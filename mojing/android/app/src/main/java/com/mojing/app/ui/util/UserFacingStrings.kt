@@ -1,0 +1,207 @@
+package com.mojing.app.ui.util
+
+/**
+ * 用户可见文案（统一用语：API Key；不追加端别后缀）。
+ */
+object UserFacingStrings {
+    /** 历史调用处保留；不再追加任何后缀 */
+    fun appendAndroidIfNeeded(msg: String): String = msg
+
+    fun personaNameRequired(): String = "请填写「我的名字」"
+
+    fun characterNameRequired(): String = "请填写角色名（必填）"
+
+    fun llmKeyMissingForAiComplete(): String =
+        "请先在「设置」填写对话线路的 API Key，或在角色中填写专用 API Key 后再使用智能补全"
+
+    fun saveSuccessGeneric(): String = "已保存"
+
+    /** 只用于已经确认发生在远程 API 调用阶段的失败。 */
+    fun remoteRequestFailed(e: Throwable?): String {
+        val detail = streamErrorDetail(e?.message)
+        return if (detail.startsWith("请求失败")) detail else "请求失败：$detail"
+    }
+
+    fun localLoadFailed(subject: String): String = "${subject}未能从本机读取，请重试。"
+
+    fun localSaveFailed(subject: String): String = "${subject}未能保存到本机，请重试。"
+
+    fun generatedCoverLocalSaveFailed(): String = "图片已生成，但封面未能保存到本机，请重试。"
+
+    fun operationFailed(): String = "操作失败，请重试。"
+
+    fun chatSendNeedContent(): String = "请先输入文字或选择图片后再发送"
+
+    fun chatNoParticipant(): String =
+        "本局还没有角色：点右上角菜单打开侧栏 →「参与者」→「+」，添加至少一名角色后再发消息。"
+
+    fun chatCharacterNotFound(): String = "绑定的角色已不存在，请在侧栏重新添加"
+
+    fun chatApiKeyMissing(): String = "请先在「设置」填写 API Key，或在角色中填写 API Key"
+
+    fun chatMainModelMissing(): String =
+        "未填写主对话模型 id：请在角色「模型名称」或「设置」的公共模型中填写后再发送"
+
+    fun chatStreamTimeout(): String =
+        "对话请求超时（约 2 分钟未完成）。可检查网络、核对设置里的服务地址与 Key，或稍后再试。"
+
+    fun ttsContentEmptyAfterClean(): String =
+        "没有适合朗读的正文（多为表情或格式符号），已跳过朗读"
+
+    fun imageGenKeyMissing(): String =
+        "请先在「设置」填写公共 API Key；若已填写仍无法生图，可在侧栏「世界」填写本场配图 Key，或在角色中开启配图并填写专用 Key。"
+
+    /** 专用配图线路失败后，已用公共线路重试并成功（仅作提示，可手动清除） */
+    fun imageGenRetriedWithPublicOk(): String =
+        "专用配图线路请求失败，已自动改用公共配图并完成。"
+
+    fun imageSaveFailed(): String = "图片保存失败"
+
+    /** 流式/接口错误信息（常见英文/厂商报错映射为中文 + 下一步） */
+    fun streamErrorDetail(msg: String?): String {
+        val raw = msg?.trim().takeUnless { it.isNullOrEmpty() } ?: return "请求失败，请稍后再试。"
+        val l = raw.lowercase()
+        val hint = when {
+            "401" in raw || "unauthorized" in l -> "API Key 无效、过期或未授权。请到「设置」或角色资料中检查 Key。"
+            "403" in raw && "forbidden" in l -> "接口拒绝访问（403）。请检查 Key 权限或账号策略。"
+            "404" in raw && ("model" in l || "not found" in l) -> "找不到指定的模型或资源。请在设置或角色中核对模型名称。"
+            "429" in raw || "rate limit" in l || "too many requests" in l -> "请求过于频繁，请稍等几秒再试。"
+            "timeout" in l || (raw.contains("timed", ignoreCase = true) && raw.contains("out", ignoreCase = true)) ->
+                "连接或读取超时。请检查网络或稍后再试。"
+            "unknownhost" in l || "unable to resolve" in l -> "无法解析服务器地址。请检查网络或填写的服务根地址是否正确。"
+            "connection refused" in l -> "连接被拒绝。请确认服务已启动且地址与端口正确。"
+            "failed to connect" in l || "connect failed" in l -> "无法连上服务器。请检查网络、VPN 或防火墙。"
+            "ssl" in l || "certificate" in l -> "SSL / 证书验证失败。请检查 HTTPS 地址或系统证书。"
+            "socket" in l && "closed" in l -> "网络连接中断。请重试。"
+            else -> null
+        }
+        val tail = if (raw.length > 120) raw.take(120) + "…" else raw
+        return if (hint != null) "$hint（详情：$tail）" else raw
+    }
+
+    /** 思考/Max 线路下接口拒绝：多为当前文字模型不支持深度思考；应用不会擅自更换模型 id。 */
+    fun streamErrorThinkMaxRoute(msg: String?): String {
+        val d = msg?.trim().takeUnless { it.isNullOrEmpty() } ?: "请求失败"
+        return "思考/Max：当前使用的文字模型可能不支持该能力（接口已拒绝）。应用不会自动改你的模型名；请换用支持思考/Max 的模型，或关闭思考/Max。\n$d"
+    }
+
+    fun entryTitleRequired(): String = "请填写条目标题（必填）"
+
+    fun entryTitleRequiredForAi(): String = "请先填写条目标题，再使用智能补全"
+
+    fun entrySaved(): String = "条目已保存"
+
+    fun entryAiNoNewFields(): String = "未生成新的可写入内容，可补充标题或摘要后再试"
+
+    fun entryAiApplied(): String = "智能补全已写入表单，请检查后点保存"
+
+    fun entryTitleRequiredForCover(): String = "请先填写条目标题，再生成封面"
+
+    fun backendApiRootMissingForCover(): String =
+        "请先在「设置」填写关联服务根地址，再生成封面"
+
+    fun entryCoverNoUrl(): String = "未获取到图片地址，请检查配图 API Key、服务地址与模型"
+
+    fun entryCoverDownloadFailed(): String = "下载封面图片失败"
+
+    fun entryCoverSaveFailed(): String = "封面裁切保存失败"
+
+    fun entryCoverGeneratedSaveHint(): String = "已生成条目封面，请点击保存以写入本机"
+
+    fun templateLabelRequired(): String = "请填写模板名称（必填）"
+
+    fun templateIdRequired(): String = "无法生成模板标识，请重新进入编辑页"
+
+    fun templateAiNoChange(): String = "未写入新的摘要或设定，可先填写模板名称再试"
+
+    fun templateAiApplied(): String = "智能补全已写入，请检查后保存"
+
+    fun exportWriteFailed(): String = "写入导出文件失败，目标文件可能不完整，请重新选择文件"
+
+    fun importReadFailed(): String = "未能读取所选文件"
+
+    /** 列表/详情页导出 JSON 等成功 */
+    fun exportSuccess(): String = "导出成功"
+
+    /** 删除角色、百科、模板、会话等后的轻量确认 */
+    fun itemDeleted(label: String): String = "已删除「$label」"
+
+    fun profileSaved(): String = "个人资料已保存"
+
+    /** 用户选择保存路径后写入导出文件 */
+    fun exportDocumentSaved(fileName: String): String = "已保存「$fileName」"
+
+    fun documentWriteFailed(msg: String?): String =
+        "写入文件失败，目标文件可能不完整: ${msg?.trim().takeUnless { it.isNullOrEmpty() } ?: "未知原因"}"
+
+    fun entryHistoryVersionLoaded(): String = "已载入历史版本，请检查后保存"
+
+    fun encyclopediaCreated(): String = "已新建百科库，可在列表中点入编辑名称"
+
+    fun characterDraftCreated(): String = "已新建角色，请在列表中点入编辑"
+
+    fun sessionCreated(): String = "对话已创建"
+
+    fun blankSessionCreated(): String =
+        "已创建空白对话。请打开侧栏 →「参与者」→「+」添加至少一名角色后再发消息。"
+
+    fun templateDraftCreated(): String = "已新建模板，请在列表中点入编辑"
+
+    fun entryCreatedListHint(): String = "已新建条目，请在列表中点入编辑"
+
+    fun timelineTitleRequired(): String = "请填写时间轴事件标题"
+
+    fun relationEndpointsMustDiffer(): String = "关系的起点与终点不能是同一条目"
+
+    fun batchGenerateInProgress(): String = "正在批量生成条目…"
+
+    fun batchGenerateSuccess(count: Int): String = "成功生成 $count 个条目"
+
+    fun micPermissionRequired(): String = "需要麦克风权限才能语音输入"
+
+    fun speechRecognitionUnavailable(): String =
+        "本机没有可用的语音听写应用，已取消。可改用键盘输入或安装系统语音服务。"
+
+    fun copiedToClipboard(): String = "已复制到剪贴板"
+    fun messageHasNoCopyableText(): String = "这条消息没有可复制的正文"
+    fun messageHasNoQuotableText(): String = "这条消息没有可引用的正文"
+
+    fun bookmarkUpdated(): String = "已更新收藏"
+
+    fun bookmarkJumpNotFound(): String = "未在主分支列表中找到该消息"
+
+    fun searchHitNotOnCurrentBranch(): String = "该条不在当前分支展示列表中"
+
+    fun imageGenPromptRequired(): String = "请先填写画面描述"
+
+    fun characterAiPersonaApplied(): String = "智能补全已写入人设，请检查后保存"
+
+    fun characterAiNoNewPersona(): String = "未生成新的可写入内容，可先填写角色名或补充关键词后再试"
+
+    fun characterAiPersonaFailed(detail: String?): String {
+        val friendly = streamErrorDetail(detail)
+        return if (friendly == "请求失败") "人设补全失败，请检查 API Key 与模型配置后重试" else "人设补全失败：$friendly"
+    }
+
+    fun characterAiPersonaQueuedLong(): String =
+        "人设任务仍在进行（可能在排队）。可打开任务列表查看；超过 15 分钟仍无结果请检查网络与 API Key。"
+
+    fun sessionSearchNoMatch(): String = "没有标题匹配的对话"
+
+    fun sessionSearchEmptyLibrary(): String = "还没有对话，无法按标题搜索"
+
+    fun chatMultiCharacterStoppedAt(characterName: String, detail: String?): String {
+        val who = characterName.trim().ifBlank { "角色" }
+        val d = detail?.trim().orEmpty()
+        return if (d.isNotEmpty()) "多角色轮次停在「$who」：$d" else "多角色轮次停在「$who」，后续角色未生成"
+    }
+
+    fun exportCharacterNotLoaded(): String = "无法导出：角色未加载"
+
+    fun exportSummaryNeedsGlobalKey(): String = "摘要导出需要先在设置中填写全局 API Key"
+
+    fun exportFailedDetail(msg: String?): String =
+        "导出失败: ${msg?.trim().takeUnless { it.isNullOrEmpty() } ?: "未知错误"}"
+
+    fun cardImageProcessFailed(): String = "无法处理所选图片，请换一张或缩小尺寸后重试"
+}

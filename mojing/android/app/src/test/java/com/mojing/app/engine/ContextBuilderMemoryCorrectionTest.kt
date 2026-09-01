@@ -1,0 +1,74 @@
+package com.mojing.app.engine
+
+import com.mojing.app.data.local.entity.CharacterEntity
+import com.mojing.app.data.local.entity.SessionMemoryCorrectionEntity
+import com.mojing.app.data.local.entity.SessionWorldEntity
+import com.mojing.app.domain.engine.CharacterBookSearcher
+import com.mojing.app.domain.engine.ContextBuilder
+import com.mojing.app.domain.engine.EncyclopediaSearcher
+import com.mojing.app.domain.engine.LoreSearcher
+import com.mojing.app.domain.engine.PromptBuilder
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.slot
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class ContextBuilderMemoryCorrectionTest {
+    @Test
+    fun passesCorrectionsThroughToPromptContext() = runTest {
+        val promptBuilder = mockk<PromptBuilder>()
+        val contextSlot = slot<PromptBuilder.PromptContext>()
+        every { promptBuilder.buildForCharacter(capture(contextSlot), any()) } returns "prompt"
+        val encyclopedia = mockk<EncyclopediaSearcher>(relaxed = true)
+        val lore = mockk<LoreSearcher>(relaxed = true)
+        val characterBook = mockk<CharacterBookSearcher>(relaxed = true)
+        coEvery { encyclopedia.search(any(), any(), any(), any()) } returns emptyList()
+        coEvery { lore.search(any(), any(), any()) } returns emptyList()
+        coEvery { characterBook.search(any(), any(), any()) } returns emptyList()
+
+        val corrections = listOf(SessionMemoryCorrectionEntity(sessionId = 1L, content = "纠正"))
+        ContextBuilder(promptBuilder, encyclopedia, lore, characterBook).buildFullContext(
+            character = CharacterEntity(id = 2L),
+            world = null,
+            personaName = "玩家",
+            userDescription = "",
+            userMessage = "你好",
+            memorySummary = "",
+            memoryCorrections = corrections,
+            activeCharacterNames = emptyList(),
+            sessionId = 1L,
+            effectiveModelName = "model",
+        )
+
+        assertEquals(corrections, contextSlot.captured.memoryCorrections)
+    }
+
+    @Test
+    fun searchesSharedWorldContextForNarratorAndCharacterPrompts() = runTest {
+        val promptBuilder = mockk<PromptBuilder>(relaxed = true)
+        val encyclopedia = mockk<EncyclopediaSearcher>()
+        val lore = mockk<LoreSearcher>()
+        val characterBook = mockk<CharacterBookSearcher>(relaxed = true)
+        coEvery { encyclopedia.search(any(), any(), any(), any()) } returns listOf(
+            EncyclopediaSearcher.HitEntry("旧城", "城门在午夜关闭", 3.0),
+        )
+        coEvery { lore.search(any(), any(), any()) } returns listOf(
+            LoreSearcher.LoreHit("禁令", "雨夜不得点燃蓝灯", 2.0),
+        )
+
+        val result = ContextBuilder(promptBuilder, encyclopedia, lore, characterBook).searchWorldContext(
+            world = SessionWorldEntity(
+                sessionId = 1L,
+                templateId = "rain-city",
+                encyclopediaId = 7L,
+            ),
+            recallQueryText = "雨夜来到旧城",
+        )
+
+        assertEquals(listOf("[旧城] 城门在午夜关闭"), result.encyclopediaHits)
+        assertEquals(listOf("[禁令] 雨夜不得点燃蓝灯"), result.loreHits)
+    }
+}

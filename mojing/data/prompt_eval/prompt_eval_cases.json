@@ -1,0 +1,34 @@
+[
+  {
+    "case_id": "narrator_scene_push_structure",
+    "template_id": "narrator_scene_push",
+    "required_in_system": ["剧情旁白器", "场景", "选项"],
+    "required_in_user": ["当前会话状态", "旁白推进"],
+    "required_variables": ["世界背景", "当前阶段", "参与角色", "最近冲突"],
+    "expected_output_format_contains": ["XML", "CHOICES"]
+  },
+  {
+    "case_id": "npc_dialogue_guarded_anti_override",
+    "template_id": "npc_dialogue_guarded",
+    "required_in_system": ["世界内 NPC", "身份", "利益"],
+    "required_in_user": ["越权要求"],
+    "required_variables": ["NPC 身份", "当前关系", "当前利益", "现场环境"],
+    "expected_output_format_contains": ["XML", "SPEECH"]
+  },
+  {
+    "case_id": "story_arc_builder_progression",
+    "template_id": "story_arc_builder",
+    "required_in_system": ["剧情策划助手", "长期推进"],
+    "required_in_user": ["剧情骨架"],
+    "required_variables": ["世界类型", "核心主题", "目标玩家体验"],
+    "expected_output_format_contains": ["Markdown", "章节目标"]
+  },
+  {
+    "case_id": "world_name_generator_json",
+    "template_id": "world_name_generator",
+    "required_in_system": ["命名设计器", "记忆点"],
+    "required_in_user": ["人名", "地名", "物品名"],
+    "required_variables": ["世界类型", "语言风格", "阵营气质"],
+    "expected_output_format_contains": ["JSON", "person_names"]
+  }
+]

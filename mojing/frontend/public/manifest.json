@@ -1,0 +1,24 @@
+{
+  "name": "墨境",
+  "short_name": "墨境",
+  "description": "本地角色扮演、长篇对话与世界设定工具",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#0d1417",
+  "theme_color": "#ff8c42",
+  "launch_handler": {
+    "client_mode": "focus-existing"
+  },
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "categories": ["entertainment", "social", "productivity"],
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "prefer_related_applications": false,
+  "screenshots": [],
+  "related_applications": []
+}

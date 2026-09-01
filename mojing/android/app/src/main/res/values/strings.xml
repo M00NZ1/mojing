@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">墨境</string>
+    <string name="splash_tagline">以墨为界，入境如梦。</string>
+    <string name="widget_description">墨境 百科快览</string>
+    <string name="shortcut_new_chat">新对话</string>
+    <string name="shortcut_characters">角色管理</string>
+</resources>

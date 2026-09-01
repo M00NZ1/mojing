@@ -1,0 +1,33 @@
+# 密钥与本地 SDK 路径（勿提交）
+*.jks
+*.keystore
+*.p12
+local.properties
+
+# Gradle / 构建产物（体积大、可重建，勿提交）
+.gradle/
+build/
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Kotlin 编译器在工程内缓存的错误日志（勿提交）
+.kotlin/
+
+# 打包输出（APK/AAB 在 CI 或本机构建即可）
+*.apk
+*.aab
+*.ap_
+
+# Dalvik / 中间产物
+*.dex
+*.class
+
+# Android Studio / IDEA
+*.iml
+.idea/
+.navigation/
+
+# 本地调试
+*.log

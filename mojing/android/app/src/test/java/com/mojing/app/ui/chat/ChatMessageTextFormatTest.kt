@@ -1,0 +1,75 @@
+package com.mojing.app.ui.chat
+
+import com.mojing.app.media.TtsSpeakText
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Test
+
+class ChatMessageTextFormatTest {
+
+    @Test
+    fun `clipboard text follows visible structured body and excludes choices`() {
+        val raw = "<NARRATION>夜色降临。</NARRATION>" +
+            "<THOUGHT>不能让他知道。</THOUGHT>" +
+            "<SPEECH name=\"林云\">快走。</SPEECH>" +
+            "门外传来脚步声。" +
+            "<CHOICES type=\"actions\"><OPTION id=\"wait\">留在原地</OPTION></CHOICES>"
+
+        val copied = ChatMessageTextFormat.forClipboard(raw)
+
+        assertEquals("🎭 夜色降临。\n\n💭 不能让他知道。\n\n快走。\n\n门外传来脚步声。", copied)
+        assertFalse(copied.contains("<OPTION"))
+        assertFalse(copied.contains("留在原地"))
+    }
+
+    @Test
+    fun `clipboard text keeps ordinary prose formatting`() {
+        val raw = "第一段。  有多余空格。\n\n\n\n第二段。"
+
+        assertEquals("第一段。 有多余空格。\n\n第二段。", ChatMessageTextFormat.forClipboard(raw))
+    }
+
+    @Test
+    fun `choice only message has no copyable body`() {
+        val raw = "<CHOICES><OPTION>继续</OPTION><OPTION>离开</OPTION></CHOICES>"
+
+        assertEquals("", ChatMessageTextFormat.forClipboard(raw))
+    }
+
+    @Test
+    fun `quote and speech reuse visible body without choices`() {
+        val raw = "<NARRATION>雨落在窗上。</NARRATION>\n" +
+            "<SPEECH>别回头。</SPEECH>\n" +
+            "<CHOICES type=\"actions\"><OPTION id=\"turn\">回头</OPTION></CHOICES>"
+
+        assertEquals("🎭 雨落在窗上。", ChatMessageTextFormat.quoteSnippet(raw, 120))
+        assertEquals(
+            "雨落在窗上。 别回头。",
+            TtsSpeakText.normalizeForSpeech(ChatMessageTextFormat.visibleBody(raw)),
+        )
+    }
+
+    @Test
+    fun `generated preview keeps visible prose and excludes unselected choices`() {
+        val raw = "<NARRATION>雨落在窗上。</NARRATION>" +
+            "<THOUGHT>必须尽快离开。</THOUGHT>" +
+            "<SPEECH>别回头。</SPEECH>" +
+            "<CHOICES type=\"actions\"><OPTION id=\"turn\">回头</OPTION></CHOICES>"
+
+        val preview = ChatMessageTextFormat.preview(raw, speakerType = "character", maxChars = 120)
+
+        assertEquals("雨落在窗上。 必须尽快离开。 别回头。", preview)
+        assertFalse(preview.contains("<OPTION"))
+        assertFalse(preview.contains("CHOICES"))
+    }
+
+    @Test
+    fun `user preview preserves literal structured text`() {
+        val raw = "我输入 <CHOICES><OPTION>原样保留</OPTION></CHOICES>"
+
+        assertEquals(
+            raw,
+            ChatMessageTextFormat.preview(raw, speakerType = "user", maxChars = 120),
+        )
+    }
+}

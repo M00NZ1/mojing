@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <cache-path name="shared_files" path="shared/" />
+    <files-path name="backup_files" path="backup/" />
+    <external-files-path name="images" path="images/" />
+</paths>

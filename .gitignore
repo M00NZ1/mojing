@@ -1,0 +1,33 @@
+# MoJing repository: generated files, machine-local state, and private data.
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+/.gradle-user/
+/.codex-work/
+
+# macOS / Windows
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# 编辑器（若需共享 .vscode 任务配置，可改为只忽略 history 等子目录）
+.vscode/
+
+# 日志与临时
+*.log
+*.tmp
+*.swp
+*~
+
+# Local configuration and user data
+/*_config.json
+/*_history.json
+outputs/
+/.legacy-local/

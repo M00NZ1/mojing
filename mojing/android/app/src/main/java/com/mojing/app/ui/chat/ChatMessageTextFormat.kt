@@ -1,0 +1,55 @@
+package com.mojing.app.ui.chat
+
+import com.mojing.app.domain.engine.ConversationMessageText
+import com.mojing.app.domain.engine.StructuredParser
+
+/** 气泡内展示：压缩连续空白与过多换行，减轻模型输出里的「大块空白」观感。 */
+object ChatMessageTextFormat {
+    fun forBubbleDisplay(raw: String): String {
+        if (raw.isEmpty()) return ""
+        return raw
+            .replace("\r\n", "\n")
+            .replace(Regex("[ \\t\\x0B\\f\\r]{2,}"), " ")
+            .replace(Regex("\\n{3,}"), "\n\n")
+            .trim()
+    }
+
+    /** 用户实际可读的消息正文；供复制、朗读、引用和编辑等气泡动作共用。 */
+    fun visibleBody(raw: String): String {
+        if (!StructuredParser.isStructured(raw)) return forBubbleDisplay(raw)
+        val reply = StructuredParser.parse(raw)
+        val parts = buildList {
+            reply.narrations.forEach { text ->
+                forBubbleDisplay(text).takeIf(String::isNotBlank)?.let { add("🎭 $it") }
+            }
+            reply.thoughts.forEach { text ->
+                forBubbleDisplay(text).takeIf(String::isNotBlank)?.let { add("💭 $it") }
+            }
+            reply.speeches.forEach { speech ->
+                forBubbleDisplay(speech.text).takeIf(String::isNotBlank)?.let(::add)
+            }
+            forBubbleDisplay(reply.plainText).takeIf(String::isNotBlank)?.let(::add)
+        }
+        return parts.joinToString("\n\n")
+    }
+
+    fun forClipboard(raw: String): String = visibleBody(raw)
+
+    fun quoteSnippet(raw: String, maxChars: Int): String = visibleBody(raw)
+        .lineSequence()
+        .firstOrNull()
+        ?.take(maxChars.coerceAtLeast(0))
+        .orEmpty()
+
+    /** 搜索、收藏、分支和会话列表共用的单行摘要。 */
+    fun preview(
+        raw: String,
+        speakerType: String?,
+        maxChars: Int,
+        emptyText: String = "",
+    ): String = ConversationMessageText.forUserVisibleText(raw, speakerType)
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .take(maxChars.coerceAtLeast(0))
+        .ifBlank { emptyText }
+}

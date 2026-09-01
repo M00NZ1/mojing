@@ -1,0 +1,417 @@
+package com.mojing.app.ui.story
+
+import com.mojing.app.data.SecureStorage
+import com.mojing.app.data.local.dao.CharacterDao
+import com.mojing.app.data.local.dao.EncyclopediaDao
+import com.mojing.app.data.local.dao.MessageDao
+import com.mojing.app.data.local.dao.SessionDao
+import com.mojing.app.data.local.dao.WorldTemplateDao
+import com.mojing.app.data.local.entity.CharacterEntity
+import com.mojing.app.data.local.entity.EncyclopediaEntity
+import com.mojing.app.data.local.entity.MessageEntity
+import com.mojing.app.data.local.entity.WorldTemplateEntity
+import com.mojing.app.domain.story.StoryChapter
+import com.mojing.app.domain.story.StoryWritingResult
+import com.mojing.app.domain.story.StoryWritingUseCase
+import com.mojing.app.domain.usecase.CreateSessionUseCase
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class StorySimulationViewModelTest {
+    private val dispatcher = UnconfinedTestDispatcher()
+
+    @Before
+    fun setUp() {
+        Dispatchers.setMain(dispatcher)
+    }
+
+    @After
+    fun tearDown() {
+        Dispatchers.resetMain()
+    }
+
+    @Test
+    fun oneOptionFailureDoesNotBlockOthersAndRetryKeepsDraft() = runTest(dispatcher) {
+        val templateDao = mockk<WorldTemplateDao>()
+        val encyclopediaDao = mockk<EncyclopediaDao>()
+        val characterDao = mockk<CharacterDao>()
+        var failTemplates = true
+        coEvery { templateDao.getAll() } answers {
+            if (failTemplates) throw IllegalStateException("database unavailable")
+            listOf(WorldTemplateEntity(id = 3, templateId = "court", label = "宫廷"))
+        }
+        coEvery { encyclopediaDao.getAll() } returns listOf(EncyclopediaEntity(id = 7, name = "王都"))
+        coEvery { characterDao.getAllBound() } returns listOf(
+            CharacterEntity(id = 9, name = "林岚", boundEncyclopediaId = 7),
+        )
+
+        val viewModel = createViewModel(templateDao, encyclopediaDao, characterDao)
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.templates.error?.contains("世界模板加载失败") == true)
+        assertEquals(1, viewModel.state.value.encyclopedias.items.size)
+        assertEquals(1, viewModel.state.value.characters.items.size)
+        viewModel.updatePremise("加冕前夜，证人失踪")
+        viewModel.updateDirection("偏政治博弈")
+        viewModel.updateTone("克制、缓慢")
+
+        failTemplates = false
+        viewModel.retryTemplates()
+        advanceUntilIdle()
+
+        assertNull(viewModel.state.value.templates.error)
+        assertEquals("宫廷", viewModel.state.value.templates.items.single().label)
+        assertEquals("加冕前夜，证人失踪", viewModel.state.value.premise)
+        assertEquals("偏政治博弈", viewModel.state.value.direction)
+        assertEquals("克制、缓慢", viewModel.state.value.tone)
+        coVerify(exactly = 2) { templateDao.getAll() }
+        coVerify(exactly = 1) { encyclopediaDao.getAll() }
+        coVerify(exactly = 1) { characterDao.getAllBound() }
+    }
+
+    @Test
+    fun loadedEmptyIsNotReportedAsFailure() = runTest(dispatcher) {
+        val templateDao = mockk<WorldTemplateDao>()
+        val encyclopediaDao = mockk<EncyclopediaDao>()
+        val characterDao = mockk<CharacterDao>()
+        coEvery { templateDao.getAll() } returns emptyList()
+        coEvery { encyclopediaDao.getAll() } returns emptyList()
+        coEvery { characterDao.getAllBound() } returns emptyList()
+
+        val viewModel = createViewModel(templateDao, encyclopediaDao, characterDao)
+        advanceUntilIdle()
+
+        listOf(
+            viewModel.state.value.templates,
+            viewModel.state.value.encyclopedias,
+            viewModel.state.value.characters,
+        ).forEach { optionState ->
+            assertFalse(optionState.isLoading)
+            assertNull(optionState.error)
+            assertTrue(optionState.items.isEmpty())
+        }
+    }
+
+    @Test
+    fun characterRetryDropsSelectionsThatAreNoLongerAvailable() = runTest(dispatcher) {
+        val templateDao = mockk<WorldTemplateDao>()
+        val encyclopediaDao = mockk<EncyclopediaDao>()
+        val characterDao = mockk<CharacterDao>()
+        var characters = listOf(CharacterEntity(id = 9, name = "林岚", boundEncyclopediaId = 7))
+        coEvery { templateDao.getAll() } returns emptyList()
+        coEvery { encyclopediaDao.getAll() } returns listOf(EncyclopediaEntity(id = 7, name = "王都"))
+        coEvery { characterDao.getAllBound() } answers { characters }
+
+        val viewModel = createViewModel(templateDao, encyclopediaDao, characterDao)
+        advanceUntilIdle()
+        viewModel.selectEncyclopedia(7)
+        viewModel.toggleCharacter(9)
+        assertEquals(setOf(9L), viewModel.state.value.selectedCharacterIds)
+
+        characters = emptyList()
+        viewModel.retryCharacters()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.selectedCharacterIds.isEmpty())
+        assertTrue(viewModel.state.value.characters.items.isEmpty())
+    }
+
+    @Test
+    fun repeatedRetryWhileLoadingKeepsOneDaoRequest() = runTest(dispatcher) {
+        val templateDao = mockk<WorldTemplateDao>()
+        val encyclopediaDao = mockk<EncyclopediaDao>()
+        val characterDao = mockk<CharacterDao>()
+        val releaseLoad = CompletableDeferred<Unit>()
+        coEvery { templateDao.getAll() } coAnswers {
+            releaseLoad.await()
+            emptyList()
+        }
+        coEvery { encyclopediaDao.getAll() } returns emptyList()
+        coEvery { characterDao.getAllBound() } returns emptyList()
+
+        val viewModel = createViewModel(templateDao, encyclopediaDao, characterDao)
+        viewModel.retryTemplates()
+        viewModel.retryTemplates()
+        releaseLoad.complete(Unit)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { templateDao.getAll() }
+        assertFalse(viewModel.state.value.templates.isLoading)
+    }
+
+    @Test
+    fun createStoryWritesChaptersAndOpensSessionWithoutCandidateStep() = runTest(dispatcher) {
+        val templateDao = mockk<WorldTemplateDao>()
+        val encyclopediaDao = mockk<EncyclopediaDao>()
+        val characterDao = mockk<CharacterDao>()
+        coEvery { templateDao.getAll() } returns emptyList()
+        coEvery { encyclopediaDao.getAll() } returns emptyList()
+        coEvery { characterDao.getAllBound() } returns emptyList()
+        val storyWriting = mockk<StoryWritingUseCase>()
+        coEvery { storyWriting.write(any(), any(), any(), any()) } returns StoryWritingResult(
+            title = "十八岁系统",
+            chapters = listOf(
+                StoryChapter(1, "觉醒", "第一章正文"),
+                StoryChapter(2, "任务", "第二章正文"),
+            ),
+            nextChoices = listOf("调查系统", "完成任务"),
+        )
+        every { storyWriting.toMessageContent(any(), any()) } answers {
+            val chapter = args[0] as StoryChapter
+            @Suppress("UNCHECKED_CAST")
+            val choices = args[1] as List<String>
+            "<NARRATION>${chapter.content}</NARRATION>" + choices.joinToString("") { "<OPTION>$it</OPTION>" }
+        }
+        every { storyWriting.toStructuredJson(any(), any()) } returns "{}"
+        val secureStorage = mockk<SecureStorage>(relaxed = true) {
+            every { publicApiKey } returns "key"
+            every { publicBaseUrl } returns "https://example.com"
+            every { publicModel } returns "model"
+        }
+        val createSession = mockk<CreateSessionUseCase>()
+        coEvery {
+            createSession.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns CreateSessionUseCase.Result.Created(42L)
+        val messages = mutableListOf<MessageEntity>()
+        val messageDao = mockk<MessageDao>()
+        coEvery { messageDao.insert(capture(messages)) } returnsMany listOf(1L, 2L, 3L)
+        val sessionDao = mockk<SessionDao>(relaxed = true)
+        val viewModel = createViewModel(
+            templateDao,
+            encyclopediaDao,
+            characterDao,
+            storyWriting = storyWriting,
+            secureStorage = secureStorage,
+            createSession = createSession,
+            sessionDao = sessionDao,
+            messageDao = messageDao,
+        )
+        advanceUntilIdle()
+        viewModel.updatePremise("现代社会，主角十八岁觉醒系统")
+        var openedSessionId: Long? = null
+
+        viewModel.createStory { openedSessionId = it }
+        advanceUntilIdle()
+
+        assertEquals(42L, openedSessionId)
+        assertEquals(listOf("user", "narrator", "narrator"), messages.map { it.speakerType })
+        assertTrue(messages.last().content.contains("<OPTION>调查系统</OPTION>"))
+        coVerify(exactly = 1) { sessionDao.bumpUpdatedAt(42L, any()) }
+        coVerify(exactly = 1) {
+            createSession.create(
+                any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(),
+                match { worldPrompt ->
+                    worldPrompt?.contains("现代社会，主角十八岁觉醒系统") == true &&
+                        worldPrompt.contains("其他人物知道")
+                },
+            )
+        }
+    }
+
+    @Test
+    fun stoppingRemoteGenerationKeepsDraftAndDoesNotPersist() = runTest(dispatcher) {
+        val templateDao = mockk<WorldTemplateDao>()
+        val encyclopediaDao = mockk<EncyclopediaDao>()
+        val characterDao = mockk<CharacterDao>()
+        coEvery { templateDao.getAll() } returns emptyList()
+        coEvery { encyclopediaDao.getAll() } returns emptyList()
+        coEvery { characterDao.getAllBound() } returns emptyList()
+        val resultGate = CompletableDeferred<StoryWritingResult>()
+        val storyWriting = mockk<StoryWritingUseCase>()
+        coEvery { storyWriting.write(any(), any(), any(), any()) } coAnswers { resultGate.await() }
+        val secureStorage = mockk<SecureStorage>(relaxed = true) {
+            every { publicApiKey } returns "key"
+            every { publicBaseUrl } returns "https://example.com"
+            every { publicModel } returns "model"
+        }
+        val createSession = mockk<CreateSessionUseCase>(relaxed = true)
+        val sessionDao = mockk<SessionDao>(relaxed = true)
+        val messageDao = mockk<MessageDao>(relaxed = true)
+        val viewModel = createViewModel(
+            templateDao,
+            encyclopediaDao,
+            characterDao,
+            storyWriting = storyWriting,
+            secureStorage = secureStorage,
+            createSession = createSession,
+            sessionDao = sessionDao,
+            messageDao = messageDao,
+        )
+        advanceUntilIdle()
+        viewModel.updatePremise("保留的故事背景")
+        viewModel.updateDirection("保留的走向")
+        viewModel.updateTone("保留的文风")
+        viewModel.updateChapterCount(3)
+        var createdCalls = 0
+        viewModel.createStory { createdCalls++ }
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.isGenerating)
+        assertFalse(viewModel.state.value.isSaving)
+        assertTrue(viewModel.stopGeneration())
+        advanceUntilIdle()
+
+        assertFalse(viewModel.state.value.isGenerating)
+        assertFalse(viewModel.state.value.isSaving)
+        assertEquals("保留的故事背景", viewModel.state.value.premise)
+        assertEquals("保留的走向", viewModel.state.value.direction)
+        assertEquals("保留的文风", viewModel.state.value.tone)
+        assertEquals(3, viewModel.state.value.chapterCount)
+        assertNull(viewModel.state.value.error)
+        assertEquals(0, createdCalls)
+        coVerify(exactly = 0) {
+            createSession.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        }
+        coVerify(exactly = 0) { messageDao.insert(any()) }
+        coVerify(exactly = 0) { sessionDao.bumpUpdatedAt(any(), any()) }
+    }
+
+    @Test
+    fun repeatedCreateStoryUsesOneCreationJob() = runTest(dispatcher) {
+        val templateDao = mockk<WorldTemplateDao>()
+        val encyclopediaDao = mockk<EncyclopediaDao>()
+        val characterDao = mockk<CharacterDao>()
+        coEvery { templateDao.getAll() } returns emptyList()
+        coEvery { encyclopediaDao.getAll() } returns emptyList()
+        coEvery { characterDao.getAllBound() } returns emptyList()
+        val resultGate = CompletableDeferred<StoryWritingResult>()
+        val storyWriting = mockk<StoryWritingUseCase>()
+        coEvery { storyWriting.write(any(), any(), any(), any()) } coAnswers { resultGate.await() }
+        val secureStorage = mockk<SecureStorage>(relaxed = true) {
+            every { publicApiKey } returns "key"
+            every { publicBaseUrl } returns "https://example.com"
+            every { publicModel } returns "model"
+        }
+        val viewModel = createViewModel(
+            templateDao,
+            encyclopediaDao,
+            characterDao,
+            storyWriting = storyWriting,
+            secureStorage = secureStorage,
+        )
+        advanceUntilIdle()
+        viewModel.updatePremise("单飞故事")
+        viewModel.createStory { }
+        viewModel.createStory { }
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { storyWriting.write(any(), any(), any(), any()) }
+        assertTrue(viewModel.stopGeneration())
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun generationResultIsDiscardedWhenInputChangesWhileWaiting() = runTest(dispatcher) {
+        val templateDao = mockk<WorldTemplateDao>()
+        val encyclopediaDao = mockk<EncyclopediaDao>()
+        val characterDao = mockk<CharacterDao>()
+        coEvery { templateDao.getAll() } returns emptyList()
+        coEvery { encyclopediaDao.getAll() } returns emptyList()
+        coEvery { characterDao.getAllBound() } returns emptyList()
+        val resultGate = CompletableDeferred<StoryWritingResult>()
+        val storyWriting = mockk<StoryWritingUseCase>()
+        coEvery { storyWriting.write(any(), any(), any(), any()) } coAnswers { resultGate.await() }
+        val secureStorage = mockk<SecureStorage>(relaxed = true) {
+            every { publicApiKey } returns "key"
+            every { publicBaseUrl } returns "https://example.com"
+            every { publicModel } returns "model"
+        }
+        val viewModel = createViewModel(
+            templateDao,
+            encyclopediaDao,
+            characterDao,
+            storyWriting = storyWriting,
+            secureStorage = secureStorage,
+        )
+        advanceUntilIdle()
+        viewModel.updatePremise("旧梗概")
+        viewModel.createStory { }
+        viewModel.updatePremise("新梗概")
+
+        resultGate.complete(
+            StoryWritingResult(
+                title = "旧结果",
+                chapters = listOf(StoryChapter(1, "第一章", "旧正文")),
+                nextChoices = listOf("继续", "转折"),
+            ),
+        )
+        advanceUntilIdle()
+
+        assertEquals("输入或绑定已变化，请重新生成", viewModel.state.value.error)
+    }
+
+    @Test
+    fun staleGenerationFailureDoesNotOverwriteChangedDraft() = runTest(dispatcher) {
+        val templateDao = mockk<WorldTemplateDao>()
+        val encyclopediaDao = mockk<EncyclopediaDao>()
+        val characterDao = mockk<CharacterDao>()
+        coEvery { templateDao.getAll() } returns emptyList()
+        coEvery { encyclopediaDao.getAll() } returns emptyList()
+        coEvery { characterDao.getAllBound() } returns emptyList()
+        val resultGate = CompletableDeferred<StoryWritingResult>()
+        val storyWriting = mockk<StoryWritingUseCase>()
+        coEvery { storyWriting.write(any(), any(), any(), any()) } coAnswers { resultGate.await() }
+        val secureStorage = mockk<SecureStorage>(relaxed = true) {
+            every { publicApiKey } returns "key"
+            every { publicBaseUrl } returns "https://example.com"
+            every { publicModel } returns "model"
+        }
+        val viewModel = createViewModel(
+            templateDao,
+            encyclopediaDao,
+            characterDao,
+            storyWriting = storyWriting,
+            secureStorage = secureStorage,
+        )
+        advanceUntilIdle()
+        viewModel.updatePremise("旧梗概")
+        viewModel.createStory { }
+        viewModel.updatePremise("新梗概")
+
+        resultGate.completeExceptionally(IllegalStateException("旧请求失败"))
+        advanceUntilIdle()
+
+        assertEquals("新梗概", viewModel.state.value.premise)
+        assertNull(viewModel.state.value.error)
+        assertFalse(viewModel.state.value.isGenerating)
+    }
+
+    private fun createViewModel(
+        templateDao: WorldTemplateDao,
+        encyclopediaDao: EncyclopediaDao,
+        characterDao: CharacterDao,
+        storyWriting: StoryWritingUseCase = mockk(relaxed = true),
+        secureStorage: SecureStorage = mockk(relaxed = true),
+        createSession: CreateSessionUseCase = mockk(relaxed = true),
+        sessionDao: SessionDao = mockk(relaxed = true),
+        messageDao: MessageDao = mockk(relaxed = true),
+    ) = StorySimulationViewModel(
+        storyWriting = storyWriting,
+        secureStorage = secureStorage,
+        templateDao = templateDao,
+        encyclopediaDao = encyclopediaDao,
+        characterDao = characterDao,
+        createSession = createSession,
+        sessionDao = sessionDao,
+        messageDao = messageDao,
+    )
+}
