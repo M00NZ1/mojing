@@ -7,6 +7,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import okhttp3.Call
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -30,6 +31,48 @@ class LlmApiService @Inject constructor() {
         .build()
 
     private val gson = Gson()
+    private val anthropicAdapter by lazy { com.mojing.app.domain.engine.AnthropicAdapter(client) }
+
+    suspend fun listModels(
+        baseUrl: String,
+        apiKey: String,
+        anthropic: Boolean = baseUrl.toHttpUrl().host == "api.anthropic.com",
+    ): List<String> = kotlinx.coroutines.withTimeout(60_000) {
+        val base = OpenAiCompatibleRouting.normalizeBase(baseUrl)
+        val url = (OpenAiCompatibleRouting.buildChatCompletionsUrl(base)
+            .removeSuffix("/chat/completions") + "/models").toHttpUrl()
+        val discoveryClient = client.newBuilder().followRedirects(false).followSslRedirects(false)
+            .callTimeout(30, TimeUnit.SECONDS).build()
+        val names = linkedSetOf<String>()
+        val cursors = mutableSetOf<String>()
+        var cursor: String? = null
+        do {
+            val pageUrl = url.newBuilder().apply {
+                if (anthropic) addQueryParameter("limit", "1000")
+                cursor?.let { addQueryParameter("after_id", it) }
+            }.build()
+            val request = Request.Builder().url(pageUrl).apply {
+                if (anthropic) {
+                    header("x-api-key", apiKey.trim())
+                    header("anthropic-version", OpenAiCompatibleRouting.ANTHROPIC_VERSION)
+                } else header("Authorization", OpenAiCompatibleRouting.bearerAuth(apiKey))
+            }.get().build()
+            val page = discoveryClient.executeCancellable(request) { response ->
+                check(response.isSuccessful) { "获取模型失败（HTTP ${response.code}），可手动填写模型名" }
+                gson.fromJson(response.body?.string().orEmpty(), JsonObject::class.java)
+            }
+            page.getAsJsonArray("data")?.forEach { item ->
+                item.asJsonObject.get("id")?.asString?.trim()?.takeIf(String::isNotEmpty)?.let(names::add)
+            }
+            cursor = if (page.get("has_more")?.asBoolean == true) {
+                val next = page.get("last_id")?.takeUnless { it.isJsonNull }?.asString
+                check(!next.isNullOrBlank() && cursors.add(next) && cursors.size <= 100) { "平台分页异常，请手动填写模型名" }
+                next
+            } else null
+        } while (cursor != null)
+        check(names.isNotEmpty()) { "平台未返回模型列表，请手动填写模型名" }
+        names.toList()
+    }
 
     fun normalizeOpenAiCompatibleBase(baseUrl: String): String {
         val trimmed = baseUrl.trim()
@@ -51,6 +94,11 @@ class LlmApiService @Inject constructor() {
         baseUrl: String,
         request: ChatRequest,
     ): ChatCompletionResult {
+        if (baseUrl.toHttpUrl().host == "api.anthropic.com") {
+            return anthropicAdapter.complete(apiKey, baseUrl, request.model,
+                request.messages.filter { it.role == "system" }.joinToString("\n\n") { it.content },
+                request.messages, request.temperature, request.max_tokens)
+        }
         val httpRequest = buildChatCompletionRequest(apiKey, baseUrl, request)
         return client.executeCancellable(httpRequest) { response ->
             if (!response.isSuccessful) {

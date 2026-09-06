@@ -120,6 +120,13 @@ fun ChatScreen(
     viewModel: ChatViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val modelLabel by viewModel.modelSelectionLabel.collectAsStateWithLifecycle()
+    var showModelPicker by remember { mutableStateOf(false) }
+    if (showModelPicker) {
+        ChatModelPicker(viewModel.availableModelPlatforms(), onDismiss = { showModelPicker = false }) { platform, model ->
+            viewModel.selectChatModel(platform, model) { showModelPicker = false }
+        }
+    }
     val isImeOpen = isImeKeyboardOpen()
     val visibleDisplayLines = remember(state.displayLines, state.messageAttachments) {
         state.displayLines.filter { line ->
@@ -606,13 +613,17 @@ fun ChatScreen(
                 Column(Modifier.fillMaxWidth()) {
                     TopAppBar(
                         title = {
-                        Text(
-                            text = stableSessionTitle.ifBlank {
-                                state.messages.firstOrNull()?.content?.take(20) ?: "对话"
-                            },
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                            Column(Modifier.clickable(role = androidx.compose.ui.semantics.Role.Button) {
+                                dismissKeyboard(); showModelPicker = true
+                            }.padding(vertical = 4.dp)) {
+                                Text(stableSessionTitle.ifBlank {
+                                    state.messages.firstOrNull()?.content?.take(20) ?: "对话"
+                                }, style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("$modelLabel ▾", style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary, maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
+                            }
                         },
                         navigationIcon = {
                             IconButton(onClick = {

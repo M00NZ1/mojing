@@ -8,6 +8,39 @@ import androidx.security.crypto.MasterKeys
 class SecureStorage {
     private var prefs: SharedPreferences? = null
 
+    fun modelPlatforms(): List<ModelPlatform> {
+        val raw = prefs?.getString("model_platforms_v1", null)
+        if (raw != null) return ModelPlatformCodec.decode(raw)
+        // Read-only legacy projection; the original fields stay intact until a successful save.
+        return listOf(ModelPlatform("legacy", "原有平台", publicBaseUrl, publicApiKey,
+            listOf(publicModel).filter(String::isNotBlank), publicModel))
+    }
+
+    fun activeModelPlatformId(): String = prefs?.getString("active_model_platform", "legacy") ?: "legacy"
+
+    fun saveModelPlatform(platform: ModelPlatform, makeDefault: Boolean = true) {
+        val all = modelPlatforms().toMutableList()
+        val index = all.indexOfFirst { it.id == platform.id }
+        if (index < 0) all.add(platform) else all[index] = platform
+        val editor = checkNotNull(prefs).edit().putString("model_platforms_v1", ModelPlatformCodec.encode(all))
+        if (makeDefault) editor.putString("active_model_platform", platform.id)
+            .putString("public_api_key", platform.apiKey).putString("public_base_url", platform.baseUrl)
+            .putString("public_model", platform.selectedModel)
+        check(editor.commit()) { "平台保存失败，请重试" }
+    }
+
+    fun sessionModelSelection(sessionId: Long): Pair<String, String>? {
+        val id = prefs?.getString("chat_platform_$sessionId", null) ?: return null
+        return id to prefs?.getString("chat_model_$sessionId", "").orEmpty()
+    }
+
+    fun selectSessionModel(sessionId: Long, platformId: String, model: String) {
+        val platform = modelPlatforms().first { it.id == platformId }
+        require(model in platform.models && platform.apiKey.isNotBlank()) { "请先完善平台 Key 与模型" }
+        check(checkNotNull(prefs).edit().putString("chat_platform_$sessionId", platformId)
+            .putString("chat_model_$sessionId", model).commit()) { "模型选择保存失败" }
+    }
+
     fun init(applicationContext: Context) {
         if (prefs != null) return
         val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)

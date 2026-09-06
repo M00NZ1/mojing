@@ -11,7 +11,7 @@ class ApiProviderPresetsTest {
     @Test
     fun imageDropdownOnlyCapableVendors() {
         val ids = ApiProviderPresets.linesForImage().map { it.id }.toSet()
-        assertTrue(ids.containsAll(setOf("siliconflow", "volcengine", "openai", "dmxapi", "custom")))
+        assertTrue(ids.containsAll(setOf("siliconflow", "openai", "custom")))
         assertFalse(ids.contains("deepseek"))
         assertFalse(ids.contains("zhipu"))
         assertFalse(ids.contains("moonshot"))
@@ -20,9 +20,9 @@ class ApiProviderPresetsTest {
     }
 
     @Test
-    fun voiceDropdownIncludesFishAndLocal() {
+    fun voiceDropdownOnlyUsesRetainedProviders() {
         val ids = ApiProviderPresets.linesForVoice().map { it.id }.toSet()
-        assertTrue(ids.containsAll(setOf("local_tts", "fish_audio", "siliconflow", "openai", "dmxapi", "custom")))
+        assertTrue(ids.containsAll(setOf("siliconflow", "openai", "custom")))
         assertFalse(ids.contains("deepseek"))
         assertFalse(ids.contains("anthropic"))
     }
@@ -43,11 +43,9 @@ class ApiProviderPresetsTest {
     }
 
     @Test
-    fun anthropicHasUpdatedModels() {
-        val line = ApiProviderPresets.LINES.first { it.id == "anthropic" }
-        assertTrue(line.suggestedModels.contains("claude-sonnet-4-5"))
-        assertTrue(line.suggestedModels.contains("claude-opus-4-7"))
-        assertFalse(line.suggestedModels.contains("claude-3-5-sonnet-20241022"))
+    fun catalogContainsExactlyTheRequestedFiveProviders() {
+        org.junit.Assert.assertEquals(listOf("deepseek", "openai", "siliconflow", "anthropic", "custom"),
+            ApiProviderPresets.LINES.map { it.id })
     }
 
     @Test

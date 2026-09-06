@@ -122,7 +122,7 @@ class ChatViewModelTest {
         memoryCorrectionDao: SessionMemoryCorrectionDao = mockk(relaxed = true),
         participantDao: ParticipantDao = mockk(relaxed = true),
         chatDraftStore: ChatDraftStore = emptyDraftStore(),
-        secureStorage: SecureStorage = mockk(relaxed = true),
+        secureStorage: SecureStorage = mockk(relaxed = true) { every { sessionModelSelection(any()) } returns null },
         llmApiService: LlmApiService = mockk(relaxed = true),
         appContext: Context = mockk(relaxed = true),
         uiPreferencesRepository: UiPreferencesRepository = uiPreferences(),
@@ -169,6 +169,7 @@ class ChatViewModelTest {
         baseUrl: String = "https://api.test.com/v1",
         model: String = "test-model",
     ): SecureStorage = mockk(relaxed = true) {
+        every { sessionModelSelection(any()) } returns null
         every { publicApiKey } returns apiKey
         every { publicBaseUrl } returns baseUrl
         every { publicModel } returns model
@@ -796,6 +797,34 @@ class ChatViewModelTest {
         assertFalse(vm.state.value.isReady)
         assertEquals("对话加载失败，请重试", vm.state.value.initialLoadError)
         coVerify(exactly = 0) { messageDao.insert(any()) }
+    }
+
+    @Test
+    fun selectedPlatformIsFrozenForCurrentRoundAndChangesOnNextSend() = runTest(testDispatcher) {
+        val a = com.mojing.app.data.ModelPlatform("a", "A", "https://a.test/v1", "test-a", listOf("a-model"))
+        val b = com.mojing.app.data.ModelPlatform("b", "B", "https://b.test/v1", "test-b", listOf("b-model"))
+        var selection = "a" to "a-model"
+        val storage = validSecureStorage()
+        every { storage.modelPlatforms() } returns listOf(a, b)
+        every { storage.sessionModelSelection(42L) } answers { selection }
+        val messageDao = mockk<MessageDao>(relaxed = true)
+        coEvery { messageDao.insert(any()) } coAnswers { awaitCancellation() }
+        val vm = createViewModel(messageDao = messageDao, secureStorage = storage)
+        advanceUntilIdle()
+        val route = ChatViewModel::class.java.getDeclaredMethod("requestPlatform").apply { isAccessible = true }
+        vm.updateInput("第一条")
+        vm.sendMessage()
+        assertTrue(vm.state.value.isGenerating)
+        assertEquals(a, route.invoke(vm))
+        selection = "b" to "b-model"
+        assertEquals(a, route.invoke(vm))
+        vm.stopGeneration()
+        advanceUntilIdle()
+        vm.updateInput("下一条")
+        vm.sendMessage()
+        assertEquals(b, route.invoke(vm))
+        vm.stopGeneration()
+        advanceUntilIdle()
     }
 
     @Test

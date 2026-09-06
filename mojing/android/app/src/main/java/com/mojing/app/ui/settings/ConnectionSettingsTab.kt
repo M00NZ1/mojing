@@ -147,51 +147,13 @@ fun ConnectionSettingsTab(
 
         when (selectedChannel) {
             ConnectionChannel.TEXT -> {
-                if (apiKey.isBlank()) {
-                    LlmKeySetupHintCard(
-                        message = "完成下面三步即可使用对话和小说创作。",
-                        onOpenSettings = {},
-                        showActionButton = false,
-                    )
-                }
-                ConnectionCard("对话与小说", "选择服务商 → 填写 Key → 测试连接") {
-                    ApiVendorPresetRow(
-                        sectionLabel = "1. 选择服务商",
-                        currentBaseUrl = baseUrl,
-                        currentModel = model,
-                        onBaseUrlChange = viewModel::updateBaseUrl,
-                        onModelChange = viewModel::updateModel,
-                        modelHint = ApiVendorModelHint.CHAT,
-                    )
-                    SecretKeyField("2. API Key", apiKey, viewModel::updateApiKey)
-                    CollapsiblePresetUrlModelBlock(
-                        collapsedPreset = ApiProviderPresets.isExactSinglePresetBaseUrl(baseUrl),
-                        showManualFields = showManualChat,
-                        onExpandManual = { showManualChat = true },
-                        onCollapseManual = { showManualChat = false },
-                        baseUrl = baseUrl,
-                        model = model,
-                        onBaseChange = viewModel::updateBaseUrl,
-                        onModelChange = viewModel::updateModel,
-                        baseLabel = "服务地址",
-                        basePlaceholder = "https://api.example.com/v1",
-                        modelLabel = "模型",
-                        modelPlaceholder = "如 deepseek-chat",
-                    )
-                    if (model.contains("deepseek", ignoreCase = true)) {
-                        Text(
-                            "已启用 DeepSeek 小说写作适配：加强设定核对、人物知情边界和连续性。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                    ProbeProgress("text", probeBusy, probeHint, probeLines)
-                    Button(
-                        onClick = { viewModel.runProbeText { scope.launch { snackbarHostState.showSnackbar(it) } } },
-                        enabled = probeBusy == null,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("3. 测试对话连接") }
-                }
+                ModelPlatformsPanel(viewModel, snackbarHostState)
+                ProbeProgress("text", probeBusy, probeHint, probeLines)
+                OutlinedButton(
+                    onClick = { viewModel.runProbeText { scope.launch { snackbarHostState.showSnackbar(it) } } },
+                    enabled = probeBusy == null && apiKey.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("测试默认对话线路") }
             }
 
             ConnectionChannel.IMAGE -> ConnectionCard("AI 配图", "仅在需要生成封面或剧情配图时配置") {

@@ -255,23 +255,12 @@ export default function CharactersPage() {
     return { base, key, model };
   }, [editing, localConfigQuery.data]);
 
-  const BUILTIN_PROVIDERS = useMemo(() => {
-    const list: { label: string; base_url: string; models: string[] }[] = [
-      { label: '继承设置中的公共 API', base_url: '', models: [] },
-      { label: 'DeepSeek', base_url: 'https://api.deepseek.com', models: ['deepseek-chat', 'deepseek-reasoner'] },
-      { label: 'OpenAI', base_url: 'https://api.openai.com', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'] },
-      { label: 'Anthropic Claude', base_url: 'https://api.anthropic.com', models: ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'] },
-      { label: 'Google Gemini', base_url: 'https://generativelanguage.googleapis.com', models: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'] },
-      { label: 'Ollama (本地)', base_url: 'http://localhost:11434', models: ['llama3', 'mistral', 'qwen2'] },
-    ];
-    // 从 providersQuery 补充更多
-    (providersQuery.data ?? []).forEach((p) => {
-      if (!list.some((l) => l.base_url === p.base_url)) {
-        list.push({ label: p.label, base_url: p.base_url, models: p.models.map((m) => m.id) });
-      }
-    });
-    return list;
-  }, [providersQuery.data]);
+  const BUILTIN_PROVIDERS = useMemo(() => [
+    { label: '继承设置中的公共 API', base_url: '', models: [] as string[] },
+    ...(providersQuery.data ?? []).filter((p) => p.base_url).map((p) => ({
+      label: p.label, base_url: p.base_url, models: p.models.map((m) => m.id),
+    })),
+  ], [providersQuery.data]);
 
   const avatarAssetsQuery = useQuery({
     queryKey: ['assets', 'avatar', assetSearch],
@@ -775,19 +764,21 @@ export default function CharactersPage() {
                   )}
                   <div className="form-group full-row">
                     <label>AI 供应商</label>
-                    <select value={editing.api_base_url ?? ''} onChange={(e) => {
+                    <select value={BUILTIN_PROVIDERS.some((p) => p.base_url === (editing.api_base_url ?? '')) ? editing.api_base_url ?? '' : '__custom__'} onChange={(e) => {
+                      if (e.target.value === '__custom__') { setEditing({ ...editing, api_base_url: 'https://', api_key: '', model_name: '' }); return; }
                       const p = BUILTIN_PROVIDERS.find((item) => item.base_url === e.target.value);
                       if (!p) return;
                       setEditing({
                         ...editing,
                         api_base_url: p.base_url,
-                        model_name: p.base_url === '' ? '' : p.models[0] ?? editing.model_name,
-                        api_key: p.base_url === '' ? '' : editing.api_key,
+                        model_name: p.base_url === editing.api_base_url ? editing.model_name : '',
+                        api_key: p.base_url === editing.api_base_url ? editing.api_key : '',
                       });
                     }}>
                       {BUILTIN_PROVIDERS.map((p) => (<option value={p.base_url} key={p.base_url}>{p.label}</option>))}
+                      <option value="__custom__">自定义</option>
                     </select>
-                    <div className="hint">选供应商会自动填入地址和模型；也可以直接修改下面字段使用兼容接口。</div>
+                    <div className="hint">选择服务商填入地址，再填写该平台的 Key 与模型；自定义接口可直接修改下面字段。</div>
                   </div>
                   <div className="form-group full-row">
                     <label>角色独立接口地址（可选）</label>
@@ -797,7 +788,7 @@ export default function CharactersPage() {
                   <div className="form-group full-row">
                     <label>角色独立模型（可选）</label>
                     <input value={editing.model_name ?? ''} onChange={(e) => setEditing({ ...editing, model_name: e.target.value })} placeholder="留空则继承公共模型" maxLength={120} />
-                    {currentProvider && <div className="hint">该供应商可用的模型：{currentProvider.models.join('、')}</div>}
+                    {Boolean(currentProvider?.models.length) && <div className="hint">模型示例：{currentProvider?.models.join('、')}</div>}
                     {!currentProvider && editing.api_base_url && <div className="hint">输入你想使用的模型名称（如 deepseek-chat、gpt-4o）</div>}
                   </div>
                   <div className="form-group full-row">

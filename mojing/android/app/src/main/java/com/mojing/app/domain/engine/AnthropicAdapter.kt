@@ -1,6 +1,10 @@
 package com.mojing.app.domain.engine
 
 import com.mojing.app.data.remote.ChatMessage
+import com.mojing.app.data.remote.ChatCompletionResult
+import com.mojing.app.data.remote.executeCancellable
+import com.google.gson.Gson
+import com.google.gson.JsonObject
 import com.mojing.app.domain.config.OpenAiCompatibleRouting
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -105,58 +109,41 @@ class AnthropicAdapter @Inject constructor(
     }
 
     suspend fun nonStreamingCall(
-        apiKey: String,
-        baseUrl: String,
-        model: String,
-        systemPrompt: String,
-        messages: List<ChatMessage>,
-        temperature: Float,
-        maxTokens: Int,
-    ): String {
-        val url = buildMessagesUrl(baseUrl)
-        val key = apiKey.trim().removePrefix("Bearer ").trim()
+        apiKey: String, baseUrl: String, model: String, systemPrompt: String,
+        messages: List<ChatMessage>, temperature: Float, maxTokens: Int,
+    ): String = complete(apiKey, baseUrl, model, systemPrompt, messages, temperature, maxTokens).content
 
-        val body = JSONObject().apply {
-            put("model", model)
-            put("max_tokens", maxTokens)
-            put("temperature", temperature.toDouble())
-            if (systemPrompt.isNotBlank()) put("system", systemPrompt)
-            put("messages", JSONArray().apply {
-                messages.filter { it.role != "system" }.forEach { msg ->
-                    put(JSONObject().apply {
-                        put("role", if (msg.role == "assistant") "assistant" else "user")
-                        put("content", msg.content)
-                    })
-                }
+    suspend fun complete(
+        apiKey: String, baseUrl: String, model: String, systemPrompt: String,
+        messages: List<ChatMessage>, temperature: Float, maxTokens: Int,
+    ): ChatCompletionResult {
+        val gson = Gson()
+        val body = linkedMapOf<String, Any>("model" to model, "max_tokens" to maxTokens,
+            "temperature" to temperature, "messages" to messages.filter { it.role != "system" }.map {
+                mapOf("role" to if (it.role == "assistant") "assistant" else "user", "content" to it.content)
             })
+        if (systemPrompt.isNotBlank()) body["system"] = systemPrompt
+        val request = Request.Builder().url(buildMessagesUrl(baseUrl))
+            .header("x-api-key", apiKey.trim().removePrefix("Bearer ").trim())
+            .header("anthropic-version", API_VERSION)
+            .post(gson.toJson(body).toRequestBody("application/json".toMediaType())).build()
+        return client.executeCancellable(request) { response ->
+            check(response.isSuccessful) { "Anthropic 请求失败（HTTP ${response.code}）" }
+            val json = gson.fromJson(response.body?.string().orEmpty(), JsonObject::class.java)
+            val content = json.getAsJsonArray("content")?.joinToString("") {
+                val block = it.asJsonObject
+                if (block.get("type")?.asString == "text") block.get("text")?.asString.orEmpty() else ""
+            }.orEmpty()
+            val usage = json.getAsJsonObject("usage")
+            val input = usage?.get("input_tokens")?.asInt ?: 0
+            val output = usage?.get("output_tokens")?.asInt ?: 0
+            ChatCompletionResult(content, input, output, input + output)
         }
-
-        val request = Request.Builder()
-            .url(url)
-            .addHeader("x-api-key", key)
-            .addHeader("anthropic-version", API_VERSION)
-            .addHeader("Content-Type", "application/json")
-            .post(body.toString().toRequestBody("application/json".toMediaType()))
-            .build()
-
-        val response = client.newCall(request).execute()
-        if (!response.isSuccessful) {
-            throw Exception("Anthropic \u8bf7\u6c42\u5931\u8d25: ${response.code}")
-        }
-        val bodyStr = response.body?.string() ?: ""
-        val json = JSONObject(bodyStr)
-        val content = json.optJSONArray("content")
-        return content?.let { arr ->
-            (0 until arr.length()).joinToString("") { i ->
-                val block = arr.optJSONObject(i)
-                if (block?.optString("type") == "text") block.optString("text", "") else ""
-            }
-        } ?: ""
     }
 
     private fun buildMessagesUrl(baseUrl: String): String {
         val b = baseUrl.trimEnd('/')
         return if (b.endsWith("/v1/messages") || b.endsWith("/messages")) b
-        else "$b/v1/messages"
+        else if (b.endsWith("/v1")) "$b/messages" else "$b/v1/messages"
     }
 }

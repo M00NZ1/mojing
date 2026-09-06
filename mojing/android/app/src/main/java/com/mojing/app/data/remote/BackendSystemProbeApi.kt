@@ -23,6 +23,9 @@ class BackendSystemProbeApi @Inject constructor(
     private val imageApiService: ImageApiService,
     private val llmApiService: LlmApiService,
 ) {
+    suspend fun listModels(baseUrl: String, apiKey: String): List<String> =
+        llmApiService.listModels(baseUrl, apiKey)
+
     private fun relayRoot(): String = resolveBackendApiRoot(secureStorage).trimEnd('/')
 
     /**

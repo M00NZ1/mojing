@@ -58,6 +58,20 @@ class SettingsViewModel @Inject constructor(
     fun updateBaseUrl(value: String) { _baseUrl.value = value; secureStorage.publicBaseUrl = value }
     fun updateModel(value: String) { _model.value = value; secureStorage.publicModel = value }
 
+    fun modelPlatforms() = secureStorage.modelPlatforms()
+    private val _activePlatformId = MutableStateFlow(secureStorage.activeModelPlatformId())
+    val activePlatformId: StateFlow<String> = _activePlatformId.asStateFlow()
+
+    suspend fun savePlatform(platform: com.mojing.app.data.ModelPlatform) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { secureStorage.saveModelPlatform(platform) }
+        _apiKey.value = platform.apiKey
+        _baseUrl.value = platform.baseUrl
+        _model.value = platform.selectedModel
+        _activePlatformId.value = platform.id
+    }
+
+    suspend fun fetchPlatformModels(base: String, key: String) = systemProbeApi.listModels(base, key)
+
     fun setThemeMode(mode: String) {
         val m = AppThemes.normalize(mode)
         _themeMode.value = m

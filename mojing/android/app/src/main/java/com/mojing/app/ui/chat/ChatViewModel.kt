@@ -180,6 +180,47 @@ class ChatViewModel @Inject constructor(
     private val sessionId: Long = savedStateHandle["sessionId"] ?: 0L
     private val _state = MutableStateFlow(ChatContract.State(sessionId = sessionId))
     val state: StateFlow<ChatContract.State> = _state.asStateFlow()
+    private var roundPlatform: com.mojing.app.data.ModelPlatform? = null
+    private var modelSelectionSaving = false
+    private val _modelSelectionLabel = MutableStateFlow(currentModelLabel())
+    val modelSelectionLabel: StateFlow<String> = _modelSelectionLabel.asStateFlow()
+
+    fun availableModelPlatforms() = runCatching { secureStorage.modelPlatforms() }.getOrElse {
+        _state.update { it.copy(error = "平台配置暂时无法读取，原数据已保留") }
+        emptyList()
+    }
+
+    private fun selectedPlatform(): com.mojing.app.data.ModelPlatform? {
+        val selection = secureStorage.sessionModelSelection(sessionId) ?: return null
+        val platform = secureStorage.modelPlatforms().firstOrNull { it.id == selection.first }
+            ?: error("所选平台不存在，请重新选择模型")
+        check(selection.second in platform.models) { "所选模型已变更，请重新选择模型" }
+        return platform.copy(selectedModel = selection.second)
+    }
+
+    private fun currentModelLabel(): String = runCatching {
+        selectedPlatform()?.let { "${it.name} · ${it.selectedModel}" }
+            ?: "${secureStorage.publicModel.ifBlank { "选择模型" }} · 默认线路"
+    }.getOrDefault("请选择模型")
+
+    fun selectChatModel(platformId: String, model: String, onSaved: () -> Unit = {}) {
+        if (modelSelectionSaving) return
+        modelSelectionSaving = true
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { secureStorage.selectSessionModel(sessionId, platformId, model) }
+                _modelSelectionLabel.value = currentModelLabel()
+                onSaved()
+            } catch (_: Exception) {
+                _state.update { it.copy(error = "模型选择未保存，请检查平台配置后重试") }
+            } finally {
+                modelSelectionSaving = false
+            }
+        }
+    }
+
+    private fun requestPlatform(): com.mojing.app.data.ModelPlatform? =
+        if (activeGeneration != null) roundPlatform else selectedPlatform()
     /** All AI generation entry points share one Job to prevent concurrent writes. */
     private var generationJob: Job? = null
     private var activeGeneration: GenerationContext? = null
@@ -246,6 +287,14 @@ class ChatViewModel @Inject constructor(
         block: suspend (GenerationContext) -> Unit,
     ): Boolean {
         if (activeGeneration != null || branchTransitionJob?.isActive == true) return false
+        if (modelSelectionSaving) {
+            _state.update { it.copy(error = "模型选择正在保存，请稍候再发送") }
+            return false
+        }
+        roundPlatform = try { selectedPlatform() } catch (_: Exception) {
+            _state.update { it.copy(error = "所选平台或模型已变更，请重新选择后发送") }
+            return false
+        }
         historyLoadJob?.cancel()
         historyLoadJob = null
         _state.update { it.copy(isLoadingHistory = false) }
@@ -364,6 +413,7 @@ class ChatViewModel @Inject constructor(
      * 此时应优先用「设置里的公共模型」，避免角色卡默认的 `deepseek-chat` 等与 SiliconFlow 等网关不匹配导致 400。
      */
     private fun resolveMainChatModelId(character: CharacterEntity): String {
+        requestPlatform()?.let { return it.selectedModel }
         val pub = secureStorage.publicModel.trim()
         val charModel = character.modelName.trim()
         val ownKey = character.apiKey.trim().isNotEmpty()
@@ -381,6 +431,7 @@ class ChatViewModel @Inject constructor(
      *   若当前模型不支持思考/Max，由接口拒绝，再通过 [streamErrorThinkMaxRoute] 提示。
      */
     private fun resolveChatLlmModel(character: CharacterEntity, sessionThinkMax: Boolean): String? {
+        requestPlatform()?.let { return it.selectedModel }
         val main = resolveMainChatModelId(character)
         if (!effectiveThinkMax(character, sessionThinkMax)) {
             return main.ifBlank { null }
@@ -1874,8 +1925,8 @@ class ChatViewModel @Inject constructor(
         manageGeneratingFlag: Boolean,
     ): Boolean {
         val world = sessionWorldDao.getBySession(sessionId)
-        val apiKey = ApiKeyResolver.resolveStreamChatApiKey(world, character, secureStorage.publicApiKey)
-        val baseUrlRaw = ApiKeyResolver.resolveStreamChatBaseUrlRaw(
+        val apiKey = requestPlatform()?.apiKey ?: ApiKeyResolver.resolveStreamChatApiKey(world, character, secureStorage.publicApiKey)
+        val baseUrlRaw = requestPlatform()?.baseUrl ?: ApiKeyResolver.resolveStreamChatBaseUrlRaw(
             world,
             character,
             secureStorage.publicBaseUrl.trim(),
@@ -2183,8 +2234,8 @@ class ChatViewModel @Inject constructor(
         return launchSingleGeneration(expectedTailMessageId, draftSubmissionId) narratorScope@{ generation ->
             if (!generation.ensureExpectedUserTail()) return@narratorScope
             val guidanceText = guidance.trim()
-            val apiKey = ApiKeyResolver.resolveNarratorApiKey(world, secureStorage.publicApiKey)
-            val baseUrlRaw = ApiKeyResolver.resolveNarratorBaseUrlRaw(world, secureStorage.publicBaseUrl.trim())
+            val apiKey = requestPlatform()?.apiKey ?: ApiKeyResolver.resolveNarratorApiKey(world, secureStorage.publicApiKey)
+            val baseUrlRaw = requestPlatform()?.baseUrl ?: ApiKeyResolver.resolveNarratorBaseUrlRaw(world, secureStorage.publicBaseUrl.trim())
             val narrBases = ApiRootLines.splitToOrderedDistinct(baseUrlRaw, llmApiService::normalizeOpenAiCompatibleBase)
                 .ifEmpty {
                     val sole = llmApiService.normalizeOpenAiCompatibleBase(baseUrlRaw.trim())
@@ -3138,8 +3189,8 @@ class ChatViewModel @Inject constructor(
                 characterDao.getById(participant.characterId)
             }
             val resolvedCharacter = firstCharacter ?: CharacterEntity()
-            val apiKey = ApiKeyResolver.resolveStreamChatApiKey(world, resolvedCharacter, secureStorage.publicApiKey)
-            val baseUrl = ApiKeyResolver.resolveStreamChatBaseUrlRaw(world, resolvedCharacter, secureStorage.publicBaseUrl.trim())
+            val apiKey = requestPlatform()?.apiKey ?: ApiKeyResolver.resolveStreamChatApiKey(world, resolvedCharacter, secureStorage.publicApiKey)
+            val baseUrl = requestPlatform()?.baseUrl ?: ApiKeyResolver.resolveStreamChatBaseUrlRaw(world, resolvedCharacter, secureStorage.publicBaseUrl.trim())
             val model = resolveMainChatModelId(resolvedCharacter).ifBlank { secureStorage.publicModel.trim() }
             if (apiKey.isBlank() || baseUrl.isBlank() || model.isBlank()) {
                 onDone("当前线路未配置可用对话模型，无法重建记忆")
