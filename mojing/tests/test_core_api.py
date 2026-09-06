@@ -164,50 +164,19 @@ class TestEncyclopedia:
         client.delete(f"/api/encyclopedia/entries/{entry_id}")
         client.delete(f"/api/encyclopedia/{enc_id}")
 
-    def test_curated_source_presets_seeded(self):
+    def test_current_starter_encyclopedia_seeded(self):
         resp = client.get("/api/encyclopedia")
         assert resp.status_code == 200
-        data = resp.json()
-        by_name = {item["name"]: item for item in data}
-        required = [
-            "都市 · 原创通用世界",
-            "官场 · 原创制度权谋",
-            "校园 · 原创青春成长",
-            "穿越古代 · 原创架空王朝",
-            "武侠江湖 · 原创江湖世界",
-            "传统西幻 · 原创冒险大陆",
-            "传统古武 · 原创国术演武",
-            "古典修仙 · 原创修真界",
-            "玄幻世界 · 原创万族大界",
-            "洪荒世界 · 原创神话洪荒",
-        ]
-        for name in required:
-            assert name in by_name
-            assert by_name[name]["entry_count"] >= 20
-            enc_id = by_name[name]["id"]
-            entries_resp = client.get(f"/api/encyclopedia/entries?encyclopedia_id={enc_id}")
-            assert entries_resp.status_code == 200
-            titles = {item["title"] for item in entries_resp.json()}
-            assert "一、世界基础" not in titles
-            assert "二十、推荐首版必须上线模块" not in titles
-
-        deprecated = [
-            "SCP基金会 · 可信来源索引",
-            "克苏鲁神话 · Chaosium与公版来源索引",
-            "战锤40K · 官方来源索引",
-            "星球大战 · 官方Databank索引",
-            "传统西幻 · SRD兼容模板",
-        ]
-        for name in deprecated:
-            assert name not in by_name, f"{name} should be deprecated and deleted"
-
-        jianghu_id = by_name["武侠江湖 · 原创江湖世界"]["id"]
-        entries_resp = client.get(f"/api/encyclopedia/entries?encyclopedia_id={jianghu_id}")
-        assert entries_resp.status_code == 200
-        entries = entries_resp.json()
-        assert len(entries) >= 20
-        assert any("九州江湖地图" == item["title"] for item in entries)
-        assert any("武学境界体系" == item["title"] for item in entries)
+        by_name = {item["name"]: item for item in resp.json()}
+        assert set(by_name) == {"雾港来信·设定集"}
+        encyclopedia = by_name["雾港来信·设定集"]
+        assert encyclopedia["entry_count"] == 9
+        entries = client.get(f"/api/encyclopedia/entries?encyclopedia_id={encyclopedia['id']}")
+        assert entries.status_code == 200
+        assert {item["title"] for item in entries.json()} == {
+            "雾港", "旧灯塔", "港务档案室", "白鹭号", "无署名旧信",
+            "港口互助会", "潮汐与浓雾", "沈照", "林汐",
+        }
 
 
 class TestSystem:

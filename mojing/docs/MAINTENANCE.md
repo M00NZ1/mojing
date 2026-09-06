@@ -444,3 +444,9 @@ node scripts/test-message-deletion.mjs
 2026-09-07：89 项 JVM（10 撤回保护、2 媒体计划、73 ViewModel、4 摘要提交）与 6 项桌面 SQLite 测试通过，主代码/AndroidTest Kotlin 编译通过。SQLite 使用真实 Kotlin 计数/删除 SQL，验证更早摘要、无关故事线/会话保留、游标回退，以及触发器注入失败的事务回滚；这不等同 Android Room 运行。新增 Room 用例覆盖继承线 A 清理、分叉更早的 B 保留、故障回滚/重试、纠正保留和从回退游标读取下一页；新增 Compose 用例检查影响提示与确认前不执行删除。两者仅编译，未设备运行。
 
 没有连接设备、调用真实供应商、打包或重启用户服务，没有新增性能结论。Gradle/Pytest 既有输出清理 DryRun 保留，无文件删除；正式数据库元信息与基线一致。主动切换回复、编辑后的摘要失效，长消息输入截断与百科沉淀仍待下一批处理。
+
+## 25. 最新安装包交付验证
+
+2026-09-07，用户授权打包并向 GitHub 推送代码与 APK。`testDebugUnitTest assembleRelease --console=plain` 通过，473 项 JVM 无失败/跳过；Release 完成 R8、资源压缩和 lintVital。Web `tsc --noEmit` 通过；本机 `pytest -q --disable-warnings` 最终 282 项全部通过。全量检查发现核心 API 测试仍要求十套旧目录，已按当前产品契约改为一个“雾港来信·设定集”，七条设定资料与两个角色条目；时间线事件不是百科条目。
+
+保持 `com.mojing.app`、1.0.21 / 10021、Room 19。三个 APK 使用现有本机 Android Debug 证书签名，apksigner 验证通过；是 Release 优化构建，不是可调试应用。通用版及 arm64-v8a / armeabi-v7a 分包均校验包名、版本和 ABI，并生成 SHA-256 清单。安装包放在本地正式 outputs 与 GitHub Release 附件，不加入源码 Git；构建对应的代码提交和哈希记录随包提供。没有更换签名、改版本、安装应用或操作用户数据，不将编译和测试视为真机验收。构建告警包含既有废弃 API 和 Gradle 堆空间提示，未阻止成功构建。输出及缓存 DryRun 保留，没有清理正式数据。
