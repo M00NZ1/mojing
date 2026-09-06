@@ -426,3 +426,21 @@ node scripts/test-message-deletion.mjs
 新增 Room 用例覆盖真实快照读取、编辑后拒绝、触发器注入保存故障后进度保留、正常重试与重复提交拒绝；该用例仅编译，没有设备运行。JVM 提交测试验证的是事务内部校验逻辑与 DAO 调用，不冒充 Room 原子性运行证据。没有打包、真实模型调用、用户服务重启或新性能指标；既有 Gradle 输出清理 DryRun 保留，未删除用户内容或改变正式数据库。
 
 尚未完成：已保存摘要在删除/回复版本变化后的尾部失效、每条原文 200 字截断的输入预算、百科沉淀晚到写入、记忆面板实际设备交互。旧无来源数据保留原状，不宣称整个长期记忆链路已闭环。
+
+## 24. Android 撤回后的摘要尾部回退
+
+- 根因：原撤回只删除覆盖目标 ID 的摘要，较新的分段仍使 `max(endMessageId)` 游标越过空洞；继承原文的故事线可能保留依赖该剧情的后续摘要。
+- 撤回前复用有效上下文/分支查询得到受影响故事线；每条线取最早影响 ID，在同一 Room 事务中删除该线 `endMessageId >= cutoff` 的自动摘要尾部。选中回复被撤回时，使用该线可见同组最早 ID，以覆盖旧回复重新参与上下文的情况。派生媒体不参与上下文时不独立触发无关摘要失效。更早摘要、无关故事线/会话和用户纠正保留；已有来源不明的事件不批量删除。
+- 预览按相同范围计数，同一故事线去重，确认窗口说明待重整段数和手动纠正保留；提交在事务内重算，不能依赖旧预览。底层原文删除未完成改为抛错，避免摘要已经移除却以 false 正常提交。成功后既有附近历史刷新会重读摘要，ViewModel 回归明确验证面板数据变化。
+- 不改 schema 或交换格式，不触碰正式用户库；旧空洞不启动自动清扫。后续整理沿用原阈值和页大小，不承诺立即重建全部摘要。回退代码不需数据库降级，但会重新引入空洞风险，且无法恢复用户已确认撤回的原文。
+
+```powershell
+# mojing 目录，隔离 SQLite
+.\.venv\Scripts\python.exe -m pytest tests/test_android_recall_protection_sqlite.py tests/test_android_event_source_sqlite.py -q
+# android 目录，JDK 17，不打包
+.\gradlew.bat :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin :app:testDebugUnitTest --tests 'com.mojing.app.data.local.dao.MessageRecallGuardTest' --tests 'com.mojing.app.data.local.dao.MessageRecallPolicyTest' --tests 'com.mojing.app.viewmodel.ChatViewModelTest' --tests 'com.mojing.app.engine.MemoryCompactionStoreTest' --console=plain
+```
+
+2026-09-07：89 项 JVM（10 撤回保护、2 媒体计划、73 ViewModel、4 摘要提交）与 6 项桌面 SQLite 测试通过，主代码/AndroidTest Kotlin 编译通过。SQLite 使用真实 Kotlin 计数/删除 SQL，验证更早摘要、无关故事线/会话保留、游标回退，以及触发器注入失败的事务回滚；这不等同 Android Room 运行。新增 Room 用例覆盖继承线 A 清理、分叉更早的 B 保留、故障回滚/重试、纠正保留和从回退游标读取下一页；新增 Compose 用例检查影响提示与确认前不执行删除。两者仅编译，未设备运行。
+
+没有连接设备、调用真实供应商、打包或重启用户服务，没有新增性能结论。Gradle/Pytest 既有输出清理 DryRun 保留，无文件删除；正式数据库元信息与基线一致。主动切换回复、编辑后的摘要失效，长消息输入截断与百科沉淀仍待下一批处理。

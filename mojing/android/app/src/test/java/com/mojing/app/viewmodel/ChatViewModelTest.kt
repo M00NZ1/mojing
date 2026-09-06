@@ -123,6 +123,7 @@ class ChatViewModelTest {
         messageSubmissionTransaction: MessageSubmissionTransaction? = null,
         memoryCorrectionDao: SessionMemoryCorrectionDao = mockk(relaxed = true),
         eventNodeDao: SessionEventNodeDao = mockk(relaxed = true),
+        memorySegmentDao: com.mojing.app.data.local.dao.SessionMemorySegmentDao = mockk(relaxed = true),
         participantDao: ParticipantDao = mockk(relaxed = true),
         chatDraftStore: ChatDraftStore = emptyDraftStore(),
         secureStorage: SecureStorage = mockk(relaxed = true) { every { sessionModelSelection(any()) } returns null },
@@ -138,7 +139,7 @@ class ChatViewModelTest {
         participantDao = participantDao,
         sessionWorldDao = sessionWorldDao,
         sessionBranchDao = sessionBranchDao,
-        memorySegmentDao = mockk(relaxed = true),
+        memorySegmentDao = memorySegmentDao,
         memoryCorrectionDao = memoryCorrectionDao,
         eventNodeDao = eventNodeDao,
         costRecorder = mockk(relaxed = true),
@@ -1701,6 +1702,11 @@ class ChatViewModelTest {
     @Test
     fun recallKeepsTheWindowNearAnOldMessage() = runTest(testDispatcher) {
         val messageDao = mockk<MessageDao>(relaxed = true)
+        val segmentDao = mockk<com.mojing.app.data.local.dao.SessionMemorySegmentDao>(relaxed = true)
+        val earlier = com.mojing.app.data.local.entity.SessionMemorySegmentEntity(id = 1, sessionId = 42, endMessageId = 100, summary = "保留")
+        val affected = earlier.copy(id = 2, endMessageId = 600, summary = "等待重新整理")
+        var deleted = false
+        coEvery { segmentDao.getRecentForBranch(42, "main", any()) } answers { if (deleted) listOf(earlier) else listOf(affected, earlier) }
         val target = MessageEntity(id = 500, sessionId = 42, content = "旧消息")
         val neighbor = target.copy(id = 499)
         coEvery { messageDao.getMainMessageById(42L, 500L) } returns target
@@ -1708,9 +1714,10 @@ class ChatViewModelTest {
         coEvery { messageDao.getMainMessageById(42L, 499L) } returns neighbor
         coEvery { messageDao.getMainMessagesBefore(42L, 499L, 41) } returns (498L downTo 457L).map { target.copy(id = it) }
         coEvery { messageDao.getMainMessagesAfter(42L, 499L, 41) } returns (501L..542L).map { target.copy(id = it) }
-        coEvery { messageDao.recallInSession(42L, 500L) } returns MessageRecallResult(true, deletedMessageIds = listOf(500L))
-        val vm = createViewModel(messageDao = messageDao)
+        coEvery { messageDao.recallInSession(42L, 500L) } answers { deleted = true; MessageRecallResult(true, deletedMessageIds = listOf(500L)) }
+        val vm = createViewModel(messageDao = messageDao, memorySegmentDao = segmentDao)
         advanceUntilIdle()
+        assertEquals(listOf(affected, earlier), vm.state.value.memorySegments)
         vm.openMessageInHistory(500L)
         advanceUntilIdle()
         val result = CompletableDeferred<Boolean>()
@@ -1721,6 +1728,7 @@ class ChatViewModelTest {
         assertTrue(vm.state.value.hasNewerMessages)
         assertEquals(81, vm.state.value.messages.size)
         assertFalse(vm.state.value.messages.any { it.id == 500L })
+        assertEquals(listOf(earlier), vm.state.value.memorySegments)
     }
 
     @Test

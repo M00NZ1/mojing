@@ -673,11 +673,27 @@ interface MessageDao {
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun deleteRaw(id: Long): Int
 
-    @Query(
-        "DELETE FROM session_memory_segments WHERE sessionId = :sessionId " +
-            "AND startMessageId <= :messageId AND endMessageId >= :messageId",
-    )
-    suspend fun deleteMemorySegmentsCovering(sessionId: Long, messageId: Long): Int
+    @Query("DELETE FROM session_memory_segments WHERE sessionId = :sessionId AND branchId = :branchId AND endMessageId >= :messageId")
+    suspend fun deleteMemorySegmentTail(sessionId: Long, branchId: String, messageId: Long): Int
+
+    @Query("SELECT COUNT(*) FROM session_memory_segments WHERE sessionId = :sessionId AND branchId = :branchId AND endMessageId >= :messageId")
+    suspend fun countMemorySegmentTail(sessionId: Long, branchId: String, messageId: Long): Int
+
+    /** 在原文仍存在时计算；同一故事线仅保留最早失效点，不重复计数。 */
+    private suspend fun memoryTailCutoffs(messages: List<MessageEntity>): Map<String, Long> {
+        val cutoffs = mutableMapOf<String, Long>()
+        for (message in messages) {
+            for (branchId in contextMemoryBranchesAffectedBy(message)) {
+                val groupId = message.swipeGroupId?.takeIf(String::isNotBlank)
+                val cutoff = if (groupId == null) message.id else {
+                    // 撤回选中版本后，更早的同组原文可能重新参与上下文。
+                    visibleSwipeVariants(message.sessionId, branchId, groupId).minOfOrNull { it.id } ?: message.id
+                }
+                cutoffs[branchId] = minOf(cutoffs[branchId] ?: cutoff, cutoff)
+            }
+        }
+        return cutoffs
+    }
 
     @Query("SELECT * FROM session_context_memories WHERE sessionId = :sessionId AND branchId = :branchId LIMIT 1")
     suspend fun getContextMemoryForInvalidation(
@@ -756,6 +772,9 @@ interface MessageDao {
             isEditedVersion -> "这条消息是编辑后的版本，撤回会让旧版本重新出现。请使用编辑创建新的故事线。"
             else -> ""
         }
+        val memoryCutoffs = if (reason.isEmpty()) memoryTailCutoffs(messages) else emptyMap()
+        var affectedSummaries = 0
+        for ((branchId, cutoff) in memoryCutoffs) affectedSummaries += countMemorySegmentTail(target.sessionId, branchId, cutoff)
         return MessageRecallImpact(
             canRecall = reason.isEmpty(), reason = reason, referenceCount = referenceCount,
             references = getRecallReferences(target.sessionId, ids).map {
@@ -763,20 +782,21 @@ interface MessageDao {
             },
             removesDerivedMessages = messages.size > 1,
             maySelectRemainingReply = !target.swipeGroupId.isNullOrBlank(),
+            affectedSummaryCount = affectedSummaries,
         )
     }
 
-    /** 删除原始消息时同步丢弃覆盖它的自动派生记忆，避免旧剧情继续进入提示词。 */
+    /** 原文与受影响故事线的摘要尾部同事务删除，避免留下整理游标空洞。 */
     @Transaction
     suspend fun delete(id: Long): Boolean {
         val message = getById(id) ?: return false
         val impact = recallImpact(message, listOf(message))
         if (!impact.canRecall) throw MessageRecallBlockedException(impact.reason)
-        val affectedBranches = contextMemoryBranchesAffectedBy(message)
-        deleteMemorySegmentsCovering(message.sessionId, id)
+        val memoryCutoffs = memoryTailCutoffs(listOf(message))
+        for ((branchId, cutoff) in memoryCutoffs) deleteMemorySegmentTail(message.sessionId, branchId, cutoff)
         deleteEventNodesForMessage(message.sessionId, id)
-        if (deleteRaw(id) != 1) return false
-        affectedBranches.forEach { branchId ->
+        check(deleteRaw(id) == 1) { "消息删除事务未完整提交" }
+        memoryCutoffs.keys.forEach { branchId ->
             invalidateContextMemoryForBranch(message.sessionId, branchId, System.currentTimeMillis())
         }
         return true
@@ -797,9 +817,10 @@ interface MessageDao {
         val messageIds = plan.messagesToDelete.map(MessageEntity::id)
         val attachmentPaths = getAttachmentStoragePaths(messageIds)
         val affectedBranches = contextMemoryBranchesAffectedBy(target)
+        val memoryCutoffs = memoryTailCutoffs(plan.messagesToDelete)
+        for ((branchId, cutoff) in memoryCutoffs) deleteMemorySegmentTail(sessionId, branchId, cutoff)
 
         for (message in plan.messagesToDelete) {
-            deleteMemorySegmentsCovering(message.sessionId, message.id)
             deleteEventNodesForMessage(message.sessionId, message.id)
             check(deleteRaw(message.id) == 1) { "消息撤回事务未完整提交" }
         }
@@ -825,7 +846,7 @@ interface MessageDao {
                 }
             }
         }
-        affectedBranches.forEach { branchId ->
+        (affectedBranches + memoryCutoffs.keys).distinct().forEach { branchId ->
             invalidateContextMemoryForBranch(sessionId, branchId, System.currentTimeMillis())
         }
         return MessageRecallResult(

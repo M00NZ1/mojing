@@ -45,6 +45,37 @@ class MessageDaoTest {
     @After
     fun teardown() { db.close() }
 
+    @Test fun recallRewindsSummaryTailsAcrossVisibleBranchesAndRollsBackOnFailure() = runBlocking {
+        val sid = sessionDao.insert(SessionEntity(title = "摘要尾部"))
+        val ids = (1..6).map { messageDao.insert(MessageEntity(sessionId = sid, content = "原文$it")) }
+        sessionBranchDao.insert(SessionBranchEntity(sessionId = sid, branchId = "A", sourceMessageId = ids[3]))
+        sessionBranchDao.insert(SessionBranchEntity(sessionId = sid, branchId = "B", sourceMessageId = ids[0]))
+        val a = messageDao.insert(MessageEntity(sessionId = sid, branchId = "A", content = "继承剧情"))
+        val b = messageDao.insert(MessageEntity(sessionId = sid, branchId = "B", content = "无关剧情"))
+        val base = SessionMemorySegmentEntity(sessionId = sid, startMessageId = ids[0], endMessageId = ids[0], summary = "保留前段")
+        memorySegmentDao.insert(base)
+        memorySegmentDao.insert(base.copy(segmentIndex = 1, startMessageId = ids[1], endMessageId = ids[2], summary = "受影响"))
+        memorySegmentDao.insert(base.copy(segmentIndex = 2, startMessageId = ids[3], endMessageId = ids[5], summary = "后续依赖"))
+        memorySegmentDao.insert(base.copy(branchId = "A", startMessageId = a, endMessageId = a, summary = "继承依赖"))
+        memorySegmentDao.insert(base.copy(branchId = "B", startMessageId = b, endMessageId = b, summary = "无关分支"))
+        db.sessionMemoryCorrectionDao().insert(SessionMemoryCorrectionEntity(sessionId = sid, content = "用户纠正"))
+        assertEquals(3, messageDao.previewRecallInSession(sid, ids[1]).affectedSummaryCount)
+        db.openHelper.writableDatabase.execSQL("CREATE TRIGGER reject_test_recall BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT, 'test failure'); END")
+        try { messageDao.recallInSession(sid, ids[1]); fail("deletion must fail") }
+        catch (_: android.database.sqlite.SQLiteException) { }
+        assertEquals(3, memorySegmentDao.getBySessionAndBranch(sid, "main").size)
+        assertNotNull(messageDao.getById(ids[1]))
+        db.openHelper.writableDatabase.execSQL("DROP TRIGGER reject_test_recall")
+        assertTrue(messageDao.recallInSession(sid, ids[1]).deleted)
+        assertEquals(listOf("保留前段"), memorySegmentDao.getBySessionAndBranch(sid, "main").map { it.summary })
+        assertTrue(memorySegmentDao.getBySessionAndBranch(sid, "A").isEmpty())
+        assertEquals(1, memorySegmentDao.getBySessionAndBranch(sid, "B").size)
+        assertEquals(1, db.sessionMemoryCorrectionDao().getVisible(sid, "main").size)
+        val snapshot = com.mojing.app.domain.engine.MemoryCompactionStore(db).read(sid, "main", 2)
+        assertEquals(ids[0], snapshot.afterMessageId)
+        assertEquals(listOf(ids[2], ids[3]), snapshot.sources.map { it.id })
+    }
+
     @Test fun compactionStoreRejectsStaleSourcesAndDuplicateCursorAndRetriesFailedInsert() = runBlocking {
         val sid = sessionDao.insert(SessionEntity(title = "摘要提交"))
         val id = messageDao.insert(MessageEntity(sessionId = sid, speakerType = "user", content = "最初原文"))

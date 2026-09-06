@@ -18,6 +18,45 @@ class MessageRecallGuardTest {
     }
     private val target = MessageEntity(id = 8, sessionId = 42, branchId = "main", content = "原文")
 
+    @Test fun recallCountsAndInvalidatesOnlyAffectedStorylineTails() = runTest {
+        coEvery { queries.getByIdInSession(8, 42) } returns target
+        coEvery { queries.getStorylinesSeeingSourceMessage(42, "main", 8) } returns listOf("main", "A")
+        coEvery { queries.countMemorySegmentTail(42, "main", 8) } returns 2
+        coEvery { queries.countMemorySegmentTail(42, "A", 8) } returns 1
+        coEvery { queries.deleteRaw(8) } returns 1
+        assertEquals(3, owner.previewRecallInSession(42, 8).affectedSummaryCount)
+        assertTrue(owner.recallInSession(42, 8).deleted)
+        coVerify(exactly = 1) { queries.deleteMemorySegmentTail(42, "main", 8) }
+        coVerify(exactly = 1) { queries.deleteMemorySegmentTail(42, "A", 8) }
+        coVerify(exactly = 0) { queries.deleteMemorySegmentTail(42, "B", any()) }
+        coVerify { queries.invalidateContextMemoryForBranch(42, "A", any()) }
+    }
+
+    @Test fun recallingSelectedReplyAccountsForEarlierFallbackSource() = runTest {
+        val old = target.copy(swipeGroupId = "g", includeInContext = false)
+        val selected = old.copy(id = 12, includeInContext = true)
+        coEvery { queries.getByIdInSession(12, 42) } returns selected
+        coEvery { queries.getMainSwipeGroupMessages(42, "g") } returns listOf(old, selected)
+        coEvery { queries.countMemorySegmentTail(42, "main", 8) } returns 4
+        assertEquals(4, owner.previewRecallInSession(42, 12).affectedSummaryCount)
+        coVerify(exactly = 0) { queries.countMemorySegmentTail(42, "main", 12) }
+    }
+
+    @Test fun excludedMediaDoesNotInvalidateUnrelatedStorySummaries() = runTest {
+        coEvery { queries.getByIdInSession(8, 42) } returns target.copy(includeInContext = false)
+        coEvery { queries.deleteRaw(8) } returns 1
+        assertEquals(0, owner.previewRecallInSession(42, 8).affectedSummaryCount)
+        assertTrue(owner.recallInSession(42, 8).deleted)
+        coVerify(exactly = 0) { queries.deleteMemorySegmentTail(any(), any(), any()) }
+    }
+
+    @Test fun failedRawDeleteThrowsSoRoomCannotCommitOnlyTheMemoryChanges() = runTest {
+        coEvery { queries.getById(8) } returns target
+        coEvery { queries.deleteRaw(8) } returns 0
+        try { owner.delete(8); fail("partial deletion must abort") } catch (_: IllegalStateException) { }
+        coVerify(exactly = 1) { queries.deleteMemorySegmentTail(42, "main", 8) }
+    }
+
     @Test fun sourceProtectionRunsBeforeRecallDeletesAnything() = runTest {
         coEvery { queries.getByIdInSession(8, 42) } returns target
         coEvery { queries.countRecallReferences(42, listOf(8)) } returns 1
@@ -27,7 +66,7 @@ class MessageRecallGuardTest {
         assertEquals("另一种结局", impact.references.single().label)
         try { owner.recallInSession(42, 8); fail("source must be preserved") } catch (_: MessageRecallBlockedException) { }
         coVerify(exactly = 0) { queries.deleteRaw(any()) }
-        coVerify(exactly = 0) { queries.deleteMemorySegmentsCovering(any(), any()) }
+        coVerify(exactly = 0) { queries.deleteMemorySegmentTail(any(), any(), any()) }
     }
 
     @Test fun referencedDerivedMediaProtectsTheWholeRecall() = runTest {

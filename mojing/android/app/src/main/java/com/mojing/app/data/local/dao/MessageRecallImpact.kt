@@ -9,6 +9,7 @@ data class MessageRecallImpact(
     val references: List<MessageRecallReference> = emptyList(),
     val removesDerivedMessages: Boolean = false,
     val maySelectRemainingReply: Boolean = false,
+    val affectedSummaryCount: Int = 0,
 )
 
 class MessageRecallBlockedException(val reason: String) : IllegalStateException(reason)

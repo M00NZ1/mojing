@@ -57,6 +57,7 @@ internal fun RecallMessageDialog(
                         if (current.referenceCount > current.references.size) Text("另有 ${current.referenceCount - current.references.size} 个引用。")
                     } else {
                         Text("撤回后无法恢复，会影响共享这段原文的故事线。相关收藏和自动记忆会更新；未被其他消息使用的本地附件也会清理。")
+                        if (current.affectedSummaryCount > 0) Text("将重新整理 ${current.affectedSummaryCount} 段自动摘要，后续对话会逐批补齐；手动纠正会保留。")
                         if (current.removesDerivedMessages) Text("有明确生成标记的附属媒体消息也会一起撤回。")
                         if (current.maySelectRemainingReply) Text("同组的其他回复会保留；撤回当前版本后会显示剩余版本。")
                     }

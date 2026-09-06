@@ -17,6 +17,17 @@ import org.junit.runner.RunWith
 class RecallMessageDialogTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun recallExplainsSummaryRebuildWithoutChangingDataBeforeConfirmation() {
+        var deletes = 0
+        compose.setContent {
+            MaterialTheme {
+                RecallMessageDialog("原文", { MessageRecallImpact(true, affectedSummaryCount = 3) }, { deletes++ }, {})
+            }
+        }
+        compose.onNodeWithText("将重新整理 3 段自动摘要，后续对话会逐批补齐；手动纠正会保留。").assertExists()
+        compose.runOnIdle { assertEquals(0, deletes) }
+    }
+
     @Test fun protectedSourceOnlyAllowsReturningWithoutRecall() {
         var deletes = 0
         var dismissed = 0
