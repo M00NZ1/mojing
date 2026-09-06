@@ -19,9 +19,11 @@ from backend.app.models import (
     SessionMemorySegmentModel,
     SessionParticipantModel,
     SessionCharacterStateModel,
+    SessionMemoryCorrectionModel,
     VoiceProfileModel,
 )
 from backend.app.services import chat_service, export_service, memory_service, memory_v2_service
+from backend.app.services.memory_source_service import memory_deletion_plan
 
 
 def _database(tmp_path, name="memory-v2.db"):
@@ -585,3 +587,125 @@ def _snapshot_files(snapshot: Path) -> dict[str, bytes]:
         for path in snapshot.rglob("*")
         if path.is_file()
     }
+
+
+def test_deletion_rewinds_only_affected_automatic_memory_and_preserves_locked_facts(tmp_path):
+    engine, Session = _database(tmp_path)
+    try:
+        sid, cid = _seed_session(Session, summary='自动主线概览', branches=('main', 'other'), messages_per_branch=36)
+        with Session() as db:
+            for index, start in enumerate((1, 13, 25, 37), 1):
+                db.add(SessionMemorySegmentModel(session_id=sid, branch_id='main' if start < 37 else 'other',
+                    segment_index=index, start_message_id=start, end_message_id=start + 11,
+                    summary='已删除的秘密' if start == 13 else f'保留-{start}'))
+            for mid in (8, 24, 36, 48):
+                db.add(SessionEventNodeModel(session_id=sid, branch_id='main' if mid < 37 else 'other', message_id=mid, title=f'事件-{mid}'))
+            db.add(SessionMemoryCorrectionModel(session_id=sid, content='用户锁定事实', source_message_id=20))
+            db.add(SessionCharacterStateModel(session_id=sid, character_id=cid, dynamic_state_json={'手动状态': '保留'}))
+            db.commit()
+            plan = memory_deletion_plan(db, db.get(MessageModel, 20))
+            assert plan == {'start': 13, 'memory_segments_removed': 2, 'memory_events_removed': 2, 'summary_reset': True}
+            sessions_routes.delete_message(sid, 20, db=db)
+        with Session() as db:
+            assert db.get(MessageModel, 20) is None
+            assert db.scalar(select(func.count()).select_from(MessageModel)) == 71
+            assert list(db.scalars(select(SessionMemorySegmentModel.start_message_id).order_by(SessionMemorySegmentModel.start_message_id))) == [1, 37]
+            assert list(db.scalars(select(SessionEventNodeModel.message_id).order_by(SessionEventNodeModel.message_id))) == [8, 48]
+            assert db.get(ChatSessionModel, sid).summary == ''
+            assert db.scalar(select(SessionMemoryCorrectionModel)).content == '用户锁定事实'
+            assert db.scalar(select(SessionCharacterStateModel)).dynamic_state_json == {'手动状态': '保留'}
+            runtime = memory_v2_service.build_context_memory(db, sid, 'main')
+            assert '已删除的秘密' not in runtime
+            assert '用户锁定事实' in runtime
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize('blocked_call', [1, 2])
+def test_deletion_during_remote_memory_work_rejects_late_result_and_can_retry(tmp_path, monkeypatch, blocked_call):
+    engine, Session = _database(tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    worker = None
+    try:
+        sid, _ = _seed_session(Session, summary='旧概览', messages_per_branch=24)
+        calls = _install_memory_fakes(monkeypatch, Session)
+        original_call = memory_v2_service.safe_non_streaming_call
+
+        def delayed(*args, **kwargs):
+            if len(calls) + 1 == blocked_call:
+                entered.set()
+                assert release.wait(5)
+            return original_call(*args, **kwargs)
+
+        monkeypatch.setattr(memory_v2_service, 'safe_non_streaming_call', delayed)
+        results = []
+        worker = threading.Thread(target=lambda: results.append(memory_service.compact_session_memory_v2(sid)))
+        worker.start()
+        assert entered.wait(3)
+        # A separate writer must be able to commit while the model is waiting.
+        with Session() as db:
+            sessions_routes.delete_message(sid, 20, db=db)
+        release.set()
+        worker.join(5)
+        assert not worker.is_alive()
+        assert results == [False]
+        with Session() as db:
+            assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 0
+            assert db.scalar(select(func.count()).select_from(SessionEventNodeModel)) == 0
+            assert db.get(ChatSessionModel, sid).summary == ''
+        monkeypatch.setattr(memory_v2_service, 'safe_non_streaming_call', original_call)
+        assert memory_service.compact_session_memory_v2(sid)
+        with Session() as db:
+            assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 1
+            assert db.get(MessageModel, 20) is None
+    finally:
+        release.set()
+        if worker:
+            worker.join(6)
+        engine.dispose()
+
+
+def test_rewinding_an_earlier_segment_rejects_later_inflight_batch(tmp_path, monkeypatch):
+    engine, Session = _database(tmp_path)
+    try:
+        sid, _ = _seed_session(Session, messages_per_branch=24)
+        with Session() as db:
+            db.add(SessionMemorySegmentModel(session_id=sid, branch_id='main', segment_index=1,
+                start_message_id=1, end_message_id=12, summary='旧阶段'))
+            db.commit()
+        _install_memory_fakes(monkeypatch, Session)
+        original = memory_v2_service.safe_non_streaming_call
+        deleted = False
+
+        def delete_earlier(*args, **kwargs):
+            nonlocal deleted
+            if not deleted:
+                with Session() as db:
+                    sessions_routes.delete_message(sid, 5, db=db)
+                deleted = True
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(memory_v2_service, 'safe_non_streaming_call', delete_earlier)
+        assert not memory_service.compact_session_memory_v2(sid)
+        with Session() as db:
+            assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 0
+    finally:
+        engine.dispose()
+
+
+def test_empty_event_result_still_publishes_validated_summary(tmp_path, monkeypatch):
+    engine, Session = _database(tmp_path)
+    try:
+        Session.configure(autoflush=False)
+        sid, _ = _seed_session(Session)
+        _install_memory_fakes(monkeypatch, Session)
+        original = memory_v2_service.safe_non_streaming_call
+        monkeypatch.setattr(memory_v2_service, 'safe_non_streaming_call', lambda *args, **kwargs:
+            '[]' if '提取关键事件节点' in kwargs['messages'][0]['content'] else original(*args, **kwargs))
+        assert memory_service.compact_session_memory_v2(sid)
+        with Session() as db:
+            assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 1
+            assert db.scalar(select(func.count()).select_from(SessionEventNodeModel)) == 0
+            assert '阶段摘要' in db.get(ChatSessionModel, sid).summary
+    finally:
+        engine.dispose()

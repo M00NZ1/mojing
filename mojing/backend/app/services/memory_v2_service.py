@@ -4,6 +4,7 @@
 """
 
 import json
+from collections.abc import Callable
 from sqlalchemy import and_, func, not_, or_, select
 from sqlalchemy.orm import Session
 
@@ -223,6 +224,7 @@ def extract_event_nodes(
     *,
     client,
     model: str,
+    before_write: Callable[[], None] | None = None,
 ) -> list[SessionEventNodeModel] | None:
     """从消息中提取事件节点，构建因果树。"""
     if not messages:
@@ -293,6 +295,9 @@ def extract_event_nodes(
             return None
     except (json.JSONDecodeError, KeyError, TypeError):
         return None
+
+    if before_write is not None:
+        before_write()
 
     new_nodes = []
     title_to_id = {}

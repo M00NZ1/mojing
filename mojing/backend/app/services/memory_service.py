@@ -20,6 +20,7 @@ from ..models import (
 )
 from .llm_client import build_client, resolve_text_model
 from .llm_retry import safe_non_streaming_call
+from .memory_source_service import MemorySourceChanged, source_snapshot, validate_compaction_sources
 
 
 DEFAULT_CARD = {
@@ -421,6 +422,7 @@ def compact_session_memory_v2(session_id: int, branch_id: str = "main") -> bool:
             )
             if len(recent_messages) < MEMORY_COMPACTION_THRESHOLD:
                 return True
+            snapshot = source_snapshot(recent_messages)
 
             summarizer = db.get(CharacterModel, participant_ids[0])
             if summarizer is None:
@@ -456,6 +458,9 @@ def compact_session_memory_v2(session_id: int, branch_id: str = "main") -> bool:
                 recent_messages,
                 client=client,
                 model=model,
+                before_write=lambda: validate_compaction_sources(
+                    db, session_id, normalized_branch_id, snapshot, last_end_id,
+                ),
             )
             if events is None:
                 db.rollback()
@@ -466,6 +471,9 @@ def compact_session_memory_v2(session_id: int, branch_id: str = "main") -> bool:
                 )
                 return False
 
+            # Empty event extraction must still persist the validated segment
+            # before calculating the compatible main-story overview.
+            db.flush()
             if normalized_branch_id == "main":
                 # 只维护主线兼容摘要；非主线不能把分支事实写进全局摘要。
                 segment_count = db.scalar(
@@ -500,6 +508,10 @@ def compact_session_memory_v2(session_id: int, branch_id: str = "main") -> bool:
 
             db.commit()
             return True
+        except MemorySourceChanged:
+            db.rollback()
+            logger.info('记忆来源已变化，保留原文并等待下次整理 session_id=%s branch_id=%s', session_id, normalized_branch_id)
+            return False
         except Exception:
             db.rollback()
             logger.exception(

@@ -43,6 +43,7 @@ try {
   const chat = { id: 1, title: '雾港 · 长篇历史', summary: '', created_at: '2026-09-07T00:00:00Z', world };
   let history = Array.from({ length: 6000 }, (_, i) => ({ id: i + 1, session_id: 1, branch_id: 'main', speaker_type: 'user', character_id: null, content: `第 ${i + 1} 夜。${i === 2 ? '旧信封的秘密。' : ''}${(i + 1) % 100 === 0 ? '线索：' : ''}${'雨声渐密，沈照与林汐对照航海日志，准备去灯塔寻找失踪的守夜人。'.repeat(8)}`, structured_content: {}, created_at: '2026-09-07T00:00:00Z' }));
   let previewFailure = false, deleteFailure = '', deletionRequests = 0;
+  let memoryRemoved = false, memoryReads = 0;
   const blocked = new Set([3]);
   const windowRequests = [];
   await context.route('http://127.0.0.1:18001/api/**', async (route) => {
@@ -54,14 +55,14 @@ try {
       const id = Number(matched[1]);
       if (matched[2]) {
         if (previewFailure) { status = 500; data = { detail: '检查暂不可用' }; }
-        else data = { can_delete: !blocked.has(id), reason: blocked.has(id) ? '这条消息是故事线或编辑版本的来源，删除会使相关剧情无法读取。请保留原文，使用编辑创建新的故事线。' : '', reference_count: blocked.has(id) ? 1 : 0, branches: blocked.has(id) ? [{ branch_id: 'A', label: '灯塔的另一种结局', is_checkpoint: false }] : [] };
+        else data = { can_delete: !blocked.has(id), memory_segments_removed: 2, memory_events_removed: 2, summary_reset: true, reason: blocked.has(id) ? '这条消息是故事线或编辑版本的来源，删除会使相关剧情无法读取。请保留原文，使用编辑创建新的故事线。' : '', reference_count: blocked.has(id) ? 1 : 0, branches: blocked.has(id) ? [{ branch_id: 'A', label: '灯塔的另一种结局', is_checkpoint: false }] : [] };
       } else if (route.request().method() === 'DELETE') {
         deletionRequests++;
         if (deleteFailure) {
           status = deleteFailure === 'conflict' ? 409 : 500;
           data = { detail: deleteFailure === 'conflict' ? '消息刚被新的故事线引用，请保留原文' : '删除暂不可用' };
           if (deleteFailure === 'conflict') blocked.add(id);
-        } else { history = history.filter((item) => item.id !== id); data = { ok: true }; }
+        } else { history = history.filter((item) => item.id !== id); memoryRemoved = true; data = { ok: true }; }
       }
     } else if (endpoint.endsWith('/messages/search-page')) {
       const query = url.searchParams.get('q');
@@ -76,6 +77,8 @@ try {
     else if (endpoint === '/sessions/1') data = chat;
     else if (endpoint === '/sessions/1/world') data = world;
     else if (endpoint === '/sessions/1/branches') data = [{ branch_id: 'main', label: '主线' }];
+    else if (endpoint === '/sessions/1/memory-segments') { memoryReads++; data = memoryRemoved ? [] : [{ id: 1, summary: '旧信封中的自动记忆', key_facts: [], start_message_id: 1, end_message_id: 12 }]; }
+    else if (endpoint === '/sessions/1/memory-corrections') data = [{ id: 1, content: '玩家锁定：灯塔仍然亮着', branch_id: null, source_message_id: null }];
     else if (endpoint === '/system/model-platforms') data = { version: 1, active_id: null, platforms: [] };
     else if (endpoint === '/sessions/1/model-selection') data = { version: 1, selection: null };
     else if (endpoint === '/personas/active') data = { id: 1, name: '玩家', avatar_color: '#53c7a8' };
@@ -91,6 +94,9 @@ try {
     await dialog.waitFor();
   }
   await page.goto(`http://127.0.0.1:${port}/chat/1`, { waitUntil: 'domcontentloaded' });
+  await page.getByRole('button', { name: '打开会话详情', exact: true }).click();
+  await page.getByRole('button', { name: '记忆', exact: true }).click();
+  await page.getByText('旧信封中的自动记忆', { exact: true }).waitFor();
   await page.getByRole('searchbox', { name: '搜索当前故事线的消息' }).fill('旧信封');
   await page.locator('.message-search-results').getByRole('button', { name: /第 3 夜/ }).click();
   await page.locator('[data-chat-message-id="3"].chat-message-focus').waitFor();
@@ -110,6 +116,8 @@ try {
   previewFailure = false;
   await dialog.getByRole('button', { name: '重试', exact: true }).click();
   await dialog.getByText(/删除后无法撤销/).waitFor();
+  await dialog.getByText('相关自动记忆也会更新', { exact: true }).waitFor();
+  await dialog.getByText(/2 段自动摘要、2 项事件/).waitFor();
   deleteFailure = 'failure';
   await dialog.getByRole('button', { name: '确认删除' }).click();
   await dialog.getByRole('alert').filter({ hasText: '删除未完成' }).waitFor();
@@ -120,6 +128,10 @@ try {
   await page.locator('[data-chat-message-id="3"].chat-message-focus').waitFor();
   assert.ok(!history.some((item) => item.id === 4));
   assert.equal(windowRequests.at(-1), 3, 'deletion should stay near old history');
+  await page.getByText('旧信封中的自动记忆', { exact: true }).waitFor({ state: 'hidden' });
+  await page.getByText('玩家锁定：灯塔仍然亮着', { exact: true }).waitFor();
+  assert.ok(memoryReads >= 2, 'open memory panel must refresh after deletion');
+  await page.locator('.chat-right-close').click();
   // A new reference can appear between preview and actual deletion.
   await openDelete(5);
   await dialog.getByText(/删除后无法撤销/).waitFor();
@@ -144,7 +156,11 @@ try {
   await dialog.getByRole('button', { name: '保留并返回' }).click();
   await openDelete(6);
   await dialog.getByText(/删除后无法撤销/).waitFor();
-  await page.waitForFunction(() => ![...document.querySelectorAll('dialog button')].find((button) => button.textContent === '确认删除').disabled);
+  await page.waitForFunction(() => {
+    const button = [...document.querySelectorAll('dialog button')].find((item) => item.textContent === '确认删除');
+    return button && !button.disabled && getComputedStyle(button).backgroundColor === 'rgb(180, 35, 24)' && getComputedStyle(button).color === 'rgb(255, 255, 255)';
+  });
+  await dialog.getByText('相关自动记忆也会更新', { exact: true }).waitFor();
   if (output) await page.screenshot({ path: path.join(output, 'delete-confirm-mobile.png') });
   const countBeforeCancel = deletionRequests;
   await dialog.getByRole('button', { name: '取消', exact: true }).click();

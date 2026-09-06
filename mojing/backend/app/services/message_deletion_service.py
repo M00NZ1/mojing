@@ -3,6 +3,7 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from ..models import MessageBookmarkModel, MessageModel, SessionBranchModel
+from .memory_source_service import memory_deletion_plan, invalidate_deleted_source
 
 
 def begin_storyline_write(db: Session) -> None:
@@ -30,12 +31,14 @@ def deletion_impact(db: Session, message: MessageModel) -> dict:
         reason = '这条消息是故事线或编辑版本的来源，删除会使相关剧情无法读取。请保留原文，使用编辑创建新的故事线。'
     elif edited_version:
         reason = '这条消息是编辑后的版本，删除会让旧版本重新出现。请使用编辑创建新的故事线。'
+    memory_plan = memory_deletion_plan(db, message)
     return {
         'can_delete': count == 0 and replacement is None and not edited_version,
         'reference_count': count,
         'branches': [{'branch_id': row.branch_id, 'label': row.label or row.branch_id,
                       'is_checkpoint': bool(row.is_checkpoint)} for row in branches],
         'reason': reason,
+        **{key: value for key, value in memory_plan.items() if key != 'start'},
     }
 
 
@@ -43,6 +46,7 @@ def remove_unreferenced_message(db: Session, message: MessageModel) -> dict:
     impact = deletion_impact(db, message)
     if not impact['can_delete']:
         return impact
+    invalidate_deleted_source(db, message, memory_deletion_plan(db, message))
     # Some existing SQLite databases do not enable foreign_keys. Remove only
     # bookmarks for this message explicitly; attachment files remain untouched.
     db.execute(delete(MessageBookmarkModel).where(MessageBookmarkModel.message_id == message.id))

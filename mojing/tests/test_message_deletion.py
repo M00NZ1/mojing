@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from backend.app.database import Base, get_db
-from backend.app.models import ChatSessionModel, MessageModel, MessageBookmarkModel, MessageAttachmentModel, SessionBranchModel
+from backend.app.models import ChatSessionModel, MessageModel, MessageBookmarkModel, MessageAttachmentModel, SessionBranchModel, SessionMemorySegmentModel, SessionEventNodeModel
 from backend.app.routes import sessions as routes
 from backend.app.schemas import SessionBranchCreate, SessionMessageEdit
 from backend.app.services.chat_service import get_session_messages_page
@@ -92,6 +92,9 @@ def test_preview_is_bounded_and_commit_rechecks_new_references(store):
 def test_failed_delete_commit_rolls_back_original_and_bookmark(store, monkeypatch):
     with store() as db:
         db.add(MessageBookmarkModel(session_id=1, message_id=3))
+        db.add(SessionMemorySegmentModel(session_id=1, branch_id='main', start_message_id=1, end_message_id=4, summary='完整摘要'))
+        db.add(SessionEventNodeModel(session_id=1, branch_id='main', message_id=4, title='完整事件'))
+        db.get(ChatSessionModel, 1).summary = '完整概览'
         db.commit()
         real_commit = db.commit
         monkeypatch.setattr(db, 'commit', lambda: (_ for _ in ()).throw(RuntimeError('commit failed')))
@@ -100,6 +103,9 @@ def test_failed_delete_commit_rolls_back_original_and_bookmark(store, monkeypatc
         db.rollback()
         assert db.get(MessageModel, 3) is not None
         assert list(db.scalars(select(MessageBookmarkModel)))
+        assert db.scalar(select(SessionMemorySegmentModel)).summary == '完整摘要'
+        assert db.scalar(select(SessionEventNodeModel)).title == '完整事件'
+        assert db.get(ChatSessionModel, 1).summary == '完整概览'
         monkeypatch.setattr(db, 'commit', real_commit)
         routes.delete_message(1, 3, db)
 

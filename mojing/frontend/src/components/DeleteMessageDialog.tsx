@@ -20,7 +20,7 @@ export default function DeleteMessageDialog({ sessionId, branchId, message, onCl
   const remove = useMutation({
     mutationFn: () => api.deleteMessage(sessionId, message.id, branchId),
     onSuccess: () => {
-      for (const key of ['session-message-search', 'session-branches', 'bookmarks']) {
+      for (const key of ['session-message-search', 'session-branches', 'bookmarks', 'memory-segments', 'session', 'session-event-tree', 'prompt-trace']) {
         void client.invalidateQueries({ queryKey: [key, sessionId] });
       }
       void client.invalidateQueries({ queryKey: ['sessions'] });
@@ -51,6 +51,11 @@ export default function DeleteMessageDialog({ sessionId, branchId, message, onCl
       {impact.data.reference_count > impact.data.branches.length && <p>另有 {impact.data.reference_count - impact.data.branches.length} 个引用。</p>}
     </div>}
     {impact.data?.can_delete && <p>删除后无法撤销。此消息会从所有共享其原文的故事线中移除，相关收藏也会移除；其他消息和媒体文件保留。</p>}
+    {impact.data?.can_delete && ((impact.data.memory_segments_removed ?? 0) > 0 || (impact.data.memory_events_removed ?? 0) > 0 || impact.data.summary_reset) && <div className="delete-message-references" role="note">
+      <strong>相关自动记忆也会更新</strong>
+      <p>将移除受影响及其后的 {impact.data.memory_segments_removed ?? 0} 段自动摘要、{impact.data.memory_events_removed ?? 0} 项事件{impact.data.summary_reset ? '，并清空主线自动概览' : ''}，避免继续引用已删除的剧情。后续对话会按现有批次重新整理。</p>
+      <p>已锁定的记忆纠正与角色设定保留。</p>
+    </div>}
     {remove.isError && <p role="alert">删除未完成：{friendlyFetchError(remove.error)}。可在检查结果更新后重试。</p>}
     <div className="delete-message-actions">
       <button type="button" className="btn btn-ghost" autoFocus disabled={remove.isPending} onClick={onClose}>{impact.data && !impact.data.can_delete ? '保留并返回' : '取消'}</button>

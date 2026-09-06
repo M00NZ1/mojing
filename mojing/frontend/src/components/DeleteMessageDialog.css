@@ -10,3 +10,5 @@
 
 .delete-message-dialog p, .delete-message-dialog li, .delete-message-dialog blockquote { font-weight: 400; }
 .delete-message-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.delete-message-actions .btn-danger:not(:disabled) { color: #fff; background: #b42318; border-color: #b42318; }
+.delete-message-actions .btn-danger:not(:disabled):hover { background: #912018; border-color: #912018; }
