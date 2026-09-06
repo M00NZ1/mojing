@@ -1,3 +1,6 @@
+import asyncio
+from unittest.mock import AsyncMock
+
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -35,10 +38,10 @@ def sample():
 @pytest.mark.parametrize("auto_save", [False, True])
 def test_generation_persists_full_result_before_response_and_reload(engine, monkeypatch, kind, auto_save):
     result = sample()
-    monkeypatch.setattr(worlds, f"{kind}_world_package", lambda db, payload: result)
+    monkeypatch.setattr(worlds, f"{kind}_world_package", AsyncMock(return_value=result))
     with Session(engine) as db:
         payload = WorldGenerationRequest(world_type="奇幻", auto_save=auto_save) if kind == "generate" else WorldImportRequest(source_text="原文", auto_save=auto_save)
-        response = getattr(worlds, f"{kind}_world")(payload, db)
+        response = asyncio.run(getattr(worlds, f"{kind}_world")(payload, db))
         job_id = response.job_id
     with Session(engine) as db:
         job, restored = read_world_job_result(db, job_id)
@@ -53,9 +56,9 @@ def test_generation_persists_full_result_before_response_and_reload(engine, monk
 
 
 def create_result(engine, monkeypatch):
-    monkeypatch.setattr(worlds, 'generate_world_package', lambda db, payload: sample())
+    monkeypatch.setattr(worlds, 'generate_world_package', AsyncMock(side_effect=lambda db, payload: sample()))
     with Session(engine) as db:
-        return worlds.generate_world(WorldGenerationRequest(world_type="奇幻"), db).job_id
+        return asyncio.run(worlds.generate_world(WorldGenerationRequest(world_type="奇幻"), db)).job_id
 
 
 def test_simultaneous_saves_are_idempotent_and_do_not_overwrite_existing_world(engine, monkeypatch):

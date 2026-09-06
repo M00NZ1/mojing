@@ -7,7 +7,7 @@ import InlineQueryError from './InlineQueryError';
 import UiIcon from './UiIcon';
 import './WorldJobHistory.css';
 
-const statusNames: Record<string, string> = { succeeded: '已完成', failed: '生成失败', running: '生成中', pending: '等待开始' };
+const statusNames: Record<string, string> = { succeeded: '已完成', failed: '生成失败', running: '生成中', pending: '等待开始', cancelled: '已停止' };
 
 export default function WorldJobHistory({ onManage }: { onManage: (result: WorldGenerationResult) => void }) {
   const [params, setParams] = useSearchParams();

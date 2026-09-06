@@ -79,6 +79,15 @@ def mark_job_failed(db: Session, job_id: int, error_message: str) -> JobRunModel
     return row
 
 
+def mark_job_cancelled(db: Session, job_id: int) -> None:
+    """Only an unfinished request may become cancelled."""
+    from sqlalchemy import update
+    db.execute(update(JobRunModel).where(JobRunModel.id == job_id,
+        JobRunModel.status.in_(("pending", "running"))).values(
+            status="cancelled", finished_at=datetime.utcnow(), error_message="用户已停止生成"))
+    db.commit()
+
+
 def list_job_runs(
     db: Session,
     *,

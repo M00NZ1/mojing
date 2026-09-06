@@ -16,6 +16,10 @@
 .world-history-lore { border-top: 1px solid var(--line); padding: 14px 0; }
 .world-history-lore summary { cursor: pointer; overflow-wrap: anywhere; }
 .world-history-lore .world-history-body { padding: 14px 0 4px; }
+.world-generation-progress { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.world-generation-progress .hint { margin-bottom: 0; }
+.world-generation-progress > button { flex-shrink: 0; }
+@media (min-width: 769px) { .workbench-layout .workbench-mobile-cta { display: none; } }
 @media (max-width: 540px) {
   .world-history-row { align-items: flex-start; flex-direction: column; gap: 12px; }
   .workbench-layout .creation-workspace-toolbar { flex-wrap: wrap; }

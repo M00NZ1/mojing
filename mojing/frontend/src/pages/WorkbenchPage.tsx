@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useBeforeUnload, useBlocker, useNavigate, useSearchParams } from 'react-router-dom';
 
@@ -9,6 +9,8 @@ import CreationHomeLink from '../components/CreationHomeLink';
 import InlineQueryError from '../components/InlineQueryError';
 import UiIcon from '../components/UiIcon';
 import { useUndoDelete } from '../components/UndoToast';
+import { useWorldDraft } from '../hooks/useWorldDraft';
+import { isAbortError } from '../utils/userFacingError';
 import { useToast } from '../hooks/useToast';
 import type {
   WorldGenerationResult,
@@ -106,13 +108,26 @@ export default function WorkbenchPage() {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const { triggerDelete, UndoToast } = useUndoDelete();
-  const [characterId, setCharacterId] = useState<number | null>(null);
-  const [generateWorldType, setGenerateWorldType] = useState('修仙');
-  const [generateTheme, setGenerateTheme] = useState('');
-  const [generateTone, setGenerateTone] = useState('偏严谨、可长期推进');
-  const [generateExtra, setGenerateExtra] = useState('');
-  const [generateLabel, setGenerateLabel] = useState('');
-  const [autoSaveGeneratedWorld, setAutoSaveGeneratedWorld] = useState(false);
+  const { draft, setField, ready: draftReady, saving: draftSaving, error: draftError } = useWorldDraft();
+  const requestController = useRef<AbortController | null>(null);
+  const navigationPrompt = useRef<AbortController | null>(null);
+  const [generationActive, setGenerationActive] = useState(false);
+  const [generationNotice, setGenerationNotice] = useState('');
+  useEffect(() => () => { requestController.current?.abort(); navigationPrompt.current?.abort(); }, []);
+  const characterId = draft.characterId;
+  const setCharacterId = (value: number | null) => setField('characterId', value);
+  const generateWorldType = draft.generateWorldType;
+  const setGenerateWorldType = (value: string) => setField('generateWorldType', value);
+  const generateTheme = draft.generateTheme;
+  const setGenerateTheme = (value: string) => setField('generateTheme', value);
+  const generateTone = draft.generateTone;
+  const setGenerateTone = (value: string) => setField('generateTone', value);
+  const generateExtra = draft.generateExtra;
+  const setGenerateExtra = (value: string) => setField('generateExtra', value);
+  const generateLabel = draft.generateLabel;
+  const setGenerateLabel = (value: string) => setField('generateLabel', value);
+  const autoSaveGeneratedWorld = draft.autoSaveGeneratedWorld;
+  const setAutoSaveGeneratedWorld = (value: boolean) => setField('autoSaveGeneratedWorld', value);
   const [generatedWorld, setGeneratedWorld] = useState<WorldGenerationResult | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('tab') || 'create';
@@ -121,10 +136,14 @@ export default function WorkbenchPage() {
   const [showManageAdvanced, setShowManageAdvanced] = useState(false);
 
   // import
-  const [importSourceFilename, setImportSourceFilename] = useState('world.txt');
-  const [importSourceText, setImportSourceText] = useState('');
-  const [importCategoryHint, setImportCategoryHint] = useState('DND');
-  const [autoSaveImportedWorld, setAutoSaveImportedWorld] = useState(false);
+  const importSourceFilename = draft.importSourceFilename;
+  const setImportSourceFilename = (value: string) => setField('importSourceFilename', value);
+  const importSourceText = draft.importSourceText;
+  const setImportSourceText = (value: string) => setField('importSourceText', value);
+  const importCategoryHint = draft.importCategoryHint;
+  const setImportCategoryHint = (value: string) => setField('importCategoryHint', value);
+  const autoSaveImportedWorld = draft.autoSaveImportedWorld;
+  const setAutoSaveImportedWorld = (value: boolean) => setField('autoSaveImportedWorld', value);
   const [importedWorld, setImportedWorld] = useState<WorldImportResult | null>(null);
 
   // manage state
@@ -175,28 +194,55 @@ export default function WorkbenchPage() {
   const isTemplateDirty = Boolean(templateId) && Boolean(templateBaseline) && templateDraftSnapshot !== templateBaseline;
 
   const templateNavigationBlocker = useBlocker(({ currentLocation, nextLocation }) =>
-    isTemplateDirty && currentLocation.pathname !== nextLocation.pathname,
+    (generationActive && (currentLocation.pathname !== nextLocation.pathname || currentLocation.search !== nextLocation.search)) ||
+    ((isTemplateDirty || Boolean(draftError) || draftSaving) && currentLocation.pathname !== nextLocation.pathname),
   );
 
   useEffect(() => {
     if (templateNavigationBlocker.state !== 'blocked') return;
+    if (!generationActive && !isTemplateDirty && !draftError && !draftSaving) { templateNavigationBlocker.reset(); return; }
+    const controller = new AbortController();
+    navigationPrompt.current?.abort();
+    navigationPrompt.current = controller;
     let active = true;
     void confirmModal(
-      '世界设定尚未保存',
-      '离开后会丢失当前修改。确认放弃修改并离开吗？',
+      generationActive ? '世界仍在生成' : '内容尚未保存',
+      generationActive ? '停止并离开会取消本次请求；已保存的草稿和完整结果会保留。' : '当前修改可能尚未保存。确认离开吗？',
+      'warning', { signal: controller.signal, confirmLabel: generationActive ? '停止并离开' : '确认离开', cancelLabel: generationActive ? '继续生成' : '继续编辑' },
     ).then((leave) => {
-      if (!active || templateNavigationBlocker.state !== 'blocked') return;
-      if (leave) templateNavigationBlocker.proceed();
+      if (!active || controller.signal.aborted || templateNavigationBlocker.state !== 'blocked') return;
+      if (leave) { requestController.current?.abort(); templateNavigationBlocker.proceed(); }
       else templateNavigationBlocker.reset();
     });
-    return () => { active = false; };
-  }, [templateNavigationBlocker]);
+    return () => { active = false; controller.abort(); };
+  }, [templateNavigationBlocker, generationActive, isTemplateDirty, draftError, draftSaving]);
 
   useBeforeUnload(useCallback((event) => {
-    if (!isTemplateDirty) return;
+    if (!isTemplateDirty && !generationActive && !draftSaving && !draftError) return;
     event.preventDefault();
     event.returnValue = '';
-  }, [isTemplateDirty]));
+  }, [isTemplateDirty, generationActive, draftSaving, draftError]));
+
+  async function runGeneration<T>(action: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    if (requestController.current) throw new Error('请先停止或等待当前生成完成');
+    const controller = new AbortController();
+    requestController.current = controller;
+    setGenerationActive(true);
+    setGenerationNotice('');
+    try { return await action(controller.signal); }
+    finally {
+      requestController.current = null;
+      setGenerationActive(false);
+      navigationPrompt.current?.abort();
+      if (templateNavigationBlocker.state === 'blocked') templateNavigationBlocker.reset();
+      void queryClient.invalidateQueries({ queryKey: ['jobs', 'world'] });
+    }
+  }
+
+  const generationError = (error: unknown) => {
+    if (isAbortError(error)) setGenerationNotice('已停止本次请求。草稿仍然保留，可以修改后重新生成；已完成的结果可在生成记录中查看。');
+    else showToast(error instanceof Error ? error.message : '生成失败，请重试', 'error');
+  };
 
   async function handleExportTemplate(templateId: string) {
     if (exportingTemplateId) return;
@@ -229,7 +275,7 @@ export default function WorkbenchPage() {
       if (!generateTheme.trim()) {
         throw new Error('请填写「核心主题」（一句话描述，必填）');
       }
-      return api.generateWorld({
+      return runGeneration((signal) => api.generateWorld({
         character_id: characterId,
         world_type: generateWorldType,
         core_theme: generateTheme,
@@ -237,7 +283,7 @@ export default function WorkbenchPage() {
         extra_requirements: generateExtra,
         label: generateLabel,
         auto_save: autoSaveGeneratedWorld,
-      });
+      }, signal));
     },
     onSuccess: async (payload) => {
       setGeneratedWorld(payload);
@@ -245,7 +291,7 @@ export default function WorkbenchPage() {
       if (payload.saved_template) await queryClient.invalidateQueries({ queryKey: ['world-templates'] });
       showToast(payload.saved_template ? '世界设定已生成并已保存到模板库' : '世界设定已生成，可在下方查看结果', 'success');
     },
-    onError: (e) => showToast(String(e), 'error'),
+    onError: generationError,
   });
 
   const importWorldMutation = useMutation({
@@ -256,13 +302,13 @@ export default function WorkbenchPage() {
       if (!importSourceText.trim()) {
         throw new Error('请粘贴「世界设定原文」（必填）');
       }
-      return api.importWorld({
+      return runGeneration((signal) => api.importWorld({
         character_id: characterId,
         source_text: importSourceText,
         source_filename: importSourceFilename,
         category_hint: importCategoryHint,
         auto_save: autoSaveImportedWorld,
-      });
+      }, signal));
     },
     onSuccess: async (payload) => {
       setImportedWorld(payload);
@@ -270,7 +316,7 @@ export default function WorkbenchPage() {
       if (payload.saved_template) await queryClient.invalidateQueries({ queryKey: ['world-templates'] });
       showToast(payload.saved_template ? '导入完成并已保存为模板' : '导入完成，可在下方查看结果', 'success');
     },
-    onError: (e) => showToast(String(e), 'error'),
+    onError: generationError,
   });
 
   const saveWorldResultMutation = useMutation({
@@ -489,6 +535,8 @@ export default function WorkbenchPage() {
     setActiveTab('manage');
   }
 
+  if (!draftReady) return <div className="page-card" role="status">正在恢复创作草稿…</div>;
+
   return (<>
     <div className="workbench-layout" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* ==================== 顶部标签切换 ==================== */}
@@ -510,6 +558,9 @@ export default function WorkbenchPage() {
         </div>
       </div>
 
+      {draftError && <p className="inline-query-error" role="alert">{draftError}</p>}
+      {generationNotice && <p className="hint" role="status">{generationNotice}</p>}
+      {generationActive && <div className="page-card world-generation-progress" role="status"><div><strong>正在构建世界设定</strong><p className="hint">停止会取消当前请求；完整结果会保留在生成记录中。</p></div><button type="button" className="btn btn-ghost" onClick={() => requestController.current?.abort()}>停止生成</button></div>}
       {activeTab === 'history' && <WorldJobHistory onManage={(result) => { void manageSavedWorld(result); }} />}
 
       {/* ==================== 快速创建世界 ==================== */}
@@ -549,7 +600,7 @@ export default function WorkbenchPage() {
             </div>
 
             <div className="button-row workbench-mobile-cta">
-              <button className="btn btn-primary btn-lg" type="submit" disabled={generateWorldMutation.isPending}>
+              <button className="btn btn-primary btn-lg" type="submit" disabled={generationActive}>
                 {generateWorldMutation.isPending && <UiIcon name="loading" className="ui-icon-loading" />}{generateWorldMutation.isPending ? '生成中…' : '生成世界设定'}
               </button>
             </div>
@@ -587,7 +638,7 @@ export default function WorkbenchPage() {
             </div>
 
             <div className="button-row workbench-desktop-actions" style={{ marginTop: 16 }}>
-              <button className="btn btn-primary btn-lg" type="submit" disabled={generateWorldMutation.isPending}>
+              <button className="btn btn-primary btn-lg" type="submit" disabled={generationActive}>
                 {generateWorldMutation.isPending && <UiIcon name="loading" className="ui-icon-loading" />}{generateWorldMutation.isPending ? '生成中…' : '生成世界设定'}
               </button>
             </div>
@@ -637,7 +688,7 @@ export default function WorkbenchPage() {
               </div>
             </div>
             <div className="button-row workbench-mobile-cta">
-              <button className="btn btn-primary btn-lg" type="submit" disabled={importWorldMutation.isPending}>
+              <button className="btn btn-primary btn-lg" type="submit" disabled={generationActive}>
                 {importWorldMutation.isPending && <UiIcon name="loading" className="ui-icon-loading" />}{importWorldMutation.isPending ? '整理中…' : '整理世界设定'}
               </button>
             </div>
@@ -650,7 +701,7 @@ export default function WorkbenchPage() {
                 <input type="checkbox" style={{ width: '16px', height: '16px', flexShrink: 0 }} checked={autoSaveImportedWorld} onChange={(event) => setAutoSaveImportedWorld(event.target.checked)} />
                 抽取后自动保存
               </label>
-              <button className="btn btn-primary" type="submit" disabled={importWorldMutation.isPending} style={{ marginLeft: 'auto' }}>
+              <button className="btn btn-primary" type="submit" disabled={generationActive} style={{ marginLeft: 'auto' }}>
                 {importWorldMutation.isPending && <UiIcon name="loading" className="ui-icon-loading" />}{importWorldMutation.isPending ? '整理中…' : '整理世界设定'}
               </button>
             </div>

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+import asyncio
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -25,7 +27,7 @@ from ..schemas import (
     WorldTemplatePackageRead,
     WorldTemplateRead,
     WorldTemplateUpdate)
-from ..services.job_service import create_job_run, mark_job_failed, mark_job_running, mark_job_succeeded
+from ..services.job_service import create_job_run, mark_job_failed, mark_job_running, mark_job_succeeded, mark_job_cancelled
 from ..services.world_package_service import (
     build_world_template_bundle,
     build_world_template_package,
@@ -34,6 +36,7 @@ from ..services.world_package_service import (
     preview_world_template_bundle_import,
     write_world_template_bundle_file,
     write_world_template_package_file)
+from ..services.world_request_control import run_world_request
 from ..services.world_job_service import complete_world_job, save_world_job_result
 from ..services.world_building_service import generate_world_package, import_world_package, review_world_package
 
@@ -321,7 +324,7 @@ def review_world_quality(payload: WorldQualityPreviewRequest, db: Session = Depe
 
 
 @router.post("/generate", summary="AI 生成世界", response_model=WorldGenerationResponse)
-def generate_world(payload: WorldGenerationRequest, db: Session = Depends(get_db)):
+async def generate_world(payload: WorldGenerationRequest, db: Session = Depends(get_db), request: Request = None):
     job = create_job_run(
         db,
         job_type="world_generate",
@@ -333,8 +336,14 @@ def generate_world(payload: WorldGenerationRequest, db: Session = Depends(get_db
         })
     mark_job_running(db, job.id)
     try:
-        result = generate_world_package(db, payload.model_copy(update={"auto_save": False}))
+        result = await run_world_request(
+            lambda: generate_world_package(db, payload.model_copy(update={"auto_save": False})),
+            request.is_disconnected if request else None)
         complete_world_job(db, job.id, result)
+    except asyncio.CancelledError:
+        db.rollback()
+        mark_job_cancelled(db, job.id)
+        raise
     except ValueError as exc:
         db.rollback()
         mark_job_failed(db, job.id, str(exc))
@@ -350,7 +359,7 @@ def generate_world(payload: WorldGenerationRequest, db: Session = Depends(get_db
 
 
 @router.post("/import", summary="导入世界设定", response_model=WorldImportResponse)
-def import_world(payload: WorldImportRequest, db: Session = Depends(get_db)):
+async def import_world(payload: WorldImportRequest, db: Session = Depends(get_db), request: Request = None):
     job = create_job_run(
         db,
         job_type="world_import",
@@ -362,8 +371,14 @@ def import_world(payload: WorldImportRequest, db: Session = Depends(get_db)):
         })
     mark_job_running(db, job.id)
     try:
-        result = import_world_package(db, payload.model_copy(update={"auto_save": False}))
+        result = await run_world_request(
+            lambda: import_world_package(db, payload.model_copy(update={"auto_save": False})),
+            request.is_disconnected if request else None)
         complete_world_job(db, job.id, result)
+    except asyncio.CancelledError:
+        db.rollback()
+        mark_job_cancelled(db, job.id)
+        raise
     except ValueError as exc:
         db.rollback()
         mark_job_failed(db, job.id, str(exc))

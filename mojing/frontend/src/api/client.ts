@@ -1037,9 +1037,10 @@ export const api = {
     auto_save?: boolean;
     template_id?: string;
     label?: string;
-  }) {
+  }, signal?: AbortSignal) {
     return request<WorldGenerationResult>('/worlds/generate', {
       method: 'POST',
+      signal,
       body: JSON.stringify(payload),
     });
   },
@@ -1051,9 +1052,10 @@ export const api = {
     template_id?: string;
     label?: string;
     auto_save?: boolean;
-  }) {
+  }, signal?: AbortSignal) {
     return request<WorldImportResult>('/worlds/import', {
       method: 'POST',
+      signal,
       body: JSON.stringify(payload),
     });
   },

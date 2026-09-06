@@ -23,13 +23,18 @@ from ..schemas import (
     WorldTemplateCreate,
     WorldTemplateRead,
 )
-from .llm_client import build_client, resolve_text_config, resolve_text_model
-from .llm_retry import safe_non_streaming_call
+from .llm_client import build_async_client, resolve_text_config, resolve_text_model
+from .llm_retry import safe_async_non_streaming_call
 from .encyclopedia_template import (
     FIRST_RELEASE_LORE_BLUEPRINTS,
     FIRST_RELEASE_MODULES,
     build_public_template_prompt,
 )
+
+
+async def _world_completion(db, character, **kwargs):
+    async with build_async_client(character, db) as client:
+        return await safe_async_non_streaming_call(client, **kwargs)
 
 
 NAME_CORPUS = {
@@ -142,10 +147,10 @@ def generate_name_pack(world_type: str, person_count: int, place_count: int, ite
     )
 
 
-def generate_world_package(db: Session, payload: WorldGenerationRequest) -> WorldGenerationResponse:
+async def generate_world_package(db: Session, payload: WorldGenerationRequest) -> WorldGenerationResponse:
     name_pack = generate_name_pack(payload.world_type, payload.person_name_count, payload.place_name_count, payload.item_name_count)
-    template, strategy = _generate_template_with_fallback(db, payload, name_pack)
-    lore_entries, lore_strategy = _generate_lore_entries_with_fallback(db, payload, template, name_pack)
+    template, strategy = await _generate_template_with_fallback(db, payload, name_pack)
+    lore_entries, lore_strategy = await _generate_lore_entries_with_fallback(db, payload, template, name_pack)
     quality_report = review_world_package(template, lore_entries)
 
     saved_template = None
@@ -168,8 +173,8 @@ def generate_world_package(db: Session, payload: WorldGenerationRequest) -> Worl
     )
 
 
-def import_world_package(db: Session, payload: WorldImportRequest) -> WorldImportResponse:
-    template, lore_entries, names, debug = _extract_world_from_source(db, payload)
+async def import_world_package(db: Session, payload: WorldImportRequest) -> WorldImportResponse:
+    template, lore_entries, names, debug = await _extract_world_from_source(db, payload)
     quality_report = review_world_package(template, lore_entries)
     saved_template = None
     if payload.auto_save:
@@ -184,7 +189,7 @@ def import_world_package(db: Session, payload: WorldImportRequest) -> WorldImpor
     )
 
 
-def _generate_template_with_fallback(
+async def _generate_template_with_fallback(
     db: Session,
     payload: WorldGenerationRequest,
     names: GeneratedNamePack,
@@ -192,7 +197,7 @@ def _generate_template_with_fallback(
     character = db.get(CharacterModel, payload.character_id) if payload.character_id else None
     if character and _has_online_text_config(character, db):
         try:
-            return _generate_template_with_llm(db, character, payload, names), "在线模型生成世界骨架"
+            return await _generate_template_with_llm(db, character, payload, names), "在线模型生成世界骨架"
         except Exception:
             pass
     world_type = payload.world_type.strip() or "通用世界"
@@ -225,7 +230,7 @@ def _generate_template_with_fallback(
     )
 
 
-def _extract_world_from_source(
+async def _extract_world_from_source(
     db: Session,
     payload: WorldImportRequest,
 ) -> tuple[WorldTemplateCreate, list[WorldLoreEntryCreate], GeneratedNamePack, WorldBuildDebugRead]:
@@ -233,7 +238,7 @@ def _extract_world_from_source(
     character = db.get(CharacterModel, payload.character_id) if payload.character_id else None
     if character and _has_online_text_config(character, db):
         try:
-            return _extract_world_with_llm(db, character, payload)
+            return await _extract_world_with_llm(db, character, payload)
         except Exception:
             pass
 
@@ -266,7 +271,7 @@ def _extract_world_from_source(
     return template, lore_entries, names, debug
 
 
-def _extract_world_with_llm(
+async def _extract_world_with_llm(
     db: Session,
     character: CharacterModel,
     payload: WorldImportRequest,
@@ -280,7 +285,7 @@ def _extract_world_with_llm(
     chunk_debug: list[WorldImportChunkDebugRead] = []
 
     for index, chunk in enumerate(chunks, start=1):
-        chunk_result = _extract_world_chunk_with_llm(db, character, payload, chunk, index, len(chunks), detected_category)
+        chunk_result = await _extract_world_chunk_with_llm(db, character, payload, chunk, index, len(chunks), detected_category)
         chunk_results.append(chunk_result)
         chunk_debug.append(
             WorldImportChunkDebugRead(
@@ -298,7 +303,7 @@ def _extract_world_with_llm(
             )
         )
 
-    merged = _merge_world_chunks_with_llm(db, character, payload, detected_category, chunk_results)
+    merged = await _merge_world_chunks_with_llm(db, character, payload, detected_category, chunk_results)
     template_data = merged.get("template") or {}
     names_data = merged.get("names") or {}
     names = _merge_name_pack_from_sources(
@@ -334,7 +339,7 @@ def _extract_world_with_llm(
     return template, lore_entries, names, debug
 
 
-def _generate_lore_entries_with_fallback(
+async def _generate_lore_entries_with_fallback(
     db: Session,
     payload: WorldGenerationRequest,
     template: WorldTemplateCreate,
@@ -343,7 +348,7 @@ def _generate_lore_entries_with_fallback(
     character = db.get(CharacterModel, payload.character_id) if payload.character_id else None
     if character and _has_online_text_config(character, db):
         try:
-            entries = _generate_lore_entries_with_llm(db, character, payload, template, names)
+            entries = await _generate_lore_entries_with_llm(db, character, payload, template, names)
             return _ensure_first_release_lore_entries(entries, payload=payload, template=template, names=names), "在线模型生成 Lore 条目"
         except Exception:
             pass
@@ -421,7 +426,7 @@ def _ensure_first_release_lore_entries(
     return _deduplicate_lore_entries(merged)
 
 
-def _extract_world_chunk_with_llm(
+async def _extract_world_chunk_with_llm(
     db: Session,
     character: CharacterModel,
     payload: WorldImportRequest,
@@ -430,7 +435,6 @@ def _extract_world_chunk_with_llm(
     total_chunks: int,
     detected_category: str,
 ) -> dict:
-    client = build_client(character, db)
     prompt = f"""
 你是世界设定分块抽取器。下面给你的是长世界设定中的一个分块，请只提取这个分块内部已经明确出现的稳定信息。
 
@@ -480,18 +484,17 @@ def _extract_world_chunk_with_llm(
 【原始文本】
 {chunk_text}
 """.strip()
-    content = safe_non_streaming_call(client, model=resolve_text_model(character, db), messages=[{"role": "user", "content": prompt}], temperature=0.2, max_tokens=min(max(character.max_tokens, 1400), 4096))
+    content = await _world_completion(db, character, model=resolve_text_model(character, db), messages=[{"role": "user", "content": prompt}], temperature=0.2, max_tokens=min(max(character.max_tokens, 1400), 4096))
     return _safe_load_json(content, {})
 
 
-def _merge_world_chunks_with_llm(
+async def _merge_world_chunks_with_llm(
     db: Session,
     character: CharacterModel,
     payload: WorldImportRequest,
     detected_category: str,
     chunk_results: list[dict],
 ) -> dict:
-    client = build_client(character, db)
     chunk_summaries = []
     for index, item in enumerate(chunk_results, start=1):
         names = item.get("names") or {}
@@ -565,12 +568,11 @@ def _merge_world_chunks_with_llm(
 【分块抽取结果】
 {json.dumps(chunk_summaries, ensure_ascii=False, indent=2)}
 """.strip()
-    content = safe_non_streaming_call(client, model=resolve_text_model(character, db), messages=[{"role": "user", "content": prompt}], temperature=0.3, max_tokens=min(max(character.max_tokens, 2200), 4096))
+    content = await _world_completion(db, character, model=resolve_text_model(character, db), messages=[{"role": "user", "content": prompt}], temperature=0.3, max_tokens=min(max(character.max_tokens, 2200), 4096))
     return _safe_load_json(content or "", {})
 
 
-def _generate_template_with_llm(db: Session, character: CharacterModel, payload: WorldGenerationRequest, names: GeneratedNamePack) -> WorldTemplateCreate:
-    client = build_client(character, db)
+async def _generate_template_with_llm(db: Session, character: CharacterModel, payload: WorldGenerationRequest, names: GeneratedNamePack) -> WorldTemplateCreate:
     prompt = f"""
 你是世界观策划师。请输出严格 JSON：
 {{
@@ -611,7 +613,7 @@ def _generate_template_with_llm(db: Session, character: CharacterModel, payload:
 4. 用户输入的目标类型、主题、基调和额外要求不得被改写；缺失字段可以补全但必须标为待确认。
 5. 只能输出 JSON。
 """.strip()
-    content = safe_non_streaming_call(client, model=resolve_text_model(character, db), messages=[{"role": "user", "content": prompt}], temperature=0.7, max_tokens=min(max(character.max_tokens, 1400), 4096))
+    content = await _world_completion(db, character, model=resolve_text_model(character, db), messages=[{"role": "user", "content": prompt}], temperature=0.7, max_tokens=min(max(character.max_tokens, 1400), 4096))
     raw = (content or "").strip()
     data = _safe_load_json(raw, {})
     return WorldTemplateCreate(
@@ -626,14 +628,13 @@ def _generate_template_with_llm(db: Session, character: CharacterModel, payload:
     )
 
 
-def _generate_lore_entries_with_llm(
+async def _generate_lore_entries_with_llm(
     db: Session,
     character: CharacterModel,
     payload: WorldGenerationRequest,
     template: WorldTemplateCreate,
     names: GeneratedNamePack,
 ) -> list[WorldLoreEntryCreate]:
-    client = build_client(character, db)
     prompt = f"""
 你是世界 Lorebook 设计师。请输出严格 JSON 数组，每项结构如下：
 {{
@@ -666,7 +667,7 @@ def _generate_lore_entries_with_llm(
 4. 用户已经输入的内容不得改写；缺失信息写成 AI补全/待确认。
 5. 只能输出 JSON 数组。
 """.strip()
-    content = safe_non_streaming_call(client, model=resolve_text_model(character, db), messages=[{"role": "user", "content": prompt}], temperature=0.6, max_tokens=min(max(character.max_tokens, 1600), 4096))
+    content = await _world_completion(db, character, model=resolve_text_model(character, db), messages=[{"role": "user", "content": prompt}], temperature=0.6, max_tokens=min(max(character.max_tokens, 1600), 4096))
     raw = (content or "").strip()
     items = _safe_load_json(raw, [])
     if not isinstance(items, list):
