@@ -1974,7 +1974,7 @@ class ChatViewModel @Inject constructor(
 
         if (runMemoryCompact) {
             val compactThreshold = secureStorage.memoryCompactThreshold.coerceIn(10, 2000)
-            memoryCompactor.compactIfNeeded(
+            val compacted = memoryCompactor.compactIfNeeded(
                 sessionId = sessionId,
                 branchId = branchId,
                 apiKey = apiKey,
@@ -1982,6 +1982,14 @@ class ChatViewModel @Inject constructor(
                 model = model,
                 threshold = compactThreshold,
             )
+            if (compacted) {
+                generation.ensureCurrent()
+                try {
+                    val segments = memorySegmentDao.getRecentForBranch(sessionId, branchId)
+                    _state.update { if (it.currentBranchId == branchId) it.copy(memorySegments = segments) else it }
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { /* 摘要已保存，下一次正常消息刷新时重新读取。 */ }
+            }
         }
 
         var snapshot = snapshotExtractor.extract(allMessages, character, apiKey, preStreamBase, model)

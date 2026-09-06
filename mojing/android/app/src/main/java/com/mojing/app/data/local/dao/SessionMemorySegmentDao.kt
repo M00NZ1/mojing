@@ -65,4 +65,7 @@ interface SessionMemorySegmentDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entity: SessionMemorySegmentEntity): Long
+
+    @Insert
+    suspend fun insertCompacted(entity: SessionMemorySegmentEntity): Long
 }

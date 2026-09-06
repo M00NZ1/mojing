@@ -408,3 +408,21 @@ node scripts/test-message-deletion.mjs
 2026-09-07：80 项 JVM（73 ViewModel、4 提取、3 提交保护）和 4 项桌面 SQLite 回归通过，主代码与 AndroidTest Kotlin 编译通过。SQLite 用例提取真实 Kotlin 查询，覆盖默认/显式回复选择、分支可见性、原文删除和查重范围；它不等同 Room 事务运行。生成的 Room DAO 包含事务包装；新增设备用例覆盖第二条插入故障整批回滚、重复结果和来源变更，但仅编译。首轮两项 JVM 失败来自挂起函数测试桩误取 Continuation，修正参数位置后以上命令通过。
 
 没有连接设备、调用真实供应商、重启用户服务或生成 APK；时间线视觉和触控尚未设备验收，没有新增性能结论。清理 DryRun 仅检查并保留既有 Gradle/Pytest 输出，没有删除文件。正式数据库、媒体、密钥和本机配置保持原状。
+
+## 23. Android 自动摘要校验提交
+
+- 根因：摘要读取原文后跨越模型等待，写入时没有重新核对来源或此前进度；段序号查询和插入也不在同一事务。损坏 JSON 曾退回原文前 100 字，却仍把整批历史推进为已覆盖，导致失败不再重试该段。
+- `MemoryCompactionStore` 复用现有 AppDatabase/DAO：短事务读取前三段可见摘要、故事线修订号和下一个原文页；模型调用在事务外；提交事务复核修订、此前段完整记录和原文 ID/正文/结构正文/发言类型/角色/分支，匹配后才分配序号并 ABORT 插入。页上限沿用配置 1–2000，不全量扫描历史。较早历史已失效、当前来源变化或另一个整理已推进时返回未保存。
+- 原始页从一致快照中取得，提交从原游标重新读取相同大小，不能只检查返回消息是否仍存在。无效、空、非字符串或异常超长摘要不推进进度；关键事实只接受有界字符串列表，取消传播，普通读取/模型/保存失败不阻断后续聊天。成功后立即尝试读取当前故事线摘要，避免必须等完整回复后才能看到已保存结果。
+- 记忆面板空状态解释原文保留与后续整理；摘要标题/情绪改为信息标签，旧事实 JSON 为 null 时按空列表展示。保留原文定位与纠正入口。没有 schema、数据格式或历史记录清理；代码回退不需降级数据库，但会重新引入上述风险。
+
+```powershell
+# android 目录，JDK 17；只编译与 JVM 测试
+.\gradlew.bat :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin :app:testDebugUnitTest --tests 'com.mojing.app.engine.MemoryCompactorTest' --tests 'com.mojing.app.engine.MemoryCompactionStoreTest' --tests 'com.mojing.app.engine.MemoryCompactionPlannerTest' --tests 'com.mojing.app.viewmodel.ChatViewModelTest' --console=plain
+```
+
+2026-09-07：84 项 JVM（5 提取、4 提交校验、2 批次规划、73 ViewModel）全部通过，主代码与 AndroidTest Kotlin 编译通过。覆盖继承摘要游标后 600 条批次、来源删除/修改/选择变化、较早修订、摘要变化与进度竞争、取消、损坏结果重试以及快照读取失败。首轮一项测试使用与实体默认值相同的结构正文，修正为真实变化样本后通过；没有修改代码绕过拒绝条件。
+
+新增 Room 用例覆盖真实快照读取、编辑后拒绝、触发器注入保存故障后进度保留、正常重试与重复提交拒绝；该用例仅编译，没有设备运行。JVM 提交测试验证的是事务内部校验逻辑与 DAO 调用，不冒充 Room 原子性运行证据。没有打包、真实模型调用、用户服务重启或新性能指标；既有 Gradle 输出清理 DryRun 保留，未删除用户内容或改变正式数据库。
+
+尚未完成：已保存摘要在删除/回复版本变化后的尾部失效、每条原文 200 字截断的输入预算、百科沉淀晚到写入、记忆面板实际设备交互。旧无来源数据保留原状，不宣称整个长期记忆链路已闭环。

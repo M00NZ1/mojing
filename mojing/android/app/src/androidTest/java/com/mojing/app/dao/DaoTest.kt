@@ -45,6 +45,25 @@ class MessageDaoTest {
     @After
     fun teardown() { db.close() }
 
+    @Test fun compactionStoreRejectsStaleSourcesAndDuplicateCursorAndRetriesFailedInsert() = runBlocking {
+        val sid = sessionDao.insert(SessionEntity(title = "摘要提交"))
+        val id = messageDao.insert(MessageEntity(sessionId = sid, speakerType = "user", content = "最初原文"))
+        val store = com.mojing.app.domain.engine.MemoryCompactionStore(db)
+        val stale = store.read(sid, "main", 1)
+        val result = com.mojing.app.data.local.entity.SessionMemorySegmentEntity(sessionId = sid, startMessageId = id, endMessageId = id, summary = "摘要")
+        messageDao.updateContent(id, "改写后原文")
+        assertFalse(store.commit(stale, result))
+        val fresh = store.read(sid, "main", 1)
+        db.openHelper.writableDatabase.execSQL("CREATE TRIGGER reject_test_summary BEFORE INSERT ON session_memory_segments BEGIN SELECT RAISE(ABORT, 'test failure'); END")
+        try { store.commit(fresh, result); fail("Insertion must fail") }
+        catch (_: android.database.sqlite.SQLiteException) { }
+        assertTrue(db.sessionMemorySegmentDao().getRecentForBranch(sid, "main").isEmpty())
+        db.openHelper.writableDatabase.execSQL("DROP TRIGGER reject_test_summary")
+        assertTrue(store.commit(fresh, result))
+        assertFalse(store.commit(fresh, result))
+        assertEquals(1, db.sessionMemorySegmentDao().getRecentForBranch(sid, "main").size)
+    }
+
     @Test fun derivedEventsAreAtomicAndRepeatedExtractionDoesNotDuplicateRows() = runBlocking {
         val sid = sessionDao.insert(SessionEntity(title = "事件事务"))
         val id = messageDao.insert(MessageEntity(sessionId = sid, content = "发现线索"))

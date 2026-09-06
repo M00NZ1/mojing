@@ -1,7 +1,5 @@
 package com.mojing.app.domain.engine
 
-import com.mojing.app.data.local.dao.MessageDao
-import com.mojing.app.data.local.dao.SessionMemorySegmentDao
 import com.mojing.app.data.local.entity.SessionMemorySegmentEntity
 import com.mojing.app.data.remote.ChatMessage
 import com.google.gson.Gson
@@ -12,8 +10,7 @@ import kotlinx.coroutines.CancellationException
 @Singleton
 class MemoryCompactor @Inject constructor(
     private val llmRetry: LlmRetry,
-    private val messageDao: MessageDao,
-    private val memorySegmentDao: SessionMemorySegmentDao,
+    private val store: MemoryCompactionStore,
 ) {
     /**
      * 从当前故事线最早的未覆盖位置读取一个有界批次。
@@ -26,25 +23,23 @@ class MemoryCompactor @Inject constructor(
         baseUrl: String,
         model: String,
         threshold: Int = 20
-    ) {
+    ): Boolean {
         require(threshold in 1..2000)
-        val recentSegments = memorySegmentDao.getRecentForBranch(sessionId, branchId, limit = 3)
-        val lastCoveredMessageId = recentSegments.maxOfOrNull { it.endMessageId } ?: 0L
-        val candidates = messageDao.getNextStoryContextBatch(
-            sessionId = sessionId,
-            branchId = branchId,
-            afterMessageId = lastCoveredMessageId,
-            limit = threshold,
-        )
+        val snapshot = try { store.read(sessionId, branchId, threshold) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { return false }
+        val recentSegments = snapshot.previous
+        val lastCoveredMessageId = snapshot.afterMessageId
+        val candidates = snapshot.sources
         val recentMessages = MemoryCompactionPlanner.nextBatch(
             messages = candidates,
             lastCoveredMessageId = lastCoveredMessageId,
             threshold = threshold,
         )
-        if (recentMessages.isEmpty()) return
+        if (recentMessages.isEmpty()) return false
 
-        val startMsg = recentMessages.firstOrNull() ?: return
-        val endMsg = recentMessages.lastOrNull() ?: return
+        val startMsg = recentMessages.firstOrNull() ?: return false
+        val endMsg = recentMessages.lastOrNull() ?: return false
 
         val conversationText = recentMessages.joinToString("\n") { msg ->
             val content = ConversationMessageText.forDerivedContext(msg).take(200)
@@ -72,27 +67,27 @@ class MemoryCompactor @Inject constructor(
             ChatMessage("user", prompt)
         )
 
-        try {
+        return try {
             val result = llmRetry.chatCompletionWithRetry(
                 apiKey, baseUrl, model, llmMessages,
                 temperature = 0.5f,
                 maxTokens = 400,
             )
             val json = extractJson(result)
-            val map: Map<*, *> = try { Gson().fromJson(json, Map::class.java) ?: emptyMap() } catch (_: Exception) { emptyMap<Any, Any>() }
-            val summary = map["summary"]?.toString() ?: conversationText.take(100)
-            val tone = map["emotional_tone"]?.toString() ?: "中性"
-            val facts = (map["key_facts"] as? List<*>)?.map { it.toString() } ?: emptyList()
+            val map: Map<*, *> = Gson().fromJson(json, Map::class.java) ?: return false
+            val summary = (map["summary"] as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: return false
+            if (summary.length > 2000) return false
+            val tone = (map["emotional_tone"] as? String)?.take(40) ?: "中性"
+            val facts = (map["key_facts"] as? List<*>)?.filterIsInstance<String>()?.take(20)?.map { it.take(500) } ?: emptyList()
 
-            val segmentIndex = memorySegmentDao.nextSegmentIndex(sessionId, branchId)
-            memorySegmentDao.insert(SessionMemorySegmentEntity(
-                sessionId = sessionId, branchId = branchId, segmentIndex = segmentIndex,
+            store.commit(snapshot, SessionMemorySegmentEntity(
+                sessionId = sessionId, branchId = branchId,
                 startMessageId = startMsg.id, endMessageId = endMsg.id,
                 summary = summary, keyFactsJson = Gson().toJson(facts), emotionalTone = tone
             ))
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Exception) {}
+        } catch (_: Exception) { false }
     }
 
     private fun extractJson(text: String): String {

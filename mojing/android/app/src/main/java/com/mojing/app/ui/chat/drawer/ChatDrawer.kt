@@ -703,16 +703,14 @@ fun MemoryTab(
                 Text("自动摘要", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
             }
             if (segments.isEmpty()) {
-                item { Text("暂无记忆分段", modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                item { Text("对话积累后会自动整理摘要。暂未整理或整理失败时，原文仍完整保留，后续对话会再次尝试。", modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
             } else {
                 items(segments, key = { it.id }) { segment ->
                     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                         Column(modifier = Modifier.padding(12.dp)) {
-                            Row {
-                                // These are informational labels, not actions; keep them visibly non-interactive.
-                                AssistChip(onClick = {}, enabled = false, label = { Text("第 ${segment.segmentIndex} 段") })
-                                Spacer(Modifier.width(8.dp))
-                                AssistChip(onClick = {}, enabled = false, label = { Text(segment.emotionalTone) })
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text("剧情摘要", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                Text(segment.emotionalTone, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Spacer(Modifier.height(8.dp))
                             Text(segment.summary, style = MaterialTheme.typography.bodyMedium)
@@ -720,7 +718,7 @@ fun MemoryTab(
                                 enabled = !isGenerating,
                                 onClick = { onAddCorrection(segment.summary, segment.startMessageId.takeIf { it > 0L }) },
                             ) { Text("纠正这段记忆") }
-                            val facts = try { Gson().fromJson(segment.keyFactsJson, List::class.java) } catch (_: Exception) { emptyList<Any>() }
+                            val facts = try { Gson().fromJson(segment.keyFactsJson, List::class.java).orEmpty() } catch (_: Exception) { emptyList<Any>() }
                             facts.take(3).forEach { fact -> Text("• $fact", style = MaterialTheme.typography.labelSmall) }
                             val source = segment.sourceReference()
                             Spacer(Modifier.height(4.dp))
