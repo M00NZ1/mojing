@@ -29,6 +29,8 @@ def complete_world_job(db: Session, job_id: int, result):
 
 
 def world_job_history(db: Session, *, before_id: int | None = None, limit: int = 20):
+    from .world_checkpoint_service import recover_world_jobs
+    recover_world_jobs(db)
     limit = min(max(limit, 1), 50)
     job = JobRunModel
     stmt = select(job.id, job.job_type, job.status, job.created_at, job.finished_at,
@@ -38,6 +40,9 @@ def world_job_history(db: Session, *, before_id: int | None = None, limit: int =
             func.json_extract(job.input_json, "$.source_filename"),
             func.json_extract(job.input_json, "$.world_type"), "世界创作").label("label"),
         func.json_extract(job.output_json, "$.world_result_version").label("result_version"),
+        func.json_extract(job.input_json, "$.world_request_version").label("request_version"),
+        func.json_extract(job.output_json, "$.completed_steps").label("completed_steps"),
+        func.json_extract(job.output_json, "$.stage_label").label("stage_label"),
     ).where(job.scope == "world", job.job_type.in_(["world_generate", "world_import"]))
     if before_id is not None:
         stmt = stmt.where(job.id < before_id)

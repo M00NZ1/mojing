@@ -662,6 +662,9 @@ export type JobRun = {
 };
 
 export type WorldJobSummary = {
+  request_version?: number | null;
+  completed_steps?: number | null;
+  stage_label?: string | null;
   id: number;
   job_type: string;
   status: string;

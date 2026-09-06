@@ -268,3 +268,15 @@ node scripts/test-world-transfer.mjs
 - 便携交换仍为 v1，TXT/DOCX 元数据保留可选 profile；旧包没有 profile 时继续兼容，旧导出已遗漏的资料无法追溯恢复。零温度不再被默认值覆盖。DOCX 正文按 OOXML 段落和运行片段读取，保留实体文本、制表与换行；格式化外观不是纯文本导入的保留目标。
 - 无 schema 或已有数据迁移；应用回滚不会删除本批导入的数据，但旧程序会重新出现导入的已知缺陷。
 - 定向验证：`pytest tests/test_character_import_workflow.py tests/test_starter_catalog.py`；frontend 的 `tsc --noEmit` 与 `node scripts/test-character-import.mjs`（既有 Playwright 环境，独立端口 15180）。使用临时 SQLite、隔离 HTTP 应用和模拟 API 浏览器，不导入正式 app、不读取用户包、不发送供应商请求。真实下载和用户文件回归另行记录。
+
+
+## 16. 世界生成检查点与中断恢复
+
+- 新 Web 流程先 `POST /jobs/world-request` 保存输入，再 `POST /jobs/{id}/run-world` 执行；`world-progress` 只读摘要并校正已中断执行，`pause-world` 请求当前步骤保存后暂停。现有 `/worlds/generate`、`/worlds/import` 保留旧调用契约；旧记录不补造检查点。
+- 无新表或 schema 迁移。输入使用 `world_request_version: 1` 与 `world_request`；中间结果使用 `world_checkpoint_version: 1`、`world_steps`、`completed_steps`、`stage_label`。步骤名称是 v1 的稳定键，修改流水线语义时必须升级检查点版本。未知格式拒绝执行且保留原记录。
+- 原文只保存一次；每个步骤结果独立于世界库提交到原 JobRun。生成保存命名、骨架、条目；在线文本整理保存逐块、合并与整理结果。暂停在步骤提交后落为 `paused`；未提交的步骤在恢复时重做，已提交步骤经类型校验后复用。成功后以完整结果替代检查点，继续沿用幂等的保存世界流程。
+- 状态：`pending → running → pause_requested → paused`；失败保留检查点为 `failed`；失去执行所有者为 `interrupted`；这些未完成状态可显式继续。`cancelled` 是停止，不能通过继续按钮重新运行；`succeeded` 不被晚到暂停/停止覆盖。没有后台任务队列，页面离开/请求断开仍会取消执行，应先暂停并等到保存成功再离开。
+- 每个执行持有数据库同目录 `.<数据库文件名>.world-job-locks/<任务 ID>.lock` 的操作系统排他锁，Windows 用 msvcrt，其他平台用 flock。锁文件不删除，文件存在不代表进程仍活着。恢复扫描只分页检查带 v1 输入的新任务；只有能获得锁并重新确认仍是运行态时才标记中断，活跃实例不会因另一个实例启动或读取记录被取消。
+- 暂停/续跑不保存 Key 或客户端；一次执行固定解析后的线路，下一次继续使用当前配置。在线错误保留失败与检查点，不静默回退成本地骨架。列表 SQL 排除原始输入和中间正文，运行或恢复步骤时才按需读取。
+- 回滚前先暂停并等待当前步骤保存。旧代码仍能读取已完成世界，但不具备新检查点控制；保留 JobRun 和锁目录，重新升级可继续。无需删除数据库或用户文件。
+- 验证入口：`pytest tests/test_world_checkpoints.py tests/test_world_cancellation.py tests/test_world_job_results.py tests/test_world_package_atomicity.py`；frontend `tsc --noEmit`、`node scripts/test-world-checkpoints.mjs`（独立端口 15181）、`node scripts/test-world-cancellation.mjs`。SQLite、HTTP、模拟在线调用及 Windows 子进程锁回归使用隔离数据；浏览器使用模拟 API。真实供应商时延、完整本机服务联调与非 Windows 文件锁未验证。

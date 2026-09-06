@@ -7,9 +7,9 @@ import InlineQueryError from './InlineQueryError';
 import UiIcon from './UiIcon';
 import './WorldJobHistory.css';
 
-const statusNames: Record<string, string> = { succeeded: '已完成', failed: '生成失败', running: '生成中', pending: '等待开始', cancelled: '已停止' };
+const statusNames: Record<string, string> = { succeeded: '已完成', failed: '生成失败', running: '生成中', pending: '等待开始', cancelled: '已停止', paused: '已暂停', pause_requested: '正在暂停', interrupted: '执行中断' };
 
-export default function WorldJobHistory({ onManage }: { onManage: (result: WorldGenerationResult) => void }) {
+export default function WorldJobHistory({ onManage, onResume, generationActive = false }: { onManage: (result: WorldGenerationResult) => void; onResume?: (id: number) => void; generationActive?: boolean }) {
   const [params, setParams] = useSearchParams();
   const selected = Number(params.get('job')) || null;
   const [cursors, setCursors] = useState<(number | undefined)[]>([undefined]);
@@ -17,12 +17,13 @@ export default function WorldJobHistory({ onManage }: { onManage: (result: World
   const client = useQueryClient();
   const cursor = cursors[cursors.length - 1];
   const history = useQuery({ queryKey: ['jobs', 'world', 'history', cursor], queryFn: () => api.worldJobHistory(cursor),
-    refetchInterval: (query) => query.state.data?.items.some((job) => ['pending', 'running'].includes(job.status)) ? 5000 : false });
+    refetchInterval: (query) => query.state.data?.items.some((job) => ['pending', 'running', 'pause_requested'].includes(job.status)) ? 5000 : false });
   const detail = useQuery({ queryKey: ['world-result', selected], queryFn: () => api.worldJobResult(selected!), enabled: selected !== null, gcTime: 0, retry: false });
   const save = useMutation({ mutationFn: (id: number) => api.saveWorldJobResult(id), onSuccess: (result, id) => {
     client.setQueryData(['world-result', id], result);
     void client.invalidateQueries({ queryKey: ['world-templates'] });
   } });
+  const pause = useMutation({ mutationFn: (id: number) => api.pauseWorldJob(id), onSuccess: () => { void history.refetch(); } });
   const resetSave = save.reset;
   useEffect(() => { setLorePage(0); resetSave(); }, [selected, resetSave]);
   const selectJob = (id: number | null) => {
@@ -43,12 +44,16 @@ export default function WorldJobHistory({ onManage }: { onManage: (result: World
       {history.isLoading && <p role="status">正在读取记录…</p>}
       {history.isError && <InlineQueryError message="记录读取失败" error={history.error} retrying={history.isFetching} onRetry={() => void history.refetch()} />}
       {history.isSuccess && !history.data.items.length && <div className="world-history-empty"><UiIcon name="world" /><h3>还没有生成记录</h3><p>生成世界或从文本整理后，结果会出现在这里。</p></div>}
+      {pause.isError && <InlineQueryError message="暂停请求未完成" error={pause.error} onRetry={() => { if (pause.variables) pause.mutate(pause.variables); }} />}
       <div className="world-history-list">{history.data?.items.map((job) => <article className="world-history-row" key={job.id}>
         <div><span className={`world-job-status world-job-${job.status}`}>{statusNames[job.status] || '状态未知'}</span><h3>{job.label || '世界创作'}</h3><p>{job.job_type === 'world_import' ? '文本整理' : '世界生成'} · {new Date(job.created_at).toLocaleString('zh-CN')}</p>
           {job.status === 'failed' && <p className="world-history-error">{job.error_message || '生成未完成，请返回创作页重试。'}</p>}
-          {job.status === 'running' && <p className="hint">结果完成后会自动更新；异常退出的旧任务可能需要重新生成。</p>}
+          {job.status === 'running' && job.request_version !== 1 && <p className="hint">结果完成后会自动更新；异常退出的旧任务可能需要重新生成。</p>}
           {job.status === 'succeeded' && job.result_version !== 1 && <p className="hint">旧记录未保留完整结果；已保存的内容可在“我的世界”查看。</p>}
+          {job.request_version === 1 && job.status !== 'succeeded' && <p className="hint">已保存 {job.completed_steps || 0} 个步骤{job.stage_label ? ` · ${job.stage_label}` : ''}。{job.status === 'pause_requested' ? '当前步骤保存后暂停。' : job.status === 'cancelled' ? '此任务已停止；需要重新生成时请创建新任务。' : '继续时复用已完成步骤，剩余步骤使用当前模型配置。'}</p>}
         </div>
+        {job.request_version === 1 && ['pending', 'paused', 'interrupted', 'failed'].includes(job.status) && onResume && <button type="button" className="btn btn-primary btn-sm" disabled={generationActive} onClick={() => onResume(job.id)}>继续生成</button>}
+        {job.request_version === 1 && job.status === 'running' && <button type="button" className="btn btn-ghost btn-sm" disabled={pause.isPending} onClick={() => pause.mutate(job.id)}>暂停</button>}
         {job.result_version === 1 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => selectJob(job.id)}>查看结果</button>}
       </article>)}</div>
       <div className="button-row world-history-pagination"><button type="button" className="btn btn-ghost btn-sm" disabled={cursors.length === 1 || history.isFetching} onClick={() => setCursors((current) => current.slice(0, -1))}>较新记录</button><span>第 {cursors.length} 页</span><button type="button" className="btn btn-ghost btn-sm" disabled={!history.data?.next_cursor || history.isFetching} onClick={() => setCursors((current) => [...current, history.data!.next_cursor!])}>更早记录</button></div>

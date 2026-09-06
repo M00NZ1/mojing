@@ -6,7 +6,8 @@
 .world-history-row p { margin: 5px 0; font-size: .8rem; color: var(--text-2); overflow-wrap: anywhere; }
 .world-history-row > button { flex-shrink: 0; }
 .world-job-status { display: inline-block; font-size: .75rem; color: var(--text-2); }
-.world-job-succeeded { color: var(--accent3); }
+.world-job-succeeded { color: var(--accent-2); }
+.world-job-paused, .world-job-interrupted { color: var(--accent); }
 .world-job-failed, .world-history-row .world-history-error { color: var(--danger, #e77979); }
 .world-history-pagination { justify-content: space-between; align-items: center; margin-top: 20px; font-size: .8rem; }
 .world-history-empty { padding: 48px 20px; text-align: center; color: var(--text-2); }
@@ -19,8 +20,12 @@
 .world-generation-progress { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .world-generation-progress .hint { margin-bottom: 0; }
 .world-generation-progress > button { flex-shrink: 0; }
+.world-generation-progress button:disabled { color: var(--text-2); background: var(--bg-2); opacity: .8; }
 @media (min-width: 769px) { .workbench-layout .workbench-mobile-cta { display: none; } }
 @media (max-width: 540px) {
+  .world-generation-progress { align-items: stretch; flex-direction: column; }
+  .world-generation-progress .button-row { display: flex; gap: 12px; }
+  .world-generation-progress .button-row > button { flex: 1; }
   .world-history-row { align-items: flex-start; flex-direction: column; gap: 12px; }
   .workbench-layout .creation-workspace-toolbar { flex-wrap: wrap; }
   .workbench-layout .creation-workspace-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex-basis: 100%; overflow: visible; }

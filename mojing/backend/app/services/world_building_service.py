@@ -23,6 +23,7 @@ from ..schemas import (
     WorldTemplateCreate,
     WorldTemplateRead,
 )
+from .world_checkpoint_service import world_step, has_world_checkpoints
 from .llm_client import build_async_client, resolve_text_config, resolve_text_model
 from .llm_retry import safe_async_non_streaming_call
 from .encyclopedia_template import (
@@ -148,9 +149,9 @@ def generate_name_pack(world_type: str, person_count: int, place_count: int, ite
 
 
 async def generate_world_package(db: Session, payload: WorldGenerationRequest) -> WorldGenerationResponse:
-    name_pack = generate_name_pack(payload.world_type, payload.person_name_count, payload.place_name_count, payload.item_name_count)
-    template, strategy = await _generate_template_with_fallback(db, payload, name_pack)
-    lore_entries, lore_strategy = await _generate_lore_entries_with_fallback(db, payload, template, name_pack)
+    name_pack = await world_step("命名参考", GeneratedNamePack, lambda: generate_name_pack(payload.world_type, payload.person_name_count, payload.place_name_count, payload.item_name_count))
+    template, strategy = await world_step("世界骨架", tuple[WorldTemplateCreate, str], lambda: _generate_template_with_fallback(db, payload, name_pack))
+    lore_entries, lore_strategy = await world_step("世界条目", tuple[list[WorldLoreEntryCreate], str], lambda: _generate_lore_entries_with_fallback(db, payload, template, name_pack))
     quality_report = review_world_package(template, lore_entries)
 
     saved_template = None
@@ -174,7 +175,7 @@ async def generate_world_package(db: Session, payload: WorldGenerationRequest) -
 
 
 async def import_world_package(db: Session, payload: WorldImportRequest) -> WorldImportResponse:
-    template, lore_entries, names, debug = await _extract_world_from_source(db, payload)
+    template, lore_entries, names, debug = await world_step("文本整理", tuple[WorldTemplateCreate, list[WorldLoreEntryCreate], GeneratedNamePack, WorldBuildDebugRead], lambda: _extract_world_from_source(db, payload))
     quality_report = review_world_package(template, lore_entries)
     saved_template = None
     if payload.auto_save:
@@ -199,6 +200,8 @@ async def _generate_template_with_fallback(
         try:
             return await _generate_template_with_llm(db, character, payload, names), "在线模型生成世界骨架"
         except Exception:
+            if has_world_checkpoints():
+                raise
             pass
     world_type = payload.world_type.strip() or "通用世界"
     label = payload.label.strip() or f"{world_type}世界"
@@ -240,6 +243,8 @@ async def _extract_world_from_source(
         try:
             return await _extract_world_with_llm(db, character, payload)
         except Exception:
+            if has_world_checkpoints():
+                raise
             pass
 
     label = payload.label.strip() or payload.source_filename.rsplit(".", 1)[0] or "导入世界"
@@ -285,7 +290,7 @@ async def _extract_world_with_llm(
     chunk_debug: list[WorldImportChunkDebugRead] = []
 
     for index, chunk in enumerate(chunks, start=1):
-        chunk_result = await _extract_world_chunk_with_llm(db, character, payload, chunk, index, len(chunks), detected_category)
+        chunk_result = await world_step(f"提取片段 {index}/{len(chunks)}", dict, lambda: _extract_world_chunk_with_llm(db, character, payload, chunk, index, len(chunks), detected_category))
         chunk_results.append(chunk_result)
         chunk_debug.append(
             WorldImportChunkDebugRead(
@@ -303,7 +308,7 @@ async def _extract_world_with_llm(
             )
         )
 
-    merged = await _merge_world_chunks_with_llm(db, character, payload, detected_category, chunk_results)
+    merged = await world_step("合并片段", dict, lambda: _merge_world_chunks_with_llm(db, character, payload, detected_category, chunk_results))
     template_data = merged.get("template") or {}
     names_data = merged.get("names") or {}
     names = _merge_name_pack_from_sources(
@@ -351,6 +356,8 @@ async def _generate_lore_entries_with_fallback(
             entries = await _generate_lore_entries_with_llm(db, character, payload, template, names)
             return _ensure_first_release_lore_entries(entries, payload=payload, template=template, names=names), "在线模型生成 Lore 条目"
         except Exception:
+            if has_world_checkpoints():
+                raise
             pass
     entries = _build_first_release_lore_entries(payload, template, names)
     return entries[: max(payload.lore_entry_count, len(FIRST_RELEASE_LORE_BLUEPRINTS))], "本地规则生成 Lore 条目"

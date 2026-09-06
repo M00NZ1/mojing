@@ -1133,6 +1133,12 @@ export const api = {
     if (typeof targetId === 'number') search.set('target_id', String(targetId));
     return request<JobRun[]>(`/jobs?${search.toString()}`);
   },
+  createWorldJob(operation: 'generate' | 'import', payload: object, signal?: AbortSignal) {
+    return request<{ id: number; status: string }>('/jobs/world-request', { method: 'POST', body: JSON.stringify({ operation, request: payload }), signal });
+  },
+  runWorldJob(id: number, signal?: AbortSignal) { return request<{ status: 'succeeded' | 'paused'; result: WorldGenerationResult | null }>(`/jobs/${id}/run-world`, { method: 'POST', signal }); },
+  pauseWorldJob(id: number) { return request(`/jobs/${id}/pause-world`, { method: 'POST' }); },
+  worldJobProgress(id: number) { return request<{ status: string; completed_steps: number | null; stage_label: string | null; can_resume: boolean }>(`/jobs/${id}/world-progress`); },
   worldJobHistory(beforeId?: number) {
     return request<{ items: WorldJobSummary[]; next_cursor: number | null }>(`/jobs/world-history${beforeId ? `?before_id=${beforeId}` : ''}`);
   },

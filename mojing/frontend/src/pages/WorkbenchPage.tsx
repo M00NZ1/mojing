@@ -112,6 +112,7 @@ export default function WorkbenchPage() {
   const requestController = useRef<AbortController | null>(null);
   const navigationPrompt = useRef<AbortController | null>(null);
   const [generationActive, setGenerationActive] = useState(false);
+  const [activeJobId, setActiveJobId] = useState<number | null>(null);
   const [generationNotice, setGenerationNotice] = useState('');
   useEffect(() => () => { requestController.current?.abort(); navigationPrompt.current?.abort(); }, []);
   const characterId = draft.characterId;
@@ -270,12 +271,29 @@ export default function WorkbenchPage() {
     }
   }
 
+  const progress = useQuery({ queryKey: ['world-progress', activeJobId], queryFn: () => api.worldJobProgress(activeJobId!), enabled: generationActive && activeJobId !== null, refetchInterval: generationActive ? 1000 : false });
+  const pause = useMutation({ mutationFn: () => api.pauseWorldJob(activeJobId!), onSuccess: () => { void progress.refetch(); }, onError: (error) => showToast(error instanceof Error ? error.message : '暂停请求失败，请重试', 'error') });
+  async function createAndRun(operation: 'generate' | 'import', payload: object, signal: AbortSignal) {
+    setActiveJobId(null);
+    const job = await api.createWorldJob(operation, payload, signal);
+    setActiveJobId(job.id);
+    const outcome = await api.runWorldJob(job.id, signal);
+    if (outcome.status === 'paused') setGenerationNotice('已暂停，完成的步骤已保存。可在生成记录中继续，不会重做已保存步骤。');
+    return outcome.result;
+  }
+  const resume = useMutation({ mutationFn: (id: number) => runGeneration(async (signal) => {
+    setActiveJobId(id);
+    const outcome = await api.runWorldJob(id, signal);
+    if (outcome.status === 'paused') setGenerationNotice('已暂停，完成的步骤已保存。');
+    return outcome.result;
+  }), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['jobs', 'world'] }); void queryClient.invalidateQueries({ queryKey: ['world-templates'] }); }, onError: generationError });
+
   const generateWorldMutation = useMutation({
     mutationFn: () => {
       if (!generateTheme.trim()) {
         throw new Error('请填写「核心主题」（一句话描述，必填）');
       }
-      return runGeneration((signal) => api.generateWorld({
+      return runGeneration((signal) => createAndRun('generate', {
         character_id: characterId,
         world_type: generateWorldType,
         core_theme: generateTheme,
@@ -286,6 +304,7 @@ export default function WorkbenchPage() {
       }, signal));
     },
     onSuccess: async (payload) => {
+      if (!payload) return;
       setGeneratedWorld(payload);
       await queryClient.invalidateQueries({ queryKey: ['jobs', 'world'] });
       if (payload.saved_template) await queryClient.invalidateQueries({ queryKey: ['world-templates'] });
@@ -302,7 +321,7 @@ export default function WorkbenchPage() {
       if (!importSourceText.trim()) {
         throw new Error('请粘贴「世界设定原文」（必填）');
       }
-      return runGeneration((signal) => api.importWorld({
+      return runGeneration((signal) => createAndRun('import', {
         character_id: characterId,
         source_text: importSourceText,
         source_filename: importSourceFilename,
@@ -311,6 +330,7 @@ export default function WorkbenchPage() {
       }, signal));
     },
     onSuccess: async (payload) => {
+      if (!payload) return;
       setImportedWorld(payload);
       await queryClient.invalidateQueries({ queryKey: ['jobs', 'world'] });
       if (payload.saved_template) await queryClient.invalidateQueries({ queryKey: ['world-templates'] });
@@ -559,9 +579,13 @@ export default function WorkbenchPage() {
       </div>
 
       {draftError && <p className="inline-query-error" role="alert">{draftError}</p>}
-      {generationNotice && <p className="hint" role="status">{generationNotice}</p>}
-      {generationActive && <div className="page-card world-generation-progress" role="status"><div><strong>正在构建世界设定</strong><p className="hint">停止会取消当前请求；完整结果会保留在生成记录中。</p></div><button type="button" className="btn btn-ghost" onClick={() => requestController.current?.abort()}>停止生成</button></div>}
-      {activeTab === 'history' && <WorldJobHistory onManage={(result) => { void manageSavedWorld(result); }} />}
+      {generationNotice && <div className="hint" role="status">{generationNotice} <button type="button" className="btn btn-ghost btn-sm" onClick={() => setActiveTab('history')}>查看生成记录</button></div>}
+      {generationActive && <div className="page-card world-generation-progress" role="status"><div><strong>{progress.data?.status === 'pause_requested' ? '正在暂停…' : '正在构建世界设定'}</strong><p className="hint">已保存 {progress.data?.completed_steps || 0} 个步骤{progress.data?.stage_label ? ` · ${progress.data.stage_label}` : ''}。暂停会在当前步骤保存后生效。</p></div><div className="button-row">
+        <button type="button" className="btn btn-primary" disabled={!activeJobId || pause.isPending || progress.data?.status !== 'running'} onClick={() => pause.mutate()}>暂停生成</button>
+        <button type="button" className="btn btn-ghost" onClick={() => requestController.current?.abort()}>停止生成</button></div></div>}
+      {generationActive && progress.isError && <InlineQueryError message="进度读取失败，生成请求仍在进行" error={progress.error} onRetry={() => void progress.refetch()} />}
+      {activeTab === 'history' && <WorldJobHistory onManage={(result) => { void manageSavedWorld(result); }} onResume={(id) => resume.mutate(id)} generationActive={generationActive} />}
+
 
       {/* ==================== 快速创建世界 ==================== */}
       {activeTab === 'create' && (

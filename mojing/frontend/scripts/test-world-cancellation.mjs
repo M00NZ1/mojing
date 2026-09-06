@@ -37,12 +37,19 @@ try {
     await context.route('http://127.0.0.1:18001/api/**', async (route) => {
       const endpoint = new URL(route.request().url()).pathname.replace('/api', '');
       let data = [];
-      if (['/worlds/generate', '/worlds/import'].includes(endpoint)) {
+      if (endpoint === '/jobs/world-request') data = { id: 1, status: 'pending' };
+      else if (endpoint.endsWith('/world-progress')) data = { status: 'running', completed_steps: 0 };
+      else if (endpoint.endsWith('/run-world')) {
         await new Promise((resolve) => pending.push(resolve));
-        data = result;
+        data = { status: 'succeeded', result };
       } else if (endpoint === '/jobs/world-history') data = { items: [], next_cursor: null };
       try { await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) }); } catch { /* explicitly aborted request */ }
     });
+    const waitForPending = async () => {
+      const deadline = Date.now() + 5000;
+      while (!pending.length && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.ok(pending.length, 'run request must exist before testing cancellation');
+    };
     const page = await context.newPage();
     page.on('pageerror', (error) => errors.push(error.message));
     page.on('requestfailed', (request) => failed.push(request.url()));
@@ -52,21 +59,23 @@ try {
     const start = () => page.getByRole('button', { name: '生成世界设定', exact: true }).filter({ visible: true }).click();
     await start();
     await page.getByRole('button', { name: '停止生成', exact: true }).waitFor();
+    await waitForPending();
     if (output) await page.screenshot({ path: path.join(output, `world-cancel-${width}.png`), fullPage: true });
     await page.getByRole('button', { name: '生成记录', exact: true }).click();
     await page.getByRole('dialog').waitFor();
     await page.getByRole('button', { name: '继续生成', exact: true }).click();
     assert.ok(!page.url().includes('history'));
-    assert.ok(!failed.some((url) => url.endsWith('/worlds/generate')), failed.join('\n'));
+    assert.ok(!failed.some((url) => url.endsWith('/run-world')), failed.join('\n'));
     await page.getByRole('button', { name: '停止生成', exact: true }).click();
     await page.getByText('已停止本次请求。', { exact: false }).waitFor();
-    assert.ok(failed.some((url) => url.endsWith('/worlds/generate')));
+    assert.ok(failed.some((url) => url.endsWith('/run-world')));
     pending.shift()();
     await page.reload();
     await theme.waitFor();
     assert.equal(await theme.inputValue(), '雾港灯塔中的失踪案');
     await start();
     await page.getByRole('button', { name: '停止生成', exact: true }).waitFor();
+    await waitForPending();
     await page.getByRole('button', { name: '生成记录', exact: true }).click();
     await page.getByRole('button', { name: '停止并离开', exact: true }).click();
     await page.getByRole('heading', { name: '还没有生成记录' }).waitFor();
@@ -74,6 +83,7 @@ try {
     await page.getByRole('button', { name: '生成世界', exact: true }).click();
     await start();
     await page.getByRole('button', { name: '停止生成', exact: true }).waitFor();
+    await waitForPending();
     await page.getByRole('button', { name: '生成记录', exact: true }).click();
     await page.getByRole('dialog').waitFor();
     pending.shift()();
@@ -85,6 +95,7 @@ try {
     const longDraft = '完整原始设定，不可截断。'.repeat(10000);
     await source.fill(longDraft);
     await page.getByRole('button', { name: '整理世界设定', exact: true }).filter({ visible: true }).click();
+    await waitForPending();
     await page.getByRole('button', { name: '停止生成', exact: true }).click();
     await page.getByText('已停止本次请求。', { exact: false }).waitFor();
     pending.shift()();
