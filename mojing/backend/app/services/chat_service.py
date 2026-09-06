@@ -773,17 +773,18 @@ def search_session_messages(
     query = keyword.strip()
     if not query:
         return []
-    like_value = f"%{query}%"
+    escaped_query = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    like_value = f"%{escaped_query}%"
     rows = list(
         db.scalars(
             select(MessageModel)
             .options(joinedload(MessageModel.character))
             .where(
                 MessageModel.session_id == session_id,
-                MessageModel.content.ilike(like_value),
+                MessageModel.content.ilike(like_value, escape="\\"),
                 _visibility_clause(context, MessageModel),
             )
-            .order_by(MessageModel.created_at.desc())
+            .order_by(MessageModel.id.desc())
             .limit(min(max(limit, 1), 100))
         )
     )

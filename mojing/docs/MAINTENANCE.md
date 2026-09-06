@@ -280,3 +280,39 @@ node scripts/test-world-transfer.mjs
 - 暂停/续跑不保存 Key 或客户端；一次执行固定解析后的线路，下一次继续使用当前配置。在线错误保留失败与检查点，不静默回退成本地骨架。列表 SQL 排除原始输入和中间正文，运行或恢复步骤时才按需读取。
 - 回滚前先暂停并等待当前步骤保存。旧代码仍能读取已完成世界，但不具备新检查点控制；保留 JobRun 和锁目录，重新升级可继续。无需删除数据库或用户文件。
 - 验证入口：`pytest tests/test_world_checkpoints.py tests/test_world_cancellation.py tests/test_world_job_results.py tests/test_world_package_atomicity.py`；frontend `tsc --noEmit`、`node scripts/test-world-checkpoints.mjs`（独立端口 15181）、`node scripts/test-world-cancellation.mjs`。SQLite、HTTP、模拟在线调用及 Windows 子进程锁回归使用隔离数据；浏览器使用模拟 API。真实供应商时延、完整本机服务联调与非 Windows 文件锁未验证。
+
+
+## 17. Web 大型历史搜索
+
+- 新 API 为 `GET /sessions/{id}/messages/search-page`：`q` 最多 256 字符，`before` 为消息 ID 游标，默认 25 条、最多 100 条；返回 `items / next_cursor / index`。`advance_index=false` 仅查询已整理部分。分页查询依赖当前分支可见性，旧 API 保持列表契约并修复 `%`、`_` 的误匹配；旧客户端仍使用 LIKE 扫描。
+- 索引格式为 v1：`mojing_message_search_meta` 保存版本，`mojing_message_search_state` 保存每会话回查游标，`mojing_message_search_pending` 保存事务内消息变更，`mojing_message_search_fts` 为派生 FTS5 表。原消息表不增删字段，不改原文和交换格式。未知版本先拒绝，不覆盖现有索引。
+- 索引使用 Unicode casefold 后的单字、双字编码和会话标记；FTS 筛选后以当前原文子串复核，防止不连续字组误命中。按 FTS rowid 倒序消费命中，避免常见词结果全量排序；按 ID 查询当前原文，编辑前的候选不能显示成旧结果。
+- 首次查询惰性创建派生表与原生 SQL 触发器，仅整理所查询会话：从最近历史开始，每次最多 200 条旧消息和 200 条变更。回查、变更处理及游标一起提交，异常全部回滚；重进从已提交位置继续。前端每批响应后按短间隔请求下一批，错误停止自动请求，暂停或关闭不再启动后续批次；已经开始的一批允许完成。未整理完不显示为“全库无匹配”，也不开放更早结果翻页。
+- 原文的新增、编辑、删除、ID/会话变化只写本机变更表，不在原文事务中执行分词或 FTS 写入。旧程序和普通 SQLite 连接无需注册 Python 函数即可继续写原文。索引缺失或捕获触发器缺失时重置回查状态；搜索维护入口事务性重建所有会话的派生索引，再按需分批回查。失败保留原文，可修正故障后重试，禁止删除原数据库。
+- SQLite 需具备 FTS5。3.43+ 使用 contentless-delete 模式，不重复存储编码词正文；较旧运行时使用存词表模式。两种存储分支均在当前 SQLite 上做正确性测试；没有用真实旧 SQLite 运行时验证降级。整库 SQLite 快照包含索引和变更状态；读取副本和批量恢复后的再次搜索有隔离测试。跨端只交换原数据，Android 不读取此派生表。
+- 回退 Web 代码不会改变原消息，原生触发器仍记录变化，重新升级可继续处理。若需要显式停用本批捕获，可在停止应用并保留一致性数据库副本后，使用当前版本的 `disable_message_search_triggers_for_downgrade(db)`；该函数只删除三条本批触发器并重置派生游标。其原文保护与重新升级回查已有测试，正常回退不要求执行。不要删除数据库或手工清空原消息。
+
+定向验证（产品根；不打包）：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_message_search_index.py tests/test_message_pagination.py tests/test_branch_context.py tests/test_project_backup.py -q
+.\.venv\Scripts\python.exe scripts/benchmark_message_search.py
+# frontend 目录
+.\node_modules\.bin\tsc.cmd --noEmit
+node scripts/test-message-search.mjs
+```
+
+浏览器脚本使用既有 Playwright 环境变量和独立端口 15182，阻止外部请求、模拟 API，只关闭自己的 Vite/Chrome。桌面 1365×900 / 窄屏 390×844 下验证结果三页、索引暂停/继续、失败重试、过期查询、旧消息定位及回到最新；6,000 条模拟历史只返回最大 41 条窗口，实际消息节点 11–18 个。不是完整 Backend 联调、系统键盘或真机证据。
+
+性能基线（2026-09-07，本机 Windows、Python 3.14.5、SQLite 3.50.4）：隔离 SQLite 样本为 6,000 条重复与变化混合的中文 RP 文本、1,432,911 字符，缓存的 cl100k_base 实际计数 1,805,022 Token；脚本禁止自动下载分词器。查询为同一连接运行七次的中位数，不是冷启动或端到端时间。
+
+| 项目 | 本次样本结果 |
+| --- | ---: |
+| 低频短语 LIKE 扫描 / FTS 查询 | 10.35 / 1.56 ms |
+| 常见词 FTS 查询 | 1.53 ms |
+| 最近 40 条 / 旧消息附近窗口 | 1.13 / 2.04 ms |
+| 首次索引总量 | 31 批，939.79 ms |
+| 单批中位 / 最大 | 29.77 / 45.92 ms |
+| 数据库索引前 / 后 | 6,000,640 / 8,003,584 字节 |
+
+查询计划确认 FTS 候选与消息主键读取，无临时结果排序。体积和延迟依赖文本重复程度、设备与数据分布；尚未覆盖极长单条正文、多会话/多分支压力、冷启动、并发写入时延、图片动态高度、内存峰值及真实模型继续生成，不能据此宣称全部百万级流程均已验收。

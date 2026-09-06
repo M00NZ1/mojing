@@ -423,6 +423,32 @@ def swipe_message(session_id: int, message_id: int):
     )
 
 
+@router.get("/{session_id}/messages/search-page")
+def search_message_results(session_id: int, q: str = "", before: int | None = None, limit: int = 25,
+                           branch_id: str = "main", advance_index: bool = True, db: Session = Depends(get_db)):
+    from ..services.message_search_service import search_message_page
+    if db.get(ChatSessionModel, session_id) is None:
+        raise HTTPException(404, "会话不存在")
+    try:
+        return search_message_page(db, session_id, q, branch_id, before, limit, advance_index)
+    except BranchContextError as exc:
+        _raise_branch_http_error(exc)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/{session_id}/messages/search-index/rebuild")
+def rebuild_message_search(session_id: int, db: Session = Depends(get_db)):
+    from ..services.message_search_service import rebuild_message_search_index
+    if db.get(ChatSessionModel, session_id) is None:
+        raise HTTPException(404, "会话不存在")
+    try:
+        rebuild_message_search_index(db)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"ok": True}
+
+
 @router.get("/{session_id}/messages/search", response_model=list[MessageSearchHitRead])
 def search_messages(session_id: int, q: str = "", limit: int = 40, branch_id: str = "main", db: Session = Depends(get_db)):
     session = db.get(ChatSessionModel, session_id)

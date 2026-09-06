@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import { useBeforeUnload, useBlocker, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
@@ -14,6 +14,7 @@ import EditMessageModal from '../components/EditMessageModal';
 import MessageList from '../components/MessageList';
 import SettingConflictDialog from '../components/SettingConflictDialog';
 import UiIcon from '../components/UiIcon';
+import MessageSearchPanel from '../components/MessageSearchPanel';
 import { useSessionMessages } from '../hooks/useSessionMessages';
 import { useSessionWorld } from '../hooks/useSessionWorld';
 import { useSpeakerPlan } from '../hooks/useSpeakerPlan';
@@ -638,14 +639,6 @@ export default function ChatPage() {
     if (!last) return `n:${flatMessages.length}:g:${isGenerating ? 1 : 0}`;
     return `id:${last.id}:len:${(last.content ?? '').length}:g:${isGenerating ? 1 : 0}`;
   }, [flatMessages, isGenerating]);
-
-  const deferredSessionSearch = useDeferredValue(sessionSearchDraft.trim());
-  const sessionMessageSearchQuery = useQuery({
-    queryKey: ['session-message-search', sessionId, selectedBranchId, deferredSessionSearch],
-    queryFn: () => api.searchMessages(sessionId, deferredSessionSearch, 25, selectedBranchId),
-    enabled: Number.isFinite(sessionId) && deferredSessionSearch.length >= 1,
-    staleTime: 5000,
-  });
 
   useEffect(() => {
     setMessageFocusRequest(null);
@@ -1619,92 +1612,8 @@ export default function ChatPage() {
           </div>
         )}
 
-        <div style={{ padding: '0 12px 8px', flexShrink: 0 }}>
-          <input
-            ref={sessionSearchInputRef}
-            type="search"
-            className="chat-message-search"
-            placeholder="搜索当前故事线的消息"
-            value={sessionSearchDraft}
-            onChange={(e) => setSessionSearchDraft(e.target.value)}
-            autoComplete="off"
-            style={{
-              width: '100%',
-              boxSizing: 'border-box',
-              padding: '8px 10px',
-              borderRadius: 8,
-              border: '1px solid var(--border)',
-              background: 'var(--surface)',
-              color: 'var(--text)',
-              fontSize: '0.9rem',
-            }}
-          />
-          {deferredSessionSearch.length >= 1 &&
-            (sessionMessageSearchQuery.isPending ||
-              sessionMessageSearchQuery.isSuccess ||
-              sessionMessageSearchQuery.isError) && (
-            <ul
-              style={{
-                listStyle: 'none',
-                margin: '6px 0 0',
-                padding: 0,
-                maxHeight: 168,
-                overflowY: 'auto',
-                borderRadius: 8,
-                border: '1px solid var(--border)',
-                background: 'var(--surface)',
-              }}
-            >
-              {sessionMessageSearchQuery.isPending && (
-                <li style={{ padding: '8px 10px', color: 'var(--text-2)', fontSize: '0.85rem' }}>搜索中…</li>
-              )}
-              {sessionMessageSearchQuery.isError && (
-                <li style={{ padding: '8px 10px', color: 'var(--danger)', fontSize: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                  <span>搜索失败</span>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    disabled={sessionMessageSearchQuery.isFetching}
-                    onClick={() => { void sessionMessageSearchQuery.refetch(); }}
-                  >
-                    {sessionMessageSearchQuery.isFetching ? '重试中…' : '重试'}
-                  </button>
-                </li>
-              )}
-              {sessionMessageSearchQuery.isSuccess && sessionMessageSearchQuery.data.length === 0 && (
-                <li style={{ padding: '8px 10px', color: 'var(--text-2)', fontSize: '0.85rem' }}>无匹配消息</li>
-              )}
-              {sessionMessageSearchQuery.isSuccess &&
-                sessionMessageSearchQuery.data.map((hit) => (
-                  <li key={hit.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <button
-                      type="button"
-                      onClick={() => { void goToSearchHit(hit); }}
-                      disabled={messagesLocating}
-                      style={{
-                        width: '100%',
-                        textAlign: 'left',
-                        padding: '8px 10px',
-                        border: 'none',
-                        background: 'transparent',
-                        color: 'var(--text)',
-                        cursor: 'pointer',
-                        fontSize: '0.82rem',
-                      }}
-                    >
-                      <div style={{ fontWeight: 600, marginBottom: 2 }}>
-                        {locatingMessageId === hit.id ? '正在定位…' : (hit.character_name || hit.speaker_type)}
-                        {hit.branch_id && hit.branch_id !== 'main' ? ` · ${branchLabel(hit.branch_id)}` : ''}
-                      </div>
-                      <div style={{ color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {hit.snippet}
-                      </div>
-                    </button>
-                  </li>
-                ))}
-            </ul>
-          )}
-        </div>
+        <MessageSearchPanel sessionId={sessionId} branchId={selectedBranchId} value={sessionSearchDraft} onChange={setSessionSearchDraft}
+          inputRef={sessionSearchInputRef} onSelect={(hit) => { void goToSearchHit(hit); }} locatingId={locatingMessageId} locating={messagesLocating} branchLabel={branchLabel} />
 
         {showChatMenu && (
           <ChatMenu
