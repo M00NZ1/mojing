@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import JSON, func, select, type_coerce
 from sqlalchemy.orm import Session
 
 from ..models import JobRunModel
@@ -85,12 +85,14 @@ def list_job_runs(
     scope: str | None = None,
     target_id: int | None = None,
     limit: int = 50,
-) -> list[JobRunModel]:
+) -> list[dict]:
     """按范围查询最近任务。"""
 
-    stmt = select(JobRunModel).order_by(JobRunModel.created_at.desc()).limit(min(max(limit, 1), 200))
+    # Preserve the legacy list shape without transferring stored world bodies.
+    columns = [column for column in JobRunModel.__table__.columns if column.name != "output_json"]
+    stmt = select(*columns, type_coerce(func.json_remove(JobRunModel.output_json, "$.world_result"), JSON).label("output_json")).order_by(JobRunModel.id.desc()).limit(min(max(limit, 1), 200))
     if scope:
         stmt = stmt.where(JobRunModel.scope == scope)
     if target_id is not None:
         stmt = stmt.where(JobRunModel.target_id == target_id)
-    return list(db.scalars(stmt))
+    return [dict(row) for row in db.execute(stmt).mappings()]

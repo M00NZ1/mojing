@@ -1,0 +1,26 @@
+.world-history { min-width: 0; }
+.world-history-list { margin-top: 20px; }
+.world-history-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 0; border-bottom: 1px solid var(--line); }
+.world-history-row > div { min-width: 0; }
+.world-history-row h3, .world-history-result h3 { margin: 10px 0 6px; overflow-wrap: anywhere; }
+.world-history-row p { margin: 5px 0; font-size: .8rem; color: var(--text-2); overflow-wrap: anywhere; }
+.world-history-row > button { flex-shrink: 0; }
+.world-job-status { display: inline-block; font-size: .75rem; color: var(--text-2); }
+.world-job-succeeded { color: var(--accent3); }
+.world-job-failed, .world-history-row .world-history-error { color: var(--danger, #e77979); }
+.world-history-pagination { justify-content: space-between; align-items: center; margin-top: 20px; font-size: .8rem; }
+.world-history-empty { padding: 48px 20px; text-align: center; color: var(--text-2); }
+.world-history-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; font-size: .9rem; }
+.world-history-result > h4 { margin: 28px 0 12px; }
+.world-history-result > p { color: var(--text-2); line-height: 1.7; }
+.world-history-lore { border-top: 1px solid var(--line); padding: 14px 0; }
+.world-history-lore summary { cursor: pointer; overflow-wrap: anywhere; }
+.world-history-lore .world-history-body { padding: 14px 0 4px; }
+@media (max-width: 540px) {
+  .world-history-row { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .workbench-layout .creation-workspace-toolbar { flex-wrap: wrap; }
+  .workbench-layout .creation-workspace-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex-basis: 100%; overflow: visible; }
+  .workbench-layout .creation-workspace-tabs .btn { width: auto; min-height: 42px; }
+  .world-history .world-history-pagination { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; }
+  .world-history .world-history-pagination > * { width: auto; }
+}

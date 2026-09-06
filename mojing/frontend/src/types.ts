@@ -475,6 +475,7 @@ export type WorldBuildDebug = {
 };
 
 export type WorldGenerationResult = {
+  job_id?: number | null;
   template: {
     template_id: string;
     label: string;
@@ -657,6 +658,17 @@ export type JobRun = {
   created_at: string;
   updated_at: string;
   started_at: string | null;
+  finished_at: string | null;
+};
+
+export type WorldJobSummary = {
+  id: number;
+  job_type: string;
+  status: string;
+  label: string;
+  error_message: string;
+  result_version: number | null;
+  created_at: string;
   finished_at: string | null;
 };
 

@@ -1,16 +1,16 @@
 import { FormEvent, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useBeforeUnload, useBlocker, useNavigate } from 'react-router-dom';
+import { useBeforeUnload, useBlocker, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { api } from '../api/client';
 import { confirmModal } from '../components/ConfirmModal';
+import WorldJobHistory from '../components/WorldJobHistory';
 import CreationHomeLink from '../components/CreationHomeLink';
 import InlineQueryError from '../components/InlineQueryError';
 import UiIcon from '../components/UiIcon';
 import { useUndoDelete } from '../components/UndoToast';
 import { useToast } from '../hooks/useToast';
 import type {
-  JobRun,
   WorldGenerationResult,
   WorldImportResult,
   WorldLoreEntry,
@@ -85,7 +85,7 @@ function WorldResultCard({
           </button>
         )}
       </div>
-      {!saved && <p className="hint" style={{ marginTop: 8 }}>保存后可在新对话中直接使用这个世界和 Lore 条目。</p>}
+      {!saved && <p className="hint" style={{ marginTop: 8 }}>{result.job_id ? '完整结果已保留在生成记录中，刷新后仍可找回。' : ''}保存后可在新对话中直接使用这个世界和 Lore 条目。</p>}
       <details className="debug-card" style={{ marginTop: 12 }}>
         <summary>查看生成的命名和条目详情</summary>
         <div className="guide-inline" style={{ marginTop: 8 }}>
@@ -114,7 +114,9 @@ export default function WorkbenchPage() {
   const [generateLabel, setGenerateLabel] = useState('');
   const [autoSaveGeneratedWorld, setAutoSaveGeneratedWorld] = useState(false);
   const [generatedWorld, setGeneratedWorld] = useState<WorldGenerationResult | null>(null);
-  const [activeTab, setActiveTab] = useState<'create' | 'import' | 'manage'>('create');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') || 'create';
+  const setActiveTab = (tab: string) => setSearchParams({ tab });
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showManageAdvanced, setShowManageAdvanced] = useState(false);
 
@@ -150,7 +152,6 @@ export default function WorkbenchPage() {
     queryFn: () => api.listWorldTemplates(deferredWorldTemplateSearch),
     placeholderData: keepPreviousData,
   });
-  const jobsQuery = useQuery({ queryKey: ['jobs', 'world'], queryFn: () => api.listJobs('world') });
   const coverAssetsQuery = useQuery({
     queryKey: ['assets', 'world_cover', coverAssetSearch],
     queryFn: () => api.listAssets('world_cover', coverAssetSearch),
@@ -273,15 +274,17 @@ export default function WorkbenchPage() {
   });
 
   const saveWorldResultMutation = useMutation({
-    mutationFn: ({ result }: { kind: 'generated' | 'imported'; result: WorldGenerationResult | WorldImportResult }) =>
-      api.importWorldTemplatePackage({
+    mutationFn: async ({ result }: { kind: 'generated' | 'imported'; result: WorldGenerationResult | WorldImportResult }) => {
+      if (result.job_id) return (await api.saveWorldJobResult(result.job_id)).saved_template!;
+      return api.importWorldTemplatePackage({
         package_json: {
           format_version: 1,
           exported_at: new Date().toISOString(),
           template: result.template,
           lore_entries: result.lore_entries,
         },
-      }),
+      });
+    },
     onSuccess: async (savedTemplate, variables) => {
       const savedResult = { ...variables.result, saved_template: savedTemplate };
       if (variables.kind === 'generated') setGeneratedWorld(savedResult);
@@ -502,9 +505,12 @@ export default function WorkbenchPage() {
             <button type="button" className={`btn ${activeTab === 'manage' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setActiveTab('manage')}>
               <UiIcon name="world" />我的世界
             </button>
+            <button type="button" className={`btn ${activeTab === 'history' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setActiveTab('history')}>生成记录</button>
           </div>
         </div>
       </div>
+
+      {activeTab === 'history' && <WorldJobHistory onManage={(result) => { void manageSavedWorld(result); }} />}
 
       {/* ==================== 快速创建世界 ==================== */}
       {activeTab === 'create' && (
@@ -601,34 +607,7 @@ export default function WorkbenchPage() {
             </div>
           )}
 
-          {/* 历史记录 */}
-          <details className="debug-card" style={{ marginTop: 16 }}>
-            <summary>最近生成记录</summary>
-            <div style={{ marginTop: 8 }}>
-              {((jobsQuery.data ?? []) as JobRun[]).length === 0 ? (
-                <div className="guide-inline">暂无生成记录</div>
-              ) : (
-                <div className="stack-list">
-                  {((jobsQuery.data ?? []) as JobRun[]).slice(0, 10).map((job, idx) => {
-                    const typeMap: Record<string, string> = { 'world_generate': '世界生成', 'world_import': '世界导入' };
-                    const statusMap: Record<string, string> = { 'success': '成功', 'failed': '失败', 'running': '运行中', 'pending': '等待中' };
-                    const statusClass = job.status === 'success' ? 'pill-green' : job.status === 'failed' ? 'pill-red' : '';
-                    const label = (job.output_json?.label as string) || (job.input_json?.label as string) || '';
-                    const displayName = label || `新世界${idx + 1}`;
-                    return (
-                      <div key={job.id} className="mini-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <strong>{typeMap[job.job_type] || job.job_type} · {displayName}</strong>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>{statusMap[job.status] || job.status} · {new Date(job.created_at).toLocaleString('zh-CN')}</div>
-                        </div>
-                        <span className={`pill ${statusClass}`}>{statusMap[job.status] || job.status}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </details>
+          <button type="button" className="btn btn-ghost" onClick={() => setActiveTab('history')}>查看生成记录与已保留结果</button>
         </div>
       )}
 

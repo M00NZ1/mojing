@@ -34,6 +34,7 @@ from ..services.world_package_service import (
     preview_world_template_bundle_import,
     write_world_template_bundle_file,
     write_world_template_package_file)
+from ..services.world_job_service import complete_world_job, save_world_job_result
 from ..services.world_building_service import generate_world_package, import_world_package, review_world_package
 
 
@@ -332,22 +333,20 @@ def generate_world(payload: WorldGenerationRequest, db: Session = Depends(get_db
         })
     mark_job_running(db, job.id)
     try:
-        result = generate_world_package(db, payload)
-        mark_job_succeeded(
-            db,
-            job.id,
-            {
-                "template_id": result.template.template_id,
-                "category": result.template.category,
-                "quality_score": result.quality_report.score,
-            })
-        return result
+        result = generate_world_package(db, payload.model_copy(update={"auto_save": False}))
+        complete_world_job(db, job.id, result)
     except ValueError as exc:
+        db.rollback()
         mark_job_failed(db, job.id, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        db.rollback()
         mark_job_failed(db, job.id, str(exc))
         raise
+    if payload.auto_save:
+        db.rollback()
+        return save_world_job_result(db, result.job_id)
+    return result
 
 
 @router.post("/import", summary="导入世界设定", response_model=WorldImportResponse)
@@ -363,20 +362,17 @@ def import_world(payload: WorldImportRequest, db: Session = Depends(get_db)):
         })
     mark_job_running(db, job.id)
     try:
-        result = import_world_package(db, payload)
-        mark_job_succeeded(
-            db,
-            job.id,
-            {
-                "template_id": result.template.template_id,
-                "category": result.template.category,
-                "quality_score": result.quality_report.score,
-                "chunk_count": result.debug.chunk_count if result.debug else 1,
-            })
-        return result
+        result = import_world_package(db, payload.model_copy(update={"auto_save": False}))
+        complete_world_job(db, job.id, result)
     except ValueError as exc:
+        db.rollback()
         mark_job_failed(db, job.id, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        db.rollback()
         mark_job_failed(db, job.id, str(exc))
         raise
+    if payload.auto_save:
+        db.rollback()
+        return save_world_job_result(db, result.job_id)
+    return result

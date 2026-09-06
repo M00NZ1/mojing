@@ -12,6 +12,7 @@ import type {
   EncyclopediaEntry,
   EncyclopediaEntryDetail,
   JobRun,
+  WorldJobSummary,
   MacroItem,
   MemoryCorrection,
   MemorySegment,
@@ -1126,6 +1127,11 @@ export const api = {
     if (typeof targetId === 'number') search.set('target_id', String(targetId));
     return request<JobRun[]>(`/jobs?${search.toString()}`);
   },
+  worldJobHistory(beforeId?: number) {
+    return request<{ items: WorldJobSummary[]; next_cursor: number | null }>(`/jobs/world-history${beforeId ? `?before_id=${beforeId}` : ''}`);
+  },
+  worldJobResult(jobId: number) { return request<WorldGenerationResult>(`/jobs/${jobId}/world-result`); },
+  saveWorldJobResult(jobId: number) { return request<WorldGenerationResult>(`/jobs/${jobId}/save-world`, { method: 'POST' }); },
   async createUserMessageWithFiles(sessionId: number, payload: { content: string; files: File[]; branch_id?: string }, signal?: AbortSignal) {
     const formData = new FormData();
     formData.append('content', payload.content);

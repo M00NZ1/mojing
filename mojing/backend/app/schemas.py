@@ -638,6 +638,7 @@ class WorldBuildDebugRead(BaseModel):
 
 
 class WorldGenerationResponse(BaseModel):
+    job_id: int | None = None
     template: WorldTemplateCreate
     lore_entries: list[WorldLoreEntryCreate] = []
     names: GeneratedNamePack = GeneratedNamePack()
@@ -647,6 +648,7 @@ class WorldGenerationResponse(BaseModel):
 
 
 class WorldImportResponse(BaseModel):
+    job_id: int | None = None
     template: WorldTemplateCreate
     lore_entries: list[WorldLoreEntryCreate] = []
     names: GeneratedNamePack = GeneratedNamePack()
