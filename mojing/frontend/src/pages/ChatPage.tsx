@@ -20,7 +20,7 @@ import { useSessionWorld } from '../hooks/useSessionWorld';
 import { useSpeakerPlan } from '../hooks/useSpeakerPlan';
 import { useToast } from '../hooks/useToast';
 import { COMPACT_LAYOUT_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
-import { useUndoDelete } from '../components/UndoToast';
+import DeleteMessageDialog from '../components/DeleteMessageDialog';
 import { friendlyFetchError } from '../utils/userFacingError';
 import { extractChoicesFromMessage, mergeRoundChoices, stripChoicesFromMessageContent } from '../utils/chatChoiceParsing';
 import { getRegenerationBranchPoint } from '../utils/chatBranching';
@@ -184,12 +184,18 @@ export default function ChatPage() {
   const quickActionRequestRef = useRef(0);
   const settingConflictReturnFocusRef = useRef<HTMLElement | null>(null);
   const { showToast } = useToast();
-  const { triggerDelete, UndoToast } = useUndoDelete();
+  const [deleteTarget, setDeleteTarget] = useState<{ sessionId: number; branchId: string; message: Message } | null>(null);
   const isCompactLayout = useMediaQuery(COMPACT_LAYOUT_QUERY);
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
 
+  useEffect(() => { setDeleteTarget(null); }, [sessionId, selectedBranchId]);
+
   function reserveGeneration(showBusyMessage = true) {
+    if (deleteTarget && deleteTarget.sessionId === sessionId && deleteTarget.branchId === selectedBranchRef.current) {
+      if (showBusyMessage) showToast('请先完成或关闭删除窗口', 'warn');
+      return false;
+    }
     if (modelChoiceBusyRef.current.sessionId !== sessionId || modelChoiceBusyRef.current.busy) {
       if (showBusyMessage) showToast('模型配置尚未就绪，请在模型选择中等待或重试', 'warn');
       return false;
@@ -849,16 +855,19 @@ export default function ChatPage() {
     }
   }
 
-  const deleteMessageMutation = useMutation({
-    mutationFn: (messageId: number) => api.deleteMessage(sessionId, messageId),
-    onSuccess: () => {
-      showToast('消息已删除', 'success');
-      reloadMessages();
-      queryClient.invalidateQueries({ queryKey: ['session-branches', sessionId] });
-      queryClient.invalidateQueries({ queryKey: ['sessions'] });
-    },
-    onError: (error) => showToast(toastErrorMessage(error), 'error'),
-  });
+  async function finishMessageDeletion() {
+    if (!deleteTarget) return;
+    const { sessionId: ownerSession, branchId: ownerBranch, message } = deleteTarget;
+    const neighbors = flatMessages.filter((item) => item.id !== message.id);
+    const neighbor = [...neighbors].reverse().find((item) => item.id < message.id) ?? neighbors[0];
+    setDeleteTarget((current) => current === deleteTarget ? null : current);
+    if (sessionIdRef.current !== ownerSession || selectedBranchRef.current !== ownerBranch) return;
+    showToast('消息已删除', 'success');
+    try {
+      if (neighbor && await loadAroundMessage(neighbor.id)) { focusMessage(neighbor.id); return; }
+    } catch { /* Fall back to the existing retryable first-page loader. */ }
+    if (sessionIdRef.current === ownerSession && selectedBranchRef.current === ownerBranch) await reloadMessages();
+  }
 
   const editMessageMutation = useMutation({
     mutationFn: ({ messageId, content, branchId }: { messageId: number; content: string; branchId: string }) =>
@@ -1718,7 +1727,10 @@ export default function ChatPage() {
           onRegenerateBranch={handleRegenerateFromMessage}
           showPromptDebug={showPromptDebug}
           onBookmarkMessage={(message) => bookmarkMutation.mutate(message)}
-          onDeleteMessage={(message) => { triggerDelete('消息', () => deleteMessageMutation.mutate(message.id)); }}
+          onDeleteMessage={(message) => {
+            if (generationGateRef.current) { showToast('请先停止或等待当前回复完成，再删除消息', 'warn'); return; }
+            setDeleteTarget({ sessionId, branchId: selectedBranchId, message });
+          }}
           onEditMessage={(message) => {
             const visibleContent = stripChoicesFromMessageContent(message.content);
             if (!visibleContent.trim()) {
@@ -1888,7 +1900,9 @@ export default function ChatPage() {
           onOpenEntry={openConflictEntry}
         />
       )}
-    {UndoToast}
+    {deleteTarget && deleteTarget.sessionId === sessionId && deleteTarget.branchId === selectedBranchId && <DeleteMessageDialog
+      key={`${deleteTarget.sessionId}:${deleteTarget.branchId}:${deleteTarget.message.id}`} sessionId={deleteTarget.sessionId} branchId={deleteTarget.branchId}
+      message={deleteTarget.message} onClose={() => setDeleteTarget(null)} onDeleted={() => { void finishMessageDeletion(); }} />}
     </section>
   );
 }

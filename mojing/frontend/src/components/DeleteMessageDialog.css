@@ -1,0 +1,12 @@
+.delete-message-dialog { width: min(520px, calc(100vw - 32px)); box-sizing: border-box; max-height: calc(100dvh - 32px); overflow: auto; margin: auto; padding: 24px; border: 1px solid var(--line); border-radius: 16px; background: var(--bg-2); color: var(--text); box-shadow: 0 18px 64px #0005; }
+.delete-message-dialog::backdrop { background: #0008; }
+.delete-message-dialog h2 { font-size: 1.15rem; margin: 0 0 20px; }
+.delete-message-dialog p, .delete-message-dialog li { color: var(--text-2); line-height: 1.7; overflow-wrap: anywhere; }
+.delete-message-dialog blockquote { max-height: 130px; overflow: auto; margin: 0 0 20px; padding: 12px; border-left: 3px solid var(--line); background: var(--surface); white-space: pre-wrap; overflow-wrap: anywhere; font-size: .9rem; }
+.delete-message-references { padding: 14px; border: 1px solid var(--line); border-radius: 10px; }
+.delete-message-references ul { margin: 8px 0 0; padding-left: 20px; }
+.delete-message-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
+.delete-message-actions button { min-height: 44px; }
+
+.delete-message-dialog p, .delete-message-dialog li, .delete-message-dialog blockquote { font-weight: 400; }
+.delete-message-actions button:disabled { opacity: .45; cursor: not-allowed; }

@@ -12,6 +12,7 @@ from starlette.background import BackgroundTask
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
+from ..services.message_deletion_service import begin_storyline_write, deletion_impact, remove_unreferenced_message
 from ..database import get_db
 from ..config import STORAGE_DIR
 from ..models import (
@@ -341,6 +342,7 @@ def get_message_window(
 
 @router.put("/{session_id}/messages/{message_id}", summary="编辑消息并创建剧情分支", response_model=MessageRead)
 def update_message(session_id: int, message_id: int, payload: SessionMessageEdit, db: Session = Depends(get_db)):
+    begin_storyline_write(db)
     session = db.get(ChatSessionModel, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="会话不存在")
@@ -399,17 +401,32 @@ def update_message(session_id: int, message_id: int, payload: SessionMessageEdit
     return serialize_message(replacement)
 
 
-@router.delete("/{session_id}/messages/{message_id}", summary="删除消息")
-def delete_message(session_id: int, message_id: int, db: Session = Depends(get_db)):
-    message = db.scalar(
-        select(MessageModel).where(
-            MessageModel.id == message_id,
-            MessageModel.session_id == session_id)
-    )
+def _message_for_deletion(db: Session, session_id: int, message_id: int, branch_id: str | None):
+    if branch_id is not None:
+        try:
+            message = get_visible_message(db, session_id, message_id, branch_id)
+        except BranchContextError as exc:
+            _raise_branch_http_error(exc)
+    else:
+        message = db.scalar(select(MessageModel).where(MessageModel.id == message_id, MessageModel.session_id == session_id))
     if message is None:
-        raise HTTPException(status_code=404, detail="消息不存在")
-    db.delete(message)
-    db.commit()
+        raise HTTPException(status_code=404, detail="消息不存在或不在当前故事线中")
+    return message
+
+
+@router.get("/{session_id}/messages/{message_id}/deletion-impact")
+def preview_message_deletion(session_id: int, message_id: int, branch_id: str = "main", db: Session = Depends(get_db)):
+    return deletion_impact(db, _message_for_deletion(db, session_id, message_id, branch_id))
+
+
+@router.delete("/{session_id}/messages/{message_id}", summary="删除未被故事线起点引用的消息")
+def delete_message(session_id: int, message_id: int, db: Session = Depends(get_db), branch_id: str | None = None):
+    begin_storyline_write(db)
+    message = _message_for_deletion(db, session_id, message_id, branch_id)
+    impact = remove_unreferenced_message(db, message)
+    if not impact['can_delete']:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=impact['reason'])
     return {"ok": True}
 
 
@@ -553,6 +570,7 @@ def list_session_branches(session_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{session_id}/branches", summary="创建分支", response_model=SessionBranchRead)
 def create_session_branch(session_id: int, payload: SessionBranchCreate, db: Session = Depends(get_db)):
+    begin_storyline_write(db)
     session = db.get(ChatSessionModel, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="会话不存在")
@@ -598,6 +616,7 @@ def create_session_branch(session_id: int, payload: SessionBranchCreate, db: Ses
 @router.post("/{session_id}/checkpoint")
 def create_checkpoint(session_id: int, payload: dict, db: Session = Depends(get_db)):
     """创建命名检查点。在最近消息处创建一个标记为 checkponit 的分支。"""
+    begin_storyline_write(db)
     session = db.get(ChatSessionModel, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="会话不存在")

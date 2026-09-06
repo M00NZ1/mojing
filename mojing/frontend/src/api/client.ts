@@ -418,8 +418,12 @@ export const api = {
       body: JSON.stringify({ content, branch_id: branchId }),
     });
   },
-  deleteMessage(sessionId: number, messageId: number) {
-    return request<{ ok: boolean }>(`/sessions/${sessionId}/messages/${messageId}`, {
+  messageDeletionImpact(sessionId: number, messageId: number, branchId: string, signal?: AbortSignal) {
+    return request<{ can_delete: boolean; reason: string; reference_count: number; branches: { branch_id: string; label: string; is_checkpoint: boolean }[] }>(`/sessions/${sessionId}/messages/${messageId}/deletion-impact?branch_id=${encodeURIComponent(branchId)}`, { signal });
+  },
+  deleteMessage(sessionId: number, messageId: number, branchId?: string) {
+    const suffix = branchId === undefined ? '' : `?branch_id=${encodeURIComponent(branchId)}`;
+    return request<{ ok: boolean }>(`/sessions/${sessionId}/messages/${messageId}${suffix}`, {
       method: 'DELETE',
     });
   },
