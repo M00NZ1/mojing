@@ -32,7 +32,7 @@ def build_portable_payload(
         "persona_prompt": character.persona_prompt or "",
         "model_name": character.model_name or "",
         "api_base_url": character.api_base_url or "",
-        "temperature": float(character.temperature or 0.9),
+        "temperature": float(character.temperature if character.temperature is not None else 0.9),
         "max_tokens": int(character.max_tokens or 1200),
         "avatar_color": character.avatar_color or "",
         "notes": "导入后请在人物中自行填写 API Key；本包不含任何密钥。",
@@ -48,7 +48,7 @@ def build_portable_payload(
 
 
 def portable_to_txt(payload: dict[str, Any]) -> str:
-    meta = {k: v for k, v in payload.items() if k not in ("persona_prompt", "profile")}
+    meta = {k: v for k, v in payload.items() if k != "persona_prompt"}
     head = json.dumps(meta, ensure_ascii=False, indent=2)
     persona = payload.get("persona_prompt") or ""
     return f"{TXT_HEADER}\n{head}{TXT_SEP}{persona}"

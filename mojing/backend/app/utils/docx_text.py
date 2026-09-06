@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import io
-import re
 import zipfile
+from xml.etree import ElementTree
 
 
 def extract_docx_plain_text(file_bytes: bytes) -> str:
@@ -19,7 +19,26 @@ def extract_docx_plain_text(file_bytes: bytes) -> str:
             xml = zf.read("word/document.xml").decode("utf-8", errors="replace")
     except zipfile.BadZipFile as exc:
         raise ValueError("ZIP 损坏或不是 docx") from exc
-    parts = re.findall(r"<w:t[^>]*>([^<]*)</w:t>", xml)
+    try:
+        root = ElementTree.fromstring(xml)
+    except ElementTree.ParseError as exc:
+        raise ValueError("DOCX 正文 XML 损坏") from exc
+    namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    parts = []
+    # Word splits a paragraph into formatting runs; runs join, paragraphs do not.
+    def read(node):
+        if node.tag == namespace + "t":
+            parts.append(node.text or "")
+        elif node.tag == namespace + "tab":
+            parts.append("\t")
+        elif node.tag in (namespace + "br", namespace + "cr"):
+            parts.append("\n")
+        else:
+            for child in node:
+                read(child)
+            if node.tag == namespace + "p":
+                parts.append("\n")
+    read(root)
     text = "".join(parts)
     text = text.replace("\u000b", " ").strip()
     return text

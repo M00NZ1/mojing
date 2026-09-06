@@ -6,6 +6,7 @@ import { api } from '../api/client';
 import { ApiProbePanel } from '../components/ApiProbePanel';
 import AiCompleteButton from '../components/AiCompleteButton';
 import { confirmModal } from '../components/ConfirmModal';
+import CharacterImportDialog from '../components/CharacterImportDialog';
 import CreationHomeLink from '../components/CreationHomeLink';
 import InlineQueryError from '../components/InlineQueryError';
 import MacroSelector from '../components/MacroSelector';
@@ -76,7 +77,9 @@ export default function CharactersPage() {
   const audioChunksRef = useRef<Blob[]>([]);
   const [sourceFilename, setSourceFilename] = useState('persona.txt');
   const [sourceText, setSourceText] = useState('');
-  const [importUrlInput, setImportUrlInput] = useState('');
+  const [importOpen, setImportOpen] = useState(false);
+  const [revealId, setRevealId] = useState<number | null>(null);
+  const libraryRef = useRef<HTMLDivElement>(null);
   const [assetSearch, setAssetSearch] = useState('');
   const [voiceMode, setVoiceMode] = useState<'builtin' | 'clone' | 'external'>('builtin');
   const [sidebarLayout, setSidebarLayout] = useState<'list' | 'grid'>(() => {
@@ -269,10 +272,17 @@ export default function CharactersPage() {
   });
 
   const filteredCharacters = useMemo(() => {
-    const data = charactersQuery.data ?? [];
+    const data = [...(charactersQuery.data ?? [])].sort((a, b) =>
+      Number(b.favorite) - Number(a.favorite) || Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id);
     if (!searchText.trim()) return data;
     return data.filter((c) => c.name.includes(searchText) || c.model_name?.includes(searchText));
   }, [charactersQuery.data, searchText]);
+
+  useEffect(() => {
+    if (!revealId || (isCompactLayout && editing)) return;
+    const target = libraryRef.current?.querySelector(`[data-character-id="${revealId}"]`);
+    if (target) { target.scrollIntoView({ block: 'nearest' }); setRevealId(null); }
+  }, [revealId, filteredCharacters, isCompactLayout, editing]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -294,6 +304,7 @@ export default function CharactersPage() {
     onSuccess: async (saved) => {
       const id = saved?.id ?? editing?.id;
       if (savingCharacterRouteRef.current === loadedCharacterRouteRef.current) {
+        if (savingCharacterRouteRef.current === 'new' && id) { setSearchText(''); setRevealId(id); }
         setEditing(saved);
         setEditingBaseline(characterDraftSnapshot(saved));
         if (id) {
@@ -359,15 +370,6 @@ export default function CharactersPage() {
       setVoiceName(''); setVoiceDescription(''); setVoiceFile(null);
       await queryClient.invalidateQueries({ queryKey: ['voices'] });
       showToast('声线上传成功', 'success');
-    },
-    onError: (e) => showToast(String(e), 'error'),
-  });
-
-  const importUrlMutation = useMutation({
-    mutationFn: (url: string) => api.importCharacterFromUrl(url),
-    onSuccess: (char) => {
-      showToast(`已从 URL 导入「${char.name}」`, 'success');
-      queryClient.invalidateQueries({ queryKey: ['characters'] });
     },
     onError: (e) => showToast(String(e), 'error'),
   });
@@ -485,6 +487,13 @@ export default function CharactersPage() {
 
   return (
     <div className={`page-layout with-secondary-nav characters-layout ${!editing ? 'is-empty-main' : ''}`} data-mobile-level={editing ? 2 : 1}>
+      {importOpen && <CharacterImportDialog onClose={() => setImportOpen(false)} onOpen={(character) => {
+        setImportOpen(false);
+        queryClient.setQueryData<Character[]>(['characters'], (current) => [...(current || []).filter((item) => item.id !== character.id), character]);
+        setSearchText('');
+        setRevealId(character.id);
+        void handleSelect(character);
+      }} />}
       {/* ========== 左侧角色列表 ========== */}
       <aside className="secondary-sidebar">
         <div className="secondary-sidebar-header">
@@ -508,7 +517,9 @@ export default function CharactersPage() {
         <div className="secondary-sidebar-search">
           <input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="按名字搜索角色…" aria-label="按名字搜索角色" />
         </div>
-        <div className={`secondary-sidebar-list ${sidebarLayout === 'grid' ? 'character-sidebar-grid' : ''}`}>
+        <div className="character-library-actions"><button type="button" className="btn btn-ghost btn-sm" onClick={() => setImportOpen(true)}>导入角色</button></div>
+        <p className="character-library-order">收藏优先 · 最新创建在前</p>
+        <div ref={libraryRef} className={`secondary-sidebar-list ${sidebarLayout === 'grid' ? 'character-sidebar-grid' : ''}`}>
           {charactersQuery.isError && (
             <InlineQueryError
               message="角色列表加载失败"
@@ -526,6 +537,7 @@ export default function CharactersPage() {
               return (
                 <button
                   key={char.id}
+                  data-character-id={char.id}
                   type="button"
                   className={`character-grid-card ${editing?.id === char.id ? 'active' : ''}`}
                   onClick={() => handleSelect(char)}
@@ -557,7 +569,7 @@ export default function CharactersPage() {
               );
             }
             return (
-              <button key={char.id} type="button" className={`secondary-nav-item ${editing?.id === char.id ? 'active' : ''}`} onClick={() => handleSelect(char)}>
+              <button key={char.id} data-character-id={char.id} type="button" className={`secondary-nav-item ${editing?.id === char.id ? 'active' : ''}`} onClick={() => handleSelect(char)}>
                 <span
                   className="secondary-nav-avatar"
                   style={{
@@ -855,49 +867,9 @@ export default function CharactersPage() {
               {activeTab === 'import' && (
                 <div className="form-grid">
                   <div className="form-group full-row">
-                    <div className="form-section-title">导入形象与设定（PNG / JSON）</div>
-                    <div className="button-row" style={{ flexWrap: 'wrap' }}>
-                      <button className="btn btn-ghost btn-sm" type="button" onClick={() => document.getElementById('import-card-png')?.click()}>导入 PNG 形象卡</button>
-                      <button className="btn btn-ghost btn-sm" type="button" onClick={() => document.getElementById('import-card-json')?.click()}>导入 JSON 扩展设定</button>
-                      <input id="import-card-png" type="file" accept=".png" style={{ display: 'none' }} onChange={async (e) => { const f = e.target.files?.[0]; if (f) { try { const c = await api.importCharacterCard(f); showToast(`已导入「${c.name}」`, 'success'); queryClient.invalidateQueries({ queryKey: ['characters'] }); } catch (err) { showToast(String(err), 'error'); } } e.target.value = ''; }} />
-                      <input id="import-card-json" type="file" accept=".json" style={{ display: 'none' }} onChange={async (e) => { const f = e.target.files?.[0]; if (f) { try { const c = await api.importCharacterCardJson(f); showToast(`已导入「${c.name}」`, 'success'); queryClient.invalidateQueries({ queryKey: ['characters'] }); } catch (err) { showToast(String(err), 'error'); } } e.target.value = ''; }} />
-                    </div>
-                  </div>
-                  <div className="form-group full-row">
-                    <div className="form-section-title">便携包（导出与导入，JSON / TXT / DOCX）</div>
-                    <p className="hint" style={{ marginBottom: 8 }}>
-                      在本页导出的包可以原样再导入，不会带上访问密钥。智能摘要需在「设置 → 联网与模型」中先配置好<strong>文字对话</strong>线路。
-                    </p>
-                    <div className="button-row" style={{ flexWrap: 'wrap', gap: 8 }}>
-                      <button className="btn btn-ghost btn-sm" type="button" onClick={() => document.getElementById('import-portable')?.click()}>导入便携包…</button>
-                      <input
-                        id="import-portable"
-                        type="file"
-                        accept=".json,.txt,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        style={{ display: 'none' }}
-                        onChange={async (e) => {
-                          const f = e.target.files?.[0];
-                          if (!f) return;
-                          try {
-                            const c = await api.importCharacterPortable(f);
-                            showToast(`已导入便携包「${c.name}」`, 'success');
-                            queryClient.invalidateQueries({ queryKey: ['characters'] });
-                          } catch (err) {
-                            showToast(String(err), 'error');
-                          }
-                          e.target.value = '';
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <div className="form-group full-row">
-                    <label>从链接导入</label>
-                    <div className="button-row">
-                      <input value={importUrlInput} onChange={(e) => setImportUrlInput(e.target.value)} placeholder="粘贴角色分享页链接" style={{ flex: 1 }} />
-                      <button className="btn btn-primary btn-sm" type="button" onClick={() => { if (importUrlInput) importUrlMutation.mutate(importUrlInput); }} disabled={importUrlMutation.isPending}>
-                        {importUrlMutation.isPending ? '导入中...' : '导入'}
-                      </button>
-                    </div>
+                    <div className="form-section-title">导入新角色</div>
+                    <p className="hint">角色卡和便携包会创建独立角色，当前资料保持不变。</p>
+                    <button type="button" className="btn btn-ghost" onClick={() => setImportOpen(true)}>导入角色</button>
                   </div>
                   {editing.id && (
                     <div className="form-group full-row">

@@ -259,3 +259,12 @@ node scripts/test-world-transfer.mjs
 - 回滚首选恢复旧示例的可见性。直接回退到仍会覆盖/补回示例的旧代码会重新引入旧启动行为，不能将代码回退等同于数据恢复。任何人工修复前先保留一致性数据库副本；本批没有对真实用户库执行升级。
 
 验证入口：项目虚拟环境运行 `pytest tests/test_starter_catalog.py tests/test_world_package_atomicity.py`；frontend 运行 `node scripts/test-starter-catalog.mjs`，使用既有 Playwright 环境变量，默认独立端口 15179。测试使用临时 SQLite 与隔离浏览器，包含配套会话创建、旧目录完整保留、失败回滚、恢复、配置引用及普通导出；浏览器覆盖桌面/窄屏开局、失败重试和资料缺失状态。尚未验证真实旧库升级耗时或 Android 真机迁移。
+
+
+## 15. Web 角色导入与排序
+
+- `CharactersPage` 的角色库和资料工具共用 `CharacterImportDialog`。同一次导入只有一个提交；失败保留选择可重试，成功后显式查看结果，不自动覆盖当前编辑。列表按收藏、创建时间、ID 倒序，新建和查看导入结果清理旧搜索条件。
+- 便携角色与 profile 一次提交，失败回滚；PNG/JSON/链接角色卡复用同一保存函数。PNG 上传直接读取，不再创建或删除按文件名共用的临时文件。文件上限 32 MiB，链接使用 30 秒连接/读取超时；该值不代表整个下载的总时限。
+- 便携交换仍为 v1，TXT/DOCX 元数据保留可选 profile；旧包没有 profile 时继续兼容，旧导出已遗漏的资料无法追溯恢复。零温度不再被默认值覆盖。DOCX 正文按 OOXML 段落和运行片段读取，保留实体文本、制表与换行；格式化外观不是纯文本导入的保留目标。
+- 无 schema 或已有数据迁移；应用回滚不会删除本批导入的数据，但旧程序会重新出现导入的已知缺陷。
+- 定向验证：`pytest tests/test_character_import_workflow.py tests/test_starter_catalog.py`；frontend 的 `tsc --noEmit` 与 `node scripts/test-character-import.mjs`（既有 Playwright 环境，独立端口 15180）。使用临时 SQLite、隔离 HTTP 应用和模拟 API 浏览器，不导入正式 app、不读取用户包、不发送供应商请求。真实下载和用户文件回归另行记录。

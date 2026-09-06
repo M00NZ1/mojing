@@ -68,7 +68,7 @@ def list_characters(db: Session = Depends(get_db)):
             select(CharacterModel)
             .where(CharacterModel.id.not_in(hidden_catalog_ids(db, "characters")))
             .options(joinedload(CharacterModel.voice_profile))
-            .order_by(CharacterModel.favorite.desc(), CharacterModel.id.desc())
+            .order_by(CharacterModel.favorite.desc(), CharacterModel.created_at.desc(), CharacterModel.id.desc())
         )
     )
     return [_character_read(character) for character in characters]
@@ -283,9 +283,14 @@ def _character_from_tavern_internal(db: Session, internal: dict) -> CharacterMod
     )
 
 
+def _portable_parameter(payload: dict, field: str, default):
+    value = payload.get(field)
+    return default if value is None or value == "" else value
+
+
 @router.post("/import-portable", summary="导入便携角色包（JSON/TXT/DOCX，与本应用导出同格式）", response_model=CharacterRead)
-async def import_character_portable(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    raw = await file.read()
+def import_character_portable(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    raw = _read_character_upload(file)
     if not raw:
         raise HTTPException(status_code=400, detail="空文件")
     try:
@@ -297,47 +302,59 @@ async def import_character_portable(file: UploadFile = File(...), db: Session = 
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"解析失败：{exc}") from exc
 
-    name = allocate_unique_character_name(db, str(payload.get("name") or "未命名"))
-    persona = str(payload.get("persona_prompt") or "")
-    character = CharacterModel(
-        name=name,
-        persona_prompt=persona,
-        api_key="",
-        api_base_url=str(payload.get("api_base_url") or "https://api.deepseek.com")[:255],
-        model_name=str(payload.get("model_name") or "deepseek-chat")[:120],
-        temperature=float(payload.get("temperature") or 0.9),
-        max_tokens=int(payload.get("max_tokens") or 1200),
-        top_p=float(payload.get("top_p") or 1.0),
-        top_k=int(payload.get("top_k") or 0),
-        frequency_penalty=float(payload.get("frequency_penalty") or 0.0),
-        presence_penalty=float(payload.get("presence_penalty") or 0.0),
-        repetition_penalty=float(payload.get("repetition_penalty") or 1.0),
-        avatar_color=str(payload.get("avatar_color") or "#F97316")[:20],
-    )
-    db.add(character)
-    db.commit()
-    db.refresh(character)
-    prof_in = payload.get("profile")
-    if isinstance(prof_in, dict) and character.id:
-        raw = str(prof_in.get("raw_persona_text") or "")
-        md = str(prof_in.get("character_card_markdown") or "")
-        cj = prof_in.get("character_card_json")
-        if raw or md or (isinstance(cj, dict) and cj):
-            existing = db.scalar(
-                select(CharacterProfileModel).where(CharacterProfileModel.character_id == character.id)
-            )
-            if not existing:
-                prof = CharacterProfileModel(
-                    character_id=character.id,
-                    source_filename=str(prof_in.get("source_filename") or "imported.json")[:255],
-                    raw_persona_text=raw,
-                    character_card_markdown=md,
-                    character_card_json=cj if isinstance(cj, dict) else {},
+    try:
+        valid_version = isinstance(payload, dict) and int(payload.get("version", 1)) == PORTABLE_VERSION
+    except (ValueError, TypeError):
+        valid_version = False
+    if not valid_version:
+        raise HTTPException(status_code=400, detail="不支持的便携包版本，原有角色未改变")
+    try:
+        name = allocate_unique_character_name(db, str(payload.get("name") or "未命名"))
+        persona = str(payload.get("persona_prompt") or "")
+        character = CharacterModel(
+            name=name,
+            persona_prompt=persona,
+            api_key="",
+            api_base_url=str(payload.get("api_base_url") or "https://api.deepseek.com")[:255],
+            model_name=str(payload.get("model_name") or "deepseek-chat")[:120],
+            temperature=float(_portable_parameter(payload, "temperature", 0.9)),
+            max_tokens=int(_portable_parameter(payload, "max_tokens", 1200)),
+            top_p=float(_portable_parameter(payload, "top_p", 1.0)),
+            top_k=int(_portable_parameter(payload, "top_k", 0)),
+            frequency_penalty=float(_portable_parameter(payload, "frequency_penalty", 0.0)),
+            presence_penalty=float(_portable_parameter(payload, "presence_penalty", 0.0)),
+            repetition_penalty=float(_portable_parameter(payload, "repetition_penalty", 1.0)),
+            avatar_color=str(payload.get("avatar_color") or "#F97316")[:20],
+        )
+        db.add(character)
+        db.flush()
+        prof_in = payload.get("profile")
+        if isinstance(prof_in, dict) and character.id:
+            raw = str(prof_in.get("raw_persona_text") or "")
+            md = str(prof_in.get("character_card_markdown") or "")
+            cj = prof_in.get("character_card_json")
+            if raw or md or (isinstance(cj, dict) and cj):
+                existing = db.scalar(
+                    select(CharacterProfileModel).where(CharacterProfileModel.character_id == character.id)
                 )
-                db.add(prof)
-                db.commit()
-    db.refresh(character)
-    return _character_read(character)
+                if not existing:
+                    prof = CharacterProfileModel(
+                        character_id=character.id,
+                        source_filename=str(prof_in.get("source_filename") or "imported.json")[:255],
+                        raw_persona_text=raw,
+                        character_card_markdown=md,
+                        character_card_json=cj if isinstance(cj, dict) else {},
+                    )
+                    db.add(prof)
+        db.commit()
+        db.refresh(character)
+        return _character_read(character)
+    except (ValueError, TypeError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="便携包参数格式无效，原有角色未改变") from exc
+    except Exception:
+        db.rollback()
+        raise
 
 
 @router.get("/{character_id}/export-portable", summary="导出便携角色包（不含密钥）")
@@ -441,61 +458,56 @@ def export_character_portable_summary(
     )
 
 
-@router.post("/import-card", summary="导入 PNG 角色卡", response_model=CharacterRead)
-def import_character_card(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """从 PNG 角色卡 V2 文件导入人物。"""
-    if not (file.content_type or "").startswith("image/") and not file.filename.endswith(".png"):
-        raise HTTPException(status_code=400, detail="仅支持 PNG 格式的角色卡")
-
-    temp_dir = STORAGE_DIR / "temp"
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    temp_path = temp_dir / f"import_card_{file.filename}"
-    try:
-        with temp_path.open("wb") as output:
-            shutil.copyfileobj(file.file, output)
-        png_bytes = temp_path.read_bytes()
-        card_data = read_character_card_from_png_bytes(png_bytes)
-        if card_data is None:
-            raise HTTPException(status_code=400, detail="未找到角色卡数据（支持 tEXt/zTXt chara 块）")
-        internal = convert_v2_to_internal(card_data)
-        if not internal.get("name"):
-            raise HTTPException(status_code=400, detail="角色卡缺少名称")
-        character = _character_from_tavern_internal(db, internal)
-        db.add(character)
-        db.flush()
-        _persist_tavern_card_profile(db, character, card_data)
-        db.commit()
-        db.refresh(character)
-        return _character_read(character)
-    finally:
-        if temp_path.exists():
-            temp_path.unlink()
-
-
-@router.post("/import-card-json", summary="导入 JSON 角色卡", response_model=CharacterRead)
-def import_character_card_json(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """从 JSON 角色卡文件导入人物（Chub.ai 等平台通用格式）。"""
-    if not file.filename.endswith(".json"):
-        raise HTTPException(status_code=400, detail="仅支持 JSON 格式的角色卡")
-
-    raw = file.file.read().decode("utf-8")
-    try:
-        card_data = json.loads(raw)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="JSON 解析失败")
-
+def _save_imported_tavern_card(db: Session, card_data: dict):
+    if not isinstance(card_data, dict) or not isinstance(card_data.get("data", card_data), dict):
+        raise HTTPException(status_code=400, detail="角色卡必须包含有效的角色对象")
+    if card_data.get("kind") == PORTABLE_KIND:
+        raise HTTPException(status_code=400, detail="这是墨境便携包，请选择便携包格式导入")
     data_root = card_data.get("data", card_data)
     internal = convert_v2_to_internal({"data": data_root})
     if not internal.get("name"):
         raise HTTPException(status_code=400, detail="角色卡缺少名称")
-    persist_root = card_data if isinstance(card_data, dict) and card_data.get("spec") else {"spec": "chara_card_v2", "data": data_root}
-    character = _character_from_tavern_internal(db, internal)
-    db.add(character)
-    db.flush()
-    _persist_tavern_card_profile(db, character, persist_root)
-    db.commit()
-    db.refresh(character)
-    return _character_read(character)
+    persist_root = card_data if card_data.get("spec") else {"spec": "chara_card_v2", "data": data_root}
+    try:
+        character = _character_from_tavern_internal(db, internal)
+        db.add(character)
+        db.flush()
+        _persist_tavern_card_profile(db, character, persist_root)
+        db.commit()
+        db.refresh(character)
+        return _character_read(character)
+    except Exception:
+        db.rollback()
+        raise
+
+
+def _read_character_upload(file: UploadFile) -> bytes:
+    raw = file.file.read(32 * 1024 * 1024 + 1)
+    if len(raw) > 32 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="角色卡超过 32 MB，请缩小图片或使用 JSON 设定")
+    return raw
+
+
+@router.post("/import-card", summary="导入 PNG 角色卡", response_model=CharacterRead)
+def import_character_card(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Read the upload directly; same-name imports never share a temporary file."""
+    if not (file.filename or "").lower().endswith(".png"):
+        raise HTTPException(status_code=400, detail="仅支持 PNG 格式的角色卡")
+    card_data = read_character_card_from_png_bytes(_read_character_upload(file))
+    if card_data is None:
+        raise HTTPException(status_code=400, detail="未找到角色卡数据（支持 tEXt/zTXt chara 块）")
+    return _save_imported_tavern_card(db, card_data)
+
+
+@router.post("/import-card-json", summary="导入 JSON 角色卡", response_model=CharacterRead)
+def import_character_card_json(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    if not (file.filename or "").lower().endswith(".json"):
+        raise HTTPException(status_code=400, detail="仅支持 JSON 格式的角色卡")
+    try:
+        card_data = json.loads(_read_character_upload(file).decode("utf-8-sig"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="JSON 解析失败，请选择 UTF-8 角色卡文件") from None
+    return _save_imported_tavern_card(db, card_data)
 
 
 @router.post(
@@ -640,36 +652,18 @@ def import_character_from_url(payload: dict = {"url": ""}, db: Session = Depends
     url = payload.get("url", "")
     if not url:
         raise HTTPException(status_code=400, detail="URL 不能为空")
-    import tempfile
     import urllib.request
 
-    tmp_path: Path | None = None
     try:
-        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-        tmp_path = Path(tmp.name)
-        tmp.close()
-        urllib.request.urlretrieve(url, str(tmp_path))
-        png_bytes = tmp_path.read_bytes()
+        with urllib.request.urlopen(url, timeout=30) as response:
+            png_bytes = response.read(32 * 1024 * 1024 + 1)
+        if len(png_bytes) > 32 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="角色卡超过 32 MB，请缩小图片或使用 JSON 设定")
         card_data = read_character_card_from_png_bytes(png_bytes)
         if card_data is None:
             raise HTTPException(status_code=400, detail="未找到角色卡数据或格式不受支持")
-        internal = convert_v2_to_internal(card_data)
-        if not internal.get("name"):
-            raise HTTPException(status_code=400, detail="角色卡缺少名称")
-        character = _character_from_tavern_internal(db, internal)
-        db.add(character)
-        db.flush()
-        _persist_tavern_card_profile(db, character, card_data)
-        db.commit()
-        db.refresh(character)
-        return _character_read(character)
+        return _save_imported_tavern_card(db, card_data)
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"从 URL 导入失败: {str(e)}") from e
-    finally:
-        if tmp_path is not None:
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="链接导入未完成，请检查文件地址或稍后重试") from exc
