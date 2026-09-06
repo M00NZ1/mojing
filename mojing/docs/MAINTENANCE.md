@@ -188,3 +188,30 @@ Set-Location .\mojing\android
 只有当前任务产生临时文件、构建缓存或临时工作区时才清理。清理前先列出精确候选，确认它们由当前任务创建、可重建、未被进程或配置使用，并严格位于任务目录。
 
 不得自动删除数据库、WAL/SHM、媒体、备份、签名、配置、用户资源、既有 Gradle/Node/Python 环境或用途不明目录。
+
+
+## 10. Web 平台配置回归与兼容
+
+- 平台目录使用现有 `app_settings` 中的 `model_platforms_v1`，内部 `version=1`；会话选择使用 `chat_model_choice_<session_id>`，只保存平台标识与模型名。
+- 首次读取只投影旧 `local_config` 的文字线路，首次显式保存才写入目录。旧文字字段原样保留；其他设置保存不会把旧页面草稿覆盖到新平台目录。未知版本/无效配置拒绝覆盖，平台保存采用一次数据库提交；没有数据库 schema 升级。
+- 回退旧代码可读取保留的旧文字配置。进行任何人工修复前，先保留一致性数据库副本与原有本机密钥文件；不要删除原数据库、密钥文件或平台目录来尝试修复。新建的平台仍保存在目录中，回退旧代码不会自动迁入旧单平台界面。
+- 平台 Key 复用现有本机凭据存储，API 返回掩码；普通备份递归清除目录中的 Key。恢复普通备份后需重新填写 Key；模型名与会话选择保留。
+- 聊天选择在请求入口解析成不可变线路快照，覆盖同回合角色与旁白；修改选择不会改变已开始的请求。选择失效时在创建用户消息前返回明确错误。
+- Anthropic 模型发现遵循 [Models API](https://platform.claude.com/docs/en/api/models/list)；Web 对话仍使用已有 [Chat Completions 兼容接口](https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk)，原生提示缓存、思考细节等能力不在本批范围。
+
+定向后端验证（在 `mojing/`）：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_model_platforms.py tests/test_text_config_fallback.py tests/test_stream_character_reply.py tests/test_secret_storage.py tests/test_project_backup.py tests/test_branch_context.py -q
+```
+
+前端验证（在 `mojing/frontend/`，不执行生产打包）：
+
+```powershell
+.\node_modules\.bin\tsc.cmd --noEmit
+# 使用已安装的 Playwright；若未在当前模块路径中，可将 PLAYWRIGHT_MODULE 指向已有包目录。
+# 可通过 SMOKE_BROWSER=chrome 使用本机 Chrome，SMOKE_OUTPUT 指定截图输出目录。
+node scripts/test-model-platforms.mjs
+```
+
+浏览器脚本自行启动/关闭独立 Vite 进程，默认使用空闲端口 15175；所有 API 由浏览器拦截模拟，并阻止其他外部请求，不启动真实 Backend、不访问用户数据。覆盖保存/重进、Key 隔离、取消获取、手填、未保存离页、窄屏、5,000 模型虚拟列表、选择重试及聊天发送。此测试不能替代真实供应商、浏览器键盘弹出或 Android 真机验收。

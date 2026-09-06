@@ -1,7 +1,7 @@
 import importlib
 import platform
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -31,7 +31,36 @@ from ..services.system_config_service import (
 )
 
 
+from ..services.model_platform_service import (
+    DiscoverRequest, PlatformWrite, discover_models, draft_key,
+    public_catalog, save_platform, set_default_platform,
+)
+
+
 router = APIRouter(prefix="/system", tags=["系统"])
+
+
+@router.get("/model-platforms")
+def list_model_platforms(db: Session = Depends(get_db)):
+    return public_catalog(db)
+
+
+@router.put("/model-platforms/{platform_id}")
+def update_model_platform(platform_id: str, payload: PlatformWrite, db: Session = Depends(get_db)):
+    return save_platform(db, platform_id, payload)
+
+
+@router.post("/model-platforms/{platform_id}/default")
+def use_default_model_platform(platform_id: str, db: Session = Depends(get_db)):
+    return set_default_platform(db, platform_id)
+
+
+@router.post("/model-platforms/discover")
+async def list_remote_models(payload: DiscoverRequest, request: Request, db: Session = Depends(get_db)):
+    key = draft_key(db, payload.platform_id, payload)
+    if not key:
+        raise HTTPException(400, "请填写该平台的 Key。")
+    return {"models": await discover_models(payload.base_url, key, is_disconnected=request.is_disconnected)}
 
 
 def _resolve_probe_key(payload: ProbePublicApiRequest, db: Session) -> str | None:

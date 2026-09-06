@@ -1691,11 +1691,13 @@ def build_narrator_prompt(
     return prompt_messages, debug_payload
 
 
-def stream_character_reply(session_id: int, character_id: int, branch_id: str = "main"):
+def stream_character_reply(session_id: int, character_id: int, branch_id: str = "main", *, text_config=None):
     """为 SSE 流式响应提供生成器。"""
 
     stream_key = uuid4().hex
     db = SessionLocal()
+    if text_config is not None:
+        db.info["text_config_override"] = text_config
     try:
         resolve_branch_context(db, session_id, branch_id)
         character = db.get(CharacterModel, character_id)
@@ -1706,7 +1708,7 @@ def stream_character_reply(session_id: int, character_id: int, branch_id: str = 
         client = build_client(character, db)
         session = db.get(ChatSessionModel, session_id)
         cfg = get_local_config(db)
-        resolved_model = resolve_think_max_chat_model(
+        resolved_model = text_config.model if text_config is not None else resolve_think_max_chat_model(
             character, session, cfg, default_model=settings.default_model
         )
         stream_kwargs: dict = {
@@ -1847,11 +1849,13 @@ def stream_character_reply(session_id: int, character_id: int, branch_id: str = 
         db.close()
 
 
-def stream_narrator_reply(session_id: int, branch_id: str = "main"):
+def stream_narrator_reply(session_id: int, branch_id: str = "main", *, text_config=None):
     """为会话级旁白器生成一条非人物消息。"""
 
     stream_key = uuid4().hex
     db = SessionLocal()
+    if text_config is not None:
+        db.info["text_config_override"] = text_config
     try:
         resolve_branch_context(db, session_id, branch_id)
         world = db.scalar(select(SessionWorldModel).where(SessionWorldModel.session_id == session_id))

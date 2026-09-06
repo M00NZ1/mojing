@@ -1,0 +1,31 @@
+.model-platforms { grid-column: 1 / -1; min-width: 0; }
+.model-platform-heading { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
+.model-platform-heading h3, .model-platform-editor h4 { margin: 0 0 8px; }
+.model-platform-heading p, .model-platform-row p, .chat-model-dialog > p { color: var(--text-2); margin: 6px 0 12px; font-size: .88rem; line-height: 1.6; }
+.model-platform-heading > button { flex-shrink: 0; }
+.model-platform-list { display: grid; gap: 10px; margin: 12px 0; }
+.model-platform-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; }
+.model-platform-row > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+.model-platform-row p { margin-bottom: 4px; }
+.model-platform-row small, .model-platform-fields small { color: var(--text-2); font-size: .8rem; }
+.model-platform-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.model-platform-editor { border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin-top: 16px; }
+.model-platform-editor fieldset { border: 0; padding: 0; margin: 0 0 18px; min-width: 0; }
+.model-platform-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.model-platform-fields label { display: flex; flex-direction: column; gap: 8px; font-size: .88rem; }
+.model-platform-wide { grid-column: 1 / -1; }
+.model-platform-fields input, .model-platform-fields textarea, .model-platform-fields select, .chat-model-dialog > input { width: 100%; box-sizing: border-box; background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font: inherit; }
+.model-platform-fields textarea { resize: vertical; }
+.model-platform-empty { padding: 24px; color: var(--text-2); border: 1px dashed var(--line); border-radius: 12px; }
+.model-platform-error { color: var(--accent-3); overflow-wrap: anywhere; }
+.chat-model-trigger { display: block; max-width: 100%; padding: 2px 0; border: 0; background: none; color: var(--text-2); text-overflow: ellipsis; white-space: nowrap; overflow: hidden; cursor: pointer; font-size: .78rem; text-align: left; min-height: 28px; }
+.chat-model-dialog { box-sizing: border-box; margin: auto; width: min(520px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); border: 1px solid var(--line); border-radius: 16px; background: var(--bg-2); color: var(--text); padding: 22px; }
+.chat-model-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.chat-model-options { height: min(45dvh, 380px); overflow-y: auto; margin: 16px 0; overscroll-behavior: contain; }
+.chat-model-virtual-option small { display: block; color: var(--text-2); margin-bottom: 4px; }
+.chat-model-virtual-option span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-model-options h4 { margin: 16px 8px 8px; color: var(--text-2); font-size: .82rem; }
+.chat-model-option { width: 100%; display: block; padding: 12px; text-align: left; background: transparent; border: 0; border-radius: 8px; color: var(--text); cursor: pointer; overflow-wrap: anywhere; }
+.chat-model-option:hover, .chat-model-option:focus-visible { background: var(--surface-2, var(--bg)); }
+.chat-model-option:disabled { opacity: .5; cursor: default; }
+@media (max-width: 600px) { .model-platform-row { align-items: start; flex-direction: column; gap: 10px; } .model-platform-fields { grid-template-columns: minmax(0, 1fr); } .model-platform-editor, .chat-model-dialog { padding: 16px; } }

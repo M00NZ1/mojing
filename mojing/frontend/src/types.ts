@@ -721,3 +721,15 @@ export type EventNode = {
 
 export { ENCYCLOPEDIA_META_TOP_KEYS, encyclopediaMetaKeysForType } from './encyclopediaMetaShapes';
 export type { EncyclopediaMetaBySchema } from './encyclopediaMetaShapes';
+
+export interface ModelPlatform {
+  id: string;
+  name: string;
+  base_url: string;
+  api_key: string;
+  models: string[];
+  selected_model: string;
+}
+export interface ModelCatalog { version: number; active_id: string | null; platforms: ModelPlatform[] }
+export interface ModelSelection { platform_id: string; model: string }
+export interface ModelChoice { version: number; selection: ModelSelection | null }

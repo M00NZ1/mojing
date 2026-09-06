@@ -1,0 +1,157 @@
+import { useEffect, useRef, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { Link } from 'react-router-dom';
+import { api } from '../api/client';
+import { confirmModal } from './ConfirmModal';
+import './ModelPlatforms.css';
+
+import type { ModelPlatform, ModelCatalog, ModelSelection } from '../types';
+const catalogKey = ['model-platforms'];
+const emptyPlatform = (): ModelPlatform => ({ id: crypto.randomUUID(), name: '', base_url: '', api_key: '', models: [], selected_model: '' });
+export const parseModelNames = (text: string) => [...new Set(text.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean))];
+const errorText = (e: unknown) => e instanceof Error ? e.message : '操作失败，请重试。';
+
+export function ModelPlatformsPanel({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void }) {
+  const queryClient = useQueryClient();
+  const catalog = useQuery({ queryKey: catalogKey, queryFn: api.getModelPlatforms });
+  const providers = useQuery({ queryKey: ['providers'], queryFn: api.listProviderCatalog });
+  const [draft, setDraft] = useState<ModelPlatform | null>(null);
+  const [original, setOriginal] = useState('');
+  const [modelText, setModelText] = useState('');
+  const [error, setError] = useState('');
+  const [fetching, setFetching] = useState(false);
+  const fetchRef = useRef<AbortController | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const dirty = draft !== null && JSON.stringify({ ...draft, models: parseModelNames(modelText) }) !== original;
+  useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => () => { fetchRef.current?.abort(); onDirtyChange(false); }, [onDirtyChange]);
+  function updateSaved(saved: ModelCatalog) {
+    queryClient.setQueryData(catalogKey, saved);
+    void queryClient.invalidateQueries({ queryKey: ['local-config'] });
+  }
+  const save = useMutation({
+    mutationFn: (value: ModelPlatform) => api.saveModelPlatform(value),
+    onSuccess: (saved) => { updateSaved(saved); setDraft(null); setError(''); },
+    onError: (e) => setError(errorText(e)),
+  });
+  const activate = useMutation({
+    mutationFn: api.setDefaultModelPlatform,
+    onSuccess: updateSaved,
+    onError: (e) => setError(errorText(e)),
+  });
+  async function edit(platform: ModelPlatform | null) {
+    if (dirty && !await confirmModal('放弃未保存的修改？', '当前平台的修改尚未保存。', 'warning', { confirmLabel: '放弃修改' })) return;
+    fetchRef.current?.abort();
+    const value = platform ?? emptyPlatform();
+    setDraft(value); setOriginal(JSON.stringify(value)); setModelText(value.models.join('\n')); setError('');
+  }
+  useEffect(() => { if (draft) editorRef.current?.querySelector<HTMLInputElement>('input')?.focus(); }, [draft?.id]);
+  function changeAddress(address: string) {
+    fetchRef.current?.abort();
+    setDraft((value) => value && ({ ...value, base_url: address, api_key: '', models: [], selected_model: '' }));
+    setModelText(''); setError('');
+  }
+  async function discover() {
+    if (!draft) return;
+    const controller = new AbortController();
+    fetchRef.current?.abort(); fetchRef.current = controller;
+    setFetching(true); setError('');
+    try {
+      const result = await api.discoverModels(draft, controller.signal);
+      if (controller.signal.aborted) return;
+      setModelText(result.models.join('\n'));
+      setDraft((value) => value && ({ ...value, selected_model: result.models.includes(value.selected_model) ? value.selected_model : result.models[0] ?? '' }));
+    } catch (e) { if (!controller.signal.aborted) setError(errorText(e)); }
+    finally { if (fetchRef.current === controller) { fetchRef.current = null; setFetching(false); } }
+  }
+  const models = parseModelNames(modelText);
+  return <section className="model-platforms">
+    <div className="model-platform-heading"><div><h3>文字对话平台</h3><p>每个平台独立保存 Key 与模型。默认平台用于未单独配置的对话和创作。</p></div>
+      <button className="btn btn-primary btn-sm" type="button" disabled={save.isPending || activate.isPending} onClick={() => { void edit(null); }}>添加平台</button></div>
+    {catalog.isPending && <p role="status">正在读取已保存的平台…</p>}
+    {catalog.isError && <p role="alert">{errorText(catalog.error)} <button type="button" className="btn btn-sm" onClick={() => { void catalog.refetch(); }}>重试</button></p>}
+    {catalog.data?.platforms.length === 0 && <div className="model-platform-empty">添加第一个平台，填写 Key 后获取模型，或手动输入模型名称。</div>}
+    <div className="model-platform-list">{catalog.data?.platforms.map((platform) => <article className="model-platform-row" key={platform.id}>
+      <div><strong>{platform.name}</strong> {platform.id === catalog.data.active_id && <span className="pill pill-green">默认</span>}
+        <p>{platform.selected_model || '尚未选择模型'} · {platform.models.length} 个模型</p><small>{platform.base_url}</small></div>
+      <div className="model-platform-actions"><button className="btn btn-sm" type="button" disabled={save.isPending || activate.isPending} onClick={() => { void edit(platform); }}>编辑</button>
+        {platform.id !== catalog.data.active_id && <button className="btn btn-ghost btn-sm" type="button" disabled={save.isPending || activate.isPending} onClick={() => activate.mutate(platform.id)}>设为默认</button>}</div>
+    </article>)}</div>
+    {error && <p className="model-platform-error" role="alert">{error}</p>}
+    {draft && <div className="model-platform-editor" ref={editorRef}>
+      <h4>{catalog.data?.platforms.some((p) => p.id === draft.id) ? '编辑平台' : '添加平台'}</h4>
+      <fieldset disabled={save.isPending}><div className="model-platform-fields">
+        <label>平台名称<input value={draft.name} maxLength={100} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="例如：我的 DeepSeek" /></label>
+        <label>服务商预设<select value="" onChange={(e) => {
+          const preset = providers.data?.find((p) => p.provider_id === e.target.value);
+          if (!preset) return;
+          fetchRef.current?.abort();
+          // A preset switch starts a new platform, preserving the original Key.
+          setDraft({ ...emptyPlatform(), name: preset.label, base_url: preset.base_url }); setModelText(''); setError('');
+        }}><option value="">选择预设填写地址</option>{providers.data?.map((p) => <option value={p.provider_id} key={p.provider_id}>{p.label}</option>)}</select></label>
+        <label className="model-platform-wide">API 地址<input value={draft.base_url} onChange={(e) => changeAddress(e.target.value)} placeholder="https://…/v1" /></label>
+        <label className="model-platform-wide">API Key<input type="password" autoComplete="off" value={draft.api_key} onChange={(e) => { fetchRef.current?.abort(); setDraft({ ...draft, api_key: e.target.value }); }} placeholder="填写当前平台的 Key" /><small>更改地址会清空 Key 与模型，请重新填写。</small></label>
+        <div className="model-platform-wide model-platform-actions"><button type="button" className="btn btn-sm" disabled={fetching || !draft.api_key || !draft.base_url} onClick={() => { void discover(); }}>{fetching ? '正在获取…' : '获取平台全部模型'}</button>
+          {fetching && <button type="button" className="btn btn-ghost btn-sm" onClick={() => fetchRef.current?.abort()}>取消获取</button>}</div>
+        <label className="model-platform-wide">模型名称 · {models.length} 个<textarea rows={6} value={modelText} disabled={fetching} onChange={(e) => setModelText(e.target.value)} placeholder="每行一个，也可用逗号分隔；不支持获取时直接填写。" /></label>
+        <label className="model-platform-wide">默认模型<select value={draft.selected_model} onChange={(e) => setDraft({ ...draft, selected_model: e.target.value })}><option value="">选择默认模型</option>{models.map((model) => <option value={model} key={model}>{model}</option>)}</select></label>
+      </div></fieldset>
+      <div className="model-platform-actions"><button type="button" className="btn btn-primary" disabled={save.isPending || fetching || !draft.name.trim() || !draft.api_key.trim() || !models.includes(draft.selected_model)} onClick={() => save.mutate({ ...draft, models })}>{save.isPending ? '正在保存…' : '保存平台'}</button>
+        <button type="button" className="btn btn-ghost" disabled={save.isPending} onClick={async () => { if (!dirty || await confirmModal('放弃未保存的修改？', '已保存的平台不会受到影响。', 'warning', { confirmLabel: '放弃修改' })) { fetchRef.current?.abort(); setDraft(null); setError(''); } }}>取消</button></div>
+    </div>}
+    {providers.isError && <p role="alert">服务商预设加载失败，仍可手动填写地址。<button type="button" onClick={() => { void providers.refetch(); }}>重试</button></p>}
+  </section>;
+}
+
+export function ChatModelPicker({ sessionId, onBusyChange }: { sessionId: number; onBusyChange: (busy: boolean) => void }) {
+  const queryClient = useQueryClient();
+  const catalog = useQuery({ queryKey: catalogKey, queryFn: api.getModelPlatforms });
+  const choiceKey = ['chat-model-choice', sessionId];
+  const choice = useQuery({ queryKey: choiceKey, queryFn: () => api.getModelChoice(sessionId) });
+  const [search, setSearch] = useState('');
+  const dialog = useRef<HTMLDialogElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const choosingRef = useRef(false);
+  const choose = useMutation({
+    mutationFn: (selection: ModelSelection | null) => api.setModelChoice(sessionId, selection),
+    onSuccess: (saved) => { queryClient.setQueryData(choiceKey, saved); dialog.current?.close(); },
+    onSettled: () => { choosingRef.current = false; onBusyChange(false); },
+  });
+  function selectModel(selection: ModelSelection | null) {
+    if (choosingRef.current) return;
+    choosingRef.current = true; onBusyChange(true); choose.mutate(selection);
+  }
+  useEffect(() => { onBusyChange(choice.isPending || choice.isError || choose.isPending); }, [choice.isPending, choice.isError, choose.isPending, onBusyChange]);
+  useEffect(() => { dialog.current?.close(); setSearch(''); choose.reset(); }, [sessionId]);
+  const selection = choice.data?.selection;
+  const selectedPlatform = catalog.data?.platforms.find((p) => p.id === selection?.platform_id);
+  const active = catalog.data?.platforms.find((p) => p.id === catalog.data.active_id);
+  const options = (catalog.data?.platforms ?? []).flatMap((platform) => platform.models
+    .filter((model) => `${platform.name} ${model}`.toLowerCase().includes(search.trim().toLowerCase()))
+    .map((model) => ({ platform, model })));
+  const virtualizer = useVirtualizer({ count: options.length, getScrollElement: () => listRef.current, estimateSize: () => 68, overscan: 6 });
+  const label = selection ? `${selectedPlatform?.name ?? '平台不可用'} · ${selection.model}` : `角色优先 · ${active?.selected_model || '默认模型未配置'}`;
+  return <>
+    <button type="button" className="chat-model-trigger" title={`切换模型：${label}`} onClick={() => { choose.reset(); setSearch(''); dialog.current?.showModal(); virtualizer.measure(); }}>{choice.isPending ? '正在读取模型…' : label} ▾</button>
+    <dialog ref={dialog} className="chat-model-dialog" onCancel={(e) => { if (choose.isPending) e.preventDefault(); }}>
+      <div className="model-platform-heading"><h3>选择对话模型</h3><button className="btn btn-ghost btn-sm" type="button" disabled={choose.isPending} onClick={() => dialog.current?.close()}>关闭</button></div>
+      <p>从下一次发送生效，当前回复保持原模型。手动选择会优先于角色独立配置和思考模式。</p>
+      <input aria-label="搜索平台或模型" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索平台或模型名称" />
+      {(catalog.isError || choice.isError) && <p role="alert">模型配置加载失败。<button type="button" className="btn btn-sm" onClick={() => { void catalog.refetch(); void choice.refetch(); }}>重试</button></p>}
+      {choose.isError && <p role="alert" className="model-platform-error">{errorText(choose.error)}</p>}
+      <button className="chat-model-option" type="button" disabled={choose.isPending} onClick={() => selectModel(null)}>按角色配置 / 默认平台 {!selection && '✓'}</button>
+      <div className="chat-model-options" ref={listRef}>
+        <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+          {virtualizer.getVirtualItems().map((row) => {
+            const { platform, model } = options[row.index];
+            return <button className="chat-model-option chat-model-virtual-option" style={{ position: 'absolute', top: 0, transform: `translateY(${row.start}px)`, height: row.size }} type="button" key={`${platform.id}:${model}`} disabled={choose.isPending || !platform.api_key} onClick={() => selectModel({ platform_id: platform.id, model })} title={`${platform.name} · ${model}`}><small>{platform.name}{!platform.api_key && ' · 请先配置 Key'}</small><span>{model}{selection?.platform_id === platform.id && selection.model === model && ' ✓'}</span></button>;
+          })}
+        </div>
+        {catalog.isPending && <p role="status">正在加载平台…</p>}
+        {catalog.data && !catalog.data.platforms.some((p) => p.models.some((m) => `${p.name} ${m}`.toLowerCase().includes(search.trim().toLowerCase()))) && <p>没有可选的匹配模型。请先在模型服务中添加平台和模型。</p>}
+      </div>
+      <Link className="btn btn-ghost" to="/settings?tab=api" onClick={(e) => { if (choose.isPending) e.preventDefault(); else dialog.current?.close(); }}>管理平台与模型</Link>
+    </dialog>
+  </>;
+}

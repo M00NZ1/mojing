@@ -1,4 +1,8 @@
 import type {
+  ModelPlatform,
+  ModelCatalog,
+  ModelSelection,
+  ModelChoice,
   AssetItem,
   CostData,
   ApiChannel,
@@ -155,6 +159,20 @@ async function downloadFile(path: string, fallbackFilename: string, options?: Re
 }
 
 export const api = {
+  getModelPlatforms() { return request<ModelCatalog>('/system/model-platforms'); },
+  saveModelPlatform(platform: ModelPlatform) {
+    return request<ModelCatalog>(`/system/model-platforms/${encodeURIComponent(platform.id)}`, { method: 'PUT', body: JSON.stringify(platform) });
+  },
+  setDefaultModelPlatform(id: string) {
+    return request<ModelCatalog>(`/system/model-platforms/${encodeURIComponent(id)}/default`, { method: 'POST' });
+  },
+  discoverModels(platform: ModelPlatform, signal?: AbortSignal) {
+    return request<{ models: string[] }>('/system/model-platforms/discover', { method: 'POST', body: JSON.stringify({ ...platform, platform_id: platform.id }), signal });
+  },
+  getModelChoice(sessionId: number) { return request<ModelChoice>(`/sessions/${sessionId}/model-choice`); },
+  setModelChoice(sessionId: number, selection: ModelSelection | null) {
+    return request<ModelChoice>(`/sessions/${sessionId}/model-choice`, { method: 'PUT', body: JSON.stringify({ selection }) });
+  },
   storageUrl(path: string) { return `${STORAGE_PREFIX}${path}`; },
   /** 头像/卡图等：支持 `https?://` 外链或 storage 相对路径（自动加 /storage/） */
   mediaRefUrl(ref: string | null | undefined): string {

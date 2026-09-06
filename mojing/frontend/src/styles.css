@@ -324,7 +324,6 @@ video {
   .action-row > *,
   .toolbar > *,
   .search-bar > *,
-  .settings-tabs > *,
   .chat-inputbar-tools > *,
   .chat-inputbar-send-group > * {
     width: 100%;
@@ -363,7 +362,6 @@ video {
   .action-row > *,
   .toolbar > *,
   .search-bar > *,
-  .settings-tabs > *,
   .chat-inputbar-tools > *,
   .chat-inputbar-send-group > * {
     width: 100%;
@@ -4458,6 +4456,7 @@ html[data-theme="paper"] .chat-bubble-text hr {
 }
 
 .settings-tab {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -4470,7 +4469,7 @@ html[data-theme="paper"] .chat-bubble-text hr {
   font-size: 0.82rem;
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.15s;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
 }
 
 .settings-tab:hover { color: var(--text); background: var(--surface); }

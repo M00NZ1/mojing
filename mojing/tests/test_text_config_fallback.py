@@ -64,18 +64,18 @@ def test_character_without_key_inherits_public_route(monkeypatch, placeholder):
     assert resolved.model == "public-model"
 
 
-def test_custom_character_base_can_reuse_public_key(monkeypatch):
+def test_custom_character_base_cannot_reuse_another_platform_key(monkeypatch):
     monkeypatch.setattr(system_config_service, "get_local_config", lambda _db: _public_config())
     monkeypatch.setattr(channel_service, "_get_default_channel", lambda _purpose: None)
+    with pytest.raises(HTTPException, match="独立 Key"):
+        resolve_text_config(_character(api_base_url="http://127.0.0.1:9999", model_name="local-model"), object())
 
-    resolved = resolve_text_config(
-        _character(api_base_url="http://127.0.0.1:9999", model_name="local-model"),
-        object(),
-    )
 
-    assert resolved.source == "public"
-    assert resolved.base_url == "http://127.0.0.1:9999"
-    assert resolved.model == "local-model"
+def test_matching_character_address_can_inherit_key(monkeypatch):
+    monkeypatch.setattr(system_config_service, "get_local_config", lambda _db: _public_config())
+    resolved = resolve_text_config(_character(api_base_url="https://example.invalid/openai", model_name="chosen-model"), object())
+    assert resolved.api_key == "public-key-for-test"
+    assert resolved.model == "chosen-model"
 
 
 def test_ollama_route_needs_no_key_and_has_single_v1_root():

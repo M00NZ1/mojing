@@ -35,6 +35,9 @@ def resolve_text_config(character: CharacterModel, db=None) -> ResolvedTextConfi
     """解析角色独立配置；未配置独立 Key 时继承公共文字线路。"""
     from .crypto_service import decrypt_api_key
 
+    if db is not None and isinstance(getattr(db, "info", {}).get("text_config_override"), ResolvedTextConfig):
+        return db.info["text_config_override"]
+
     character_key = decrypt_api_key(character.api_key) if character.api_key else ""
     character_base = (character.api_base_url or "").strip()
     character_model = (character.model_name or "").strip()
@@ -60,6 +63,9 @@ def resolve_text_config(character: CharacterModel, db=None) -> ResolvedTextConfi
         config = get_local_config(db)
         public_key = decrypt_api_key(config.get("public_text_api_key", ""))
         if public_key:
+            if custom_character_base and custom_character_base.rstrip("/") != str(config.get("public_text_base_url") or "").rstrip("/"):
+                from fastapi import HTTPException
+                raise HTTPException(400, "角色填写了不同的平台地址，请填写该平台独立 Key，或清空地址以继承默认平台。")
             return ResolvedTextConfig(
                 api_key=public_key,
                 base_url=custom_character_base or (config.get("public_text_base_url") or "").strip() or character_base,
@@ -76,6 +82,9 @@ def resolve_text_config(character: CharacterModel, db=None) -> ResolvedTextConfi
 
     default_channel = _get_default_channel("text")
     if default_channel and default_channel.get("api_key"):
+        if custom_character_base and custom_character_base.rstrip("/") != str(default_channel.get("base_url") or "").rstrip("/"):
+            from fastapi import HTTPException
+            raise HTTPException(400, "角色平台地址与默认渠道不同，请填写独立 Key。")
         return ResolvedTextConfig(
             api_key=str(default_channel.get("api_key") or ""),
             base_url=custom_character_base or str(default_channel.get("base_url") or "").strip() or character_base,

@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useReducer, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useBeforeUnload, useBlocker, useSearchParams } from 'react-router-dom';
 
 import { api } from '../api/client';
 import type { LocalConfig, VoiceServiceConfig } from '../types';
+import { ModelPlatformsPanel } from '../components/ModelPlatforms';
 import { ApiProbePanel } from '../components/ApiProbePanel';
 import OutputRulesPage from '../components/OutputRulesPage';
 import { CostPanel } from '../components/CostPanel';
@@ -62,11 +63,29 @@ export default function SettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get('tab');
   const tab: SettingsTab = isSettingsTab(requestedTab) ? requestedTab : 'persona';
+  const tabsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const tabs = tabsRef.current;
+    if (!tabs) return;
+    const revealActiveTab = () => {
+      const active = tabs.querySelector<HTMLElement>('[aria-selected="true"]');
+      if (!active) return;
+      const bounds = tabs.getBoundingClientRect();
+      const item = active.getBoundingClientRect();
+      if (item.right > bounds.right) tabs.scrollLeft += item.right - bounds.right;
+      else if (item.left < bounds.left) tabs.scrollLeft += item.left - bounds.left;
+    };
+    revealActiveTab();
+    const observer = new ResizeObserver(revealActiveTab);
+    observer.observe(tabs);
+    return () => observer.disconnect();
+  }, [tab]);
   const localConfigQuery = useQuery({ queryKey: ['local-config'], queryFn: api.getLocalConfig, placeholderData: (prev) => prev });
   const voiceServiceQuery = useQuery({ queryKey: ['voice-service-config'], queryFn: api.getVoiceServiceConfig });
   const worldTemplatesQuery = useQuery({ queryKey: ['world-templates'], queryFn: () => api.listWorldTemplates() });
   const activePersonaQuery = useQuery({ queryKey: ['persona-active'], queryFn: api.getActivePersona });
 
+  const [modelPlatformDirty, setModelPlatformDirty] = useState(false);
   const [personaName, setPersonaName] = useState('');
   const [personaDesc, setPersonaDesc] = useState('');
   const [personaColor, setPersonaColor] = useState('#53c7a8');
@@ -197,11 +216,12 @@ export default function SettingsPage() {
     personaDesc !== activePersonaQuery.data.description ||
     personaColor !== (activePersonaQuery.data.avatar_color || '#53c7a8')
   ));
-  const isSettingsDirty = localConfigDirty || voiceServiceDirty || personaDirty;
+  const isSettingsDirty = localConfigDirty || voiceServiceDirty || personaDirty || modelPlatformDirty;
   const sortedTemplates = [...(worldTemplatesQuery.data ?? [])].sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'));
 
   const settingsNavigationBlocker = useBlocker(({ currentLocation, nextLocation }) => (
-    isSettingsDirty && currentLocation.pathname !== nextLocation.pathname
+    (isSettingsDirty && currentLocation.pathname !== nextLocation.pathname)
+    || (modelPlatformDirty && currentLocation.search !== nextLocation.search)
   ));
 
   useEffect(() => {
@@ -228,7 +248,7 @@ export default function SettingsPage() {
     <div className="settings-page">
       <div className="settings-header">
         <h2>设置</h2>
-        <div className="settings-tabs" style={{ marginTop: 12 }} role="tablist" aria-label="设置分类">
+        <div ref={tabsRef} className="settings-tabs" style={{ marginTop: 12 }} role="tablist" aria-label="设置分类">
           {SETTINGS_TABS.map((item) => (
             <button
               key={item.id}
@@ -467,35 +487,7 @@ export default function SettingsPage() {
           </p>
 
           <div className="settings-api-layout">
-            <section className="settings-api-card">
-              <div className="settings-api-card-heading">
-                <h3 className="settings-api-card-title">文字对话</h3>
-                <span className="pill pill-green">开始使用所需</span>
-              </div>
-              <div className="settings-api-fields">
-                <div className="form-group">
-                  <label>API 地址</label>
-                  <input value={lc.public_text_base_url || ''} onChange={(e) => {
-                    patchLocalConfig({ public_text_base_url: e.target.value });
-                  }} placeholder="https://…/v1" />
-                </div>
-                <div className="form-group">
-                  <label>API 密钥</label>
-                  <input type="password" value={lc.public_text_api_key || ''} onChange={(e) => {
-                    patchLocalConfig({ public_text_api_key: e.target.value });
-                  }} placeholder="sk-…" />
-                </div>
-                <div className="form-group">
-                  <label>模型</label>
-                  <input value={lc.public_text_model || ''} onChange={(e) => {
-                    patchLocalConfig({ public_text_model: e.target.value });
-                  }} placeholder="如 gpt-4o-mini、deepseek-chat" />
-                </div>
-                <div className="form-group full-row settings-api-probe">
-                  <ApiProbePanel channel="text" baseUrl={lc.public_text_base_url || ''} apiKey={lc.public_text_api_key || ''} model={lc.public_text_model || ''} buttonLabel="测试文字连接" />
-                </div>
-              </div>
-            </section>
+            <ModelPlatformsPanel onDirtyChange={setModelPlatformDirty} />
 
             <details className="settings-api-docs">
               <summary>填写与测试说明</summary>
@@ -509,11 +501,11 @@ export default function SettingsPage() {
               <summary>查看当前已保存的生效线路</summary>
               <div className="settings-api-docs-body">
                 <p>
-                  单角色会话优先使用角色页的独立线路；角色未填写时，才使用这里的本机公共配置。
+                  聊天页手动选择优先；未选择时使用角色独立线路，角色未填写时继承默认平台。
                 </p>
                 <ul style={{ margin: '8px 0 0', paddingLeft: 20, fontSize: '0.88rem', lineHeight: 1.65 }}>
                   <li>
-                    <strong>文字</strong>：<code>{(lc.public_text_base_url || '').trim() || '—'}</code> · Key {maskConfiguredSecret(lc.public_text_api_key)} · 模型 <code>{(lc.public_text_model || '').trim() || '—'}</code>
+                    <strong>文字</strong>：<code>{(localConfigQuery.data?.public_text_base_url || '').trim() || '—'}</code> · Key {maskConfiguredSecret(localConfigQuery.data?.public_text_api_key)} · 模型 <code>{(localConfigQuery.data?.public_text_model || '').trim() || '—'}</code>
                   </li>
                   <li>
                     <strong>生图</strong>：<code>{(lc.public_image_base_url || '').trim() || '—'}</code> · Key {maskConfiguredSecret(lc.public_image_api_key)} · 模型 <code>{(lc.public_image_model || '').trim() || '—'}</code>
@@ -700,8 +692,8 @@ export default function SettingsPage() {
             </details>
 
             <p className="hint" style={{ margin: 0, fontSize: '0.76rem' }}>文字、图片与语音转写可以分别使用不同线路。</p>
-            <div className="settings-save-bar">
-              <span className="hint">修改只保留在当前页面，点击保存后才写入本机数据库。</span>
+            {(localConfigDirty || voiceServiceDirty) && <div className="settings-save-bar">
+              <span className="hint">这里保存图片、语音与思考设置；文字平台请使用编辑区的“保存平台”。</span>
               <div className="button-row">
                 {vs && voiceServiceDirty && (
                   <button
@@ -719,10 +711,10 @@ export default function SettingsPage() {
                   disabled={!localConfigDirty || saveLocalConfigMutation.isPending}
                   onClick={() => saveLocalConfigMutation.mutate()}
                 >
-                  {saveLocalConfigMutation.isPending ? '保存中...' : localConfigDirty ? '保存模型配置' : '模型配置已保存'}
+                  {saveLocalConfigMutation.isPending ? '保存中...' : localConfigDirty ? '保存其他设置' : '其他设置已保存'}
                 </button>
               </div>
-            </div>
+            </div>}
           </div>
         </div>
       )}

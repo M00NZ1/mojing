@@ -4,6 +4,7 @@ import { useBeforeUnload, useBlocker, useNavigate, useParams, useSearchParams } 
 
 import { api } from '../api/client';
 import { confirmModal } from '../components/ConfirmModal';
+import { ChatModelPicker } from '../components/ModelPlatforms';
 import ChatInputBar from '../components/ChatInputBar';
 import ChatMenu from '../components/ChatMenu';
 import BranchTreeGraph from '../components/BranchTreeGraph';
@@ -162,6 +163,10 @@ export default function ChatPage() {
   const [retryReplyBranchId, setRetryReplyBranchId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const generationGateRef = useRef(false);
+  const modelChoiceBusyRef = useRef({ sessionId, busy: true });
+  const onModelChoiceBusyChange = useCallback((busy: boolean) => {
+    if (sessionIdRef.current === sessionId) modelChoiceBusyRef.current = { sessionId, busy };
+  }, [sessionId]);
   const branchCreationGateRef = useRef(false);
   const branchSwitchRequestRef = useRef(0);
   const [switchingBranchId, setSwitchingBranchId] = useState<string | null>(null);
@@ -184,6 +189,10 @@ export default function ChatPage() {
   sessionIdRef.current = sessionId;
 
   function reserveGeneration(showBusyMessage = true) {
+    if (modelChoiceBusyRef.current.sessionId !== sessionId || modelChoiceBusyRef.current.busy) {
+      if (showBusyMessage) showToast('模型配置尚未就绪，请在模型选择中等待或重试', 'warn');
+      return false;
+    }
     if (generationGateRef.current) {
       if (showBusyMessage) showToast('当前回复仍在处理中，请先停止或等待完成', 'warn');
       return false;
@@ -1562,6 +1571,7 @@ export default function ChatPage() {
           />
           <div className="chat-topbar-info">
             <div className="chat-topbar-name">{sessionTitle}</div>
+            <ChatModelPicker key={sessionId} sessionId={sessionId} onBusyChange={onModelChoiceBusyChange} />
             <div className="chat-topbar-status">
               {activeBranchLabel} · {flatMessages.length} 条消息
             </div>

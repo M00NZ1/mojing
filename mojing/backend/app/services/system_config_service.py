@@ -73,10 +73,20 @@ def set_setting(db: Session, key: str, value: dict) -> dict:
 
 
 def get_local_config(db: Session) -> dict:
-    return _decrypt_config(
+    result = _decrypt_config(
         get_setting(db, LOCAL_CONFIG_KEY, DEFAULT_LOCAL_CONFIG),
         LOCAL_CONFIG_SECRET_FIELDS,
     )
+    # Once a catalog is saved it owns the public text route. Legacy fields
+    # remain untouched as a rollback point and for older clients.
+    from .model_platform_service import CATALOG_KEY, get_catalog
+    if get_setting(db, CATALOG_KEY, {}):
+        catalog = get_catalog(db)
+        active = next((p for p in catalog["platforms"] if p["id"] == catalog["active_id"]), None)
+        if active:
+            result.update(public_text_api_key=decrypt_api_key(active["api_key"]),
+                          public_text_base_url=active["base_url"], public_text_model=active["selected_model"])
+    return result
 
 
 def set_local_config(
@@ -93,8 +103,13 @@ def set_local_config(
         LOCAL_CONFIG_SECRET_FIELDS,
         clear_secret_fields=clear_secret_fields or set(),
     )
+    from .model_platform_service import CATALOG_KEY
+    if get_setting(db, CATALOG_KEY, {}):
+        original = get_setting(db, LOCAL_CONFIG_KEY, DEFAULT_LOCAL_CONFIG)
+        for field in ("public_text_api_key", "public_text_base_url", "public_text_model"):
+            stored[field] = original[field]
     set_setting(db, LOCAL_CONFIG_KEY, stored)
-    return _decrypt_config(stored, LOCAL_CONFIG_SECRET_FIELDS)
+    return get_local_config(db)
 
 
 def get_voice_service_config(db: Session) -> dict:

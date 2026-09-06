@@ -75,8 +75,10 @@ from ..services.export_service import build_session_export_archive
 from ..services.session_exchange_service import SessionExchangeError, import_session_archive
 from ..services.tavern_chat_import_service import parse_tavern_chat_file
 from ..services.memory_service import ensure_session_character_state
-from ..services.system_config_service import get_local_config
-
+from ..services.system_config_service import get_local_config, set_setting
+from ..services.model_platform_service import (
+    ModelChoiceWrite, ModelSelection, get_model_choice, resolve_selection,
+)
 
 
 router = APIRouter(prefix="/sessions", tags=["会话"])
@@ -934,6 +936,23 @@ def list_character_states(session_id: int, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/{session_id}/model-choice")
+def read_model_choice(session_id: int, db: Session = Depends(get_db)):
+    if db.get(ChatSessionModel, session_id) is None:
+        raise HTTPException(404, "会话不存在")
+    return get_model_choice(db, session_id)
+
+
+@router.put("/{session_id}/model-choice")
+def update_model_choice(session_id: int, payload: ModelChoiceWrite, db: Session = Depends(get_db)):
+    if db.get(ChatSessionModel, session_id) is None:
+        raise HTTPException(404, "会话不存在")
+    get_model_choice(db, session_id)  # Reject unreadable future versions before overwriting.
+    if payload.selection:
+        resolve_selection(db, payload.selection)
+    return set_setting(db, f"chat_model_choice_{session_id}", {"version": 1, **payload.model_dump()})
+
+
 @router.post("/{session_id}/speaker-plan", summary="获取发言人规划", response_model=SpeakerPlanRead)
 def get_speaker_plan(session_id: int, payload: GenerateRequest, db: Session = Depends(get_db)):
     session = db.get(ChatSessionModel, session_id)
@@ -958,6 +977,11 @@ def generate_stream(session_id: int, payload: GenerateRequest, db: Session = Dep
     if session is None:
         raise HTTPException(status_code=404, detail="会话不存在")
 
+    # Resolve once before any message write. Every speaker and narrator in this
+    # response uses this immutable tuple, even if settings change during SSE.
+    choice = get_model_choice(db, session_id)["selection"]
+    route_args = {"text_config": resolve_selection(db, ModelSelection.model_validate(choice))} if choice else {}
+
     branch_id = payload.branch_id or "main"
     try:
         # 先完成分支校验，再允许任何本轮消息落库。
@@ -978,7 +1002,7 @@ def generate_stream(session_id: int, payload: GenerateRequest, db: Session = Dep
         def narrator_only_stream():
             yield sse_event({"type": "session", "session_id": session_id})
             yield sse_event({"type": "speaker_plan", "character_ids": [], "reason": "仅生成旁白"})
-            for event in stream_narrator_reply(session_id, branch_id):
+            for event in stream_narrator_reply(session_id, branch_id, **route_args):
                 yield sse_event(event)
             trigger_memory_compaction_async(session_id, branch_id)
             yield sse_event({"type": "done"})
@@ -1018,10 +1042,10 @@ def generate_stream(session_id: int, payload: GenerateRequest, db: Session = Dep
         yield sse_event({"type": "session", "session_id": session_id})
         yield sse_event({"type": "speaker_plan", "character_ids": target_ids, "reason": plan_reason})
         for character_id in target_ids:
-            for event in stream_character_reply(session_id, character_id, branch_id):
+            for event in stream_character_reply(session_id, character_id, branch_id, **route_args):
                 yield sse_event(event)
         if payload.include_narrator:
-            for event in stream_narrator_reply(session_id, branch_id):
+            for event in stream_narrator_reply(session_id, branch_id, **route_args):
                 yield sse_event(event)
         trigger_memory_compaction_async(session_id, branch_id)
         yield sse_event({"type": "done"})
