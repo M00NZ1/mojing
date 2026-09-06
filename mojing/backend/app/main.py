@@ -35,7 +35,7 @@ from .routes.expressions import router as expressions_router
 from .routes.timeline import router as timeline_router
 from .services.legacy_import import bootstrap_legacy_data
 from .services.public_storage import mount_public_storage
-from .services.encyclopedia_seed import seed_preset_encyclopedias
+from .services.starter_catalog_service import install_starter_catalog
 from .services.builtin_media_sync import sync_builtin_media_pack
 from .services.channel_service import ChannelStorageError
 from .services.crypto_service import SecretStorageError
@@ -130,7 +130,7 @@ AI 驱动的角色扮演对话平台，**本地优先**设计，完整开源。
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         bootstrap_legacy_data(db, Path(__file__).resolve().parents[2])
-        seed_preset_encyclopedias()
+        install_starter_catalog(db)
 
     app.include_router(sessions_router, prefix=settings.api_prefix)
     app.include_router(assets_router, prefix=settings.api_prefix)

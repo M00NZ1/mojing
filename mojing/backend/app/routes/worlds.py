@@ -62,7 +62,8 @@ def _serialize_world_template(row: WorldTemplateModel) -> WorldTemplateRead:
 
 @router.get("/templates", summary="获取模板列表", response_model=list[WorldTemplateRead])
 def list_world_templates(q: str = "", db: Session = Depends(get_db)):
-    stmt = select(WorldTemplateModel)
+    from ..services.starter_catalog_service import hidden_catalog_ids
+    stmt = select(WorldTemplateModel).where(WorldTemplateModel.id.not_in(hidden_catalog_ids(db, "worlds")))
     keyword = q.strip()
     if keyword:
         like_value = f"%{keyword}%"

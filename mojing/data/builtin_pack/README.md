@@ -1,5 +1,7 @@
 # 内置角色 / 封面图（随仓库分发）
 
+`starter_catalog.json` 维护“雾港来信”的一个百科、一个世界和两名角色。Web 直接读取此文件；Android 的 `res/raw/seed_data.json` 是相同内容的分发副本，由 `tests/test_starter_catalog.py` 校验一致性。旧目录代码仅供迁移识别，不再参与正常启动填充。
+
 ## 版权与来源策略
 
 - **本目录下的 SVG 均为项目原创的抽象 / 装饰性图形**，在 `manifest.json` 中标注为 **CC0-1.0**，可自由用于产品内置展示。

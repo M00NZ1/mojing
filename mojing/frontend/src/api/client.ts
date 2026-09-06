@@ -160,6 +160,10 @@ async function downloadFile(path: string, fallbackFilename: string, options?: Re
 }
 
 export const api = {
+  getStarterCatalog() {
+    return request<{ available: boolean; title?: string; summary?: string; template_id?: string; encyclopedia_id?: number; characters?: { id: number; name: string }[]; retired: Record<string, string[]> }>('/system/starter-catalog');
+  },
+  restoreStarterCatalog() { return request('/system/starter-catalog/restore', { method: 'POST' }); },
   getModelPlatforms() { return request<ModelCatalog>('/system/model-platforms'); },
   saveModelPlatform(platform: ModelPlatform) {
     return request<ModelCatalog>(`/system/model-platforms/${encodeURIComponent(platform.id)}`, { method: 'PUT', body: JSON.stringify(platform) });

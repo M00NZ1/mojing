@@ -1,8 +1,6 @@
 """
-预设百科种子数据。首次启动时自动导入常用世界观百科。
-数据量大、覆盖全面，力求接近 Wiki 级参考质量。
+旧版百科目录参考。仅用于隔离数据库中的升级比对，不再写入用户库。
 """
-from ..database import SessionLocal
 from ..models import WorldEncyclopediaModel, EncyclopediaEntryModel
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
@@ -501,42 +499,40 @@ PRESET_ENCYCLOPEDIAS: list[dict] = [
 ]
 
 
-def seed_preset_encyclopedias():
-    """首次启动时导入预设百科库和条目。"""
-    with SessionLocal() as db:
-        _seed_universal_template(db)
-        seed_curated_source_encyclopedias(db)
-        for enc_data in PRESET_ENCYCLOPEDIAS:
-            if enc_data["name"] in DEPRECATED_SEED_ENCYCLOPEDIA_NAMES:
-                continue
-            existing = db.scalar(select(WorldEncyclopediaModel).where(WorldEncyclopediaModel.name == enc_data["name"]))
-            if existing:
-                continue
-            enc = WorldEncyclopediaModel(
-                name=enc_data["name"],
-                description=enc_data["description"],
-                is_official=enc_data.get("is_official", 0),
+def seed_legacy_encyclopedias(db: Session):
+    """Historical catalog reference only; never called against user data at startup."""
+    _seed_universal_template(db)
+    seed_curated_source_encyclopedias(db)
+    for enc_data in PRESET_ENCYCLOPEDIAS:
+        if enc_data["name"] in DEPRECATED_SEED_ENCYCLOPEDIA_NAMES:
+            continue
+        existing = db.scalar(select(WorldEncyclopediaModel).where(WorldEncyclopediaModel.name == enc_data["name"]))
+        if existing:
+            continue
+        enc = WorldEncyclopediaModel(
+            name=enc_data["name"],
+            description=enc_data["description"],
+            is_official=enc_data.get("is_official", 0),
+        )
+        db.add(enc)
+        db.flush()
+        for entry_data in enc_data.get("entries", []):
+            entry = EncyclopediaEntryModel(
+                encyclopedia_id=enc.id,
+                title=entry_data["title"],
+                entry_type=entry_data["entry_type"],
+                summary=entry_data.get("summary", ""),
+                content=entry_data.get("content", ""),
+                tags=entry_data.get("tags", ""),
+                is_featured=entry_data.get("is_featured", 0),
+                sort_order=entry_data.get("sort_order", 0),
+                meta_json=entry_data.get("meta_json", {}),
             )
-            db.add(enc)
-            db.flush()
-            for entry_data in enc_data.get("entries", []):
-                entry = EncyclopediaEntryModel(
-                    encyclopedia_id=enc.id,
-                    title=entry_data["title"],
-                    entry_type=entry_data["entry_type"],
-                    summary=entry_data.get("summary", ""),
-                    content=entry_data.get("content", ""),
-                    tags=entry_data.get("tags", ""),
-                    is_featured=entry_data.get("is_featured", 0),
-                    sort_order=entry_data.get("sort_order", 0),
-                    meta_json=entry_data.get("meta_json", {}),
-                )
-                db.add(entry)
-        db.commit()
+            db.add(entry)
+    db.commit()
 
-        # 第二遍：批量生成扩展数据（为已有百科库补充大量条目；须在同一 Session 内）
-        _generate_batch_entries(db)
-
+    # 第二遍：批量生成扩展数据（为已有百科库补充大量条目；须在同一 Session 内）
+    _generate_batch_entries(db)
 
 def _generate_batch_entries(db: Session) -> None:
     """对每个有生成器的百科库依次补充条目；每库一批写入后单独 commit，再处理下一库。"""

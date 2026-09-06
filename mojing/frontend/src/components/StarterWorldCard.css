@@ -1,0 +1,10 @@
+.starter-world { padding: 28px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); margin: 4px 0 24px; }
+.starter-world h2 { font-size: clamp(1.6rem, 4vw, 2.2rem); margin: 10px 0 14px; letter-spacing: .06em; }
+.starter-world-copy { max-width: 760px; }
+.starter-world-copy > p { line-height: 1.8; color: var(--text-2); }
+.starter-world-meta { display: flex; gap: 8px 24px; flex-wrap: wrap; margin: 20px 0; font-size: .85rem; color: var(--text); }
+.starter-world-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+.starter-retired { margin: -8px 0 24px; padding: 12px 0; font-size: .85rem; }
+.starter-retired summary { cursor: pointer; color: var(--text-2); }
+.starter-retired-names { overflow-wrap: anywhere; line-height: 1.8; }
+@media (max-width: 540px) { .starter-world { padding: 22px 18px; } .starter-world-actions > * { flex: 1; text-align: center; } }

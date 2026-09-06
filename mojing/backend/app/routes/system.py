@@ -218,3 +218,15 @@ def list_available_macros():
     """返回系统支持的宏变量列表，供前端提示词编辑器使用。"""
     from ..services.macro_service import get_available_macros
     return get_available_macros()
+
+
+@router.get("/starter-catalog")
+def get_starter_catalog(db: Session = Depends(get_db)):
+    from ..services.starter_catalog_service import catalog_status
+    return catalog_status(db)
+
+
+@router.post("/starter-catalog/restore")
+def restore_starter_catalog(db: Session = Depends(get_db)):
+    from ..services.starter_catalog_service import restore_retired_catalog
+    return restore_retired_catalog(db)

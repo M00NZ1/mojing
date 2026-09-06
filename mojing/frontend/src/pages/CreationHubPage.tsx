@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import UiIcon, { type UiIconName } from '../components/UiIcon';
+import StarterWorldCard from '../components/StarterWorldCard';
 
 const creationResources: ReadonlyArray<{
   to: string;
@@ -40,6 +41,7 @@ export default function CreationHubPage() {
           返回对话
         </NavLink>
       </header>
+      <StarterWorldCard />
       <section aria-labelledby="creation-start-title">
         <h2 id="creation-start-title" className="creation-hub-section-title">开始创作</h2>
         <NavLink to="/story-simulation" className="creation-hub-card creation-hub-primary">

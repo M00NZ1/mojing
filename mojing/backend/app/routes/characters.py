@@ -62,9 +62,11 @@ def _character_read(character: CharacterModel) -> CharacterRead:
 
 @router.get("", summary="获取角色列表", response_model=list[CharacterRead])
 def list_characters(db: Session = Depends(get_db)):
+    from ..services.starter_catalog_service import hidden_catalog_ids
     characters = list(
         db.scalars(
             select(CharacterModel)
+            .where(CharacterModel.id.not_in(hidden_catalog_ids(db, "characters")))
             .options(joinedload(CharacterModel.voice_profile))
             .order_by(CharacterModel.favorite.desc(), CharacterModel.id.desc())
         )

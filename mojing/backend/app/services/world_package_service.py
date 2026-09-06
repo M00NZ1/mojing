@@ -76,7 +76,8 @@ def write_world_template_package_file(package: WorldTemplatePackageRead, templat
 def build_world_template_bundle(db: Session, include_builtin: bool = True) -> WorldTemplateBundleRead:
     """导出一组世界模板包。"""
 
-    stmt = select(WorldTemplateModel).order_by(WorldTemplateModel.is_builtin.desc(), WorldTemplateModel.updated_at.desc())
+    from .starter_catalog_service import hidden_catalog_ids
+    stmt = select(WorldTemplateModel).where(WorldTemplateModel.id.not_in(hidden_catalog_ids(db, "worlds"))).order_by(WorldTemplateModel.is_builtin.desc(), WorldTemplateModel.updated_at.desc())
     if not include_builtin:
         stmt = stmt.where(WorldTemplateModel.is_builtin.is_(False))
     rows = list(db.scalars(stmt))

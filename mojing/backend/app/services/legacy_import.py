@@ -27,7 +27,7 @@ from .secret_migration_service import migrate_persisted_secrets
 
 
 def _merge_starter_characters(db: Session) -> None:
-    """按名字补全内置预设角色：老库已有部分角色时仍会在启动时合并新增项，不删已有角色与会话。"""
+    """旧版角色参考，仅由目录升级的隔离校验调用。"""
     existing = set(db.scalars(select(CharacterModel.name)).all())
     changed = False
     for spec in STARTER_CHARACTERS:
@@ -55,11 +55,9 @@ def bootstrap_legacy_data(db: Session, project_dir: Path) -> None:
     _ensure_runtime_columns(db)
     migrate_persisted_secrets(db)
     _seed_builtin_voices(db)
-    _seed_builtin_world_templates(db)
     _seed_builtin_prompt_templates(db)
     _backfill_session_worlds(db)
     has_session = db.scalar(select(ChatSessionModel.id).limit(1))
-    _merge_starter_characters(db)
 
     if has_session:
         return

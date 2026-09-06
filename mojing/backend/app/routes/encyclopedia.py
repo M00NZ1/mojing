@@ -150,7 +150,8 @@ def source_policy():
 
 @router.get("", summary="获取百科列表")
 def list_encyclopedias(db: Session = Depends(get_db)):
-    rows = db.scalars(select(WorldEncyclopediaModel).order_by(WorldEncyclopediaModel.is_official.desc(), WorldEncyclopediaModel.updated_at.desc())).all()
+    from ..services.starter_catalog_service import hidden_catalog_ids
+    rows = db.scalars(select(WorldEncyclopediaModel).where(WorldEncyclopediaModel.id.not_in(hidden_catalog_ids(db, "encyclopedias"))).order_by(WorldEncyclopediaModel.is_official.desc(), WorldEncyclopediaModel.updated_at.desc())).all()
     result = []
     for row in rows:
         entry_count = db.scalar(select(func.count(EncyclopediaEntryModel.id)).where(EncyclopediaEntryModel.encyclopedia_id == row.id)) or 0
