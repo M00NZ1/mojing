@@ -8,6 +8,8 @@ import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.ChatDraftSnapshot
 import com.mojing.app.data.ChatDraftStore
 import com.mojing.app.data.prefs.UiPreferencesRepository
+import com.mojing.app.data.local.dao.MessageRecallImpact
+import com.mojing.app.data.local.dao.MessageRecallBlockedException
 import com.mojing.app.data.local.dao.AttachmentDao
 import com.mojing.app.data.local.dao.BookmarkDao
 import com.mojing.app.data.local.dao.CharacterDao
@@ -598,6 +600,7 @@ class ChatViewModel @Inject constructor(
                                 speakerType = "character",
                                 characterId = character.id,
                                 content = "🖼 配图生成中…",
+                                structuredContentJson = """{"derived_media_version":1,"derived_media_kind":"image"}""",
                                 branchId = generation.branchId,
                                 parentMessageId = sourceReplyMessageId,
                                 includeInContext = false,
@@ -675,6 +678,7 @@ class ChatViewModel @Inject constructor(
                                 speakerType = "character",
                                 characterId = character.id,
                                 content = "🔊 语音生成中…",
+                                structuredContentJson = """{"derived_media_version":1,"derived_media_kind":"voice"}""",
                                 branchId = generation.branchId,
                                 parentMessageId = sourceReplyMessageId,
                                 includeInContext = false,
@@ -1247,14 +1251,19 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private suspend fun refreshMessagesUi(requestedBranchId: String = currentBranchId()) {
+    private suspend fun refreshMessagesUi(requestedBranchId: String = currentBranchId(), anchorMessageId: Long? = null) {
         val branches = sessionBranchDao.getBySession(sessionId)
         val branchId = if (
             requestedBranchId == "main" || branches.any { it.branchId == requestedBranchId }
         ) requestedBranchId else "main"
-        val pageRows = getMessageTailForBranch(branchId, INITIAL_MESSAGE_WINDOW_SIZE + 1)
-        val hasOlderMessages = pageRows.size > INITIAL_MESSAGE_WINDOW_SIZE
-        val msgs = pageRows.take(INITIAL_MESSAGE_WINDOW_SIZE).asReversed()
+        val anchor = anchorMessageId?.let { getVisibleMessage(branchId, it) }
+        val radius = INITIAL_MESSAGE_WINDOW_SIZE / 2
+        val pageRows = if (anchor == null) getMessageTailForBranch(branchId, INITIAL_MESSAGE_WINDOW_SIZE + 1)
+            else getMessagesBefore(branchId, anchor.id, radius + 1)
+        val afterRows = if (anchor == null) emptyList() else getMessagesAfter(branchId, anchor.id, radius + 1)
+        val hasOlderMessages = pageRows.size > if (anchor == null) INITIAL_MESSAGE_WINDOW_SIZE else radius
+        val msgs = if (anchor == null) pageRows.take(INITIAL_MESSAGE_WINDOW_SIZE).asReversed()
+            else pageRows.take(radius).asReversed() + anchor + afterRows.take(radius)
         val world = sessionWorldDao.getBySession(sessionId)
         val anchors = branches
             .filter { it.sourceMessageId > 0L }
@@ -1285,9 +1294,9 @@ class ChatViewModel @Inject constructor(
             messages = msgs,
             displayLines = msgs.toChatDisplayLines(),
             hasOlderMessages = hasOlderMessages,
-            hasNewerMessages = false,
+            hasNewerMessages = anchor != null && afterRows.size > radius,
             isLoadingHistory = false,
-            focusedMessageId = null,
+            focusedMessageId = anchor?.id,
             searchResults = emptyList(),
             isSearchingMessages = false,
             messageAttachments = map,
@@ -2856,6 +2865,13 @@ class ChatViewModel @Inject constructor(
         }
     }
     fun toggleDrawer() { _state.value = _state.value.copy(isDrawerOpen = !_state.value.isDrawerOpen) }
+    suspend fun previewMessageRecall(messageId: Long): MessageRecallImpact {
+        if (getVisibleMessage(currentBranchId(), messageId) == null) {
+            return MessageRecallImpact(false, "消息不存在或不在当前故事线")
+        }
+        return messageDao.previewRecallInSession(sessionId, messageId)
+    }
+
     fun deleteMessage(messageId: Long, onResult: (Boolean) -> Unit = {}) {
         if (_state.value.isGenerating) {
             _state.update { it.copy(error = "当前正在生成，请先停止或等待完成后再撤回消息") }
@@ -2865,6 +2881,7 @@ class ChatViewModel @Inject constructor(
         val launched = launchBranchTransition {
             var committed = false
             try {
+                val beforeRecall = _state.value.messages
                 val result = messageDao.recallInSession(sessionId, messageId)
                 if (!result.deleted) {
                     _state.update { it.copy(error = "消息不存在或已经撤回") }
@@ -2885,11 +2902,16 @@ class ChatViewModel @Inject constructor(
                         cleanupFailed = true
                     }
                 }
-                refreshMessagesUi()
+                val neighbors = beforeRecall.filter { it.id !in result.deletedMessageIds }
+                val anchor = neighbors.lastOrNull { it.id < messageId } ?: neighbors.firstOrNull()
+                refreshMessagesUi(anchorMessageId = anchor?.id)
                 if (cleanupFailed) {
                     _state.update { it.copy(error = "消息已撤回，但部分本地媒体文件未能清理") }
                 }
                 onResult(true)
+            } catch (e: MessageRecallBlockedException) {
+                _state.update { it.copy(error = e.reason) }
+                onResult(false)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {

@@ -8,6 +8,7 @@ import androidx.room.Transaction
 import com.mojing.app.data.local.entity.BranchSwipeSelectionEntity
 import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.local.entity.MessageSearchIndexStateEntity
+import com.mojing.app.data.local.entity.SessionBranchEntity
 import com.mojing.app.data.local.entity.SessionContextMemoryEntity
 import com.mojing.app.data.local.search.MessageSearchTokenizer
 
@@ -691,10 +692,53 @@ interface MessageDao {
     @Query("DELETE FROM session_event_nodes WHERE sessionId = :sessionId AND messageId = :messageId")
     suspend fun deleteEventNodesForMessage(sessionId: Long, messageId: Long): Int
 
+    @Query("SELECT COUNT(*) FROM session_branches WHERE sessionId = :sessionId AND sourceMessageId IN (:messageIds)")
+    suspend fun countRecallReferences(sessionId: Long, messageIds: List<Long>): Int
+
+    @Query("SELECT * FROM session_branches WHERE sessionId = :sessionId AND sourceMessageId IN (:messageIds) ORDER BY id LIMIT 10")
+    suspend fun getRecallReferences(sessionId: Long, messageIds: List<Long>): List<SessionBranchEntity>
+
+    @Query("SELECT COUNT(*) FROM messages AS replacement JOIN messages AS source ON source.id = replacement.regeneratedFromMessageId WHERE replacement.sessionId = :sessionId AND source.sessionId = :sessionId AND source.id IN (:messageIds) AND replacement.branchId <> source.branchId")
+    suspend fun countCrossBranchReplacements(sessionId: Long, messageIds: List<Long>): Int
+
+    @Transaction
+    suspend fun previewRecallInSession(sessionId: Long, id: Long): MessageRecallImpact {
+        val target = getByIdInSession(id, sessionId)
+            ?: return MessageRecallImpact(false, "消息不存在或已经撤回")
+        val plan = MessageRecallPolicy.plan(target, getDerivedChildrenInSession(sessionId, id))
+        return recallImpact(target, plan.messagesToDelete)
+    }
+
+    private suspend fun recallImpact(target: MessageEntity, messages: List<MessageEntity>): MessageRecallImpact {
+        val ids = messages.map(MessageEntity::id)
+        val referenceCount = countRecallReferences(target.sessionId, ids)
+        val hasReplacements = countCrossBranchReplacements(target.sessionId, ids) > 0
+        val isEditedVersion = messages.any { message ->
+            message.regeneratedFromMessageId?.let { sourceId ->
+                getByIdInSession(sourceId, target.sessionId)?.branchId?.let { it != message.branchId }
+            } == true
+        }
+        val reason = when {
+            referenceCount > 0 || hasReplacements -> "这条消息或其附属内容是故事线、检查点或编辑版本的来源。请保留原文，使用编辑创建新的故事线。"
+            isEditedVersion -> "这条消息是编辑后的版本，撤回会让旧版本重新出现。请使用编辑创建新的故事线。"
+            else -> ""
+        }
+        return MessageRecallImpact(
+            canRecall = reason.isEmpty(), reason = reason, referenceCount = referenceCount,
+            references = getRecallReferences(target.sessionId, ids).map {
+                MessageRecallReference(it.branchId, it.label.ifBlank { it.branchId }, it.isCheckpoint)
+            },
+            removesDerivedMessages = messages.size > 1,
+            maySelectRemainingReply = !target.swipeGroupId.isNullOrBlank(),
+        )
+    }
+
     /** 删除原始消息时同步丢弃覆盖它的自动派生记忆，避免旧剧情继续进入提示词。 */
     @Transaction
     suspend fun delete(id: Long): Boolean {
         val message = getById(id) ?: return false
+        val impact = recallImpact(message, listOf(message))
+        if (!impact.canRecall) throw MessageRecallBlockedException(impact.reason)
         val affectedBranches = contextMemoryBranchesAffectedBy(message)
         deleteMemorySegmentsCovering(message.sessionId, id)
         deleteEventNodesForMessage(message.sessionId, id)
@@ -715,6 +759,8 @@ interface MessageDao {
         val children = getDerivedChildrenInSession(sessionId, id)
         val groupId = target.swipeGroupId?.takeIf(String::isNotBlank)
         val plan = MessageRecallPolicy.plan(target, children)
+        val impact = recallImpact(target, plan.messagesToDelete)
+        if (!impact.canRecall) throw MessageRecallBlockedException(impact.reason)
         val messageIds = plan.messagesToDelete.map(MessageEntity::id)
         val attachmentPaths = getAttachmentStoragePaths(messageIds)
         val affectedBranches = contextMemoryBranchesAffectedBy(target)

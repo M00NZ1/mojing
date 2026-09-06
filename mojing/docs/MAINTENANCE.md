@@ -336,4 +336,23 @@ node scripts/test-message-search.mjs
 node scripts/test-message-deletion.mjs
 ```
 
-Chrome 脚本使用既有 Playwright 环境变量、独立端口 15183 和模拟 API，验证桌面 1365×900 / 窄屏 390×844 的引用保护、取消/Escape、读取和删除重试、预览后新增引用、旧历史位置保持。并发测试使用隔离 SQLite 与两个独立 Session，包含分叉、编辑、检查点先于删除，以及删除先于分叉；不代表多设备或真实供应商运行验证。Android 原生删除和既有损坏分支恢复仍单独验收。
+Chrome 脚本使用既有 Playwright 环境变量、独立端口 15183 和模拟 API，验证桌面 1365×900 / 窄屏 390×844 的引用保护、取消/Escape、读取和删除重试、预览后新增引用、旧历史位置保持。并发测试使用隔离 SQLite 与两个独立 Session，包含分叉、编辑、检查点先于删除，以及删除先于分叉；不代表多设备或真实供应商运行验证。Android 原生撤回见下一节，既有损坏分支恢复仍单独验收。
+
+## 19. Android 撤回确认与故事线来源
+
+- 撤回预览和提交复用 DAO 影响计算，引用摘要最多十项。Room 生成代码为预览、撤回、底层删除与故事线创建生成事务包装；预览不是删除授权的唯一检查，提交会重新读取引用。新建故事线在事务中拒绝不存在或其他会话的来源。
+- 撤回计划保护目标及明确归属子媒体上的故事线/检查点引用、跨线编辑来源与替代版本。同线旧 swipe 回复保留既有回退语义，界面提前说明。普通撤回沿用既有附件/收藏和派生记忆处理，文件只在提交后且无其他引用时按私有目录边界清理；失败不先清理文件。
+- 原有排除上下文标志也用于普通剧情，不能作为媒体归属证据。新图片/语音在既有结构字段记录 v1 生成标记，只有已知版本、种类及同会话/同线/父消息一致时才连带撤回。无标记旧行、损坏或未知格式保留，不扫描回填或改写旧库；标记不包含需跨端重映射的 ID。无 schema、交换版本或数据迁移。
+- 成功后保留邻近窗口，默认最多 40 条前文、锚点及 40 条后文；无有效锚点时读取最近页。确认窗口支持取消、检查重试和失败后的重新检查，生成期间沿用撤回互斥。
+
+```powershell
+# mojing 目录，临时 SQLite，不接触正式存储
+.\.venv\Scripts\python.exe -m pytest tests/test_android_recall_protection_sqlite.py -q
+
+# android 目录，JDK 17；只编译与 JVM 测试，不打包 APK
+.\gradlew.bat :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin :app:testDebugUnitTest --tests 'com.mojing.app.viewmodel.ChatViewModelTest' --tests 'com.mojing.app.data.local.dao.MessageRecallPolicyTest' --tests 'com.mojing.app.data.local.dao.MessageRecallGuardTest' --console=plain
+```
+
+2026-09-07：77 项 JVM（69 ViewModel、6 保护逻辑、2 媒体计划）、2 项提取真实 DAO SQL 的桌面 SQLite 测试通过；主代码与 AndroidTest Kotlin 编译通过。新增 2 项 Room 用例覆盖预览后来源变化与先撤回后分叉，2 项 Compose 用例覆盖引用阻断、读取重试与提交失败；这些设备用例只编译，未运行。没有连接设备、调用真实模型、重启用户环境或生成 APK，未修改正式数据库、配置和媒体。没有本批性能结论。
+
+回退代码不需要降级 schema，也不会清空新增标记，但会重新引入旧撤回风险；回退不能恢复已经确认删除的原文。不自动修补历史缺失来源，不通过删除数据库排障。验证输出保留在既有 Gradle/Pytest 目录，清理 DryRun 保留既有缓存和当前证据，无删除操作。

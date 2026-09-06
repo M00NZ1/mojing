@@ -1606,6 +1606,48 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun recallProtectionFailureKeepsMessagesAndDoesNotCleanFiles() = runTest(testDispatcher) {
+        val messageDao = mockk<MessageDao>(relaxed = true)
+        val attachmentDao = mockk<AttachmentDao>(relaxed = true)
+        val target = MessageEntity(id = 8, sessionId = 42, content = "分叉来源")
+        coEvery { messageDao.getMainMessagesTail(42L, any()) } returns listOf(target)
+        coEvery { messageDao.recallInSession(42L, 8L) } throws com.mojing.app.data.local.dao.MessageRecallBlockedException("需要保留分叉来源")
+        val vm = createViewModel(messageDao = messageDao, attachmentDao = attachmentDao)
+        advanceUntilIdle()
+        val result = CompletableDeferred<Boolean>()
+        vm.deleteMessage(8L) { result.complete(it) }
+        assertFalse(result.await())
+        assertEquals("需要保留分叉来源", vm.state.value.error)
+        assertEquals(listOf(8L), vm.state.value.messages.map { it.id })
+        coVerify(exactly = 0) { attachmentDao.countByStoragePath(any()) }
+    }
+
+    @Test
+    fun recallKeepsTheWindowNearAnOldMessage() = runTest(testDispatcher) {
+        val messageDao = mockk<MessageDao>(relaxed = true)
+        val target = MessageEntity(id = 500, sessionId = 42, content = "旧消息")
+        val neighbor = target.copy(id = 499)
+        coEvery { messageDao.getMainMessageById(42L, 500L) } returns target
+        coEvery { messageDao.getMainMessagesBefore(42L, 500L, 41) } returns listOf(neighbor)
+        coEvery { messageDao.getMainMessageById(42L, 499L) } returns neighbor
+        coEvery { messageDao.getMainMessagesBefore(42L, 499L, 41) } returns (498L downTo 457L).map { target.copy(id = it) }
+        coEvery { messageDao.getMainMessagesAfter(42L, 499L, 41) } returns (501L..542L).map { target.copy(id = it) }
+        coEvery { messageDao.recallInSession(42L, 500L) } returns MessageRecallResult(true, deletedMessageIds = listOf(500L))
+        val vm = createViewModel(messageDao = messageDao)
+        advanceUntilIdle()
+        vm.openMessageInHistory(500L)
+        advanceUntilIdle()
+        val result = CompletableDeferred<Boolean>()
+        vm.deleteMessage(500L) { result.complete(it) }
+        assertTrue(result.await())
+        assertEquals(499L, vm.state.value.focusedMessageId)
+        assertTrue(vm.state.value.hasOlderMessages)
+        assertTrue(vm.state.value.hasNewerMessages)
+        assertEquals(81, vm.state.value.messages.size)
+        assertFalse(vm.state.value.messages.any { it.id == 500L })
+    }
+
+    @Test
     fun recallIsRejectedWhileGenerationOwnsTheSession() = runTest(testDispatcher) {
         val messageDao = mockk<MessageDao>(relaxed = true)
         val vm = createViewModel(messageDao = messageDao)

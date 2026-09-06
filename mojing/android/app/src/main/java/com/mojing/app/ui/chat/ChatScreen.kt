@@ -158,6 +158,7 @@ fun ChatScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     var editingMessage by remember { mutableStateOf<com.mojing.app.data.local.entity.MessageEntity?>(null) }
     var editContent by remember { mutableStateOf("") }
+    var recallMessage by remember(sessionId, state.currentBranchId) { mutableStateOf<com.mojing.app.data.local.entity.MessageEntity?>(null) }
     var showImageGenDialog by remember { mutableStateOf(false) }
     var imageGenPrompt by remember { mutableStateOf("") }
     var showEmojiPicker by remember { mutableStateOf(false) }
@@ -1028,6 +1029,7 @@ fun ChatScreen(
                                     showGenerationLockedMessage()
                                 } else {
                                     when (action) {
+                                    is MessageAction.Recall -> { recallMessage = action.message }
                                     is MessageAction.Edit -> {
                                         editingMessage = action.message
                                         editContent = ChatMessageTextFormat.visibleBody(action.message.content)
@@ -1115,6 +1117,15 @@ fun ChatScreen(
             }
             }
         }
+    }
+
+    recallMessage?.let { target ->
+        RecallMessageDialog(
+            content = target.content,
+            loadImpact = { viewModel.previewMessageRecall(target.id) },
+            onConfirm = { result -> viewModel.deleteMessage(target.id, result) },
+            onDismiss = { recallMessage = null },
+        )
     }
 
     if (showAddParticipant) {

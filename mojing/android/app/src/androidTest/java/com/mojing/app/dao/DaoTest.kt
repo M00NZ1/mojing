@@ -46,6 +46,36 @@ class MessageDaoTest {
     fun teardown() { db.close() }
 
     @Test
+    fun recallRejectsReferencedMediaBeforeAnyOriginalOrAttachmentIsRemoved() = runBlocking {
+        val sessionId = sessionDao.insert(SessionEntity(title = "来源保护"))
+        val sourceId = messageDao.insert(MessageEntity(sessionId = sessionId, content = "原始消息"))
+        val mediaId = messageDao.insert(MessageEntity(sessionId = sessionId, parentMessageId = sourceId, includeInContext = false, structuredContentJson = """{"derived_media_version":1,"derived_media_kind":"image"}"""))
+        db.attachmentDao().insert(MessageAttachmentEntity(messageId = mediaId, storagePath = "/private/keep.png"))
+        assertTrue(messageDao.previewRecallInSession(sessionId, sourceId).canRecall)
+        sessionBranchDao.insert(SessionBranchEntity(sessionId = sessionId, branchId = "A", sourceMessageId = mediaId, isCheckpoint = true))
+        assertFalse(messageDao.previewRecallInSession(sessionId, sourceId).canRecall)
+        try {
+            messageDao.recallInSession(sessionId, sourceId)
+            fail("Referenced child must reject the entire recall")
+        } catch (_: com.mojing.app.data.local.dao.MessageRecallBlockedException) { }
+        assertNotNull(messageDao.getById(sourceId))
+        assertNotNull(messageDao.getById(mediaId))
+        assertEquals(1, db.attachmentDao().countByStoragePath("/private/keep.png"))
+    }
+
+    @Test
+    fun branchInsertionAfterRecallRejectsMissingSource() = runBlocking {
+        val sessionId = sessionDao.insert(SessionEntity(title = "撤回后的分叉"))
+        val sourceId = messageDao.insert(MessageEntity(sessionId = sessionId, content = "普通消息"))
+        assertTrue(messageDao.recallInSession(sessionId, sourceId).deleted)
+        try {
+            sessionBranchDao.insert(SessionBranchEntity(sessionId = sessionId, branchId = "A", sourceMessageId = sourceId))
+            fail("A missing source cannot become a new branch")
+        } catch (_: IllegalArgumentException) { }
+        assertTrue(sessionBranchDao.getBySession(sessionId).isEmpty())
+    }
+
+    @Test
     fun insertAndQuery() = runBlocking {
         val sessionId = sessionDao.insert(SessionEntity(title = "测试会话"))
         messageDao.insert(MessageEntity(sessionId = sessionId, speakerType = "user", content = "你好"))
@@ -701,10 +731,12 @@ class MessageDaoTest {
                 createdAt = 200L,
             ),
         )
+        // This branch inherits the reply, but the reply itself is not its source.
+        val laterAnchorId = messageDao.insert(MessageEntity(sessionId = sessionId, content = "后续分叉点", includeInContext = false))
         val affectedBranch = SessionBranchEntity(
             sessionId = sessionId,
             branchId = "recall-sees-active",
-            sourceMessageId = activeId,
+            sourceMessageId = laterAnchorId,
         )
         val siblingBeforeActive = SessionBranchEntity(
             sessionId = sessionId,
@@ -744,6 +776,7 @@ class MessageDaoTest {
                 speakerType = "character",
                 parentMessageId = activeId,
                 includeInContext = false,
+                structuredContentJson = """{"derived_media_version":1,"derived_media_kind":"image"}""",
                 content = "",
                 createdAt = 300L,
             ),

@@ -78,8 +78,12 @@ interface SessionBranchDao {
         branchId: String,
     )
 
+    @Query("SELECT sessionId FROM messages WHERE id = :sourceId LIMIT 1")
+    suspend fun sourceSessionId(sourceId: Long): Long?
+
     @Transaction
     suspend fun insert(entity: SessionBranchEntity): Long {
+        require(sourceSessionId(entity.sourceMessageId) == entity.sessionId) { "故事线来源已不存在或不属于当前会话" }
         val id = insertRaw(entity)
         rebuildVisibilitySegments(entity.sessionId)
         copyVisibleSwipeSelectionOverrides(
