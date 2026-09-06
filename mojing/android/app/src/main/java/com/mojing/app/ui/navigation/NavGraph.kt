@@ -112,7 +112,12 @@ internal fun NavGraph(
         }
 
         composable(Routes.GENERATION_TASKS) {
-            GenerationTaskListScreen(onBack = { navController.popBackStack() })
+            GenerationTaskListScreen(onBack = { navController.popBackStack() }, onOpenResult = { task ->
+                val route = task.targetCharacterId?.takeIf { it > 0 }?.let(Routes::characterEdit)
+                    ?: task.targetWorldTemplateId?.takeIf { it > 0 }?.let(Routes::templateEdit)
+                    ?: task.targetEncyclopediaId?.takeIf { it > 0 }?.let(Routes::encyclopediaDetail)
+                if (route != null) navController.navigateSingleTop(route)
+            })
         }
 
         composable(

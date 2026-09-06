@@ -22,8 +22,8 @@ interface GenerationTaskDao {
     @Query(
         """
         SELECT * FROM generation_tasks
-        WHERE status IN ('QUEUED', 'RUNNING', 'PAUSED', 'FAILED', 'COMPLETED')
-        ORDER BY id DESC
+        WHERE status IN ('QUEUED', 'RUNNING', 'PAUSED', 'FAILED', 'COMPLETED', 'CANCELLED')
+        ORDER BY CASE WHEN status IN ('RUNNING', 'PAUSED', 'QUEUED') THEN 0 ELSE 1 END, id DESC
         LIMIT 150
         """,
     )
@@ -117,7 +117,7 @@ interface GenerationTaskDao {
         """
         UPDATE generation_tasks
         SET status = :status, errorMessage = :err, updatedAt = :now
-        WHERE id = :id
+        WHERE id = :id AND status NOT IN ('CANCELLED', 'COMPLETED')
         """,
     )
     suspend fun setTerminal(id: Long, status: String, err: String, now: Long)
@@ -168,11 +168,11 @@ interface GenerationTaskDao {
     )
     suspend fun countActivePersonaForCharacter(characterId: Long): Int
 
-    /** 失败任务重新排队：进度归零，总数恢复为 payload 原始 count。 */
+    /** 失败任务从已保存的进度继续，总数保持 payload 原始 count。 */
     @Query(
         """
         UPDATE generation_tasks
-        SET status = 'QUEUED', progressDone = 0, progressTotal = :total,
+        SET status = 'QUEUED', progressTotal = :total,
             errorMessage = '', updatedAt = :now
         WHERE id = :id AND status = 'FAILED'
         """,

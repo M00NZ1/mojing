@@ -18,6 +18,7 @@ import javax.inject.Inject
 class MoJingApp : Application() {
 
     @Inject lateinit var seedDataManager: SeedDataManager
+    @Inject lateinit var builtinCatalogUpgrade: com.mojing.app.data.BuiltinCatalogUpgrade
     @Inject lateinit var branchVisibilityIndexManager: BranchVisibilityIndexManager
     @Inject lateinit var messageSearchIndexManager: MessageSearchIndexManager
 
@@ -26,8 +27,8 @@ class MoJingApp : Application() {
         UsbSessionLog.init(this)
         createNotificationChannels()
         CoroutineScope(Dispatchers.IO).launch {
-            seedDataManager.seedIfNeeded()
-            seedDataManager.mergeBuiltinPresetsFromAsset()
+            runCatching { builtinCatalogUpgrade.installCurrent(seedDataManager) }
+                .onFailure { UsbSessionLog.w("BuiltinCatalog", "示例升级未完成，原数据已保留：${it::class.simpleName}") }
         }
         CoroutineScope(Dispatchers.IO).launch {
             runCatching { branchVisibilityIndexManager.repairIfNeeded() }

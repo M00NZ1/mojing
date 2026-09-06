@@ -8,14 +8,14 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface CharacterDao {
-    @Query("SELECT * FROM characters ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, favorite DESC, updatedAt DESC, id DESC")
+    @Query("SELECT * FROM characters ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, favorite DESC, createdAt DESC, id DESC")
     fun observeAll(): Flow<List<CharacterEntity>>
 
     @Query(
         """
         SELECT * FROM characters
         WHERE boundEncyclopediaId = :encyclopediaId
-        ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, name COLLATE NOCASE ASC, id ASC
+        ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, favorite DESC, createdAt DESC, id DESC
         """,
     )
     fun observeByEncyclopedia(encyclopediaId: Long): Flow<List<CharacterEntity>>
@@ -24,12 +24,12 @@ interface CharacterDao {
         """
         SELECT * FROM characters
         WHERE boundEncyclopediaId > 0
-        ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, favorite DESC, updatedAt DESC, id DESC
+        ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, favorite DESC, createdAt DESC, id DESC
         """,
     )
     suspend fun getAllBound(): List<CharacterEntity>
 
-    @Query("SELECT * FROM characters ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, favorite DESC, updatedAt DESC, id DESC")
+    @Query("SELECT * FROM characters ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, favorite DESC, createdAt DESC, id DESC")
     suspend fun getAll(): List<CharacterEntity>
 
     @Query("SELECT * FROM characters WHERE id = :id")

@@ -1,6 +1,9 @@
 package com.mojing.app.domain.generation
 
 import com.mojing.app.data.SecureStorage
+import androidx.room.withTransaction
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.EncyclopediaEntryDao
@@ -51,10 +54,14 @@ class GenerationQueueProcessor @Inject constructor(
     private val llmApiService: LlmApiService,
     private val saveCharacterBinding: SaveCharacterBindingUseCase,
     private val saveCharacterEntry: SaveCharacterEntryUseCase,
+    private val database: com.mojing.app.data.local.AppDatabase,
 ) {
     private val gson = Gson()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val queuePaused = AtomicBoolean(false)
+    private val queuePaused = AtomicBoolean(secureStorage.generationQueuePaused)
+    private val pauseMutex = Mutex()
+    private val _pausedState = kotlinx.coroutines.flow.MutableStateFlow(queuePaused.get())
+    val pausedState: kotlinx.coroutines.flow.StateFlow<Boolean> = _pausedState
 
     init {
         scope.launch { runLoop() }
@@ -81,7 +88,7 @@ class GenerationQueueProcessor @Inject constructor(
     suspend fun hasActivePersonaForCharacter(characterId: Long): Boolean =
         characterId > 0L && taskDao.countActivePersonaForCharacter(characterId) > 0
 
-    /** 失败任务原记录重新排队（0/总数），避免新建任务进度显示为剩余条数。 */
+    /** 失败任务保留已保存进度，原记录重新排队。 */
     suspend fun requeueFailedTask(task: GenerationTaskEntity): Boolean {
         if (task.status != GenerationTaskStatus.FAILED) return false
         val total = resolveRetryTotal(task) ?: return false
@@ -106,14 +113,33 @@ class GenerationQueueProcessor @Inject constructor(
         else -> null
     }
 
-    suspend fun pauseAll() {
+    suspend fun pauseAll() = pauseMutex.withLock {
+        withContext(Dispatchers.IO) { secureStorage.generationQueuePaused = true }
         queuePaused.set(true)
+        _pausedState.value = true
     }
 
-    suspend fun resumeAll() {
+    suspend fun resumeAll() = pauseMutex.withLock {
         taskDao.resumePausedToQueued(now())
+        withContext(Dispatchers.IO) { secureStorage.generationQueuePaused = false }
         queuePaused.set(false)
+        _pausedState.value = false
     }
+
+    /** Finish the current saved step before pausing; resuming never replays saved work. */
+    private suspend fun pauseAtCheckpoint(): Boolean = pauseMutex.withLock {
+        if (!queuePaused.get()) return@withLock false
+        taskDao.pauseRunningTasks(now())
+        true
+    }
+
+    private suspend fun commitStep(taskId: Long, done: Int, total: Int, save: suspend () -> Unit): Boolean =
+        database.withTransaction {
+            if (taskDao.getById(taskId)?.status != GenerationTaskStatus.RUNNING) return@withTransaction false
+            save()
+            taskDao.updateProgress(taskId, done, total, now())
+            true
+        }
 
     suspend fun enqueueEncyclopediaBatch(
         encyclopediaId: Long,
@@ -298,7 +324,7 @@ class GenerationQueueProcessor @Inject constructor(
         while (done < total) {
             val cur = taskDao.getById(taskId) ?: return
             if (cur.status == GenerationTaskStatus.CANCELLED) return
-            if (cur.status == GenerationTaskStatus.PAUSED) return
+            if (cur.status == GenerationTaskStatus.PAUSED || pauseAtCheckpoint()) return
             done = cur.progressDone.coerceIn(0, total)
             val chunk = batchChunkSize(total, done, payload.maxWords)
             val referenceBlock = EncyclopediaBatchReferenceComposer.buildReferenceBlock(
@@ -335,6 +361,7 @@ class GenerationQueueProcessor @Inject constructor(
             var progressed = false
             var ts = System.currentTimeMillis()
             for (item in items) {
+                if (taskDao.getById(taskId)?.status == GenerationTaskStatus.CANCELLED) return
                 if (done >= total) break
                 val titleRaw = (item["title"] as? String) ?: (item["name"] as? String)
                 val title = titleRaw?.trim().orEmpty().ifBlank { "条目 ${done + 1}" }
@@ -346,21 +373,22 @@ class GenerationQueueProcessor @Inject constructor(
                     else -> ""
                 }
                 ts += 1L
-                saveCharacterEntry(
-                    EncyclopediaEntryEntity(
-                        encyclopediaId = payload.encyclopediaId,
-                        title = title,
-                        entryType = payload.entryType,
-                        summary = summary,
-                        content = content,
-                        tags = tags,
-                        createdAt = ts,
-                        updatedAt = ts,
-                    ),
-                )
+                if (!commitStep(taskId, done + 1, total) {
+                    saveCharacterEntry(
+                        EncyclopediaEntryEntity(
+                            encyclopediaId = payload.encyclopediaId,
+                            title = title,
+                            entryType = payload.entryType,
+                            summary = summary,
+                            content = content,
+                            tags = tags,
+                            createdAt = ts,
+                            updatedAt = ts,
+                        ),
+                    )
+                }) return
                 done++
                 progressed = true
-                taskDao.updateProgress(taskId, done, total, now())
             }
             if (!progressed) {
                 taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, "模型返回的条目无法解析", now())
@@ -387,7 +415,7 @@ class GenerationQueueProcessor @Inject constructor(
         while (done < total) {
             val cur = taskDao.getById(taskId) ?: return
             if (cur.status == GenerationTaskStatus.CANCELLED) return
-            if (cur.status == GenerationTaskStatus.PAUSED) return
+            if (cur.status == GenerationTaskStatus.PAUSED || pauseAtCheckpoint()) return
             val chunk = min(3, total - done)
             val referenceBlock = EncyclopediaBatchReferenceComposer.buildReferenceBlock(
                 entryDao = entryDao,
@@ -436,6 +464,7 @@ class GenerationQueueProcessor @Inject constructor(
             }
             var progressed = false
             for (item in items) {
+                if (taskDao.getById(taskId)?.status == GenerationTaskStatus.CANCELLED) return
                 if (done >= total) break
                 val titleRaw = (item["title"] as? String) ?: (item["name"] as? String)
                 val title = titleRaw?.trim().orEmpty().ifBlank { "事件 ${done + 1}" }
@@ -447,20 +476,21 @@ class GenerationQueueProcessor @Inject constructor(
                 val explicitOrder = (item["sortOrder"] as? Number)?.toInt()
                 val sortOrder = explicitOrder ?: nextAutoSort++
                 val ts = System.currentTimeMillis()
-                timelineEventDao.upsert(
-                    TimelineEventEntity(
-                        encyclopediaId = payload.encyclopediaId,
-                        entryId = null,
-                        title = title.take(500),
-                        description = description,
-                        eventTime = eventTime.take(400),
-                        sortOrder = sortOrder,
-                        createdAt = ts,
-                    ),
-                )
+                if (!commitStep(taskId, done + 1, total) {
+                    timelineEventDao.upsert(
+                        TimelineEventEntity(
+                            encyclopediaId = payload.encyclopediaId,
+                            entryId = null,
+                            title = title.take(500),
+                            description = description,
+                            eventTime = eventTime.take(400),
+                            sortOrder = sortOrder,
+                            createdAt = ts,
+                        ),
+                    )
+                }) return
                 done++
                 progressed = true
-                taskDao.updateProgress(taskId, done, total, now())
             }
             if (!progressed) {
                 taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, "时间线模型输出无法解析", now())
@@ -496,12 +526,16 @@ class GenerationQueueProcessor @Inject constructor(
         taskDao.updateProgress(taskId, done, total, now())
         var touchedRows = 0
         val allowedMetaKeys = mutableSetOf<String>()
-        for (entryId in payload.entryIds) {
+        for (entryId in payload.entryIds.drop(done)) {
             val cur = taskDao.getById(taskId) ?: return
             if (cur.status == GenerationTaskStatus.CANCELLED) return
-            if (cur.status == GenerationTaskStatus.PAUSED) return
-            val latest = entryDao.getById(entryId) ?: continue
-            if (latest.encyclopediaId != payload.encyclopediaId) continue
+            if (cur.status == GenerationTaskStatus.PAUSED || pauseAtCheckpoint()) return
+            val latest = entryDao.getById(entryId)
+            if (latest == null || latest.encyclopediaId != payload.encyclopediaId) {
+                if (!commitStep(taskId, done + 1, total) {}) return
+                done++
+                continue
+            }
             allowedMetaKeys.clear()
             allowedMetaKeys.addAll(EncyclopediaMetaDefinitions.fieldsFor(latest.entryType).map { it.key })
             try {
@@ -529,7 +563,7 @@ class GenerationQueueProcessor @Inject constructor(
                 if (result.isNotEmpty()) {
                     val metaPatch = result.filterKeys { it in allowedMetaKeys }
                     val metaChanged = EncyclopediaEntryMetaMerge.mergeMetaPatch(metaObj, metaPatch)
-                    var next = latest
+                    var next: EncyclopediaEntryEntity = latest
                     var rowChanged = metaChanged
                     (result["title"] as? String)?.trim()?.takeIf { it.isNotBlank() && it != latest.title }?.let {
                         next = next.copy(title = it)
@@ -549,15 +583,19 @@ class GenerationQueueProcessor @Inject constructor(
                     }
                     if (rowChanged) {
                         val nowTs = System.currentTimeMillis()
-                        saveCharacterEntry(next.copy(metaJson = metaObj.toString(), updatedAt = nowTs))
+                        if (!commitStep(taskId, done + 1, total) {
+                            saveCharacterEntry(next.copy(metaJson = metaObj.toString(), updatedAt = nowTs))
+                        }) return
                         touchedRows++
                     }
                 }
+                check(result.isNotEmpty()) { "模型没有返回可用内容" }
             } catch (_: Exception) {
-                // 单条失败仍推进进度，避免整批卡死
+                taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, "当前条目未完成，可从已保存进度继续尝试", now())
+                return
             }
+            if (!commitStep(taskId, done + 1, total) {}) return
             done++
-            taskDao.updateProgress(taskId, done.coerceAtMost(total), total, now())
         }
         val end = taskDao.getById(taskId) ?: return
         if (end.status == GenerationTaskStatus.CANCELLED) return
@@ -639,15 +677,24 @@ class GenerationQueueProcessor @Inject constructor(
                 taskDao.setTerminal(taskId, GenerationTaskStatus.COMPLETED, "人设未变化", now())
                 return
             }
+            if (taskDao.getById(taskId)?.status == GenerationTaskStatus.CANCELLED) return
             val entity = characterDao.getById(payload.characterId)
             if (entity == null) {
                 taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, "角色已删除", now())
                 return
             }
-            saveCharacterBinding(
-                entity.copy(personaPrompt = newPrompt, updatedAt = System.currentTimeMillis()),
-            )
-            taskDao.updateProgress(taskId, 1, 1, now())
+            var applied = false
+            if (!commitStep(taskId, 1, 1) {
+                val latest = characterDao.getById(payload.characterId)
+                if (latest != null && latest.personaPrompt == payload.personaPrompt) {
+                    saveCharacterBinding(latest.copy(personaPrompt = newPrompt, updatedAt = System.currentTimeMillis()))
+                    applied = true
+                }
+            }) return
+            if (!applied) {
+                taskDao.setTerminal(taskId, GenerationTaskStatus.COMPLETED, "角色已在生成期间编辑或删除，未覆盖当前内容", now())
+                return
+            }
             taskDao.setTerminal(taskId, GenerationTaskStatus.COMPLETED, "", now())
         } catch (e: Exception) {
             val raw = e.message?.trim().orEmpty().ifBlank { "人设生成失败" }
@@ -727,6 +774,7 @@ class GenerationQueueProcessor @Inject constructor(
                 taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, "模型返回空，请检查网络、模型或 Base URL 配置", now())
                 return
             }
+            if (taskDao.getById(taskId)?.status == GenerationTaskStatus.CANCELLED) return
             val tmpl = worldTemplateDao.getById(payload.templateRowId) ?: run {
                 taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, "模板已删除", now())
                 return
@@ -753,14 +801,17 @@ class GenerationQueueProcessor @Inject constructor(
                 taskDao.setTerminal(taskId, GenerationTaskStatus.COMPLETED, "模型未修改摘要或世界书", now())
                 return
             }
-            val updated = worldTemplateDao.updateGeneratedContentIfUnchanged(
-                id = tmpl.id,
-                expectedSummary = payload.expectedSummary ?: payload.summary,
-                expectedWorldPrompt = payload.expectedWorldPrompt ?: payload.worldPrompt,
-                summary = next.summary,
-                worldPrompt = next.worldPrompt,
-                updatedAt = System.currentTimeMillis(),
-            )
+            var updated = 0
+            if (!commitStep(taskId, 1, 1) {
+                updated = worldTemplateDao.updateGeneratedContentIfUnchanged(
+                    id = tmpl.id,
+                    expectedSummary = payload.expectedSummary ?: payload.summary,
+                    expectedWorldPrompt = payload.expectedWorldPrompt ?: payload.worldPrompt,
+                    summary = next.summary,
+                    worldPrompt = next.worldPrompt,
+                    updatedAt = System.currentTimeMillis(),
+                )
+            }) return
             if (updated == 0) {
                 if (worldTemplateDao.getById(tmpl.id) == null) {
                     taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, "模板已删除", now())
@@ -774,7 +825,6 @@ class GenerationQueueProcessor @Inject constructor(
                 }
                 return
             }
-            taskDao.updateProgress(taskId, 1, 1, now())
             taskDao.setTerminal(taskId, GenerationTaskStatus.COMPLETED, "", now())
         } catch (e: Exception) {
             taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, e.message ?: "模板 AI 失败", now())

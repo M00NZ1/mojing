@@ -89,28 +89,23 @@ class SeedDataManager @Inject constructor(
     )
 
     suspend fun seedIfNeeded() {
-        val seeded = configDao.get("data_seeded")
-        if (seeded != null) return
-
-        val data = loadSeedData()
-        val encId = resolveBuiltinEncyclopediaId(data)
-        seedCharacters(data.characters, encId)
-        ensureSeedCharacterBindings(data.characters, encId)
-        seedTemplates(data.templates)
-        data.encyclopedia?.let { seedEncyclopediaExtras(it, encId) }
-
-        configDao.set(ConfigEntity(key = "data_seeded", valueJson = "true"))
+        mergeBuiltinPresetsFromAsset()
+        if (configDao.get("data_seeded") == null) {
+            configDao.set(ConfigEntity(key = "data_seeded", valueJson = "true"))
+        }
     }
 
-    /**
-     * 已种过全量数据的设备在版本升级后仍会执行：只补全当前资源里「尚未存在」的内置角色与世界模板，
-     * 并把 `seed_data` 中的内置角色名 **补绑** 到官方示例百科（`boundEncyclopediaId`），以兼容「仅显示已绑定角色」的新逻辑。
-     */
+    /** Versioned one-time catalog installation. Deleting a sample must stay deleted. */
     suspend fun mergeBuiltinPresetsFromAsset() {
+        if (configDao.get("builtin_catalog_v2") != null) return
         val data = loadSeedData()
+        installCatalog(data)
+        configDao.set(ConfigEntity(key = "builtin_catalog_v2", valueJson = "true"))
+    }
+
+    internal suspend fun installCatalog(data: SeedData) {
         val encId = resolveBuiltinEncyclopediaId(data)
         seedCharacters(data.characters, encId)
-        rebindLegacySeedCharacters(data.characters, encId)
         ensureSeedCharacterBindings(data.characters, encId)
         seedTemplates(data.templates)
         data.encyclopedia?.let { seedEncyclopediaExtras(it, encId) }
@@ -125,7 +120,7 @@ class SeedDataManager @Inject constructor(
     /** 优先使用 JSON 中的百科；否则建默认官方库（与旧包无 encyclopedia 字段时兼容）。 */
     private suspend fun resolveBuiltinEncyclopediaId(data: SeedData): Long {
         val fromJson = data.encyclopedia?.takeIf { it.name.isNotBlank() }?.let { enc ->
-            encyclopediaDao.getAll().find { it.name == enc.name.trim() }?.id
+            encyclopediaDao.getAll().find { it.name == enc.name.trim() && it.isOfficial && it.worldPrompt == enc.worldPrompt }?.id
                 ?: insertEncyclopediaWithEntries(enc)
         }
         if (fromJson != null && fromJson > 0L) return fromJson
@@ -261,16 +256,6 @@ class SeedDataManager @Inject constructor(
                     boundEncyclopediaId = bind,
                 ),
             )
-        }
-    }
-
-    private suspend fun rebindLegacySeedCharacters(characters: List<SeedCharacter>, encId: Long) {
-        if (encId <= 0L) return
-        val nameSet = characters.map { it.name }.toSet()
-        characterDao.getAll().forEach { ch ->
-            if (ch.name in nameSet && ch.boundEncyclopediaId == 0L) {
-                saveCharacterBinding(ch.copy(boundEncyclopediaId = encId))
-            }
         }
     }
 

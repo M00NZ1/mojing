@@ -18,10 +18,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/**
- * 验证内置种子：旧库未绑定角色在 [SeedDataManager.mergeBuiltinPresetsFromAsset] 后补绑到官方示例百科，
- * 并在百科内生成 linkedCharacterId 镜像条目。
- */
+/** Versioned sample installation, conservative retirement, and recovery. */
 @RunWith(AndroidJUnit4::class)
 class SeedDataManagerInstrumentedTest {
 
@@ -54,59 +51,64 @@ class SeedDataManagerInstrumentedTest {
     }
 
     @Test
-    fun mergeRebindsLegacySeedCharacterAndCreatesMirrorEntry() = runBlocking {
-        val legacyId = db.characterDao().upsert(
-            CharacterEntity(
-                name = "星野澄",
-                personaPrompt = "旧人设",
-                boundEncyclopediaId = 0L,
-            ),
-        )
+    fun installsOneEncyclopediaOneWorldAndTwoCharactersOnlyOnce() = runBlocking {
+        seedDataManager.seedIfNeeded()
+        val enc = db.encyclopediaDao().getAll().single()
+        assertEquals("雾港来信·设定集", enc.name)
+        assertEquals(1, db.worldTemplateDao().getAll().size)
+        assertEquals(setOf("沈照", "林汐"), db.characterDao().getAll().map { it.name }.toSet())
+        val entries = db.encyclopediaEntryDao().getByEncyclopedia(enc.id)
+        assertEquals(9, entries.size)
+        assertEquals(2, entries.count { it.entryType == "character" })
+        assertEquals(2, db.timelineEventDao().getByEncyclopedia(enc.id).size)
+        assertEquals(3, db.entryRelationDao().getByEncyclopedia(enc.id).size)
+        val removed = db.characterDao().getAll().first()
+        com.mojing.app.domain.usecase.DeleteCharacterUseCase(db)(removed.id)
         seedDataManager.mergeBuiltinPresetsFromAsset()
+        assertEquals(1, db.characterDao().getAll().size)
+    }
 
-        val updated = db.characterDao().getById(legacyId)
-        assertNotNull(updated)
-        assertTrue("应补绑百科", updated!!.boundEncyclopediaId > 0L)
-
-        val enc = db.encyclopediaDao().getById(updated.boundEncyclopediaId)
-        assertNotNull(enc)
-        assertTrue(enc!!.name.contains("内置"))
-
-        val entries = db.encyclopediaEntryDao().getByEncyclopedia(updated.boundEncyclopediaId)
-        val mirror = entries.firstOrNull { entry ->
-            runCatching {
-                JsonParser.parseString(entry.metaJson.ifBlank { "{}" }).asJsonObject
-                    .get("linkedCharacterId")?.asLong
-            }.getOrNull() == legacyId
+    private suspend fun installLegacy() {
+        val data = context.resources.openRawResource(com.mojing.app.R.raw.legacy_seed_v1).bufferedReader().use {
+            com.google.gson.Gson().fromJson(it, SeedDataManager.SeedData::class.java)
         }
-        assertNotNull("应有 linkedCharacterId 镜像条目", mirror)
-        assertEquals("星野澄", mirror!!.title)
-        assertEquals("character", mirror.entryType)
+        seedDataManager.installCatalog(data)
     }
 
     @Test
-    fun mergeSeedsAllBuiltinEntryTypesAndExtras() = runBlocking {
-        seedDataManager.mergeBuiltinPresetsFromAsset()
-        val enc = db.encyclopediaDao().getAll().first { it.name.contains("内置") }
-        val entries = db.encyclopediaEntryDao().getByEncyclopedia(enc.id)
-        val types = entries.map { it.entryType }.toSet()
-        listOf(
-            "world", "faction", "location", "item", "event",
-            "skill", "creature", "profession", "concept", "timeline", "character",
-        ).forEach { t ->
-            assertTrue("缺少示例类型 $t", t in types)
-        }
-        assertTrue(
-            "应有沉淀示例（confidence=inferred）",
-            entries.any { it.confidence == "inferred" },
-        )
-        assertTrue(
-            "时间线 Tab 应有事件",
-            db.timelineEventDao().getByEncyclopedia(enc.id).size >= 3,
-        )
-        assertTrue(
-            "关系图 Tab 应有连线",
-            db.entryRelationDao().getByEncyclopedia(enc.id).size >= 5,
-        )
+    fun retiresPristineCatalogAndCanRestoreWithoutOverwritingNewCatalog() = runBlocking {
+        installLegacy()
+        val oldIds = db.characterDao().getAll().map { it.id }.toSet()
+        val upgrade = BuiltinCatalogUpgrade(db, context, SecureStorage())
+        upgrade.installCurrent(seedDataManager)
+        assertEquals(2, db.characterDao().getAll().size)
+        assertEquals(1, db.encyclopediaDao().getAll().size)
+        assertEquals(1, db.worldTemplateDao().getAll().size)
+        upgrade.installCurrent(seedDataManager)
+        assertEquals(2, db.characterDao().getAll().size)
+        upgrade.restoreRetiredCatalog()
+        assertEquals(14, db.characterDao().getAll().size)
+        assertTrue(db.characterDao().getAll().map { it.id }.containsAll(oldIds))
+        assertTrue(runCatching { upgrade.restoreRetiredCatalog() }.isFailure)
+        assertEquals(14, db.characterDao().getAll().size)
+    }
+
+    @Test
+    fun editedCatalogIsPreservedDuringUpgrade() = runBlocking {
+        installLegacy()
+        val character = db.characterDao().getAll().first()
+        db.characterDao().upsert(character.copy(personaPrompt = "用户修改的人设"))
+        BuiltinCatalogUpgrade(db, context, SecureStorage()).installCurrent(seedDataManager)
+        assertEquals("用户修改的人设", db.characterDao().getById(character.id)?.personaPrompt)
+        assertEquals(14, db.characterDao().getAll().size)
+        assertEquals(2, db.encyclopediaDao().getAll().size)
+    }
+
+    @Test
+    fun userCharacterWithSameNameIsNotRebound() = runBlocking {
+        val id = db.characterDao().upsert(CharacterEntity(name = "沈照", personaPrompt = "用户角色"))
+        seedDataManager.seedIfNeeded()
+        assertEquals(0L, db.characterDao().getById(id)?.boundEncyclopediaId)
+        assertEquals("用户角色", db.characterDao().getById(id)?.personaPrompt)
     }
 }

@@ -233,9 +233,7 @@ fun SessionListScreen(
                             }
                         },
                     ) {
-                        IconButton(onClick = onGenerationTasksClick) {
-                            Icon(Icons.Default.CloudSync, contentDescription = "AI 生成任务")
-                        }
+                        TextButton(onClick = onGenerationTasksClick) { Text("生成记录") }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(

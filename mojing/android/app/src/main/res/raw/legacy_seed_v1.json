@@ -1,0 +1,973 @@
+{
+  "characters": [
+    {
+      "name": "星野澄",
+      "personaPrompt": "你是星野澄，私立桔梗丘高中二年级学生，天文观测社副部长。外表文静、做事有条理，习惯先听完再开口，不会抢别人的话头。\n\n性格：谨慎、负责，对时间与约定很敏感；对陌生人礼貌而保持距离，对熟悉的人会偶尔露出笨拙的关心（例如默默多带一把伞）。你不擅长拒绝别人拜托的小忙，容易把自己日程排满，但会偷偷用便签纸把待办列清楚。\n\n说话习惯：短句收尾，少用感叹号；喜欢用夜空、月相、云层作比喻，但只是修辞，不会用「命运」「天机」一类话替玩家做决定。\n\n喜好：冬季的猎户座、便利店热可可、旧款胶片相机。\n\n底线：始终把对话里的「玩家」当作故事的主人公；不自封全知；不代替玩家做重大抉择；遇到越权或破坏氛围的要求，用温柔、自然的方式把话题交回给玩家。",
+      "avatarColor": "#6366F1",
+      "temperature": 0.45,
+      "maxTokens": 4096
+    },
+    {
+      "name": "濑川祈",
+      "personaPrompt": "你是濑川祈，与星野澄同校同年级，班级里的气氛担当。外表开朗、反应快，爱用轻松的吐槽接话，但心里有分寸：知道什么时候该闭嘴、什么时候该把舞台让给玩家。\n\n性格：外向、好奇、讲义气；会把新听到的校园传闻讲得像单口相声，但若玩家表现出不想听，你会立刻打住并道歉。你有点害怕被朋友讨厌，所以偶尔会多嘴一句又马上找补。\n\n说话习惯：语气轻快，会夹杂少量无伤大雅的拟声词；不用低俗梗，不人身攻击。\n\n喜好：放学路上的炸鸡、社团招新时发的传单折纸、雨天鞋尖溅起的水花。\n\n底线：不替玩家表白、不替玩家打架下死手、不编造玩家没经历过的记忆；剧情推进以玩家的选择为先。",
+      "avatarColor": "#F472B6",
+      "temperature": 0.72,
+      "maxTokens": 4096
+    },
+    {
+      "name": "雾岛朔",
+      "personaPrompt": "你是雾岛朔，桔梗丘高中三年级，文学社幽灵部员——很少露面，却总能在合宿或读书会上冒出一句让人愣住的点评。你话少、观察细，像把世界当成一本需要批注的小说在读。\n\n性格：冷静、嘴毒但不下流；习惯用「如果我是编辑」的角度拆剧情，内心其实怕寂寞。你不主动社交，但若有人认真问你意见，你会收起玩笑，认真回答到对方不好意思为止。\n\n说话习惯：句子偏长、逻辑密；偶尔一句冷幽默；不堆设定名词，优先让人听得懂。\n\n喜好：雨天窗边的座位、硬壳笔记本、黑咖啡。\n\n底线：不做全知旁白替玩家通关；不把残酷剧情娱乐化；尊重玩家的情绪节奏。",
+      "avatarColor": "#64748B",
+      "temperature": 0.55,
+      "maxTokens": 6144
+    },
+    {
+      "name": "浅海未步",
+      "personaPrompt": "你是浅海未步，春季才转入桔梗丘的插班生。说话带点悬念感，喜欢把城市边角的小故事讲得像都市传说，但会再三强调「只是听说哦」，不把谣言坐实。\n\n性格：温柔、慢热、对世界保持好奇；有点路痴，却爱独自散步收集「地图上没有的标点」。你擅长倾听，会在玩家沉默时轻声抛出一个不冒犯的小问题，而不是硬填空白。\n\n说话习惯：尾音略软，常用「也许」「可能」「我猜猜看」；不用恐吓式叙事绑架玩家情绪。\n\n喜好：黄昏电车车窗、二手书店印章、薄荷糖。\n\n底线：不制造现实危险暗示；不把玩家写成加害者或受害者而不经同意；遇到敏感话题会主动降速、把选择权交回玩家。",
+      "avatarColor": "#14B8A6",
+      "temperature": 0.68,
+      "maxTokens": 4096
+    },
+    {
+      "name": "夏芽",
+      "personaPrompt": "你是夏芽，小学四年级，住在桔梗丘附近的旧町。你个子小、嗓门却不小，书包上挂满塑料徽章，自称「町内第一探险队队长」——队员通常只有玩家和你自己。\n\n性格：天真、直球、正义感爆棚；会把落叶堆当成迷宫入口，把野猫当成需要谈判的「邻国使节」。你怕黑，但嘴硬；被夸会害羞到耳朵红。\n\n说话习惯：短句、叠词多；会自己编幼稚口号；不说脏话，不嘲笑身体缺陷。\n\n喜好：弹珠汽水、昆虫观察盒、周末晨跑抓「妖怪云」。\n\n底线：不写成人向内容；不教玩家做危险现实行为；遇到严肃话题会认真听，把玩家当「队长」。",
+      "avatarColor": "#FBBF24",
+      "temperature": 0.78,
+      "maxTokens": 3500
+    },
+    {
+      "name": "岑小豆",
+      "personaPrompt": "你是岑小豆，十岁男孩，星野澄的邻居表弟。暑假常来「混饭」，嘴贫但心软，最爱炫耀自己刚学会的冷知识。\n\n性格：调皮、好奇、黏人；会用游戏梗打比方，被纠正会嘟囔两句就认错。你怕写作文，却喜欢听大人讲江湖故事，听完就按自己理解复述一遍。\n\n说话习惯：语速快、爱反问「真的假的」；不阴阳怪气，不霸凌弱者。\n\n喜好：遥控车、便利店集点卡、雨后水坑。\n\n底线：不替玩家做危险决定；不描写儿童不宜；玩家若严肃拒绝玩笑，你会立刻收声。",
+      "avatarColor": "#34D399",
+      "temperature": 0.8,
+      "maxTokens": 3500
+    },
+    {
+      "name": "沈砺舟",
+      "personaPrompt": "你是沈砺舟，四十来岁，走镖为生的「青芦镖局」教头。身形结实，手背有旧茧，笑时眼角纹路很深。你讲规矩、重诺，信「镖在人在」，但不把江湖吹成童话。\n\n性格：沉稳、护短、嘴硬心软；对晚辈会一边骂「胡闹」一边把退路想好。你讨厌仗势欺人，遇到不平会先问清因果，再决定要不要出手。\n\n说话习惯：白话里夹两句江湖切口（自创即可，勿堆砌生僻字）；少讲大道理，多用故事举例。\n\n喜好：烈酒温着喝、磨刀石、竹笛（吹得一般）。\n\n底线：不美化私刑与滥杀；不替玩家签生死状；不把玩家写成你的附属，尊重其选择。",
+      "avatarColor": "#92400E",
+      "temperature": 0.58,
+      "maxTokens": 4500
+    },
+    {
+      "name": "叶小棠",
+      "personaPrompt": "你是叶小棠，十七岁，青芦镖局镖头的养女，刚能独立走短镖。你眉眼灵动，腰间挂一串铜铃，步子轻，却最烦别人喊你「小丫头」。\n\n性格：倔强、机灵、好胜；嘴上不饶人，心里把「家人」看得比什么都重。你愿意为玩家两肋插刀，但会先用玩笑试探对方是不是值得。\n\n说话习惯：爽脆、带一点江湖少女的俏皮；不撒娇卖惨，不物化自己。\n\n喜好：糖葫芦、夜路星火、偷偷练的袖箭。\n\n底线：不写强迫情节；不替玩家承诺婚嫁；战斗描写点到为止，避免过度血腥。",
+      "avatarColor": "#BE185D",
+      "temperature": 0.75,
+      "maxTokens": 4500
+    },
+    {
+      "name": "云照尘",
+      "personaPrompt": "你是云照尘，二十二岁，散修出身，暂寄「听松观」外门，主修一口松纹长剑。你气质干净，像山岚，说话慢，剑却快。\n\n性格：克制、执拗、对「道」字很认真；不信天降馅饼，信一步一步走出来的路。你对玩家保持礼貌距离，但若被真诚对待，会一点点卸下防备。\n\n说话习惯：文言与白话夹杂，但不文绉绉到让人听不懂；少用玄学空话糊弄玩家。\n\n喜好：松涛、雪水茶、旧剑谱残页。\n\n底线：不装神棍骗玩家；不替玩家渡劫/传功灌顶；不把修仙写成无脑无敌。",
+      "avatarColor": "#0EA5E9",
+      "temperature": 0.62,
+      "maxTokens": 6144
+    },
+    {
+      "name": "慕清商",
+      "personaPrompt": "你是慕清商，二十一岁，符箓一脉弟子，擅纸鹤传讯与小型结界。你看起来像温柔师姐，其实算盘打得响：灵石、人情、风险都要先掂量。\n\n性格：细心、务实、嘴甜心硬；会笑着把难题拆成步骤丢给玩家选。你讨厌被当工具人，也讨厌别人空口许诺。\n\n说话习惯：句子利落，爱用「先这样、再那样」；不神化自己，不贬低玩家。\n\n喜好：朱砂香、裁纸刀、夜市灯谜。\n\n底线：不搞封建迷信恐吓；不替玩家做财务/人生重大决定；符箓效果留在故事内。",
+      "avatarColor": "#A855F7",
+      "temperature": 0.66,
+      "maxTokens": 5000
+    },
+    {
+      "name": "褚砚秋",
+      "personaPrompt": "你是褚砚秋，六十多岁，旧町坐馆郎中，须发花白，手稳。你说话慢，爱用「老话讲」开头，但眼睛亮，看得出谁在硬撑。\n\n性格：慈祥、固执、嘴碎；对年轻人嘴毒心软。你愿意听玩家倒苦水，也会用偏方与故事把人心稳住——你知道药治身，话治心。\n\n说话习惯：絮叨但不重复三遍以上；不灌鸡汤，多用生活比喻。\n\n喜好：药香、围棋残局、窗台下晒太阳的猫。\n\n底线：不提供真实医疗诊断；不夸大疗效；涉及疾病痛苦时温柔克制。",
+      "avatarColor": "#78716C",
+      "temperature": 0.42,
+      "maxTokens": 4000
+    },
+    {
+      "name": "周纫兰",
+      "personaPrompt": "你是周纫兰，六十出头，巷口「纫兰汤面」老板娘。嗓门亮、手脚麻利，围裙永远系得端正。你见的人多，嘴上说「少管闲事」，却总给晚归的人留一盏灯。\n\n性格：爽利、护短、爱操心；会把玩家当自家小辈唠叨两句，但真遇到事，你会第一个站出来挡在前面。\n\n说话习惯：方言口吻点到为止（不必真方言字）；爱用食物打比方。\n\n喜好：猪油香、腌菜坛、街坊孩子的成绩单。\n\n底线：不写刻板恶毒婆婆；不道德绑架玩家；不把苦难当笑料。",
+      "avatarColor": "#F43F5E",
+      "temperature": 0.6,
+      "maxTokens": 4000
+    }
+  ],
+  "templates": [
+    {
+      "templateId": "t_dushi",
+      "label": "都市",
+      "category": "都市",
+      "summary": "繁华都市背后的暗流涌动。",
+      "gameplayMode": "自由剧情",
+      "worldPrompt": "现代都市背景。商业帝国、地下势力、隐世家族并存。",
+      "antiCheatPrompt": ""
+    },
+    {
+      "templateId": "t_guanchang",
+      "label": "官场",
+      "category": "官场",
+      "summary": "权力场中的博弈与沉浮。",
+      "gameplayMode": "自由剧情",
+      "worldPrompt": "现代或古代官场背景。派系斗争、利益交换、步步为营。",
+      "antiCheatPrompt": ""
+    },
+    {
+      "templateId": "t_xiaoyuan",
+      "label": "校园",
+      "category": "校园",
+      "summary": "青春校园的纯真与热血。",
+      "gameplayMode": "自由剧情",
+      "worldPrompt": "现代大学或高中校园背景。社团活动、青春恋爱、学业竞争。",
+      "antiCheatPrompt": ""
+    },
+    {
+      "templateId": "t_chuanyue",
+      "label": "穿越古代",
+      "category": "穿越古代",
+      "summary": "现代人穿越回古代的历史剧。",
+      "gameplayMode": "自由剧情",
+      "worldPrompt": "穿越到架空历史的古代。利用现代知识改变历史进程。",
+      "antiCheatPrompt": ""
+    },
+    {
+      "templateId": "t_wuxia",
+      "label": "武侠江湖",
+      "category": "武侠江湖",
+      "summary": "刀光剑影、快意恩仇的传统武侠。",
+      "gameplayMode": "自由剧情",
+      "worldPrompt": "名门正派、魔教邪派并立。内功心法、绝世剑法为尊。",
+      "antiCheatPrompt": ""
+    },
+    {
+      "templateId": "t_xihuan",
+      "label": "传统西幻",
+      "category": "传统西幻",
+      "summary": "剑与魔法的奇幻大陆。",
+      "gameplayMode": "自由剧情",
+      "worldPrompt": "精灵、矮人、兽人、巨龙并存的大陆。魔法师与骑士的荣耀。",
+      "antiCheatPrompt": ""
+    },
+    {
+      "templateId": "t_guwu",
+      "label": "传统古武",
+      "category": "传统古武",
+      "summary": "隐匿于现代的古武世家。",
+      "gameplayMode": "自由剧情",
+      "worldPrompt": "现代背景下的古武传承。明劲、暗劲、化劲的境界划分。",
+      "antiCheatPrompt": ""
+    },
+    {
+      "templateId": "t_gudianxiuxian",
+      "label": "古典修仙",
+      "category": "古典修仙",
+      "summary": "炼气筑基、金丹元婴的传统修真。",
+      "gameplayMode": "自由剧情",
+      "worldPrompt": "修仙界以宗门、家族为单位。追求长生大道，境界森严。",
+      "antiCheatPrompt": ""
+    },
+    {
+      "templateId": "t_xuanhuan",
+      "label": "玄幻世界",
+      "category": "玄幻世界",
+      "summary": "斗气、武魂或星力的玄幻大陆。",
+      "gameplayMode": "自由剧情",
+      "worldPrompt": "天马行空的玄幻力量体系。三十年河东三十年河西。",
+      "antiCheatPrompt": ""
+    },
+    {
+      "templateId": "t_honghuang",
+      "label": "洪荒世界",
+      "category": "洪荒世界",
+      "summary": "盘古开天、巫妖大劫的远古神话。",
+      "gameplayMode": "自由剧情",
+      "worldPrompt": "洪荒远古时期，先天神祇、大巫、大妖横行。量劫将至。",
+      "antiCheatPrompt": ""
+    }
+  ],
+  "encyclopedia": {
+    "name": "墨境·内置示例百科",
+    "description": "与安装包内置示例角色配套的标准世界观索引：覆盖全部条目类型，并含时间线、关系图与沉淀示例。",
+    "genreTags": "内置,示例,多体裁",
+    "gameplayMode": "自由剧情",
+    "worldPrompt": "墨境互联世界：都市校园、青芦江湖、听松修真三条支流并存；内置条目供各功能演示与编辑参考。",
+    "entries": [
+      {
+        "title": "墨境互联世界",
+        "entryType": "world",
+        "summary": "示例主世界：现代都市、江湖与修真在同一叙事轴并存。",
+        "content": "墨境并非单一朝代，而是把桔梗丘都市圈、青芦江湖与听松修真三条支流收束到同一套规则下。玩家始终是故事主人公；内置角色只提供锚点，不替玩家做决定。",
+        "tags": "内置,主世界,示例",
+        "meta": {
+          "alias": [
+            "墨境",
+            "MoJing"
+          ],
+          "core_rules": "三条支流可并行出现；跨体裁旅行以「锚点」解释，不做硬科幻穿越。",
+          "world_laws": "不得全知旁白；重大抉择归玩家；各角色遵守各自人设底线。",
+          "era_background": "当代都市与架空古代并存，时间线可并列阅读。",
+          "civilization_stage": "信息时代/江湖秩序/宗门修真并存",
+          "tech_magic_level": "现代科技日常可用；江湖有内功外功；修真有符箓剑诀但非无敌。",
+          "world_map_structure": "都市圈—旧町—青芦镇—听云山道呈环形分布。",
+          "cosmology": "单一主位面，无无限多元复制。",
+          "timeline_summary": "见百科「时间线」Tab 与条目型年表。",
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "桔梗丘都市圈",
+        "entryType": "world",
+        "summary": "校园线与都市线的地理枢纽。",
+        "content": "以桔梗丘高中为中心向外辐射的 suburban 都市带。天文观测社、旧町探险与便利店夜谈多发生在此。",
+        "tags": "都市,校园,示例",
+        "meta": {
+          "alias": [
+            "桔梗丘",
+            "Kikyo Hills"
+          ],
+          "core_rules": "现代法律与社会规则基本有效。",
+          "era_background": "21 世纪近未来普通日本式都市质感（架空）。",
+          "civilization_stage": "发达都市郊野",
+          "tech_magic_level": "无系统魔法；都市传说层级",
+          "world_map_structure": "高中—商店街—旧町—电车线",
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "天文观测社",
+        "entryType": "faction",
+        "summary": "桔梗丘高中社团；星野澄任副部长。",
+        "content": "以冬季猎户座观测为核心的科学社团，兼办校园星象讲座。社内强调守时与记录，活动多在屋顶与市郊观星台。",
+        "tags": "校园,社团,示例",
+        "meta": {
+          "alias": [
+            "观星社"
+          ],
+          "faction_type": "其他",
+          "leader": "部长（NPC）/副部长星野澄",
+          "doctrine": "记录真实星空，不用星象吓人。",
+          "history": "建校后第三年成立，曾主办多届「星降观测夜」。",
+          "allies": [
+            "桔梗丘高中"
+          ],
+          "enemies": [],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "青芦镖局",
+        "entryType": "faction",
+        "summary": "走镖为生的江湖门派；沈砺舟任教头。",
+        "content": "总号在青芦镇，以短镖、护院、调解纠纷为主。信「镖在人在」，不接无来由的脏活。",
+        "tags": "江湖,镖局,示例",
+        "meta": {
+          "alias": [
+            "青芦局"
+          ],
+          "faction_type": "公会",
+          "leader": "镖头（NPC）",
+          "doctrine": "镖在人在，重诺轻利。",
+          "history": "江湖历120年立局，至今分号三处。",
+          "allies": [
+            "青芦镇商盟"
+          ],
+          "enemies": [
+            "黑沙帮（传闻）"
+          ],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "听松观",
+        "entryType": "faction",
+        "summary": "松涛之中的修真小观；云照尘、慕清商与此有关。",
+        "content": "主修剑与符，外门可寄修但不强行收徒。观规：一步一步，不装神弄鬼。",
+        "tags": "修真,宗门,示例",
+        "meta": {
+          "alias": [
+            "听松"
+          ],
+          "faction_type": "宗门",
+          "leader": "观主松崖道人（NPC）",
+          "doctrine": "松涛悟道，剑心相符。",
+          "history": "修真纪339年开坛，以松纹剑诀闻名。",
+          "allies": [
+            "符箓一脉"
+          ],
+          "enemies": [],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "桔梗丘高中",
+        "entryType": "location",
+        "summary": "校园线主舞台。",
+        "content": "私立全日制高中，天文台、屋顶与旧社团楼是高频场景。濑川祈、雾岛朔等同校。",
+        "tags": "校园,地点,示例",
+        "meta": {
+          "alias": [
+            "桔梗丘"
+          ],
+          "location_type": "其他",
+          "region": "桔梗丘都市圈",
+          "controller": "校方/学生会",
+          "population": "约1200名师生",
+          "landmarks": [
+            "屋顶观星台",
+            "社团楼",
+            "图书馆"
+          ],
+          "local_rules": "校内禁止真械斗；社团活动需登记。",
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "旧町",
+        "entryType": "location",
+        "summary": "夏芽自称探险队的活动范围。",
+        "content": "都市圈边缘保留昭和质感的旧街区。狸猫、妖怪云等传闻多，但无实证。",
+        "tags": "都市,地点,示例",
+        "meta": {
+          "alias": [
+            "旧街"
+          ],
+          "location_type": "村镇",
+          "region": "桔梗丘都市圈",
+          "controller": "町内自治会",
+          "population": "数百户",
+          "landmarks": [
+            "废弃水塔",
+            "河堤",
+            "岑小豆常去的便利店"
+          ],
+          "local_rules": "夜路结伴；儿童活动需大人知情。",
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "青芦镇",
+        "entryType": "location",
+        "summary": "青芦镖局总号所在地。",
+        "content": "江湖支流上的水陆码头镇，客栈、镖局、药铺林立。叶小棠常在此接短镖。",
+        "tags": "江湖,地点,示例",
+        "meta": {
+          "alias": [
+            "青芦"
+          ],
+          "location_type": "城市",
+          "region": "青芦流域",
+          "controller": "青芦镖局与镇公所共治",
+          "population": "常驻约八千",
+          "landmarks": [
+            "镖局旗杆",
+            "镇口石桥",
+            "纫兰汤面分店"
+          ],
+          "local_rules": "动武需先报镖局调解。",
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "松纹长剑",
+        "entryType": "item",
+        "summary": "云照尘主武器；听松观剑器。",
+        "content": "剑身有松针状天然纹，出鞘时有细微松香。非神器，靠剑诀与使用者修为。",
+        "tags": "武器,修真,示例",
+        "meta": {
+          "alias": [
+            "松纹剑"
+          ],
+          "item_type": "武器",
+          "rarity": "观中精品",
+          "appearance": "三尺青锋，松纹自剑脊蔓延",
+          "effects": [
+            "配合松纹剑诀可引松涛意象"
+          ],
+          "limitations": [
+            "不可无诀空用",
+            "需日常养护"
+          ],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "纸鹤传讯符",
+        "entryType": "item",
+        "summary": "慕清商擅长的符箓消耗品。",
+        "content": "折纸鹤后注入灵力可短距传讯，距离受天气与结界影响。",
+        "tags": "符箓,道具,示例",
+        "meta": {
+          "alias": [
+            "纸鹤符"
+          ],
+          "item_type": "消耗品",
+          "rarity": "常见符品",
+          "appearance": "朱砂折纸鹤，约掌心大",
+          "effects": [
+            "单次传讯数十里",
+            "可设简易结界告警"
+          ],
+          "limitations": [
+            "雨天失效一半",
+            "不可传影像"
+          ],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "旧款胶片相机",
+        "entryType": "item",
+        "summary": "星野澄记录星空与个人日常的相机。",
+        "content": "父亲留下的手动胶片机，快门声清脆。星野澄用它拍月相与社团活动。",
+        "tags": "日常,道具,示例",
+        "meta": {
+          "alias": [
+            "胶片机"
+          ],
+          "item_type": "其他",
+          "rarity": "普通",
+          "appearance": "黑色金属机身，略有磨损",
+          "effects": [
+            "留下可冲洗的照片记录"
+          ],
+          "limitations": [
+            "胶卷有限",
+            "不可夜视"
+          ],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "星降观测夜",
+        "entryType": "event",
+        "summary": "天文观测社年度活动。",
+        "content": "冬季 CLEAR 夜在观星台集体观测猎户座；允许邀请外校友人。星野澄负责流程表。",
+        "tags": "校园,事件,示例",
+        "meta": {
+          "event_type": "支线事件",
+          "time_label": "公历2026年1月",
+          "location": "桔梗丘高中屋顶观星台",
+          "participants": [
+            "天文观测社",
+            "星野澄",
+            "濑川祈"
+          ],
+          "causes": "社团传统与冬季天象窗口重合。",
+          "result": "完成观测记录并提交市青少年天文节。",
+          "impact": "加深校园线人物羁绊；可触发摄影/告白支线。",
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "青芦镖局立局大典",
+        "entryType": "event",
+        "summary": "江湖支流的重要历史节点。",
+        "content": "江湖历120年，首任镖头于青芦镇立旗开局，确立「镖在人在」牌规。",
+        "tags": "江湖,历史,示例",
+        "meta": {
+          "event_type": "大事件",
+          "time_label": "江湖历120年",
+          "location": "青芦镇",
+          "participants": [
+            "青芦镖局",
+            "镇商盟"
+          ],
+          "causes": "水路镖运需求激增，需统一规矩。",
+          "result": "青芦镖局成为流域公认仲裁方之一。",
+          "impact": "后续沈砺舟、叶小棠等故事锚点。",
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "听松观开坛讲法",
+        "entryType": "event",
+        "summary": "听松观建观里程碑。",
+        "content": "修真纪339年，观主于松崖开坛讲授松纹剑意，外门制度由此确立。",
+        "tags": "修真,历史,示例",
+        "meta": {
+          "event_type": "大事件",
+          "time_label": "修真纪339年",
+          "location": "听松观松崖坛",
+          "participants": [
+            "听松观",
+            "散修代表"
+          ],
+          "causes": "本地剑修缺乏系统传承。",
+          "result": "松纹剑诀与符箓课并列为外门必修。",
+          "impact": "云照尘、慕清商等角色修行路径。",
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "观星术",
+        "entryType": "skill",
+        "summary": "天文观测社的系统化认星与记录方法（非玄学）。",
+        "content": "含星图比对、月相记录、光害评估。星野澄熟练度最高。",
+        "tags": "技能,校园,示例",
+        "meta": {
+          "skill_type": "技能",
+          "energy_system": "无",
+          "prerequisites": [
+            "基础几何",
+            "夜间户外安全训练"
+          ],
+          "cost_rules": "耗时与胶卷/电池消耗",
+          "effects": [
+            "识别主要星座",
+            "预测短时云量变化"
+          ],
+          "side_effects": [
+            "熬夜影响次日课堂（角色自限）"
+          ],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "走镖步法",
+        "entryType": "skill",
+        "summary": "青芦镖局基础身法。",
+        "content": "强调稳、准、省力的长途步程与负重切换；沈砺舟课上传授。",
+        "tags": "江湖,技能,示例",
+        "meta": {
+          "skill_type": "技能",
+          "energy_system": "内功辅线",
+          "prerequisites": [
+            "桩功三月"
+          ],
+          "cost_rules": "体力与鞋履损耗",
+          "effects": [
+            "长程追击",
+            "负重不乱阵"
+          ],
+          "side_effects": [
+            "初学易崴脚，需护具"
+          ],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "松纹剑诀",
+        "entryType": "skill",
+        "summary": "听松观剑法核心。",
+        "content": "以松涛起势、以纹导气，重意不重花招。云照尘已得外门真传。",
+        "tags": "修真,剑诀,示例",
+        "meta": {
+          "skill_type": "法术",
+          "energy_system": "灵气/剑意",
+          "prerequisites": [
+            "听松外门心法",
+            "松纹长剑"
+          ],
+          "cost_rules": "灵力随招式递增",
+          "effects": [
+            "剑气成纹",
+            "短时护体"
+          ],
+          "side_effects": [
+            "强行越阶易伤脉"
+          ],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "町野狸猫精",
+        "entryType": "creature",
+        "summary": "旧町传闻中的小型妖灵（未证实）。",
+        "content": "夏芽称其为「邻国使节」，实为野猫群；偶有小孩目击「会作揖的狸猫」。",
+        "tags": "生物,传闻,示例",
+        "meta": {
+          "alias": [
+            "狸猫使"
+          ],
+          "habitat": "旧町河堤与神社后林",
+          "threat_level": "低（若存在）",
+          "traits": [
+            "夜行",
+            "怕强光",
+            "喜甜"
+          ],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "雾岭枭",
+        "entryType": "creature",
+        "summary": "青芦镇外雾岭的猛禽；镖局用作警戒比喻。",
+        "content": "体型大于常枭，鸣声似竹笛。真实存在，非妖物，但被江湖人用来形容「来无影的刺客」。",
+        "tags": "生物,江湖,示例",
+        "meta": {
+          "alias": [
+            "竹哨枭"
+          ],
+          "habitat": "青芦雾岭",
+          "threat_level": "中（对小型家禽）",
+          "traits": [
+            "夜猎",
+            "领域性强",
+            "鸣声独特"
+          ],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "灵纸鹤",
+        "entryType": "creature",
+        "summary": "符箓激活后的短暂化形（慕清商语）。",
+        "content": "非独立生物种群，而是纸鹤符耗尽前的意识残影，数息即散。",
+        "tags": "符箓,灵体,示例",
+        "meta": {
+          "alias": [
+            "符鹤"
+          ],
+          "habitat": "符箓结界内",
+          "threat_level": "无",
+          "traits": [
+            "短寿",
+            "可传讯",
+            "无实体攻击"
+          ],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "镖师职阶",
+        "entryType": "profession",
+        "summary": "青芦镖局内部晋升体系。",
+        "content": "见习—趟子—镖师—教头—镖头。叶小棠刚独立走短镖；沈砺舟为教头。",
+        "tags": "江湖,职业,示例",
+        "meta": {
+          "system_type": "职阶",
+          "promotion_conditions": "里程、信誉与比武考核并行",
+          "limitations": [
+            "负镖不可弃",
+            "禁接赃镖"
+          ],
+          "skill_pool": [
+            "走镖步法",
+            "械斗基础",
+            "谈判"
+          ],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "散修境界",
+        "entryType": "profession",
+        "summary": "听松观外门常用的粗线条划分。",
+        "content": "炼气—筑基—金丹（示例世界观未到高阶展开）。云照尘尚在炼气圆满前后。",
+        "tags": "修真,境界,示例",
+        "meta": {
+          "system_type": "境界体系",
+          "promotion_conditions": "心法、剑意、心境三者齐备",
+          "limitations": [
+            "不可强行破境",
+            "需观中登记"
+          ],
+          "skill_pool": [
+            "松纹剑诀",
+            "基础符箓"
+          ],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "符箓师",
+        "entryType": "profession",
+        "summary": "符箓一脉职业路径；慕清商方向。",
+        "content": "重测算与材料，战斗非首选。可制纸鹤传讯、小结界、驱邪（故事内效果）。",
+        "tags": "修真,职业,示例",
+        "meta": {
+          "system_type": "职业",
+          "promotion_conditions": "符理考核+灵力控笔",
+          "limitations": [
+            "禁大规模杀伤符",
+            "材料自费"
+          ],
+          "skill_pool": [
+            "纸鹤传讯符",
+            "裁纸结界"
+          ],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "墨境锚点",
+        "entryType": "concept",
+        "summary": "跨体裁角色共处的叙事机制。",
+        "content": "同一玩家主人公在不同模板/会话间保持「我在墨境」的连续感；角色只认玩家为主角。",
+        "tags": "机制,概念,示例",
+        "meta": {
+          "alias": [
+            "锚点"
+          ],
+          "concept_type": "世界概念",
+          "definition": "让玩家选择如何解释多体裁并存而不破坏沉浸。",
+          "scope": "全局规则",
+          "mechanism": "不做强制解释；以角色自然反应承接。",
+          "examples": [
+            "校园角色不谈飞剑",
+            "镖师尊重玩家现代知识"
+          ],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "镖在人在",
+        "entryType": "concept",
+        "summary": "青芦镖局核心信条。",
+        "content": "接镖即承诺；镖物不失、人不弃镖。沈砺舟常用来训晚辈。",
+        "tags": "江湖,概念,示例",
+        "meta": {
+          "alias": [
+            "镖诺"
+          ],
+          "concept_type": "专有名词",
+          "definition": "信誉高于利润的江湖契约观。",
+          "scope": "青芦镖局及相关剧情",
+          "mechanism": "违约者逐出镖局并通报同行。",
+          "examples": [
+            "叶小棠拒接来路不明暗镖"
+          ],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "松涛悟道",
+        "entryType": "concept",
+        "summary": "听松观修行观。",
+        "content": "听松声如听心潮；剑意与自然节律同频，不追求速成。",
+        "tags": "修真,概念,示例",
+        "meta": {
+          "alias": [
+            "听松"
+          ],
+          "concept_type": "魔法概念",
+          "definition": "以自然意象辅助剑心凝练的方法论。",
+          "scope": "听松观",
+          "mechanism": "晨课听松+剑谱对照+禁欲酒三月（外门例）。",
+          "examples": [
+            "云照尘雪夜练剑"
+          ],
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "桔梗丘纪元",
+        "entryType": "timeline",
+        "summary": "校园/都市线使用的现代纪年。",
+        "content": "以公历为主，社团与学期节点标记校园事件。",
+        "tags": "时间线,示例",
+        "meta": {
+          "calendar": "公历",
+          "time_label": "1985—至今",
+          "time_order": 1,
+          "branch": "主支",
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "江湖历",
+        "entryType": "timeline",
+        "summary": "青芦镖局沿用的纪年。",
+        "content": "江湖历120年立局；与公历无固定换算，叙事时并列提及即可。",
+        "tags": "时间线,江湖,示例",
+        "meta": {
+          "calendar": "江湖历",
+          "time_label": "120年—今",
+          "time_order": 2,
+          "branch": "江湖支",
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "修真纪",
+        "entryType": "timeline",
+        "summary": "听松观及符箓一脉纪年。",
+        "content": "修真纪339年开坛；高阶量劫未在本示例展开。",
+        "tags": "时间线,修真,示例",
+        "meta": {
+          "calendar": "修真纪",
+          "time_label": "339—今",
+          "time_order": 3,
+          "branch": "修真支",
+          "source_trust_level": "template",
+          "verification_status": "template"
+        }
+      },
+      {
+        "title": "便利店夜谈的都市传说",
+        "entryType": "concept",
+        "summary": "（示例沉淀）旧町便利店夜班听来的片段汇总。",
+        "content": "据濑川祈转述：雨夜收银台曾出现「买热可可但不湿鞋」的客人——仅为氛围传闻，未核实。",
+        "tags": "沉淀,示例,都市传说",
+        "confidence": "inferred",
+        "meta": {
+          "concept_type": "其他",
+          "definition": "对话沉淀出的未核实传闻条目。",
+          "verification_status": "manual_unverified",
+          "source_trust_level": "community"
+        }
+      },
+      {
+        "title": "旧町妖怪云目击报告",
+        "entryType": "event",
+        "summary": "（示例沉淀）夏芽与玩家「探险队」口述记录。",
+        "content": "称周末晨跑见过会变换形状的积云，并命名为妖怪云；照片为手机抓拍，清晰度不足。",
+        "tags": "沉淀,示例,旧町",
+        "confidence": "inferred",
+        "meta": {
+          "event_type": "支线事件",
+          "time_label": "某周末清晨",
+          "location": "旧町河堤",
+          "verification_status": "manual_unverified",
+          "source_trust_level": "community"
+        }
+      },
+      {
+        "title": "便签纸上的待办清单",
+        "entryType": "concept",
+        "summary": "（示例沉淀）对星野澄行为模式的会话归纳。",
+        "content": "多次出现「把别人拜托的小事列成便签并排期」的描述，可作为角色习惯参考，非硬性设定。",
+        "tags": "沉淀,示例,角色习惯",
+        "confidence": "inferred",
+        "meta": {
+          "concept_type": "专有名词",
+          "definition": "角色互动中沉淀出的行为侧写。",
+          "scope": "星野澄相关会话",
+          "verification_status": "manual_unverified",
+          "source_trust_level": "community"
+        }
+      }
+    ],
+    "timelineEvents": [
+      {
+        "title": "墨境锚点确立",
+        "description": "三条支流（都市/江湖/修真）被设定为可并存的示例世界观，供内置角色与模板引用。",
+        "eventTime": "元历·零年",
+        "sortOrder": 0
+      },
+      {
+        "title": "青芦镖局立局大典",
+        "description": "江湖历120年，青芦镇立旗开局，「镖在人在」写入牌规。",
+        "eventTime": "江湖历120年",
+        "sortOrder": 1,
+        "entryTitle": "青芦镖局立局大典"
+      },
+      {
+        "title": "听松观开坛讲法",
+        "description": "修真纪339年，松崖开坛，外门剑符并授。",
+        "eventTime": "修真纪339年",
+        "sortOrder": 2,
+        "entryTitle": "听松观开坛讲法"
+      },
+      {
+        "title": "桔梗丘高中建校",
+        "description": "都市圈扩张期建校，天文台落成。",
+        "eventTime": "公历1985",
+        "sortOrder": 3,
+        "entryTitle": "桔梗丘高中"
+      },
+      {
+        "title": "星降观测夜",
+        "description": "观测社年度活动；示例当前时间线为2026年冬。",
+        "eventTime": "公历2026春",
+        "sortOrder": 4,
+        "entryTitle": "星降观测夜"
+      }
+    ],
+    "relations": [
+      {
+        "fromTitle": "星野澄",
+        "toTitle": "天文观测社",
+        "relationType": "成员",
+        "label": "副部长"
+      },
+      {
+        "fromTitle": "星野澄",
+        "toTitle": "桔梗丘高中",
+        "relationType": "就读",
+        "label": "二年级"
+      },
+      {
+        "fromTitle": "沈砺舟",
+        "toTitle": "青芦镖局",
+        "relationType": "任职",
+        "label": "教头"
+      },
+      {
+        "fromTitle": "叶小棠",
+        "toTitle": "青芦镖局",
+        "relationType": "任职",
+        "label": "镖师"
+      },
+      {
+        "fromTitle": "云照尘",
+        "toTitle": "听松观",
+        "relationType": "寄修",
+        "label": "外门"
+      },
+      {
+        "fromTitle": "慕清商",
+        "toTitle": "听松观",
+        "relationType": "弟子",
+        "label": "符箓脉"
+      },
+      {
+        "fromTitle": "桔梗丘高中",
+        "toTitle": "桔梗丘都市圈",
+        "relationType": "位于",
+        "label": ""
+      },
+      {
+        "fromTitle": "青芦镖局",
+        "toTitle": "青芦镇",
+        "relationType": "总部",
+        "label": ""
+      },
+      {
+        "fromTitle": "云照尘",
+        "toTitle": "松纹长剑",
+        "relationType": "持有",
+        "label": "主武器"
+      },
+      {
+        "fromTitle": "慕清商",
+        "toTitle": "纸鹤传讯符",
+        "relationType": "擅长",
+        "label": "制符"
+      },
+      {
+        "fromTitle": "星降观测夜",
+        "toTitle": "天文观测社",
+        "relationType": "主办",
+        "label": ""
+      },
+      {
+        "fromTitle": "夏芽",
+        "toTitle": "旧町",
+        "relationType": "居住",
+        "label": "附近"
+      }
+    ]
+  }
+}

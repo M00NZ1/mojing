@@ -30,7 +30,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -220,40 +219,9 @@ class CharacterListViewModel @Inject constructor(
 
     val characters = _filterEncyclopediaId
         .flatMapLatest { encId ->
-            val source = characterDao.observeForCharacterFilter(encId)
-            source.mapLatest { list -> sortLikeEncyclopediaCharacters(list, encId) }
+            characterDao.observeForCharacterFilter(encId)
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    /** 与百科「角色」条目顺序一致：先置顶，再按百科内角色条目创建顺序。 */
-    private suspend fun sortLikeEncyclopediaCharacters(
-        list: List<CharacterEntity>,
-        filterEncId: Long?,
-    ): List<CharacterEntity> {
-        if (list.isEmpty()) return list
-        val encs = _encyclopedias.value.ifEmpty { encyclopediaDao.getAll() }
-        val encRank = encs.withIndex().associate { it.value.id to it.index }
-        val titleRankByEnc = mutableMapOf<Long, Map<String, Int>>()
-        val encIds = if (filterEncId != null) listOf(filterEncId) else list.map { it.boundEncyclopediaId }.distinct()
-        for (eid in encIds) {
-            if (eid <= 0L) continue
-            val titles = entryDao.getByType(eid, "character").map { it.title.trim().lowercase() }
-            titleRankByEnc[eid] = titles.withIndex().associate { (i, t) -> t to i }
-        }
-        return list.sortedWith(
-            compareBy(
-                { if (it.pinnedAt > 0) 0 else 1 },
-                { -it.pinnedAt },
-                { encRank[it.boundEncyclopediaId] ?: Int.MAX_VALUE },
-                {
-                    titleRankByEnc[it.boundEncyclopediaId]?.get(it.name.trim().lowercase())
-                        ?: Int.MAX_VALUE
-                },
-                { it.name.lowercase() },
-                { it.id },
-            ),
-        )
-    }
 
     /** `"list"` 或 `"grid"`，持久化在 DataStore，离开页面后保持 */
     val characterListLayout = uiPreferencesRepository.characterListLayout

@@ -8,6 +8,10 @@ import androidx.security.crypto.MasterKeys
 class SecureStorage {
     private var prefs: SharedPreferences? = null
 
+    var generationQueuePaused: Boolean
+        get() = prefs?.getBoolean("generation_queue_paused", false) ?: false
+        set(value) { check(prefs?.edit()?.putBoolean("generation_queue_paused", value)?.commit() == true) { "暂停状态未保存" } }
+
     fun modelPlatforms(): List<ModelPlatform> {
         val raw = prefs?.getString("model_platforms_v1", null)
         if (raw != null) return ModelPlatformCodec.decode(raw)
