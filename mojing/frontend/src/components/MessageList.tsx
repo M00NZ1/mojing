@@ -38,6 +38,7 @@ type Props = {
   branchAnchorsByMessageId?: Record<number, BranchAnchor[]>;
   onEditMessage?: (message: Message) => void;
   onDeleteMessage?: (message: Message) => void;
+  onSetMessageContext?: (message: Message) => void;
   onBookmarkMessage?: (message: Message) => void;
   showPromptDebug: boolean;
   expressionMap?: Record<number, Expression[]>;
@@ -180,6 +181,7 @@ export default function MessageList({
   branchAnchorsByMessageId = {},
   onEditMessage,
   onDeleteMessage,
+  onSetMessageContext,
   onBookmarkMessage,
   showPromptDebug,
   expressionMap,
@@ -565,6 +567,7 @@ export default function MessageList({
                   onSwitchBranch={onSwitchBranch}
                 />
               )}
+              {message.include_in_context === false && <div className="hint" style={{ padding: '6px 12px' }} role="note">已排除上下文 · 原文保留</div>}
               {isNarrator ? (
                 <div className="chat-msg-system">
                   <div
@@ -615,6 +618,7 @@ export default function MessageList({
                             <ActionButton icon="copy" label="复制" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); void handleCopy(visibleContent); }} />
                             {onPlayVoice && <ActionButton icon="volume" label="播放语音" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onPlayVoice(message); }} />}
                             {onBookmarkMessage && <ActionButton icon="bookmark" label="收藏" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onBookmarkMessage(message); }} />}
+                            {onSetMessageContext && <ActionButton icon="book" label={message.include_in_context === false ? "恢复到上下文" : "排除上下文"} className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onSetMessageContext(message); }} />}
                             {onQuoteMessage && <ActionButton icon="quote" label="引用回复" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onQuoteMessage(message); }} />}
                             {onCreateBranch && <ActionButton icon="branch" label="从此创建故事线" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onCreateBranch(message); }} />}
                           </div>
@@ -724,6 +728,7 @@ export default function MessageList({
                               <ActionButton icon="copy" label="复制" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); void handleCopy(visibleContent); }} />
                               {onPlayVoice && message.speaker_type !== 'user' && <ActionButton icon="volume" label="播放语音" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onPlayVoice(message); }} />}
                               {onBookmarkMessage && <ActionButton icon="bookmark" label="收藏" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onBookmarkMessage(message); }} />}
+                              {onSetMessageContext && <ActionButton icon="book" label={message.include_in_context === false ? "恢复到上下文" : "排除上下文"} className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onSetMessageContext(message); }} />}
                               {onQuoteMessage && <ActionButton icon="quote" label="引用回复" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onQuoteMessage(message); }} />}
                               {onCreateBranch && <ActionButton icon="branch" label="从此创建故事线" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onCreateBranch(message); }} />}
                               {onRegenerateBranch && !isUser && <ActionButton icon="regenerate" label="重新生成" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onRegenerateBranch(message); }} />}
@@ -789,6 +794,7 @@ export default function MessageList({
               <ActionButton icon="copy" label="复制" className="btn btn-sm" onClick={() => { closeMobileMenu(); void handleCopy(visibleContent); }} />
               {onEditMessage && <ActionButton icon="edit" label="编辑" className="btn btn-sm" onClick={() => { closeMobileMenu(); onEditMessage(msg); }} />}
               {onDeleteMessage && <ActionButton icon="delete" label="删除" className="btn btn-sm btn-danger" onClick={() => { closeMobileMenu(); onDeleteMessage(msg); }} />}
+              {onSetMessageContext && <ActionButton icon="book" label={msg.include_in_context === false ? '恢复到上下文' : '排除上下文'} className="btn btn-sm" onClick={() => { closeMobileMenu(); onSetMessageContext(msg); }} />}
               {onPlayVoice && !isUserMessage && (
                 <ActionButton icon="volume" label="播放语音" className="btn btn-sm" onClick={() => { closeMobileMenu(); onPlayVoice(msg); }} />
               )}

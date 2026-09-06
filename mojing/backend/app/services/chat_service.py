@@ -325,6 +325,7 @@ def serialize_message(message: MessageModel) -> MessageRead:
     """把 ORM 对象序列化成前端结构。"""
 
     return MessageRead(
+        include_in_context=message.include_in_context,
         id=message.id,
         session_id=message.session_id,
         speaker_type=message.speaker_type,

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from ..models import ChatSessionModel, MessageModel, SessionEventNodeModel, SessionMemorySegmentModel
 
 
-def memory_deletion_plan(db: Session, message: MessageModel) -> dict:
+def memory_invalidation_plan(db: Session, message: MessageModel) -> dict:
     scope = (
         SessionMemorySegmentModel.session_id == message.session_id,
         SessionMemorySegmentModel.branch_id == message.branch_id,
@@ -25,7 +25,7 @@ def memory_deletion_plan(db: Session, message: MessageModel) -> dict:
             'summary_reset': message.branch_id == 'main' and bool(session and session.summary)}
 
 
-def invalidate_deleted_source(db: Session, message: MessageModel, plan: dict) -> None:
+def invalidate_source_memory(db: Session, message: MessageModel, plan: dict) -> None:
     """Use the caller's original-message transaction; never commit independently."""
     db.execute(delete(SessionMemorySegmentModel).where(
         SessionMemorySegmentModel.session_id == message.session_id,
@@ -66,7 +66,7 @@ def validate_compaction_sources(db: Session, session_id: int, branch_id: str, sn
             MessageModel.session_id == session_id,
             MessageModel.branch_id == branch_id,
             MessageModel.include_in_context == True,
-            MessageModel.id >= snapshot[0][0],
+            MessageModel.id > previous_end,
             MessageModel.id <= snapshot[-1][0],
         ).order_by(MessageModel.id).limit(len(snapshot) + 1)))
         current_end = db.scalar(select(func.max(SessionMemorySegmentModel.end_message_id)).where(

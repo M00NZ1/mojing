@@ -421,6 +421,11 @@ export const api = {
   messageDeletionImpact(sessionId: number, messageId: number, branchId: string, signal?: AbortSignal) {
     return request<{ can_delete: boolean; reason: string; reference_count: number; memory_segments_removed?: number; memory_events_removed?: number; summary_reset?: boolean; branches: { branch_id: string; label: string; is_checkpoint: boolean }[] }>(`/sessions/${sessionId}/messages/${messageId}/deletion-impact?branch_id=${encodeURIComponent(branchId)}`, { signal });
   },
+  setMessageContext(sessionId: number, messageId: number, branchId: string, include: boolean, expected: boolean) {
+    return request<{ id: number; include_in_context: boolean; changed: boolean }>(`/sessions/${sessionId}/messages/${messageId}/context`, {
+      method: 'PUT', body: JSON.stringify({ include_in_context: include, expected_include_in_context: expected, branch_id: branchId }),
+    });
+  },
   deleteMessage(sessionId: number, messageId: number, branchId?: string) {
     const suffix = branchId === undefined ? '' : `?branch_id=${encodeURIComponent(branchId)}`;
     return request<{ ok: boolean }>(`/sessions/${sessionId}/messages/${messageId}${suffix}`, {

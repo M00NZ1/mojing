@@ -21,6 +21,7 @@ import { useSpeakerPlan } from '../hooks/useSpeakerPlan';
 import { useToast } from '../hooks/useToast';
 import { COMPACT_LAYOUT_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
 import DeleteMessageDialog from '../components/DeleteMessageDialog';
+import MessageContextDialog from '../components/MessageContextDialog';
 import { friendlyFetchError } from '../utils/userFacingError';
 import { extractChoicesFromMessage, mergeRoundChoices, stripChoicesFromMessageContent } from '../utils/chatChoiceParsing';
 import { getRegenerationBranchPoint } from '../utils/chatBranching';
@@ -185,15 +186,20 @@ export default function ChatPage() {
   const settingConflictReturnFocusRef = useRef<HTMLElement | null>(null);
   const { showToast } = useToast();
   const [deleteTarget, setDeleteTarget] = useState<{ sessionId: number; branchId: string; message: Message } | null>(null);
+  const [contextTarget, setContextTarget] = useState<{ sessionId: number; branchId: string; message: Message } | null>(null);
   const isCompactLayout = useMediaQuery(COMPACT_LAYOUT_QUERY);
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
 
-  useEffect(() => { setDeleteTarget(null); }, [sessionId, selectedBranchId]);
+  useEffect(() => { setDeleteTarget(null); setContextTarget(null); }, [sessionId, selectedBranchId]);
 
   function reserveGeneration(showBusyMessage = true) {
     if (deleteTarget && deleteTarget.sessionId === sessionId && deleteTarget.branchId === selectedBranchRef.current) {
       if (showBusyMessage) showToast('请先完成或关闭删除窗口', 'warn');
+      return false;
+    }
+    if (contextTarget && contextTarget.sessionId === sessionId && contextTarget.branchId === selectedBranchRef.current) {
+      if (showBusyMessage) showToast('请先完成或关闭上下文设置窗口', 'warn');
       return false;
     }
     if (modelChoiceBusyRef.current.sessionId !== sessionId || modelChoiceBusyRef.current.busy) {
@@ -418,6 +424,7 @@ export default function ChatPage() {
     reloadMessages,
     switchMessagesToBranch,
     refreshMessages,
+    applyMessageContext,
   } = useSessionMessages(sessionId, selectedBranchId);
 
   async function activateBranch(branchId: string) {
@@ -1405,7 +1412,7 @@ export default function ChatPage() {
   const currentChoiceMessage = useMemo(() => {
     if (hasNewer) return undefined;
     const tail = flatMessages[flatMessages.length - 1];
-    return tail && (tail.speaker_type === 'character' || tail.speaker_type === 'narrator')
+    return tail && tail.include_in_context !== false && (tail.speaker_type === 'character' || tail.speaker_type === 'narrator')
       ? tail
       : undefined;
   }, [flatMessages, hasNewer]);
@@ -1727,6 +1734,10 @@ export default function ChatPage() {
           onRegenerateBranch={handleRegenerateFromMessage}
           showPromptDebug={showPromptDebug}
           onBookmarkMessage={(message) => bookmarkMutation.mutate(message)}
+          onSetMessageContext={(message) => {
+            if (generationGateRef.current) { showToast('请先停止或等待当前回复完成，再调整上下文', 'warn'); return; }
+            setContextTarget({ sessionId, branchId: selectedBranchId, message });
+          }}
           onDeleteMessage={(message) => {
             if (generationGateRef.current) { showToast('请先停止或等待当前回复完成，再删除消息', 'warn'); return; }
             setDeleteTarget({ sessionId, branchId: selectedBranchId, message });
@@ -1900,6 +1911,16 @@ export default function ChatPage() {
           onOpenEntry={openConflictEntry}
         />
       )}
+    {contextTarget && contextTarget.sessionId === sessionId && contextTarget.branchId === selectedBranchId && <MessageContextDialog
+      key={`${sessionId}:${selectedBranchId}:${contextTarget.message.id}`}
+      sessionId={sessionId} branchId={selectedBranchId} message={contextTarget.message}
+      onClose={() => setContextTarget((current) => current === contextTarget ? null : current)}
+      onSaved={async () => {
+        if (sessionIdRef.current !== contextTarget.sessionId || selectedBranchRef.current !== contextTarget.branchId) return;
+        applyMessageContext(contextTarget.message.id, contextTarget.message.include_in_context === false);
+        if (!await loadAroundMessage(contextTarget.message.id)) throw new Error('请重新读取当前消息');
+        focusMessage(contextTarget.message.id);
+      }} />}
     {deleteTarget && deleteTarget.sessionId === sessionId && deleteTarget.branchId === selectedBranchId && <DeleteMessageDialog
       key={`${deleteTarget.sessionId}:${deleteTarget.branchId}:${deleteTarget.message.id}`} sessionId={deleteTarget.sessionId} branchId={deleteTarget.branchId}
       message={deleteTarget.message} onClose={() => setDeleteTarget(null)} onDeleted={() => { void finishMessageDeletion(); }} />}

@@ -294,6 +294,11 @@ export function useSessionMessages(sessionId: number, branchId: string) {
     return requestFirstPage(false);
   }
 
+  function applyMessageContext(messageId: number, include: boolean) {
+    updateMessagePages((pages) => pages.map((page) => page.map((message) =>
+      message.id === messageId ? { ...message, include_in_context: include } : message)));
+  }
+
   function retryMessages() {
     // 首屏失败时先清空残留窗口；后台刷新失败时保留当前可见窗口供用户重试。
     return requestFirstPage(messagePages.length === 0);
@@ -421,5 +426,6 @@ export function useSessionMessages(sessionId: number, branchId: string) {
     reloadMessages,
     switchMessagesToBranch,
     refreshMessages,
+    applyMessageContext,
   };
 }

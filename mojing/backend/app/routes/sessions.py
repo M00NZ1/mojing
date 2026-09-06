@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from ..services.message_deletion_service import begin_storyline_write, deletion_impact, remove_unreferenced_message
+from ..services.memory_source_service import memory_invalidation_plan, invalidate_source_memory
 from ..database import get_db
 from ..config import STORAGE_DIR
 from ..models import (
@@ -32,6 +33,7 @@ from ..models import (
 from ..schemas import (
     GenerateRequest,
     MessageRead,
+    MessageContextUpdate,
     MessageSearchHitRead,
     MessagePage,
     MessageWindowPage,
@@ -656,16 +658,19 @@ def list_checkpoints(session_id: int, db: Session = Depends(get_db)):
 
 
 @router.put("/{session_id}/messages/{message_id}/context")
-def toggle_message_context(session_id: int, message_id: int, payload: dict, db: Session = Depends(get_db)):
-    """设置消息是否进入上下文。"""
-    msg = db.get(MessageModel, message_id)
-    if not msg or msg.session_id != session_id:
-        raise HTTPException(status_code=404, detail="消息不存在")
-    include = payload.get("include_in_context")
-    if include is not None:
-        msg.include_in_context = bool(include)
+def toggle_message_context(session_id: int, message_id: int, payload: MessageContextUpdate, db: Session = Depends(get_db)):
+    """原文保留；上下文标志与派生记忆失效同事务提交。"""
+    begin_storyline_write(db)
+    msg = _message_for_deletion(db, session_id, message_id, payload.branch_id)
+    changed = msg.include_in_context != payload.include_in_context
+    if changed:
+        if payload.expected_include_in_context is not None and msg.include_in_context != payload.expected_include_in_context:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="这条消息的上下文状态已改变，请重新打开后操作")
+        invalidate_source_memory(db, msg, memory_invalidation_plan(db, msg))
+        msg.include_in_context = payload.include_in_context
     db.commit()
-    return {"id": msg.id, "include_in_context": msg.include_in_context}
+    return {"id": msg.id, "include_in_context": bool(msg.include_in_context), "changed": changed}
 
 
 @router.post("/{session_id}/user-message")

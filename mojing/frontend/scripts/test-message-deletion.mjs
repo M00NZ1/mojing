@@ -44,6 +44,7 @@ try {
   let history = Array.from({ length: 6000 }, (_, i) => ({ id: i + 1, session_id: 1, branch_id: 'main', speaker_type: 'user', character_id: null, content: `第 ${i + 1} 夜。${i === 2 ? '旧信封的秘密。' : ''}${(i + 1) % 100 === 0 ? '线索：' : ''}${'雨声渐密，沈照与林汐对照航海日志，准备去灯塔寻找失踪的守夜人。'.repeat(8)}`, structured_content: {}, created_at: '2026-09-07T00:00:00Z' }));
   let previewFailure = false, deleteFailure = '', deletionRequests = 0;
   let memoryRemoved = false, memoryReads = 0;
+  let contextFailure = false, windowFailure = false, contextRequests = 0;
   const blocked = new Set([3]);
   const windowRequests = [];
   await context.route('http://127.0.0.1:18001/api/**', async (route) => {
@@ -51,7 +52,21 @@ try {
     const endpoint = url.pathname.replace('/api', '');
     let data = [], status = 200;
     const matched = endpoint.match(/^\/sessions\/1\/messages\/(\d+)(?:\/(deletion-impact))?$/);
-    if (matched) {
+    const contextChange = endpoint.match(/^\/sessions\/1\/messages\/(\d+)\/context$/);
+    if (contextChange) {
+      contextRequests++;
+      const id = Number(contextChange[1]);
+      const payload = route.request().postDataJSON();
+      assert.equal(payload.branch_id, 'main');
+      assert.equal(typeof payload.include_in_context, 'boolean');
+      if (contextFailure) { status = 500; data = { detail: '保存暂不可用' }; }
+      else {
+        const item = history.find((row) => row.id === id);
+        item.include_in_context = payload.include_in_context;
+        memoryRemoved = true;
+        data = { id, include_in_context: item.include_in_context, changed: true };
+      }
+    } else if (matched) {
       const id = Number(matched[1]);
       if (matched[2]) {
         if (previewFailure) { status = 500; data = { detail: '检查暂不可用' }; }
@@ -72,6 +87,7 @@ try {
       windowRequests.push(anchor);
       const items = history.filter((item) => item.id >= anchor - 20 && item.id <= anchor + 20);
       data = { items, older_cursor: items[0].id > 1 ? items[0].id : null, newer_cursor: items.at(-1).id < 6000 ? items.at(-1).id : null };
+      if (windowFailure) { status = 500; data = { detail: '消息窗口暂不可用' }; }
     } else if (endpoint === '/sessions/1/messages') data = { items: history.slice(-40), next_cursor: history.at(-40).id };
     else if (endpoint === '/sessions') data = [chat];
     else if (endpoint === '/sessions/1') data = chat;
@@ -166,8 +182,66 @@ try {
   await dialog.getByRole('button', { name: '取消', exact: true }).click();
   assert.equal(deletionRequests, countBeforeCancel);
   assert.ok(history.some((item) => item.id === 6));
+  // Mobile context controls preserve text and support retrying readback without resending the mutation.
+  const contextDialog = page.getByRole('dialog', { name: '排除上下文？', exact: true });
+  const contextRow = () => page.locator('[data-chat-message-id="6"]');
+  await contextRow().scrollIntoViewIfNeeded();
+  await contextRow().locator('[data-message-actions-trigger="6"]').click();
+  await page.getByRole('dialog', { name: '消息操作', exact: true }).getByRole('button', { name: '排除上下文', exact: true }).click();
+  await contextDialog.getByText(/共享这条原文的故事线/).waitFor();
+  if (output) await page.screenshot({ path: path.join(output, 'context-confirm-mobile.png') });
+  await page.keyboard.press('Escape');
+  assert.equal(contextRequests, 0);
+  await contextRow().locator('[data-message-actions-trigger="6"]').click();
+  await page.getByRole('dialog', { name: '消息操作', exact: true }).getByRole('button', { name: '排除上下文', exact: true }).click();
+  contextFailure = true;
+  await contextDialog.getByRole('button', { name: '排除上下文', exact: true }).click();
+  await contextDialog.getByRole('alert').filter({ hasText: '设置未完成' }).waitFor();
+  assert.notEqual(history.find((item) => item.id === 6).include_in_context, false);
+  contextFailure = false;
+  windowFailure = true;
+  await contextDialog.getByRole('button', { name: '排除上下文', exact: true }).click();
+  await contextDialog.getByRole('alert').filter({ hasText: '设置已保存' }).waitFor();
+  const requestsBeforeRefresh = contextRequests;
+  windowFailure = false;
+  await contextDialog.getByRole('button', { name: '重试刷新', exact: true }).click();
+  await contextDialog.waitFor({ state: 'hidden' });
+  assert.equal(contextRequests, requestsBeforeRefresh);
+  await contextRow().getByText('已排除上下文 · 原文保留', { exact: true }).waitFor();
+  assert.ok(history.find((item) => item.id === 6).content.startsWith('第 6 夜'));
+  await page.reload();
+  await page.getByRole('searchbox', { name: '搜索当前故事线的消息' }).fill('第 6 夜');
+  await page.locator('.message-search-results').getByRole('button', { name: /第 6 夜/ }).click();
+  await contextRow().getByText('已排除上下文 · 原文保留', { exact: true }).waitFor();
+  await page.setViewportSize({ width: 1365, height: 900 });
+  await page.getByRole('searchbox', { name: '搜索当前故事线的消息' }).fill('第 6 夜');
+  await page.locator('.message-search-results').getByRole('button', { name: /第 6 夜/ }).click();
+  await page.locator('[data-chat-message-id="6"].chat-message-focus').waitFor();
+  await contextRow().hover();
+  await contextRow().locator('[data-message-actions-trigger="6"]').click();
+  await page.getByRole('menuitem', { name: '恢复到上下文', exact: true }).click();
+  const restoreDialog = page.getByRole('dialog', { name: '恢复到上下文？', exact: true });
+  await restoreDialog.getByText(/是否实际发送仍取决于当前故事线/).waitFor();
+  if (output) await page.screenshot({ path: path.join(output, 'context-restore-desktop.png') });
+  await restoreDialog.getByRole('button', { name: '恢复到上下文', exact: true }).click();
+  await restoreDialog.waitFor({ state: 'hidden' });
+  await contextRow().getByText('已排除上下文 · 原文保留', { exact: true }).waitFor({ state: 'hidden' });
+  assert.equal(history.find((item) => item.id === 6).include_in_context, true);
+  history.at(-1).speaker_type = 'narrator';
+  history.at(-1).content = '守夜人留下一条新的线索。';
+  history.at(-1).structured_content = { choices: ['前往旧灯塔'] };
+  await page.reload();
+  await page.getByRole('group', { name: '本回合可选行动' }).getByRole('button', { name: '前往旧灯塔' }).waitFor();
+  const tailRow = page.locator('[data-chat-message-id="6000"]');
+  await tailRow.hover();
+  await tailRow.locator('[data-message-actions-trigger="6000"]').click();
+  await page.getByRole('menuitem', { name: '排除上下文', exact: true }).click();
+  await contextDialog.getByRole('button', { name: '排除上下文', exact: true }).click();
+  await contextDialog.waitFor({ state: 'hidden' });
+  await page.getByRole('group', { name: '本回合可选行动' }).waitFor({ state: 'hidden' });
+  assert.ok(await tailRow.getByRole('button', { name: '前往旧灯塔' }).isDisabled());
   assert.equal(errors.length, 0, errors.join('\n'));
-  console.log('PASS: source protection, no delayed deletion, bounded preview, cancel/Escape, preview retry, delete retry, late reference rejection, preserved old reading position, desktop/mobile layout. Mock APIs only.');
+  console.log('PASS: deletion protection and memory refresh; context exclude/restore, original retained, strict request, cancel, save/readback retry, reload/search, desktop/mobile. Mock APIs only.');
 } finally {
   await browser?.close();
   if (child.exitCode === null) { child.kill(); await once(child, 'exit'); }

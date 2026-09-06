@@ -136,6 +136,7 @@ export type SessionEventNode = {
 };
 
 export type Message = {
+  include_in_context?: boolean;
   id: number;
   session_id: number;
   speaker_type: 'user' | 'character' | 'system' | 'narrator';

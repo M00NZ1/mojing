@@ -10,8 +10,9 @@ from sqlalchemy.orm import sessionmaker
 from backend.app.database import Base, get_db
 from backend.app.models import ChatSessionModel, MessageModel, MessageBookmarkModel, MessageAttachmentModel, SessionBranchModel, SessionMemorySegmentModel, SessionEventNodeModel
 from backend.app.routes import sessions as routes
-from backend.app.schemas import SessionBranchCreate, SessionMessageEdit
+from backend.app.schemas import SessionBranchCreate, SessionMessageEdit, MessageContextUpdate
 from backend.app.services.chat_service import get_session_messages_page
+from backend.app.services.chat_service import _list_visible_messages, serialize_message
 from backend.app.services.message_search_service import search_message_page
 
 
@@ -196,3 +197,59 @@ def test_delete_wins_race_and_later_branch_creation_rejects_missing_source(store
     with store() as db:
         assert db.get(MessageModel, 4) is None
         assert not list(db.scalars(select(SessionBranchModel)))
+
+
+def test_context_round_trip_invalidates_memory_but_preserves_original_and_noop(store):
+    with store() as db:
+        db.add(SessionMemorySegmentModel(session_id=1, branch_id='main', start_message_id=1, end_message_id=4, summary='旧剧情'))
+        db.add(SessionEventNodeModel(session_id=1, branch_id='main', message_id=4, title='旧事件'))
+        db.get(ChatSessionModel, 1).summary = '旧概览'
+        db.commit()
+        result = routes.toggle_message_context(1, 2, MessageContextUpdate(include_in_context=False, branch_id='main'), db)
+        assert result == {'id': 2, 'include_in_context': False, 'changed': True}
+        assert db.get(MessageModel, 2).content == '信件 2'
+        assert serialize_message(db.get(MessageModel, 2)).include_in_context is False
+        assert 2 not in [row.id for row in _list_visible_messages(db, 1, 'main', limit=40)]
+        assert search_message_page(db, 1, '信件 2')['items']
+        assert not list(db.scalars(select(SessionMemorySegmentModel)))
+        assert not list(db.scalars(select(SessionEventNodeModel)))
+        assert db.get(ChatSessionModel, 1).summary == ''
+        # A retried request with the desired value already saved is a no-op.
+        db.add(SessionMemorySegmentModel(session_id=1, branch_id='main', start_message_id=1, end_message_id=4, summary='新剧情'))
+        db.commit()
+        assert not routes.toggle_message_context(1, 2, MessageContextUpdate(include_in_context=False), db)['changed']
+        assert db.scalar(select(SessionMemorySegmentModel)).summary == '新剧情'
+        assert routes.toggle_message_context(1, 2, MessageContextUpdate(include_in_context=True), db)['changed']
+        assert 2 in [row.id for row in _list_visible_messages(db, 1, 'main', limit=40)]
+        assert not list(db.scalars(select(SessionMemorySegmentModel)))
+
+
+def test_context_commit_failure_rolls_back_flag_and_memory(store, monkeypatch):
+    with store() as db:
+        db.add(SessionMemorySegmentModel(session_id=1, branch_id='main', start_message_id=1, end_message_id=4, summary='原摘要'))
+        db.commit()
+        monkeypatch.setattr(db, 'commit', lambda: (_ for _ in ()).throw(RuntimeError('commit failed')))
+        with pytest.raises(RuntimeError):
+            routes.toggle_message_context(1, 2, MessageContextUpdate(include_in_context=False), db)
+        db.rollback()
+        assert bool(db.get(MessageModel, 2).include_in_context) is True
+        assert db.scalar(select(SessionMemorySegmentModel)).summary == '原摘要'
+
+
+def test_context_http_rejects_coercions_and_invisible_sources(store):
+    app = FastAPI()
+    app.include_router(routes.router)
+    def dependency():
+        with store() as db:
+            yield db
+    app.dependency_overrides[get_db] = dependency
+    with store() as db:
+        branch(db)
+    with TestClient(app) as client:
+        for invalid in ({}, {'include_in_context': 'false'}, {'include_in_context': 0}, {'include_in_context': None}):
+            assert client.put('/sessions/1/messages/2/context', json=invalid).status_code == 422
+        assert client.put('/sessions/1/messages/4/context', json={'include_in_context': False, 'branch_id': 'A'}).status_code == 404
+        assert client.put('/sessions/99/messages/2/context', json={'include_in_context': False}).status_code == 404
+        assert client.put('/sessions/1/messages/2/context', json={'include_in_context': False, 'expected_include_in_context': False}).status_code == 409
+        assert client.put('/sessions/1/messages/2/context', json={'include_in_context': False, 'branch_id': 'A'}).status_code == 200
+        assert client.get('/sessions/1/messages').json()['items'][1]['include_in_context'] is False

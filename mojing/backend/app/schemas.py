@@ -4,7 +4,7 @@ from datetime import datetime
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
 
 class VoiceProfileRead(BaseModel):
@@ -244,6 +244,7 @@ class AttachmentRead(BaseModel):
 
 
 class MessageRead(BaseModel):
+    include_in_context: bool = True
     id: int
     session_id: int
     speaker_type: str
@@ -263,6 +264,12 @@ class MessageRead(BaseModel):
 class MessagePage(BaseModel):
     items: list[MessageRead]
     next_cursor: int | None = None
+
+
+class MessageContextUpdate(BaseModel):
+    include_in_context: StrictBool
+    expected_include_in_context: StrictBool | None = None
+    branch_id: str | None = None
 
 
 class MessageWindowPage(BaseModel):

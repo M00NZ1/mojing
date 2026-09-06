@@ -23,7 +23,8 @@ from backend.app.models import (
     VoiceProfileModel,
 )
 from backend.app.services import chat_service, export_service, memory_service, memory_v2_service
-from backend.app.services.memory_source_service import memory_deletion_plan
+from backend.app.services.memory_source_service import memory_invalidation_plan
+from backend.app.schemas import MessageContextUpdate
 
 
 def _database(tmp_path, name="memory-v2.db"):
@@ -603,7 +604,7 @@ def test_deletion_rewinds_only_affected_automatic_memory_and_preserves_locked_fa
             db.add(SessionMemoryCorrectionModel(session_id=sid, content='用户锁定事实', source_message_id=20))
             db.add(SessionCharacterStateModel(session_id=sid, character_id=cid, dynamic_state_json={'手动状态': '保留'}))
             db.commit()
-            plan = memory_deletion_plan(db, db.get(MessageModel, 20))
+            plan = memory_invalidation_plan(db, db.get(MessageModel, 20))
             assert plan == {'start': 13, 'memory_segments_removed': 2, 'memory_events_removed': 2, 'summary_reset': True}
             sessions_routes.delete_message(sid, 20, db=db)
         with Session() as db:
@@ -707,5 +708,38 @@ def test_empty_event_result_still_publishes_validated_summary(tmp_path, monkeypa
             assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 1
             assert db.scalar(select(func.count()).select_from(SessionEventNodeModel)) == 0
             assert '阶段摘要' in db.get(ChatSessionModel, sid).summary
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize('restore', [False, True])
+def test_context_changes_during_generation_reject_stale_memory_including_restored_prefix(tmp_path, monkeypatch, restore):
+    engine, Session = _database(tmp_path)
+    try:
+        sid, _ = _seed_session(Session, messages_per_branch=24)
+        with Session() as db:
+            if restore:
+                db.get(MessageModel, 1).include_in_context = False
+                db.commit()
+        _install_memory_fakes(monkeypatch, Session)
+        original = memory_v2_service.safe_non_streaming_call
+        changed = False
+        def change_source(*args, **kwargs):
+            nonlocal changed
+            if not changed:
+                with Session() as db:
+                    sessions_routes.toggle_message_context(sid, 1, MessageContextUpdate(include_in_context=restore), db)
+                changed = True
+            return original(*args, **kwargs)
+        monkeypatch.setattr(memory_v2_service, 'safe_non_streaming_call', change_source)
+        assert not memory_service.compact_session_memory_v2(sid)
+        with Session() as db:
+            assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 0
+            assert db.scalar(select(func.count()).select_from(SessionEventNodeModel)) == 0
+            assert bool(db.get(MessageModel, 1).include_in_context) is restore
+        monkeypatch.setattr(memory_v2_service, 'safe_non_streaming_call', original)
+        assert memory_service.compact_session_memory_v2(sid)
+        with Session() as db:
+            assert db.scalar(select(SessionMemorySegmentModel)).start_message_id == (1 if restore else 2)
     finally:
         engine.dispose()
