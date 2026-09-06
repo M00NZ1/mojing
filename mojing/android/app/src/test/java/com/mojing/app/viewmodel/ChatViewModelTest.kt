@@ -8,6 +8,8 @@ import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.local.dao.AttachmentDao
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.MessageDao
+import com.mojing.app.data.local.dao.SessionEventNodeDao
+import com.mojing.app.data.local.entity.SessionEventNodeEntity
 import com.mojing.app.data.local.dao.MessageRecallResult
 import com.mojing.app.data.local.dao.ParticipantDao
 import com.mojing.app.data.local.dao.SessionDao
@@ -120,6 +122,7 @@ class ChatViewModelTest {
         attachmentDao: AttachmentDao = mockk(relaxed = true),
         messageSubmissionTransaction: MessageSubmissionTransaction? = null,
         memoryCorrectionDao: SessionMemoryCorrectionDao = mockk(relaxed = true),
+        eventNodeDao: SessionEventNodeDao = mockk(relaxed = true),
         participantDao: ParticipantDao = mockk(relaxed = true),
         chatDraftStore: ChatDraftStore = emptyDraftStore(),
         secureStorage: SecureStorage = mockk(relaxed = true) { every { sessionModelSelection(any()) } returns null },
@@ -137,7 +140,7 @@ class ChatViewModelTest {
         sessionBranchDao = sessionBranchDao,
         memorySegmentDao = mockk(relaxed = true),
         memoryCorrectionDao = memoryCorrectionDao,
-        eventNodeDao = mockk(relaxed = true),
+        eventNodeDao = eventNodeDao,
         costRecorder = mockk(relaxed = true),
         chatEngine = chatEngine,
         secureStorage = secureStorage,
@@ -1620,6 +1623,79 @@ class ChatViewModelTest {
         assertEquals("需要保留分叉来源", vm.state.value.error)
         assertEquals(listOf(8L), vm.state.value.messages.map { it.id })
         coVerify(exactly = 0) { attachmentDao.countByStoragePath(any()) }
+    }
+
+    @Test fun eventStatusUsesCurrentStorylineAndKeepsSavedStateIfReadbackFails() = runTest(testDispatcher) {
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        val source = SessionEventNodeEntity(id = 1, sessionId = 42, title = "当前线事件")
+        coEvery { events.getForBranch(42, "main") } returns listOf(source)
+        val vm = createViewModel(eventNodeDao = events)
+        advanceUntilIdle()
+        coEvery { events.getForBranch(42, "main") } throws IllegalStateException("read failed")
+        vm.toggleEventNodeResolved(1)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.eventNodes.single().resolved)
+        assertTrue(vm.state.value.error.orEmpty().contains("修改已保存"))
+        coVerify { events.setResolved(1, true) }
+        coVerify(exactly = 0) { events.getBySession(any()) }
+        coVerify(exactly = 0) { events.toggleResolved(any()) }
+    }
+
+    @Test fun lateEventRefreshCannotReplaceAnotherStoryline() = runTest(testDispatcher) {
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        val source = SessionEventNodeEntity(id = 1, sessionId = 42, title = "主线事件")
+        val other = source.copy(id = 2, branchId = "B", title = "分支事件")
+        coEvery { events.getForBranch(42, "main") } returns listOf(source)
+        coEvery { events.getForBranch(42, "B") } returns listOf(other)
+        coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId = 42, branchId = "B", sourceMessageId = 8))
+        val vm = createViewModel(eventNodeDao = events, sessionBranchDao = branches)
+        advanceUntilIdle()
+        val reply = CompletableDeferred<List<SessionEventNodeEntity>>()
+        coEvery { events.getForBranch(42, "main") } coAnswers { reply.await() }
+        vm.toggleEventNodeResolved(1)
+        runCurrent()
+        vm.switchBranch("B")
+        advanceUntilIdle()
+        assertEquals("B", vm.state.value.currentBranchId)
+        reply.complete(listOf(source.copy(resolved = true)))
+        advanceUntilIdle()
+        assertEquals(listOf(other), vm.state.value.eventNodes)
+        coVerify(exactly = 0) { events.getBySession(any()) }
+    }
+
+    @Test fun deletingAnEventDoesNotLoadOtherStorylines() = runTest(testDispatcher) {
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        val source = SessionEventNodeEntity(id = 1, sessionId = 42, title = "当前线事件")
+        coEvery { events.getForBranch(42, "main") } returns listOf(source)
+        val vm = createViewModel(eventNodeDao = events)
+        advanceUntilIdle()
+        coEvery { events.getForBranch(42, "main") } returns emptyList()
+        vm.deleteEventNode(1)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.eventNodes.isEmpty())
+        coVerify { events.deleteById(1) }
+        coVerify(exactly = 0) { events.getBySession(any()) }
+    }
+
+    @Test fun lateEventRefreshCannotUndoANewerStatusChange() = runTest(testDispatcher) {
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        val source = SessionEventNodeEntity(id = 1, sessionId = 42, title = "事件")
+        coEvery { events.getForBranch(42, "main") } returns listOf(source)
+        val vm = createViewModel(eventNodeDao = events)
+        advanceUntilIdle()
+        val older = CompletableDeferred<List<SessionEventNodeEntity>>()
+        var reads = 0
+        coEvery { events.getForBranch(42, "main") } coAnswers { if (++reads == 1) older.await() else listOf(source) }
+        vm.toggleEventNodeResolved(1)
+        runCurrent()
+        assertTrue(vm.state.value.eventNodes.single().resolved)
+        vm.toggleEventNodeResolved(1)
+        advanceUntilIdle()
+        assertFalse(vm.state.value.eventNodes.single().resolved)
+        older.complete(listOf(source.copy(resolved = true)))
+        advanceUntilIdle()
+        assertFalse(vm.state.value.eventNodes.single().resolved)
     }
 
     @Test

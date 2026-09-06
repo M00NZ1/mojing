@@ -10,6 +10,9 @@ import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.local.entity.MessageSearchIndexStateEntity
 import com.mojing.app.data.local.entity.SessionBranchEntity
 import com.mojing.app.data.local.entity.SessionContextMemoryEntity
+import com.mojing.app.data.local.entity.SessionEventNodeEntity
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import com.mojing.app.data.local.search.MessageSearchTokenizer
 
 data class MessageSearchRebuildBatchResult(
@@ -182,6 +185,36 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages WHERE sessionId = :sessionId AND id IN (:messageIds)")
     suspend fun getByIdsInSession(sessionId: Long, messageIds: List<Long>): List<MessageEntity>
+
+    @Query("$MAIN_CONTEXT_MESSAGES_QUERY AND message.id IN (:messageIds)")
+    suspend fun getMainEventSources(sessionId: Long, messageIds: List<Long>): List<MessageEntity>
+
+    @Query("$VISIBLE_CONTEXT_MESSAGES_QUERY AND message.id IN (:messageIds)")
+    suspend fun getVisibleEventSources(sessionId: Long, branchId: String, messageIds: List<Long>): List<MessageEntity>
+
+    @Query("SELECT id FROM session_event_nodes WHERE sessionId = :sessionId AND branchId = :branchId AND characterId IS :characterId AND messageId = :messageId AND title = :title LIMIT 1")
+    suspend fun findEquivalentEvent(sessionId: Long, branchId: String, characterId: Long?, messageId: Long, title: String): Long?
+
+    @Insert
+    suspend fun insertDerivedEvent(entity: SessionEventNodeEntity): Long
+
+    /** 来源复核、去重与整批写入共用 Room 事务；拒绝晚到或已失效的模型结果。 */
+    @Transaction
+    suspend fun commitDerivedEvents(sessionId: Long, branchId: String, sources: List<MessageEntity>, events: List<SessionEventNodeEntity>): List<SessionEventNodeEntity> {
+        require(sources.size in 1..20 && sources.all { it.sessionId == sessionId && it.id > 0 })
+        require(events.size <= 5)
+        val ids = sources.map { it.id }
+        require(ids.distinct().size == ids.size)
+        require(events.all { it.id == 0L && it.sessionId == sessionId && it.branchId == branchId && it.messageId in ids && it.title.isNotBlank() && it.importance in 1..5 })
+        val current = if (branchId == "main") getMainEventSources(sessionId, ids) else getVisibleEventSources(sessionId, branchId, ids)
+        fun versions(rows: List<MessageEntity>) = rows.associate { it.id to listOf(it.content, it.structuredContentJson, it.speakerType, it.characterId, it.branchId) }
+        if (versions(current) != versions(sources)) return emptyList()
+        return events.map { event ->
+            currentCoroutineContext().ensureActive()
+            val existingId = findEquivalentEvent(sessionId, branchId, event.characterId, requireNotNull(event.messageId), event.title)
+            event.copy(id = existingId ?: insertDerivedEvent(event))
+        }
+    }
 
     @Query("UPDATE messages SET swipeGroupId = :gid WHERE id = :id")
     suspend fun updateSwipeGroupId(id: Long, gid: String)

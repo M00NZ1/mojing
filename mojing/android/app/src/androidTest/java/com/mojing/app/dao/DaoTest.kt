@@ -45,6 +45,25 @@ class MessageDaoTest {
     @After
     fun teardown() { db.close() }
 
+    @Test fun derivedEventsAreAtomicAndRepeatedExtractionDoesNotDuplicateRows() = runBlocking {
+        val sid = sessionDao.insert(SessionEntity(title = "事件事务"))
+        val id = messageDao.insert(MessageEntity(sessionId = sid, content = "发现线索"))
+        val source = requireNotNull(messageDao.getById(id))
+        val valid = SessionEventNodeEntity(sessionId = sid, messageId = id, title = "线索")
+        db.openHelper.writableDatabase.execSQL("CREATE TRIGGER reject_test_event BEFORE INSERT ON session_event_nodes WHEN NEW.title = 'reject' BEGIN SELECT RAISE(ABORT, 'test failure'); END")
+        try {
+            messageDao.commitDerivedEvents(sid, "main", listOf(source), listOf(valid, valid.copy(title = "reject")))
+            fail("Second insertion must fail")
+        } catch (_: android.database.sqlite.SQLiteException) { }
+        assertTrue(db.sessionEventNodeDao().getBySession(sid).isEmpty())
+        val first = messageDao.commitDerivedEvents(sid, "main", listOf(source), listOf(valid))
+        val second = messageDao.commitDerivedEvents(sid, "main", listOf(source), listOf(valid))
+        assertEquals(first.single().id, second.single().id)
+        assertEquals(1, db.sessionEventNodeDao().getBySession(sid).size)
+        messageDao.updateContent(id, "原文已修改")
+        assertTrue(messageDao.commitDerivedEvents(sid, "main", listOf(source), listOf(valid.copy(title = "旧模型结果"))).isEmpty())
+    }
+
     @Test
     fun recallRejectsReferencedMediaBeforeAnyOriginalOrAttachmentIsRemoved() = runBlocking {
         val sessionId = sessionDao.insert(SessionEntity(title = "来源保护"))

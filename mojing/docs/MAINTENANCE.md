@@ -389,3 +389,22 @@ node scripts/test-message-deletion.mjs
 沿用第 20 节的六文件 pytest、TypeScript 和 `test-message-deletion.mjs` 命令。2026-09-07：78 项定向测试通过，覆盖严格参数/可见性、往返与 Prompt 历史过滤、搜索原文保留、同值幂等、提交失败回滚，以及后台整理期间排除和恢复前缀来源后拒绝旧结果并重试。Chrome 1365×900 / 390×844 模拟 API 验证取消、保存失败、保存后读取失败单独重试、刷新与搜索、桌面恢复及旁白选项收起；两种尺寸截图人工复核。脚本在视口改变后重新通过搜索定位，符合页面选择结果后清空搜索的真实行为。
 
 本批无正式数据库写入、用户服务重启、供应商调用、APK/生产打包或设备操作。截图与既有缓存只做清理 DryRun 并保留证据。没有性能测量或完整本机联调结论；Android 对应设置及旧无来源派生数据仍需后续验收。回退不需要迁移数据库，但旧界面不能展示本入口且会重现旧失效问题。
+
+## 22. Android 自动事件与故事线刷新
+
+- 根因：自动事件逐条插入且捕获取消异常，后续解析失败可能留下部分结果；模型等待后的来源没有复核。时间线删除/状态操作又使用全会话读取，可能混入其他故事线，较早刷新也可能覆盖最新状态。
+- 选择复用 `MessageDao` 的有效上下文查询和 Room 事务，在短事务中重新检查最多 20 条原文快照（ID、正文、结构正文、发言类型、角色、所属分支），然后查重、整批保存最多 5 条事件。模型调用不占用本批事务。有效回复选择与分支可见性由现有查询判断，不直接比较兼任 swipe 默认选择的 `includeInContext`。原文缺失、改变或退出有效来源时返回空结果；取消向上传递，解析失败不会先保存前面的事件。
+- 同会话/故事线/角色/原文/标题的重复结果复用已有 ID，不覆盖已保存的解决状态。模型结果限制标题、描述长度和重要度；时间线也限制旧数据星标数量，显示待跟进/已解决。状态保存使用明确目标值，当前故事线查询和刷新序号保护列表，保存后读取失败保留本地已保存状态并解释重新进入方式。
+- 不修改 Room schema 19 或交换格式，不清理、改写旧事件和用户原文。回退代码不需数据迁移，但会重新引入旧风险。自动摘要 `MemoryCompactor` 与可选百科沉淀仍有独立写入路径，本批不宣称它们具备相同保护；摘要尾部失效与独立上下文开关后续处理。
+
+```powershell
+# mojing 目录：临时 SQLite，不读取正式数据库
+.\.venv\Scripts\python.exe -m pytest tests/test_android_event_source_sqlite.py tests/test_android_recall_protection_sqlite.py -q
+
+# android 目录：JDK 17，只编译与 JVM 测试，不打包
+.\gradlew.bat :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin :app:testDebugUnitTest --tests 'com.mojing.app.viewmodel.ChatViewModelTest' --tests 'com.mojing.app.engine.MemoryV2ManagerTest' --tests 'com.mojing.app.data.local.dao.DerivedEventCommitTest' --console=plain
+```
+
+2026-09-07：80 项 JVM（73 ViewModel、4 提取、3 提交保护）和 4 项桌面 SQLite 回归通过，主代码与 AndroidTest Kotlin 编译通过。SQLite 用例提取真实 Kotlin 查询，覆盖默认/显式回复选择、分支可见性、原文删除和查重范围；它不等同 Room 事务运行。生成的 Room DAO 包含事务包装；新增设备用例覆盖第二条插入故障整批回滚、重复结果和来源变更，但仅编译。首轮两项 JVM 失败来自挂起函数测试桩误取 Continuation，修正参数位置后以上命令通过。
+
+没有连接设备、调用真实供应商、重启用户服务或生成 APK；时间线视觉和触控尚未设备验收，没有新增性能结论。清理 DryRun 仅检查并保留既有 Gradle/Pytest 输出，没有删除文件。正式数据库、媒体、密钥和本机配置保持原状。

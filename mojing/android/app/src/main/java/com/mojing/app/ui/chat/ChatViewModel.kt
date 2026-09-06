@@ -181,6 +181,7 @@ class ChatViewModel @Inject constructor(
 
     private val sessionId: Long = savedStateHandle["sessionId"] ?: 0L
     private val _state = MutableStateFlow(ChatContract.State(sessionId = sessionId))
+    private val eventRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     val state: StateFlow<ChatContract.State> = _state.asStateFlow()
     private var roundPlatform: com.mojing.app.data.ModelPlatform? = null
     private var modelSelectionSaving = false
@@ -1252,6 +1253,7 @@ class ChatViewModel @Inject constructor(
     }
 
     private suspend fun refreshMessagesUi(requestedBranchId: String = currentBranchId(), anchorMessageId: Long? = null) {
+        val eventRevision = eventRefreshRevision.incrementAndGet()
         val branches = sessionBranchDao.getBySession(sessionId)
         val branchId = if (
             requestedBranchId == "main" || branches.any { it.branchId == requestedBranchId }
@@ -1290,7 +1292,8 @@ class ChatViewModel @Inject constructor(
         val memorySegments = memorySegmentDao.getRecentForBranch(sessionId, branchId)
         val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, branchId)
         val roundChoices = buildRoundChoiceSnapshot(world, msgs)
-        _state.value = _state.value.copy(
+        val events = eventNodeDao.getForBranch(sessionId, branchId)
+        _state.update { current -> current.copy(
             messages = msgs,
             displayLines = msgs.toChatDisplayLines(),
             hasOlderMessages = hasOlderMessages,
@@ -1311,13 +1314,13 @@ class ChatViewModel @Inject constructor(
             roundChoiceOptions = roundChoices.options,
             roundChoiceMessageId = roundChoices.sourceMessageId,
             branchAnchorsByMessageId = anchors,
-            eventNodes = eventNodeDao.getForBranch(sessionId, branchId),
+            eventNodes = if (current.currentBranchId != branchId || eventRefreshRevision.get() == eventRevision) events else current.eventNodes,
             allowSessionThinkMax = secureStorage.allowSessionThinkMax,
             sessionThinkMaxEnabled = sess?.thinkMaxEnabled == true,
             characterForcesThinkMax = firstChar?.thinkMaxEnabled == true,
             displayContextTokenLimit = displayCap,
             conversationTokenEstimate = convEst,
-        )
+        ) }
     }
 
     private fun launchHistoryLoad(
@@ -2141,6 +2144,7 @@ class ChatViewModel @Inject constructor(
                                 baseUrl = llmHookBase,
                                 model = model
                             )
+                            refreshEventNodesForBranch(branchId)
                             if (world?.autoSedimentEnabled == true && world.encyclopediaId != null) {
                                 sedimentEngine.sedimentFromMessages(
                                     encyclopediaId = world.encyclopediaId,
@@ -3190,16 +3194,39 @@ class ChatViewModel @Inject constructor(
     }
 
     fun deleteEventNode(nodeId: Long) {
+        val branchId = currentBranchId()
+        if (_state.value.eventNodes.none { it.id == nodeId }) return
         viewModelScope.launch {
-            eventNodeDao.deleteById(nodeId)
-            _state.value = _state.value.copy(eventNodes = eventNodeDao.getBySession(sessionId))
+            try {
+                eventNodeDao.deleteById(nodeId)
+                _state.update { if (it.currentBranchId == branchId) it.copy(eventNodes = it.eventNodes.filter { event -> event.id != nodeId }) else it }
+                refreshEventNodesForBranch(branchId, reportFailure = true)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { _state.update { if (it.currentBranchId == branchId) it.copy(error = "事件删除失败，请重试") else it } }
         }
     }
 
     fun toggleEventNodeResolved(nodeId: Long) {
+        val branchId = currentBranchId()
+        val target = _state.value.eventNodes.firstOrNull { it.id == nodeId } ?: return
         viewModelScope.launch {
-            eventNodeDao.toggleResolved(nodeId)
-            _state.value = _state.value.copy(eventNodes = eventNodeDao.getBySession(sessionId))
+            try {
+                eventNodeDao.setResolved(nodeId, !target.resolved)
+                _state.update { if (it.currentBranchId == branchId) it.copy(eventNodes = it.eventNodes.map { event -> if (event.id == nodeId) event.copy(resolved = !target.resolved) else event }) else it }
+                refreshEventNodesForBranch(branchId, reportFailure = true)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { _state.update { if (it.currentBranchId == branchId) it.copy(error = "事件状态保存失败，请重试") else it } }
+        }
+    }
+
+    private suspend fun refreshEventNodesForBranch(branchId: String, reportFailure: Boolean = false) {
+        val revision = eventRefreshRevision.incrementAndGet()
+        try {
+            val events = eventNodeDao.getForBranch(sessionId, branchId)
+            _state.update { if (it.currentBranchId == branchId && eventRefreshRevision.get() == revision) it.copy(eventNodes = events) else it }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) {
+            if (reportFailure) _state.update { if (it.currentBranchId == branchId && eventRefreshRevision.get() == revision) it.copy(error = "修改已保存，事件列表刷新失败，可重新进入当前故事线") else it }
         }
     }
 

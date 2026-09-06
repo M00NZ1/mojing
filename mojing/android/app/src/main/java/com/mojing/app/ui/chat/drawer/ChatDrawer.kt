@@ -763,11 +763,11 @@ fun TimelineTab(
 ) {
     if (events.isEmpty()) {
         Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-            Text("暂无事件节点", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+            Text("当前故事线暂无事件。对话推进后会自动整理，可从事件返回原文。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     } else {
         LazyColumn(modifier = Modifier.fillMaxWidth()) {
-            items(events.sortedWith(compareBy({ it.createdAt }, { it.id }))) { event ->
+            items(events.sortedWith(compareBy({ it.createdAt }, { it.id })), key = { it.id }) { event ->
                 Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -775,6 +775,7 @@ fun TimelineTab(
                             Spacer(Modifier.width(8.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(event.title, style = MaterialTheme.typography.titleMedium)
+                                Text(if (event.resolved) "已解决" else "待跟进", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(
                                     java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
                                         .format(java.util.Date(event.createdAt)),
@@ -782,7 +783,7 @@ fun TimelineTab(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            repeat(event.importance) { Text("★", color = MaterialTheme.colorScheme.primary) }
+                            repeat(event.importance.coerceIn(1, 5)) { Text("★", color = MaterialTheme.colorScheme.primary) }
                         }
                         if (event.description.isNotBlank()) { Spacer(Modifier.height(4.dp)); Text(event.description, style = MaterialTheme.typography.bodyMedium, maxLines = 3) }
                         val source = event.sourceReference()

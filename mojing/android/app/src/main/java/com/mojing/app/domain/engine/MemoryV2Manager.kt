@@ -1,6 +1,6 @@
 package com.mojing.app.domain.engine
 
-import com.mojing.app.data.local.dao.SessionEventNodeDao
+import com.mojing.app.data.local.dao.MessageDao
 import com.mojing.app.data.local.entity.SessionEventNodeEntity
 import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.remote.ChatMessage
@@ -8,11 +8,14 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 @Singleton
 class MemoryV2Manager @Inject constructor(
     private val llmRetry: LlmRetry,
-    private val eventNodeDao: SessionEventNodeDao,
+    private val messageDao: MessageDao,
 ) {
     suspend fun extractEventNodes(
         sessionId: Long,
@@ -26,6 +29,7 @@ class MemoryV2Manager @Inject constructor(
         if (messages.isEmpty()) return emptyList()
 
         val sourceMessages = messages.takeLast(20)
+        if (sourceMessages.any { it.sessionId != sessionId || it.id <= 0L }) return emptyList()
         val sourceMessageIds = sourceMessages.map { it.id }.filter { it > 0L }.toSet()
         val fallbackMessageId = sourceMessages.lastOrNull()?.id?.takeIf { it > 0L }
         val conversationText = sourceMessages.joinToString("\n") { msg ->
@@ -54,7 +58,9 @@ class MemoryV2Manager @Inject constructor(
             @Suppress("UNCHECKED_CAST")
             val list = (Gson().fromJson(json, object : TypeToken<List<Map<String, Any>>>() {}.type) as? List<Map<String, Any>>) ?: emptyList()
             val entities = mutableListOf<SessionEventNodeEntity>()
-            for (item in list) {
+            for (item in list.take(5)) {
+                val title = (item["title"] as? String)?.trim()?.take(200).orEmpty()
+                if (title.isBlank()) continue
                 val parsedMessageId = when (val rawId = item["message_id"]) {
                     is Number -> rawId.toLong()
                     is String -> rawId.toLongOrNull()
@@ -67,15 +73,17 @@ class MemoryV2Manager @Inject constructor(
                     characterId = characterId,
                     branchId = branchId,
                     eventType = (item["event_type"] as? String) ?: "action",
-                    title = (item["title"] as? String) ?: "",
-                    description = (item["description"] as? String) ?: "",
-                    importance = ((item["importance"] as? Double)?.toInt() ?: 1),
+                    title = title,
+                    description = ((item["description"] as? String) ?: "").take(2000),
+                    importance = ((item["importance"] as? Number)?.toInt() ?: 1).coerceIn(1, 5),
                     messageId = sourceMessageId,
                 )
-                eventNodeDao.insert(entity)
                 entities.add(entity)
             }
-            entities
+            currentCoroutineContext().ensureActive()
+            messageDao.commitDerivedEvents(sessionId, branchId, sourceMessages, entities)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Exception) { emptyList() }
     }
 

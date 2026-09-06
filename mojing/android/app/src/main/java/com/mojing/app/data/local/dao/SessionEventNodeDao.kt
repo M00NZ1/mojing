@@ -50,6 +50,9 @@ interface SessionEventNodeDao {
     @Query("UPDATE session_event_nodes SET resolved = NOT resolved WHERE id = :id")
     suspend fun toggleResolved(id: Long)
 
+    @Query("UPDATE session_event_nodes SET resolved = :resolved WHERE id = :id")
+    suspend fun setResolved(id: Long, resolved: Boolean)
+
     @Query("DELETE FROM session_event_nodes WHERE id = :id")
     suspend fun deleteById(id: Long)
 

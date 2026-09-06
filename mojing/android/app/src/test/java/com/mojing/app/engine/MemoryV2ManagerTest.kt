@@ -1,6 +1,7 @@
 package com.mojing.app.engine
 
-import com.mojing.app.data.local.dao.SessionEventNodeDao
+import com.mojing.app.data.local.dao.MessageDao
+import com.mojing.app.data.local.entity.SessionEventNodeEntity
 import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.remote.ChatMessage
 import com.mojing.app.domain.engine.LlmRetry
@@ -17,11 +18,37 @@ import org.junit.Test
 
 class MemoryV2ManagerTest {
     private val llmRetry = mockk<LlmRetry>()
-    private val eventNodeDao = mockk<SessionEventNodeDao>(relaxed = true)
-    private val manager = MemoryV2Manager(llmRetry, eventNodeDao)
+    private val messageDao = mockk<MessageDao>(relaxed = true)
+    private val manager = MemoryV2Manager(llmRetry, messageDao)
+
+    @Test fun cancellationPropagatesWithoutWritingEvents() = runTest {
+        coEvery { llmRetry.chatCompletionWithRetry(any(), any(), any(), any(), any(), any(), any()) } throws kotlinx.coroutines.CancellationException("stopped")
+        var cancelled = false
+        try { manager.extractEventNodes(7, "main", null, listOf(MessageEntity(id = 1, sessionId = 7)), "k", "url", "m") }
+        catch (_: kotlinx.coroutines.CancellationException) { cancelled = true }
+        assertTrue(cancelled)
+        coVerify(exactly = 0) { messageDao.commitDerivedEvents(any(), any(), any(), any()) }
+    }
+
+    @Test fun malformedLaterItemCannotSaveAnEarlierPartialEvent() = runTest {
+        coEvery { llmRetry.chatCompletionWithRetry(any(), any(), any(), any(), any(), any(), any()) } returns """[{"title":"有效标题"},"损坏项"]"""
+        assertTrue(manager.extractEventNodes(7, "main", null, listOf(MessageEntity(id = 1, sessionId = 7)), "k", "url", "m").isEmpty())
+        coVerify(exactly = 0) { messageDao.commitDerivedEvents(any(), any(), any(), any()) }
+    }
+
+    @Test fun eventCountAndImportanceAreBoundedBeforeOneAtomicWrite() = runTest {
+        coEvery { llmRetry.chatCompletionWithRetry(any(), any(), any(), any(), any(), any(), any()) } returns
+            (1..30).joinToString(prefix = "[", postfix = "]") { """{"title":"事件$it","importance":999999,"message_id":1}""" }
+        coEvery { messageDao.commitDerivedEvents(any(), any(), any(), any()) } coAnswers { arg<List<SessionEventNodeEntity>>(3) }
+        val result = manager.extractEventNodes(7, "main", null, listOf(MessageEntity(id = 1, sessionId = 7)), "k", "url", "m")
+        assertEquals(5, result.size)
+        assertTrue(result.all { it.importance == 5 })
+        coVerify(exactly = 1) { messageDao.commitDerivedEvents(7, "main", any(), any()) }
+    }
 
     @Test
     fun extractedEventsKeepBranchAndValidatedSourceMessage() = runTest {
+        coEvery { messageDao.commitDerivedEvents(any(), any(), any(), any()) } coAnswers { arg<List<SessionEventNodeEntity>>(3) }
         val requestMessages = slot<List<ChatMessage>>()
         coEvery {
             llmRetry.chatCompletionWithRetry(
@@ -64,8 +91,6 @@ class MemoryV2ManagerTest {
         assertTrue(prompt.contains("继续前进"))
         assertFalse(prompt.contains("先停下"))
         assertFalse(prompt.contains("<OPTION"))
-        coVerify(exactly = 2) {
-            eventNodeDao.insert(match { it.sessionId == 7L && it.branchId == "edit_42" })
-        }
+        coVerify(exactly = 1) { messageDao.commitDerivedEvents(7L, "edit_42", any(), match { it.size == 2 }) }
     }
 }
