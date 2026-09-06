@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import delete, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from ..config import STORAGE_DIR
 from ..models import WorldLoreEntryModel, WorldTemplateModel
@@ -14,6 +14,8 @@ from ..schemas import (
     WorldTemplateBundlePreviewRead,
     WorldTemplateBundleRead,
     WorldTemplatePackageRead,
+    WorldTemplateCreate,
+    WorldLoreEntryCreate,
 )
 
 
@@ -100,6 +102,71 @@ def write_world_template_bundle_file(bundle: WorldTemplateBundleRead, file_name:
     return export_path
 
 
+def _validated_package(package_json: dict, *, new_template_id: str = "", new_label: str = "") -> dict:
+    """Validate the complete versioned payload before any database mutation."""
+    if not isinstance(package_json, dict) or package_json.get("format_version", 1) != 1:
+        raise ValueError("不支持的世界模板包版本，原有资料未改变。")
+    template_payload = package_json.get("template")
+    lore_payload = package_json.get("lore_entries", [])
+    if not isinstance(template_payload, dict) or not isinstance(lore_payload, list):
+        raise ValueError("模板包需要 template 对象和 lore_entries 列表。")
+    template = {
+        "category": "通用", "summary": "", "gameplay_mode": "自由剧情", "world_prompt": "",
+        **template_payload,
+        "template_id": new_template_id or template_payload.get("template_id", ""),
+        "label": new_label or template_payload.get("label", ""),
+    }
+    try:
+        parsed = WorldTemplateCreate.model_validate(template)
+        parsed.template_id = parsed.template_id.strip()
+        parsed.label = parsed.label.strip()
+        if not parsed.template_id or not parsed.label:
+            raise ValueError()
+        lore = []
+        for index, item in enumerate(lore_payload):
+            if not isinstance(item, dict):
+                raise ValueError()
+            lore.append(WorldLoreEntryCreate.model_validate({
+                "title": f"条目 {index + 1}", "sort_order": index, **item,
+            }).model_dump())
+    except (ValueError, TypeError):
+        raise ValueError("模板名称、标识或 Lore 字段无效，请修正模板包后重试。") from None
+    return {"format_version": 1, "template": parsed.model_dump(), "lore_entries": lore}
+
+
+def _validated_bundle(bundle_json: dict) -> list[dict]:
+    if not isinstance(bundle_json, dict) or bundle_json.get("format_version", 1) != 1:
+        raise ValueError("不支持的世界模板合集版本，原有资料未改变。")
+    packages = bundle_json.get("packages")
+    if not isinstance(packages, list) or not packages:
+        raise ValueError("导入包缺少 packages 列表")
+    if "package_count" in bundle_json and bundle_json["package_count"] != len(packages):
+        raise ValueError("合集声明的模板数量与实际数量不一致。")
+    return [_validated_package(item) for item in packages]
+
+
+def _apply_world_template_package(db: Session, package: dict, *, override_existing: bool) -> WorldTemplateModel:
+    template = package["template"]
+    row = db.scalar(select(WorldTemplateModel).where(WorldTemplateModel.template_id == template["template_id"]))
+    if row is not None and row.is_builtin:
+        raise ValueError("不能覆盖内置世界模板，请改用新的模板 ID 导入")
+    if row is not None and not override_existing:
+        raise ValueError("模板 ID 已存在，如需覆盖请开启覆盖导入")
+    if row is None:
+        row = WorldTemplateModel(template_id=template["template_id"], is_builtin=False)
+        db.add(row)
+    else:
+        db.execute(delete(WorldLoreEntryModel).where(WorldLoreEntryModel.world_template_id == row.id))
+    for field in ("label", "category", "summary", "gameplay_mode", "world_prompt", "cover_image_path", "anti_cheat_prompt"):
+        setattr(row, field, template[field])
+    row.suggested_choices_json = template["suggested_choices"]
+    db.flush()
+    for item in package["lore_entries"]:
+        db.add(WorldLoreEntryModel(world_template_id=row.id, **item))
+    db.flush()
+    return row
+
+
 def import_world_template_package(
     db: Session,
     *,
@@ -107,70 +174,18 @@ def import_world_template_package(
     override_existing: bool = False,
     new_template_id: str = "",
     new_label: str = "",
+    commit: bool = True,
 ) -> WorldTemplateModel:
-    """导入单个世界模板包，并根据需要覆盖现有自定义模板。"""
-
-    template_payload = dict(package_json.get("template") or {})
-    lore_payload = list(package_json.get("lore_entries") or [])
-    if not template_payload:
-        raise ValueError("导入包缺少 template 字段")
-
-    final_template_id = (new_template_id or template_payload.get("template_id") or "").strip()
-    if not final_template_id:
-        raise ValueError("导入包缺少有效的模板 ID")
-    final_label = (new_label or template_payload.get("label") or "").strip()
-    if not final_label:
-        raise ValueError("导入包缺少有效的模板名称")
-
-    existing = db.scalar(select(WorldTemplateModel).where(WorldTemplateModel.template_id == final_template_id))
-    if existing is not None and existing.is_builtin:
-        raise ValueError("不能覆盖内置世界模板，请改用新的模板 ID 导入")
-    if existing is not None and not override_existing:
-        raise ValueError("模板 ID 已存在，如需覆盖请开启覆盖导入")
-
-    if existing is None:
-        row = WorldTemplateModel(
-            template_id=final_template_id,
-            label=final_label,
-            category=template_payload.get("category", "通用"),
-            summary=template_payload.get("summary", ""),
-            gameplay_mode=template_payload.get("gameplay_mode", "自由剧情"),
-            world_prompt=template_payload.get("world_prompt", ""),
-            cover_image_path=template_payload.get("cover_image_path", ""),
-            suggested_choices_json=list(template_payload.get("suggested_choices") or []),
-            anti_cheat_prompt=template_payload.get("anti_cheat_prompt", ""),
-            is_builtin=False,
-        )
-        db.add(row)
-        db.flush()
-    else:
-        row = existing
-        row.label = final_label
-        row.category = template_payload.get("category", row.category)
-        row.summary = template_payload.get("summary", row.summary)
-        row.gameplay_mode = template_payload.get("gameplay_mode", row.gameplay_mode)
-        row.world_prompt = template_payload.get("world_prompt", row.world_prompt)
-        row.cover_image_path = template_payload.get("cover_image_path", row.cover_image_path)
-        row.suggested_choices_json = list(template_payload.get("suggested_choices") or [])
-        row.anti_cheat_prompt = template_payload.get("anti_cheat_prompt", row.anti_cheat_prompt)
-        db.execute(delete(WorldLoreEntryModel).where(WorldLoreEntryModel.world_template_id == row.id))
-
-    for index, item in enumerate(lore_payload):
-        db.add(
-            WorldLoreEntryModel(
-                world_template_id=row.id,
-                title=str(item.get("title") or f"条目 {index + 1}"),
-                entry_type=str(item.get("entry_type") or "设定"),
-                keywords_json=list(item.get("keywords_json") or []),
-                content=str(item.get("content") or ""),
-                sort_order=int(item.get("sort_order") or index),
-                is_core=bool(item.get("is_core", False)),
-            )
-        )
-
-    db.commit()
-    db.refresh(row)
-    return row
+    """Import atomically; a route may include its job status in the same commit."""
+    try:
+        package = _validated_package(package_json, new_template_id=new_template_id, new_label=new_label)
+        row = _apply_world_template_package(db, package, override_existing=override_existing)
+        if commit:
+            db.commit()
+        return row
+    except Exception:
+        db.rollback()
+        raise
 
 
 def import_world_template_bundle(
@@ -179,30 +194,34 @@ def import_world_template_bundle(
     bundle_json: dict,
     override_existing: bool = False,
     replace_all_custom_templates: bool = False,
+    commit: bool = True,
 ) -> list[WorldTemplateModel]:
-    """批量导入模板包，可选替换全部自定义模板。"""
-
-    packages = list(bundle_json.get("packages") or [])
-    if not packages:
-        raise ValueError("导入包缺少 packages 列表")
-
-    if replace_all_custom_templates:
-        custom_templates = list(db.scalars(select(WorldTemplateModel).where(WorldTemplateModel.is_builtin.is_(False))))
-        custom_ids = [item.id for item in custom_templates]
-        if custom_ids:
-            db.execute(delete(WorldLoreEntryModel).where(WorldLoreEntryModel.world_template_id.in_(custom_ids)))
-            db.execute(delete(WorldTemplateModel).where(WorldTemplateModel.id.in_(custom_ids)))
+    """Validate the complete bundle; replace and insert in one transaction."""
+    try:
+        packages = _validated_bundle(bundle_json)
+        ids = [item["template"]["template_id"] for item in packages]
+        if len(ids) != len(set(ids)):
+            raise ValueError("同一个合集包含重复模板 ID，请清理冲突后重试。")
+        preview = preview_world_template_bundle_import(db, bundle_json=bundle_json,
+            override_existing=override_existing, replace_all_custom_templates=replace_all_custom_templates)
+        if preview.blocked_count:
+            raise ValueError("合集存在无法导入的模板，请先处理预览中的冲突。")
+        if replace_all_custom_templates:
+            # Keep IDs for matching templates instead of deleting and recreating
+            # them. Only templates absent from the incoming bundle are removed.
+            removed = select(WorldTemplateModel.id).where(
+                WorldTemplateModel.is_builtin.is_(False), WorldTemplateModel.template_id.not_in(ids))
+            db.execute(delete(WorldLoreEntryModel).where(WorldLoreEntryModel.world_template_id.in_(removed)))
+            db.execute(delete(WorldTemplateModel).where(
+                WorldTemplateModel.is_builtin.is_(False), WorldTemplateModel.template_id.not_in(ids)))
+        rows = [_apply_world_template_package(db, package,
+            override_existing=override_existing or replace_all_custom_templates) for package in packages]
+        if commit:
             db.commit()
-
-    imported_rows: list[WorldTemplateModel] = []
-    for package_json in packages:
-        row = import_world_template_package(
-            db,
-            package_json=package_json,
-            override_existing=override_existing or replace_all_custom_templates,
-        )
-        imported_rows.append(row)
-    return imported_rows
+        return rows
+    except Exception:
+        db.rollback()
+        raise
 
 
 def preview_world_template_bundle_import(
@@ -214,16 +233,16 @@ def preview_world_template_bundle_import(
 ) -> WorldTemplateBundlePreviewRead:
     """预览批量模板恢复会产生的结果，避免用户直接盲覆盖。"""
 
-    packages = list(bundle_json.get("packages") or [])
-    if not packages:
-        raise ValueError("导入包缺少 packages 列表")
+    packages = _validated_bundle(bundle_json)
 
-    existing_rows = list(db.scalars(select(WorldTemplateModel)))
+    existing_rows = list(db.scalars(select(WorldTemplateModel).options(load_only(
+        WorldTemplateModel.template_id, WorldTemplateModel.label, WorldTemplateModel.is_builtin))))
     existing_map = {item.template_id: item for item in existing_rows}
+    incoming_ids = {package["template"]["template_id"] for package in packages}
     will_delete_template_ids = [
         item.template_id
         for item in existing_rows
-        if not item.is_builtin
+        if not item.is_builtin and item.template_id not in incoming_ids
     ] if replace_all_custom_templates else []
 
     seen_ids: dict[str, int] = {}
@@ -307,15 +326,15 @@ def preview_world_template_bundle_import(
             continue
 
         if replace_all_custom_templates:
-            recreate_count += 1
+            overwrite_count += 1
             preview_items.append(
                 WorldTemplateBundlePreviewItemRead(
                     template_id=template_id,
                     label=label,
                     category=category,
                     lore_entry_count=lore_entry_count,
-                    action="清空后重建",
-                    conflict_reason="当前启用了“先清空全部自定义模板再恢复”，会先删除旧模板再重建。",
+                    action="替换内容",
+                    conflict_reason="保留同标识模板并替换内容，包外自定义模板将移除。",
                     existing_label=existing.label,
                     existing_is_builtin=False,
                 )
@@ -355,7 +374,7 @@ def preview_world_template_bundle_import(
     if duplicate_ids:
         warnings.append("批量包内部存在重复模板 ID，重复项会被阻止恢复。")
     if replace_all_custom_templates and will_delete_template_ids:
-        warnings.append("已启用“先清空全部自定义模板再恢复”，恢复前会删除当前全部自定义模板。")
+        warnings.append("将移除合集之外的自定义模板；全部内容校验并写入成功后才会统一生效。")
     if blocked_count > 0 and not override_existing and not replace_all_custom_templates:
         warnings.append("存在需要覆盖或改名的模板，建议先预览后再决定是否恢复。")
 

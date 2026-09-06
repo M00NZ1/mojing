@@ -177,7 +177,7 @@ def import_world_template_archive(payload: WorldTemplatePackageImportRequest, db
             package_json=payload.package_json,
             override_existing=payload.override_existing,
             new_template_id=payload.new_template_id,
-            new_label=payload.new_label)
+            new_label=payload.new_label, commit=False)
         mark_job_succeeded(
             db,
             job.id,
@@ -187,9 +187,11 @@ def import_world_template_archive(payload: WorldTemplatePackageImportRequest, db
             })
         return _serialize_world_template(row)
     except ValueError as exc:
+        db.rollback()
         mark_job_failed(db, job.id, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        db.rollback()
         mark_job_failed(db, job.id, str(exc))
         raise
 
@@ -210,7 +212,7 @@ def import_world_template_bundle_archive(payload: WorldTemplateBundleImportReque
             db,
             bundle_json=payload.bundle_json,
             override_existing=payload.override_existing,
-            replace_all_custom_templates=payload.replace_all_custom_templates)
+            replace_all_custom_templates=payload.replace_all_custom_templates, commit=False)
         mark_job_succeeded(
             db,
             job.id,
@@ -220,9 +222,11 @@ def import_world_template_bundle_archive(payload: WorldTemplateBundleImportReque
             })
         return [_serialize_world_template(row) for row in rows]
     except ValueError as exc:
+        db.rollback()
         mark_job_failed(db, job.id, str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        db.rollback()
         mark_job_failed(db, job.id, str(exc))
         raise
 

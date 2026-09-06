@@ -9,7 +9,6 @@ import InlineQueryError from '../components/InlineQueryError';
 import UiIcon from '../components/UiIcon';
 import { useUndoDelete } from '../components/UndoToast';
 import { useToast } from '../hooks/useToast';
-import { isCompanionBackendConfigured } from '../utils/backendApiRoot';
 import type {
   JobRun,
   WorldGenerationResult,
@@ -156,20 +155,11 @@ export default function WorkbenchPage() {
     queryKey: ['assets', 'world_cover', coverAssetSearch],
     queryFn: () => api.listAssets('world_cover', coverAssetSearch),
   });
-  const localConfigQuery = useQuery({
-    queryKey: ['local-config'],
-    queryFn: api.getLocalConfig,
-    staleTime: 20_000,
-  });
   useEffect(() => {
     if (!worldTemplatesQuery.isSuccess || worldTemplatesQuery.isPlaceholderData || !worldTemplatesQuery.data) return;
     setLastTemplateResult({ search: deferredWorldTemplateSearch, items: worldTemplatesQuery.data });
   }, [deferredWorldTemplateSearch, worldTemplatesQuery.data, worldTemplatesQuery.isPlaceholderData, worldTemplatesQuery.isSuccess]);
   const visibleWorldTemplates = worldTemplatesQuery.data ?? lastTemplateResult?.items ?? [];
-  const showCompanionExports = useMemo(
-    () => isCompanionBackendConfigured(localConfigQuery.data?.public_text_base_url ?? ''),
-    [localConfigQuery.data?.public_text_base_url],
-  );
   const templateDraftSnapshot = useMemo(() => JSON.stringify({
     templateId,
     templateLabel,
@@ -751,9 +741,7 @@ export default function WorkbenchPage() {
                   </div>
                   <div className="card-actions">
                     <button type="button" className="btn btn-primary btn-sm" onClick={() => { void openTemplateForm(template); }}><UiIcon name="edit" />编辑</button>
-                    {showCompanionExports && (
-                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => void handleExportTemplate(template.template_id)} disabled={exportingTemplateId === template.template_id}><UiIcon name="archive" />导出</button>
-                    )}
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => void handleExportTemplate(template.template_id)} disabled={exportingTemplateId === template.template_id}><UiIcon name="archive" />导出</button>
                     {!template.is_builtin && (
                       <button type="button" className="btn btn-ghost btn-sm btn-danger" onClick={() => { triggerDelete(template.label, () => deleteTemplateMutation.mutate(template.template_id), () => {}); }}><UiIcon name="delete" />删除</button>
                     )}
@@ -810,20 +798,14 @@ export default function WorkbenchPage() {
           {/* 高级工具 */}
           {showManageAdvanced && (
             <div className="page-card" style={{ borderColor: 'var(--line-soft)' }}>
-              <div className="card-header"><h2>导入与导出</h2></div>
-              <p style={{ fontSize: '0.82rem', color: 'var(--muted)', marginBottom: 12 }}>需要转移多个世界时再使用这里。</p>
-              {showCompanionExports ? (
-                <div className="form-group">
-                  <label>导出</label>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => void handleExportBundle()} disabled={exportingBundle} title="Download template bundle">
-                    导出所有自定义模板
-                  </button>
-                </div>
-              ) : (
-                <p style={{ fontSize: '0.8rem', color: 'var(--text-2)' }}>
-                  当前「公共对话根地址」为典型 OpenAI 兼容网关（如以 <code>/v1</code> 结尾）时，不提供浏览器直达模板包下载（与 Android 工坊一致）；请改用 JSON 导入导出或部署墨境式 FastAPI 根地址。
-                </p>
-              )}
+              <div className="card-header"><h2>转移世界资料</h2></div>
+              <p style={{ fontSize: '0.82rem', color: 'var(--muted)', marginBottom: 12 }}>导出本机世界模板与 Lore，不经过模型服务。</p>
+              <div className="form-group">
+                <label>导出</label>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => void handleExportBundle()} disabled={exportingBundle}>
+                  导出所有自定义模板
+                </button>
+              </div>
             </div>
           )}
         </>
