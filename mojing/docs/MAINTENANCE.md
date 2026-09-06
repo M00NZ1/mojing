@@ -1,85 +1,74 @@
-# MoJing 构建、验证与交付
+# 墨境构建与维护
 
-本文只保留当前可执行的维护流程。历史施工日志、个人设备名称、绝对路径和一次性测试记录不属于公开维护文档。
+环境安装和服务启停见[运行指南](../README.md)。下列各节独立从仓库根目录执行命令。
 
-## 1. 环境
-
-| 模块 | 建议环境 |
-|---|---|
-| Backend | Python 3.11+ |
-| Web | Node.js 20+、npm |
-| Android | JDK 17、Android SDK、Gradle Wrapper |
-
-从仓库根目录准备 Web/Backend：
-
-```powershell
-Set-Location .\mojing
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r .\backend\requirements.txt
-Copy-Item .\.env.example .\.env
-
-Set-Location .\frontend
-npm install
-Set-Location ..
-```
-
-`.env`、`mojing_config.json` 和 Android `local.properties` 都是本机文件，不得提交真实值。
-
-## 2. 启动与停止
-
-### 一键启动
-
-```powershell
-Set-Location .\mojing
-.\一键启动.bat
-```
-
-默认监听：
-
-- Web：`127.0.0.1:5175`；
-- Backend：`127.0.0.1:8000`。
-
-### 分别启动
-
-```powershell
-# Backend
-Set-Location .\mojing
-.\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
-
-# Web（另一个终端）
-Set-Location .\mojing\frontend
-npm run dev
-```
-
-停止前先确认 PID、端口和启动路径确实属于当前工作区。不要按进程名批量结束其他项目的 Python、Node 或 Java 进程。
-
-## 3. 自动验证
-
-只运行与改动风险相称的子集；跨数据、并发、导航、协议或核心交互的改动需要提高验证等级。
-
-### Backend
+## Python
 
 ```powershell
 Set-Location .\mojing
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-定向测试示例：
+定向运行角色导入与初始目录测试：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest .\tests\test_sessions.py -q
+Set-Location .\mojing
+.\.venv\Scripts\python.exe -m pytest tests/test_character_import_workflow.py tests/test_starter_catalog.py -q
 ```
 
-### Web
+Python 测试主要位于 [tests/](../tests/)，API 实现位于 [backend/app/](../backend/app/)。
+
+## Web
 
 ```powershell
 Set-Location .\mojing\frontend
 npm run build
 ```
 
-仓库内的 `.test.ts`、`.test.tsx` 和 `.test.mjs` 应按 `package.json` 中现有脚本运行。不要用生产构建替代交互测试。
+仅检查 TypeScript：
 
-### Android
+```powershell
+Set-Location .\mojing\frontend
+npx tsc --noEmit
+```
+
+### 浏览器回归
+
+[frontend/scripts/](../frontend/scripts/)中的 `test-*.mjs` 使用 Playwright 启动独立 Vite 端口，并在浏览器中拦截模拟 API。
+
+准备可用的 Playwright 包和 Chromium 后，从 Web 目录运行对应脚本：
+
+```powershell
+Set-Location .\mojing\frontend
+node scripts/test-model-platforms.mjs
+```
+
+| 环境变量 | 用途 |
+|---|---|
+| `PLAYWRIGHT_MODULE` | 指定可加载的 Playwright 包路径，默认解析 `playwright` |
+| `SMOKE_BROWSER` | 浏览器 channel，例如 `chrome`；留空使用 Playwright Chromium |
+| `SMOKE_PORT` | 覆盖脚本使用的独立 Vite 端口 |
+| `SMOKE_OUTPUT` | 输出截图等文件的目录 |
+
+按改动选择角色导入、初始目录、世界记录、世界转移、取消、检查点、搜索或删除脚本。各脚本负责关闭自身启动的浏览器和 Vite 进程。
+
+### 数据规模分析
+
+```powershell
+Set-Location .\mojing
+.\.venv\Scripts\python.exe scripts/benchmark_message_search.py
+```
+
+该脚本建立临时 SQLite 数据集，统计 6,000 条消息的 Token 数、查询耗时、索引分批耗时和数据库体积。运行环境需要已有的 `cl100k_base` tokenizer 缓存。
+
+Web 数组与序列化推演：
+
+```powershell
+Set-Location .\mojing\frontend
+npm run perf:h5
+```
+
+## Android
 
 ```powershell
 Set-Location .\mojing\android
@@ -88,365 +77,38 @@ Set-Location .\mojing\android
 .\gradlew.bat assembleRelease
 ```
 
-设备/模拟器测试只在已有、可确认的数据安全环境中运行：
+连接设备后的测试入口：
 
 ```powershell
+Set-Location .\mojing\android
 .\gradlew.bat connectedDebugAndroidTest
 ```
 
-不要擅自启动、重置、擦除或覆盖用户的模拟器和真机应用数据。
+测试位于 `app/src/test/` 和 `app/src/androidTest/`。签名、ABI 与 APK 输出见 [Android 开发指南](ANDROID.md)。
 
-## 4. 验证分层
+## 数据库迁移
 
-报告结果时使用以下边界：
+Web 使用 Alembic，迁移脚本位于 [backend/alembic/versions/](../backend/alembic/versions/)。
 
-| 证据 | 能证明 | 不能证明 |
-|---|---|---|
-| 静态源码/配置 | 引用、结构和配置一致 | 运行行为正确 |
-| Backend 测试 | 被覆盖的服务与数据行为 | 浏览器/设备交互 |
-| Web build | TypeScript/打包链可完成 | 页面流程、触控和网络恢复 |
-| Android JVM 测试 | 被覆盖的 Kotlin 逻辑 | Room 设备迁移、IME、系统返回 |
-| Android build | 编译、资源、R8/打包边界 | 安装、冷启动和真实交互 |
-| 浏览器运行 | 当前浏览器中的实际流程 | Android 行为 |
-| 模拟器 | 指定 API/镜像上的实际流程 | 真机厂商差异和闪存性能 |
-| 真机 | 指定设备上的真实交互 | 其他设备和数据规模 |
-| 性能测试 | 给定数据/设备的指标 | 未测规模或环境 |
-
-用户反馈应标记为“用户报告”；Agent 独立运行应单独记录。
-
-## 5. 手工验收
-
-### Web
-
-- 首次启动、无配置、空数据、加载失败和重试；
-- 新建会话、发送、停止、失败恢复、重试和继续生成；
-- 草稿在刷新、离页和会话切换后的隔离与恢复；
-- 编辑、分支、搜索、跳转、收藏和历史分页；
-- 角色、百科、模板的创建、导入、删除和失败恢复；
-- 桌面与窄屏；浏览器前进/后退；中文输入法；
-- 附件、图片、语音和文件选择器的取消/失败路径。
-
-### Android
-
-- 冷启动、进程重建、旋转、分屏；
-- 系统返回、手势返回、底部导航和深链；
-- IME 打开/关闭、输入栏可见性、光标插入和覆盖层；
-- 发送、停止、重试、编辑、分支与生成单飞；
-- 权限拒绝、文件取消、云端 URI、媒体保存失败；
-- Room 迁移、备份恢复、导入导出往返；
-- 小屏、字体放大、深色/浅色主题；
-- 大型会话的打开、滚动、搜索、跳转和继续生成。
-
-## 6. 数据保护
-
-以下状态默认受保护：
-
-- `backend/storage/`、SQLite、WAL/SHM、媒体；
-- `.env`、`mojing_config.json`、`local.properties`、签名和 API Key；
-- `data/sessions/`、Android 应用数据、备份和用户导入资源；
-- 任务前已有的修改、未跟踪/ignored 文件、缓存和恢复目录。
-
-规则：
-
-1. ignored 不等于可删除；
-2. 不使用 `git clean`、`reset --hard` 或强制 checkout 清理不明状态；
-3. schema/格式迁移前先校验，并提供幂等路径和失败恢复；
-4. 派生索引可重建，原始消息、角色、设定和手动记忆不可随意重建；
-5. 日志、测试快照、公开导出和 Git 不得包含完整密钥或认证头。
-
-## 7. Android 标识与数据迁移
-
-当前 namespace/application ID：`com.mojing.app`。
-
-采用新标识后，早期预改名构建与 MoJing 会作为不同应用存在。迁移流程必须是：
-
-1. 在旧应用中完成本地导出；
-2. 保留旧应用和原始数据，直到导入验证成功；
-3. 安装 MoJing；
-4. 导入并核对角色、会话、分支、百科、模板和媒体；
-5. 只有用户确认后，才自行决定是否卸载旧应用。
-
-构建任务不得自动卸载旧应用、清除数据或覆盖备份。
-
-## 8. 发布检查
-
-发布前核对：
-
-- Git remote、base、branch、HEAD、merge-base 与工作区状态；
-- staged 文件只包含当前任务；
-- `.env`、密钥、数据库、媒体、日志、缓存和本机路径没有进入 diff；
-- 版本文件变化是当前任务明确授权的；
-- Backend、Web、Android 的相关测试/构建已按风险完成；
-- 导入导出版本、Room schema 和公开文档与代码一致；
-- APK/制品名称使用 MoJing 品牌；
-- 自动化通过、真实运行与未验证项分开报告。
-
-未经明确授权，不 commit、push、创建 PR、改版本、发布或合并。
-
-## 9. 清理
-
-只有当前任务产生临时文件、构建缓存或临时工作区时才清理。清理前先列出精确候选，确认它们由当前任务创建、可重建、未被进程或配置使用，并严格位于任务目录。
-
-不得自动删除数据库、WAL/SHM、媒体、备份、签名、配置、用户资源、既有 Gradle/Node/Python 环境或用途不明目录。
-
-
-## 10. Web 平台配置回归与兼容
-
-- 平台目录使用现有 `app_settings` 中的 `model_platforms_v1`，内部 `version=1`；会话选择使用 `chat_model_choice_<session_id>`，只保存平台标识与模型名。
-- 首次读取只投影旧 `local_config` 的文字线路，首次显式保存才写入目录。旧文字字段原样保留；其他设置保存不会把旧页面草稿覆盖到新平台目录。未知版本/无效配置拒绝覆盖，平台保存采用一次数据库提交；没有数据库 schema 升级。
-- 回退旧代码可读取保留的旧文字配置。进行任何人工修复前，先保留一致性数据库副本与原有本机密钥文件；不要删除原数据库、密钥文件或平台目录来尝试修复。新建的平台仍保存在目录中，回退旧代码不会自动迁入旧单平台界面。
-- 平台 Key 复用现有本机凭据存储，API 返回掩码；普通备份递归清除目录中的 Key。恢复普通备份后需重新填写 Key；模型名与会话选择保留。
-- 聊天选择在请求入口解析成不可变线路快照，覆盖同回合角色与旁白；修改选择不会改变已开始的请求。选择失效时在创建用户消息前返回明确错误。
-- Anthropic 模型发现遵循 [Models API](https://platform.claude.com/docs/en/api/models/list)；Web 对话仍使用已有 [Chat Completions 兼容接口](https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk)，原生提示缓存、思考细节等能力不在本批范围。
-
-定向后端验证（在 `mojing/`）：
+升级前保留完整数据库备份；SQLite 运行中的数据库使用 SQLite backup API 获取一致副本。离线复制应在数据库连接关闭后进行，并保留现有 WAL/SHM。
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_model_platforms.py tests/test_text_config_fallback.py tests/test_stream_character_reply.py tests/test_secret_storage.py tests/test_project_backup.py tests/test_branch_context.py -q
+Set-Location .\mojing
+.\scripts\migrate_backend.ps1
 ```
 
-前端验证（在 `mojing/frontend/`，不执行生产打包）：
+该脚本调用 `alembic upgrade head`。数据库迁移实现应包含旧格式读取、重复执行和失败回滚处理。
 
-```powershell
-.\node_modules\.bin\tsc.cmd --noEmit
-# 使用已安装的 Playwright；若未在当前模块路径中，可将 PLAYWRIGHT_MODULE 指向已有包目录。
-# 可通过 SMOKE_BROWSER=chrome 使用本机 Chrome，SMOKE_OUTPUT 指定截图输出目录。
-node scripts/test-model-platforms.mjs
-```
+Android 使用 Room migration，schema 位于 [app/schemas/](../android/app/schemas/)，迁移实现位于 [AppDatabase.kt](../android/app/src/main/java/com/mojing/app/data/local/AppDatabase.kt)。
 
-浏览器脚本自行启动/关闭独立 Vite 进程，默认使用空闲端口 15175；所有 API 由浏览器拦截模拟，并阻止其他外部请求，不启动真实 Backend、不访问用户数据。覆盖保存/重进、Key 隔离、取消获取、手填、未保存离页、窄屏、5,000 模型虚拟列表、选择重试及聊天发送。此测试不能替代真实供应商、浏览器键盘弹出或 Android 真机验收。
+## CI 与交付
 
-## 11. 世界包导入与导出回归
+[Android 工作流](../../.github/workflows/android-build.yml)在 Android 路径相关的 main 推送、PR 和手动运行时执行 JVM 测试与 Debug 构建；非 PR 运行还生成 Release APK。产物上传为 Actions artifacts。
 
-- 交换格式仍为 v1，无 schema 迁移。旧包可省略版本与可选字段；未知版本、字段无效、数量不符、重复标识或内置覆盖冲突在写入前拒绝。
-- 单包/合集导入和成功记录共用一次提交。任何校验、写入或提交前异常先回滚，再记录失败；不再提前提交清空操作。相同标识模板保留数据库 ID，替换模式仅删除包外自定义模板。
-- 导入失败可以修正包后重试；重复覆盖不生成额外模板。成功的显式替换仍会移除包外模板，如需撤销成功替换，应在导入前保留导出包并通过预览恢复。不能靠回退代码找回已经成功替换的内容。
-- 回退代码不需要降级数据库或数据格式，但会恢复旧导入风险；不得以删除数据库处理导入错误。
+GitHub Releases 由发布流程单独上传 APK。发布时沿用项目版本与签名配置，安装包放入 Release assets，源码通过 Git 管理。
 
-定向验证（分别在产品根与 frontend 目录）：
+## 文件管理
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_world_package_atomicity.py -q
-node scripts/test-world-transfer.mjs
-```
+`.env`、数据库、媒体、签名文件和 `local.properties` 属于本机状态。日常构建使用现有依赖与缓存，临时输出放在 `.codex-work/`，交付文件放在 `outputs/`。
 
-浏览器脚本与模型配置脚本使用相同 `PLAYWRIGHT_MODULE`、`SMOKE_BROWSER` 和可选 `SMOKE_OUTPUT` 约定，默认独立端口 15176；模拟全部 API 并阻止外部请求，只关闭自己启动的进程。验证桌面/窄屏导出可见、失败重试、单包及合集下载完整性。SQLite 样本覆盖 100 世界、2,000 Lore、约 800 万中文字符的重复导入与往返；这是正确性验证，不是 UI 性能或真实设备验收。
-
-## 12. 世界生成记录与结果恢复
-
-- 复用 `job_runs.output_json`，完整结果采用 `world_result_version=1` / `world_result`，无数据库 schema 迁移。旧记录原样保留；没有完整结果或不支持的格式拒绝恢复，不伪造正文。
-- 结果与成功状态同一次提交，先于响应及可选自动保存；自动保存失败时结果仍可从记录找回。保存世界与记录中的保存标记共用事务，SQLite 写事务串行处理重复请求；失败可重试，重复请求不覆盖后续编辑或新增重复模板。
-- 记录列表使用 ID 游标、上限 50 的有界查询，SQL 只投影摘要；原 `/jobs` 列表也移除完整世界结果字段。详情单独读取；不缓存多个大结果，Lore 分页显示。尚未完成真实大规模记录性能验收。
-- 整库便携备份包含原有任务表及新结果字段；单个世界导出仍只包含已保存模板与 Lore。回退代码不会删除新增结果字段，但旧 UI 无法显示恢复入口。不要删记录或数据库修复显示问题。
-
-定向命令：产品根运行 `pytest tests/test_world_job_results.py`（使用项目虚拟环境）；frontend 运行 `node scripts/test-world-history.mjs`。浏览器脚本使用同样的模块/浏览器/截图环境变量，默认独立端口 15177，模拟 API 并阻止其他外部请求。覆盖桌面/窄屏空状态、状态显示、游标翻页、旧记录说明、详情失败重试、条目分页、保存失败重试、深链刷新及管理跳转。HTTP 测试仅挂载相关路由、注入临时数据库，不运行真实服务生命周期。
-
-## 13. 世界请求取消与浏览器草稿
-
-- 世界构建的在线调用改用既有 `build_async_client` / `safe_async_non_streaming_call`，每次调用通过异步上下文关闭客户端；请求监视器取消并等待当前协程结束，不创建脱离请求的后台线程。取消不会被本地回退或重试吞掉，记录只从 pending/running 转入 cancelled。
-- 浏览器停止按钮使用 AbortController；离页确认可以继续原请求，或停止并离开。请求完成会关闭过期确认框；刷新/关闭页面仍使用浏览器原生提示。供应商已经接收的计算是否立即停止及其计费不能由客户端保证，真实线路停止时延尚未测量。
-- 草稿使用当前源下的 IndexedDB `mojing-creation-drafts` v1 / `drafts` / `world`，数据包含 version、revision 和表单值。先读取、验证，再允许写入；新建时无旧格式迁移。事务按 revision 检测其他页面更新，冲突、未知格式或配额失败保留已有记录及当前输入。写入中的草稿受离页提示保护；故障时可先复制当前输入，修复浏览器存储后再重进，不删除旧数据库尝试恢复。
-- 浏览器草稿不会随本机 Backend 的整库备份迁移；完整生成结果仍在 Backend 的原任务表。回退前端代码不会删除草稿数据库，但旧界面不会恢复它。未完成的生成步骤尚无持久化检查点，停止后重新生成；服务器崩溃后的旧 running 记录仍待恢复机制处理。
-
-定向验证：产品根运行项目虚拟环境的 `pytest tests/test_world_cancellation.py`；frontend 运行 `node scripts/test-world-cancellation.mjs`，使用既有浏览器环境变量，默认独立端口 15178。全部模型请求为模拟上游，HTTP 路由注入临时 SQLite；浏览器测试使用独立空上下文和模拟 API，覆盖 12 万字源文本重进恢复、取消竞态、跨页冲突、配额异常和未来草稿版本原样保留，不访问用户数据库或真实供应商。
-
-## 14. 内置目录升级
-
-- `data/builtin_pack/starter_catalog.json` 是正式目录内容源，Android `res/raw/seed_data.json` 是打包分发副本；调整内容时同步两份，并通过 `test_starter_catalog.py` 的一致性断言。
-- Web 在既有 `app_settings` 写入 `builtin_catalog_v2` 标记（内部 version=1），与新百科、条目、关系、时间线、世界和角色同一事务提交。没有 schema 迁移；失败全回滚，可在修正故障后再次启动。已有标记时不再安装或补回已删除示例；同名用户资料保留，示例使用不冲突的名称/标识。
-- 旧种子程序只在临时内存数据库重建参考，不再对用户库执行覆盖/补充。收起前核对所有内容字段、条目数量及内容、数据库引用和默认世界配置。无法证明原样或存在引用的旧资料保持可见；更早、无法匹配参考版本的资料不会强行处理。
-- 收起只记录旧 ID 与时间标识，不删除旧行。列表和普通世界合集导出排除收起的示例；整库备份仍包含原始行及标记。旧行后续被编辑或 ID 被复用时不会被旧标记继续隐藏。配套开局同时校验原始创建标识；资料删除后即使 ID 被复用，也不会带入无关资料。创作中心“恢复旧示例”清除收起状态，不覆盖现有内容，也不重新运行旧种子程序。
-- 回滚首选恢复旧示例的可见性。直接回退到仍会覆盖/补回示例的旧代码会重新引入旧启动行为，不能将代码回退等同于数据恢复。任何人工修复前先保留一致性数据库副本；本批没有对真实用户库执行升级。
-
-验证入口：项目虚拟环境运行 `pytest tests/test_starter_catalog.py tests/test_world_package_atomicity.py`；frontend 运行 `node scripts/test-starter-catalog.mjs`，使用既有 Playwright 环境变量，默认独立端口 15179。测试使用临时 SQLite 与隔离浏览器，包含配套会话创建、旧目录完整保留、失败回滚、恢复、配置引用及普通导出；浏览器覆盖桌面/窄屏开局、失败重试和资料缺失状态。尚未验证真实旧库升级耗时或 Android 真机迁移。
-
-
-## 15. Web 角色导入与排序
-
-- `CharactersPage` 的角色库和资料工具共用 `CharacterImportDialog`。同一次导入只有一个提交；失败保留选择可重试，成功后显式查看结果，不自动覆盖当前编辑。列表按收藏、创建时间、ID 倒序，新建和查看导入结果清理旧搜索条件。
-- 便携角色与 profile 一次提交，失败回滚；PNG/JSON/链接角色卡复用同一保存函数。PNG 上传直接读取，不再创建或删除按文件名共用的临时文件。文件上限 32 MiB，链接使用 30 秒连接/读取超时；该值不代表整个下载的总时限。
-- 便携交换仍为 v1，TXT/DOCX 元数据保留可选 profile；旧包没有 profile 时继续兼容，旧导出已遗漏的资料无法追溯恢复。零温度不再被默认值覆盖。DOCX 正文按 OOXML 段落和运行片段读取，保留实体文本、制表与换行；格式化外观不是纯文本导入的保留目标。
-- 无 schema 或已有数据迁移；应用回滚不会删除本批导入的数据，但旧程序会重新出现导入的已知缺陷。
-- 定向验证：`pytest tests/test_character_import_workflow.py tests/test_starter_catalog.py`；frontend 的 `tsc --noEmit` 与 `node scripts/test-character-import.mjs`（既有 Playwright 环境，独立端口 15180）。使用临时 SQLite、隔离 HTTP 应用和模拟 API 浏览器，不导入正式 app、不读取用户包、不发送供应商请求。真实下载和用户文件回归另行记录。
-
-
-## 16. 世界生成检查点与中断恢复
-
-- 新 Web 流程先 `POST /jobs/world-request` 保存输入，再 `POST /jobs/{id}/run-world` 执行；`world-progress` 只读摘要并校正已中断执行，`pause-world` 请求当前步骤保存后暂停。现有 `/worlds/generate`、`/worlds/import` 保留旧调用契约；旧记录不补造检查点。
-- 无新表或 schema 迁移。输入使用 `world_request_version: 1` 与 `world_request`；中间结果使用 `world_checkpoint_version: 1`、`world_steps`、`completed_steps`、`stage_label`。步骤名称是 v1 的稳定键，修改流水线语义时必须升级检查点版本。未知格式拒绝执行且保留原记录。
-- 原文只保存一次；每个步骤结果独立于世界库提交到原 JobRun。生成保存命名、骨架、条目；在线文本整理保存逐块、合并与整理结果。暂停在步骤提交后落为 `paused`；未提交的步骤在恢复时重做，已提交步骤经类型校验后复用。成功后以完整结果替代检查点，继续沿用幂等的保存世界流程。
-- 状态：`pending → running → pause_requested → paused`；失败保留检查点为 `failed`；失去执行所有者为 `interrupted`；这些未完成状态可显式继续。`cancelled` 是停止，不能通过继续按钮重新运行；`succeeded` 不被晚到暂停/停止覆盖。没有后台任务队列，页面离开/请求断开仍会取消执行，应先暂停并等到保存成功再离开。
-- 每个执行持有数据库同目录 `.<数据库文件名>.world-job-locks/<任务 ID>.lock` 的操作系统排他锁，Windows 用 msvcrt，其他平台用 flock。锁文件不删除，文件存在不代表进程仍活着。恢复扫描只分页检查带 v1 输入的新任务；只有能获得锁并重新确认仍是运行态时才标记中断，活跃实例不会因另一个实例启动或读取记录被取消。
-- 暂停/续跑不保存 Key 或客户端；一次执行固定解析后的线路，下一次继续使用当前配置。在线错误保留失败与检查点，不静默回退成本地骨架。列表 SQL 排除原始输入和中间正文，运行或恢复步骤时才按需读取。
-- 回滚前先暂停并等待当前步骤保存。旧代码仍能读取已完成世界，但不具备新检查点控制；保留 JobRun 和锁目录，重新升级可继续。无需删除数据库或用户文件。
-- 验证入口：`pytest tests/test_world_checkpoints.py tests/test_world_cancellation.py tests/test_world_job_results.py tests/test_world_package_atomicity.py`；frontend `tsc --noEmit`、`node scripts/test-world-checkpoints.mjs`（独立端口 15181）、`node scripts/test-world-cancellation.mjs`。SQLite、HTTP、模拟在线调用及 Windows 子进程锁回归使用隔离数据；浏览器使用模拟 API。真实供应商时延、完整本机服务联调与非 Windows 文件锁未验证。
-
-
-## 17. Web 大型历史搜索
-
-- 新 API 为 `GET /sessions/{id}/messages/search-page`：`q` 最多 256 字符，`before` 为消息 ID 游标，默认 25 条、最多 100 条；返回 `items / next_cursor / index`。`advance_index=false` 仅查询已整理部分。分页查询依赖当前分支可见性，旧 API 保持列表契约并修复 `%`、`_` 的误匹配；旧客户端仍使用 LIKE 扫描。
-- 索引格式为 v1：`mojing_message_search_meta` 保存版本，`mojing_message_search_state` 保存每会话回查游标，`mojing_message_search_pending` 保存事务内消息变更，`mojing_message_search_fts` 为派生 FTS5 表。原消息表不增删字段，不改原文和交换格式。未知版本先拒绝，不覆盖现有索引。
-- 索引使用 Unicode casefold 后的单字、双字编码和会话标记；FTS 筛选后以当前原文子串复核，防止不连续字组误命中。按 FTS rowid 倒序消费命中，避免常见词结果全量排序；按 ID 查询当前原文，编辑前的候选不能显示成旧结果。
-- 首次查询惰性创建派生表与原生 SQL 触发器，仅整理所查询会话：从最近历史开始，每次最多 200 条旧消息和 200 条变更。回查、变更处理及游标一起提交，异常全部回滚；重进从已提交位置继续。前端每批响应后按短间隔请求下一批，错误停止自动请求，暂停或关闭不再启动后续批次；已经开始的一批允许完成。未整理完不显示为“全库无匹配”，也不开放更早结果翻页。
-- 原文的新增、编辑、删除、ID/会话变化只写本机变更表，不在原文事务中执行分词或 FTS 写入。旧程序和普通 SQLite 连接无需注册 Python 函数即可继续写原文。索引缺失或捕获触发器缺失时重置回查状态；搜索维护入口事务性重建所有会话的派生索引，再按需分批回查。失败保留原文，可修正故障后重试，禁止删除原数据库。
-- SQLite 需具备 FTS5。3.43+ 使用 contentless-delete 模式，不重复存储编码词正文；较旧运行时使用存词表模式。两种存储分支均在当前 SQLite 上做正确性测试；没有用真实旧 SQLite 运行时验证降级。整库 SQLite 快照包含索引和变更状态；读取副本和批量恢复后的再次搜索有隔离测试。跨端只交换原数据，Android 不读取此派生表。
-- 回退 Web 代码不会改变原消息，原生触发器仍记录变化，重新升级可继续处理。若需要显式停用本批捕获，可在停止应用并保留一致性数据库副本后，使用当前版本的 `disable_message_search_triggers_for_downgrade(db)`；该函数只删除三条本批触发器并重置派生游标。其原文保护与重新升级回查已有测试，正常回退不要求执行。不要删除数据库或手工清空原消息。
-
-定向验证（产品根；不打包）：
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_message_search_index.py tests/test_message_pagination.py tests/test_branch_context.py tests/test_project_backup.py -q
-.\.venv\Scripts\python.exe scripts/benchmark_message_search.py
-# frontend 目录
-.\node_modules\.bin\tsc.cmd --noEmit
-node scripts/test-message-search.mjs
-```
-
-浏览器脚本使用既有 Playwright 环境变量和独立端口 15182，阻止外部请求、模拟 API，只关闭自己的 Vite/Chrome。桌面 1365×900 / 窄屏 390×844 下验证结果三页、索引暂停/继续、失败重试、过期查询、旧消息定位及回到最新；6,000 条模拟历史只返回最大 41 条窗口，实际消息节点 11–18 个。不是完整 Backend 联调、系统键盘或真机证据。
-
-性能基线（2026-09-07，本机 Windows、Python 3.14.5、SQLite 3.50.4）：隔离 SQLite 样本为 6,000 条重复与变化混合的中文 RP 文本、1,432,911 字符，缓存的 cl100k_base 实际计数 1,805,022 Token；脚本禁止自动下载分词器。查询为同一连接运行七次的中位数，不是冷启动或端到端时间。
-
-| 项目 | 本次样本结果 |
-| --- | ---: |
-| 低频短语 LIKE 扫描 / FTS 查询 | 10.35 / 1.56 ms |
-| 常见词 FTS 查询 | 1.53 ms |
-| 最近 40 条 / 旧消息附近窗口 | 1.13 / 2.04 ms |
-| 首次索引总量 | 31 批，939.79 ms |
-| 单批中位 / 最大 | 29.77 / 45.92 ms |
-| 数据库索引前 / 后 | 6,000,640 / 8,003,584 字节 |
-
-查询计划确认 FTS 候选与消息主键读取，无临时结果排序。体积和延迟依赖文本重复程度、设备与数据分布；尚未覆盖极长单条正文、多会话/多分支压力、冷启动、并发写入时延、图片动态高度、内存峰值及真实模型继续生成，不能据此宣称全部百万级流程均已验收。
-
-
-## 18. 删除消息与故事线完整性
-
-- `GET /sessions/{id}/messages/{message_id}/deletion-impact?branch_id=…` 返回能否删除、原因、直接引用数量和最多十个故事线/检查点摘要。普通消息的删除同时影响共享该原文的故事线，确认窗口明确说明；预览失败时不允许确认。
-- `DELETE /sessions/{id}/messages/{message_id}` 接受可选 `branch_id`，新前端带上当前故事线并校验可见性；旧客户端省略该参数时保持原会话内寻址。无论调用方是否预览，实际写入都检查分支/检查点起点、编辑来源和替代版本，受保护时返回 409。禁止删除替代版本，避免旧版原文重新出现。
-- 分叉、编辑、创建检查点和删除共用 `begin_storyline_write`，SQLite 在来源读取之前开启 `BEGIN IMMEDIATE`；已有事务不另起事务。来源校验与本次写入共用锁，分支先提交则删除拒绝，删除先提交则后来的分叉不能引用已不存在的消息。整会话导入创建的是新会话，沿用既有事务；不为本批新增数据库触发器或 schema。
-- 普通删除显式移除对应收藏，避免历史 SQLite 配置未启用外键时留下悬空收藏；附件记录沿用 ORM 级联，媒体文件不删除。原文、收藏与附件记录共用提交，失败回滚；搜索沿用 v1 变更捕获。自动摘要与事件失效见第 20 节；手动记忆和校正保留。
-- Web 使用独立原生 dialog 展示片段、引用原因、取消和重试；不再倒计时自动提交消息删除。生成中拒绝打开删除窗口；窗口未关闭时不开始生成。会话/故事线改变时清理未提交确认，已发出的请求仍绑定原会话，晚到结果不刷新其他会话。
-- 成功删除优先重新读取附近原文窗口并定位邻近消息；失败回退到既有可重试的消息加载。没有邻近消息时加载最新窗口。原始消息删除不可撤销，代码回退不能恢复已经确认删除的内容；回退会重新引入缺失来源风险。本批未执行真实用户消息删除，也不补造历史损坏分支的原文。
-
-验证入口（产品根，测试由根 conftest 在收集前切换临时存储和数据库，禁用 .env）：
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_message_deletion.py tests/test_branch_context.py tests/test_message_search_index.py tests/test_tavern_chat_branch_import.py -q
-# frontend 目录，不执行生产打包
-.\node_modules\.bin\tsc.cmd --noEmit
-node scripts/test-message-deletion.mjs
-```
-
-Chrome 脚本使用既有 Playwright 环境变量、独立端口 15183 和模拟 API，验证桌面 1365×900 / 窄屏 390×844 的引用保护、取消/Escape、读取和删除重试、预览后新增引用、旧历史位置保持。并发测试使用隔离 SQLite 与两个独立 Session，包含分叉、编辑、检查点先于删除，以及删除先于分叉；不代表多设备或真实供应商运行验证。Android 原生撤回见下一节，既有损坏分支恢复仍单独验收。
-
-## 19. Android 撤回确认与故事线来源
-
-- 撤回预览和提交复用 DAO 影响计算，引用摘要最多十项。Room 生成代码为预览、撤回、底层删除与故事线创建生成事务包装；预览不是删除授权的唯一检查，提交会重新读取引用。新建故事线在事务中拒绝不存在或其他会话的来源。
-- 撤回计划保护目标及明确归属子媒体上的故事线/检查点引用、跨线编辑来源与替代版本。同线旧 swipe 回复保留既有回退语义，界面提前说明。普通撤回沿用既有附件/收藏和派生记忆处理，文件只在提交后且无其他引用时按私有目录边界清理；失败不先清理文件。
-- 原有排除上下文标志也用于普通剧情，不能作为媒体归属证据。新图片/语音在既有结构字段记录 v1 生成标记，只有已知版本、种类及同会话/同线/父消息一致时才连带撤回。无标记旧行、损坏或未知格式保留，不扫描回填或改写旧库；标记不包含需跨端重映射的 ID。无 schema、交换版本或数据迁移。
-- 成功后保留邻近窗口，默认最多 40 条前文、锚点及 40 条后文；无有效锚点时读取最近页。确认窗口支持取消、检查重试和失败后的重新检查，生成期间沿用撤回互斥。
-
-```powershell
-# mojing 目录，临时 SQLite，不接触正式存储
-.\.venv\Scripts\python.exe -m pytest tests/test_android_recall_protection_sqlite.py -q
-
-# android 目录，JDK 17；只编译与 JVM 测试，不打包 APK
-.\gradlew.bat :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin :app:testDebugUnitTest --tests 'com.mojing.app.viewmodel.ChatViewModelTest' --tests 'com.mojing.app.data.local.dao.MessageRecallPolicyTest' --tests 'com.mojing.app.data.local.dao.MessageRecallGuardTest' --console=plain
-```
-
-2026-09-07：77 项 JVM（69 ViewModel、6 保护逻辑、2 媒体计划）、2 项提取真实 DAO SQL 的桌面 SQLite 测试通过；主代码与 AndroidTest Kotlin 编译通过。新增 2 项 Room 用例覆盖预览后来源变化与先撤回后分叉，2 项 Compose 用例覆盖引用阻断、读取重试与提交失败；这些设备用例只编译，未运行。没有连接设备、调用真实模型、重启用户环境或生成 APK，未修改正式数据库、配置和媒体。没有本批性能结论。
-
-回退代码不需要降级 schema，也不会清空新增标记，但会重新引入旧撤回风险；回退不能恢复已经确认删除的原文。不自动修补历史缺失来源，不通过删除数据库排障。验证输出保留在既有 Gradle/Pytest 目录，清理 DryRun 保留既有缓存和当前证据，无删除操作。
-
-## 20. Web 删除后的自动记忆一致性
-
-- 根因：消息删除曾只处理原文、收藏和附件记录；v2 分段与事件继续被 Prompt 读取。后台摘要还可能在原文删除后提交已过期结果。自动概览在事件提取为空数组且 Session 关闭 autoflush 时也会漏更新。
-- `memory_source_service` 从原文所属分支找到 `end_message_id >= 被删 ID` 的自动分段，删除这些分段并回退到首个受影响分段之前；对应分支从该起点之后的有来源事件一并失效。保留更早分段、其他分支、原始消息、用户锁定纠正、角色状态和媒体文件。主线删除会清空派生 `session.summary` 概览；此字段由自动摘要维护，用户锁定内容使用独立纠正表。
-- 失效与原文、收藏、附件记录删除共享原有 SQLite 写事务，提交故障共同回滚。只删中间一段会令现有 `max(end_message_id)` 游标跳过空洞，因此选择回退派生尾部，代价是后续需要重新整理更多摘要。沿用每批最多 40 条、至少 12 条的自动整理触发，不宣称删除后立即重建全部历史。
-- 两个远程模型步骤不持有本批写锁。事件创建的首次 flush 前取得短 `BEGIN IMMEDIATE`，不自动 flush 待提交摘要，重新查询原文页的 ID、正文、发言者及角色和此前分段进度；结果不一致则回滚，不提交旧摘要或旧事件。验证读取最多本批大小加一条，不扫描完整历史；校验通过后在同一事务 flush 派生记录并更新概览，空事件结果也更新概览。
-- 删除预览新增可选的自动摘要/事件数量与概览重置标志，旧客户端保持可用。新窗口解释影响并保留明确确认，提交后刷新记忆、事件与会话缓存；确认按钮提高对比度。派生失效不增加数据库字段、迁移或交换格式；历史已损坏数据不追溯改写。
-
-```powershell
-# mojing 目录，全部使用隔离数据库和模拟模型
-.\.venv\Scripts\python.exe -m pytest tests/test_memory_v2_compaction.py tests/test_message_deletion.py tests/test_memory_corrections.py tests/test_branch_context.py tests/test_message_search_index.py tests/test_session_exchange.py -q
-
-# frontend 目录，既有 Playwright 环境，默认独立端口 15183
-.\node_modules\.bin\tsc.cmd --noEmit
-node scripts/test-message-deletion.mjs
-```
-
-2026-09-07：73 项定向测试通过，覆盖提交失败共同回滚、删除后的分段/事件/概览与运行时记忆、纠正和角色状态保留、摘要与事件两个请求等待期间的删除、较早段回退拒绝后续过期结果、正常重试和空事件结果。TypeScript 通过；Chrome 1365×900 / 390×844 模拟 API 检查影响提示、已打开记忆面板刷新、纠正保留、读取/删除失败重试、取消及按钮颜色稳定状态，截图人工复核。没有真实供应商、完整本机服务或 Android 设备验证，没有新增性能指标。
-
-上下文排除/恢复的后续实现见第 21 节。缺失 `message_id` 的旧事件与旧角色状态没有可靠来源，保留原样，不宣称它们已全部消除陈旧事实。回退代码不需降级数据库，但会重新引入已修复风险，且不能恢复已确认删除的原文。测试使用临时 SQLite；截图与既有缓存清理 DryRun 保留，不删除正式存储或用户资源，不打包。
-
-## 21. Web 排除与恢复消息上下文
-
-- 原 `PUT /sessions/{id}/messages/{id}/context` 接受任意字典并用 `bool(value)` 转换，字符串 `"false"` 会变成真值；也未同步处理摘要和事件。现在要求 `include_in_context` 为 JSON 布尔值，缺失、字符串、数字或 null 返回 422。可选 `branch_id` 校验当前可见性，可选 `expected_include_in_context` 拒绝不符合预期的实际变更；旧客户端只传正确布尔值仍兼容。
-- 在读取来源前取得原有 SQLite 短写事务，实际状态改变才调用统一 `memory_invalidation_plan` / `invalidate_source_memory` 并保存标志；同值请求返回 `changed=false`，不再次失效已重建的摘要。提交失败原标志和派生记忆共同回滚，原文、附件、收藏和用户锁定纠正不删除。没有 schema 或交换版本变化。
-- 消息序列化明确返回布尔标志；Web 旧载荷缺失该字段时按参与上下文显示。更多菜单在桌面、旁白和手机操作面板中提供排除/恢复，独立确认窗口解释共享原文范围和下一轮语义，消息始终可读、可搜索。模型仍按预算决定是否发送恢复的原文；锁定纠正单独参与记忆，界面提示按需调整。
-- 新设置落库后更新当前窗口标记并重新读取附近窗口，过期分页结果由既有请求版本淘汰；读取失败明确区分“已保存”，可只重试刷新或返回对话，不再次变更标志。未保存时可取消/Escape；提交时防重复操作，会话/故事线变化清理旧窗口，晚到回调不更新其他故事线。生成与设置窗口互斥；排除最新回复后不再显示可执行的本回合选项，消息内旧选项仅供回顾。
-- 后台校验下界改为上一段的结束 ID，而非当前快照首条 ID；整理时恢复了快照之前的旧消息也会触发拒绝。读取仍限制为本批条数加一，不全量加载历史。后续整理沿用既有阈值和批次，不自动调用额外模型或追溯修复未知来源记忆。
-
-沿用第 20 节的六文件 pytest、TypeScript 和 `test-message-deletion.mjs` 命令。2026-09-07：78 项定向测试通过，覆盖严格参数/可见性、往返与 Prompt 历史过滤、搜索原文保留、同值幂等、提交失败回滚，以及后台整理期间排除和恢复前缀来源后拒绝旧结果并重试。Chrome 1365×900 / 390×844 模拟 API 验证取消、保存失败、保存后读取失败单独重试、刷新与搜索、桌面恢复及旁白选项收起；两种尺寸截图人工复核。脚本在视口改变后重新通过搜索定位，符合页面选择结果后清空搜索的真实行为。
-
-本批无正式数据库写入、用户服务重启、供应商调用、APK/生产打包或设备操作。截图与既有缓存只做清理 DryRun 并保留证据。没有性能测量或完整本机联调结论；Android 对应设置及旧无来源派生数据仍需后续验收。回退不需要迁移数据库，但旧界面不能展示本入口且会重现旧失效问题。
-
-## 22. Android 自动事件与故事线刷新
-
-- 根因：自动事件逐条插入且捕获取消异常，后续解析失败可能留下部分结果；模型等待后的来源没有复核。时间线删除/状态操作又使用全会话读取，可能混入其他故事线，较早刷新也可能覆盖最新状态。
-- 选择复用 `MessageDao` 的有效上下文查询和 Room 事务，在短事务中重新检查最多 20 条原文快照（ID、正文、结构正文、发言类型、角色、所属分支），然后查重、整批保存最多 5 条事件。模型调用不占用本批事务。有效回复选择与分支可见性由现有查询判断，不直接比较兼任 swipe 默认选择的 `includeInContext`。原文缺失、改变或退出有效来源时返回空结果；取消向上传递，解析失败不会先保存前面的事件。
-- 同会话/故事线/角色/原文/标题的重复结果复用已有 ID，不覆盖已保存的解决状态。模型结果限制标题、描述长度和重要度；时间线也限制旧数据星标数量，显示待跟进/已解决。状态保存使用明确目标值，当前故事线查询和刷新序号保护列表，保存后读取失败保留本地已保存状态并解释重新进入方式。
-- 不修改 Room schema 19 或交换格式，不清理、改写旧事件和用户原文。回退代码不需数据迁移，但会重新引入旧风险。自动摘要 `MemoryCompactor` 与可选百科沉淀仍有独立写入路径，本批不宣称它们具备相同保护；摘要尾部失效与独立上下文开关后续处理。
-
-```powershell
-# mojing 目录：临时 SQLite，不读取正式数据库
-.\.venv\Scripts\python.exe -m pytest tests/test_android_event_source_sqlite.py tests/test_android_recall_protection_sqlite.py -q
-
-# android 目录：JDK 17，只编译与 JVM 测试，不打包
-.\gradlew.bat :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin :app:testDebugUnitTest --tests 'com.mojing.app.viewmodel.ChatViewModelTest' --tests 'com.mojing.app.engine.MemoryV2ManagerTest' --tests 'com.mojing.app.data.local.dao.DerivedEventCommitTest' --console=plain
-```
-
-2026-09-07：80 项 JVM（73 ViewModel、4 提取、3 提交保护）和 4 项桌面 SQLite 回归通过，主代码与 AndroidTest Kotlin 编译通过。SQLite 用例提取真实 Kotlin 查询，覆盖默认/显式回复选择、分支可见性、原文删除和查重范围；它不等同 Room 事务运行。生成的 Room DAO 包含事务包装；新增设备用例覆盖第二条插入故障整批回滚、重复结果和来源变更，但仅编译。首轮两项 JVM 失败来自挂起函数测试桩误取 Continuation，修正参数位置后以上命令通过。
-
-没有连接设备、调用真实供应商、重启用户服务或生成 APK；时间线视觉和触控尚未设备验收，没有新增性能结论。清理 DryRun 仅检查并保留既有 Gradle/Pytest 输出，没有删除文件。正式数据库、媒体、密钥和本机配置保持原状。
-
-## 23. Android 自动摘要校验提交
-
-- 根因：摘要读取原文后跨越模型等待，写入时没有重新核对来源或此前进度；段序号查询和插入也不在同一事务。损坏 JSON 曾退回原文前 100 字，却仍把整批历史推进为已覆盖，导致失败不再重试该段。
-- `MemoryCompactionStore` 复用现有 AppDatabase/DAO：短事务读取前三段可见摘要、故事线修订号和下一个原文页；模型调用在事务外；提交事务复核修订、此前段完整记录和原文 ID/正文/结构正文/发言类型/角色/分支，匹配后才分配序号并 ABORT 插入。页上限沿用配置 1–2000，不全量扫描历史。较早历史已失效、当前来源变化或另一个整理已推进时返回未保存。
-- 原始页从一致快照中取得，提交从原游标重新读取相同大小，不能只检查返回消息是否仍存在。无效、空、非字符串或异常超长摘要不推进进度；关键事实只接受有界字符串列表，取消传播，普通读取/模型/保存失败不阻断后续聊天。成功后立即尝试读取当前故事线摘要，避免必须等完整回复后才能看到已保存结果。
-- 记忆面板空状态解释原文保留与后续整理；摘要标题/情绪改为信息标签，旧事实 JSON 为 null 时按空列表展示。保留原文定位与纠正入口。没有 schema、数据格式或历史记录清理；代码回退不需降级数据库，但会重新引入上述风险。
-
-```powershell
-# android 目录，JDK 17；只编译与 JVM 测试
-.\gradlew.bat :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin :app:testDebugUnitTest --tests 'com.mojing.app.engine.MemoryCompactorTest' --tests 'com.mojing.app.engine.MemoryCompactionStoreTest' --tests 'com.mojing.app.engine.MemoryCompactionPlannerTest' --tests 'com.mojing.app.viewmodel.ChatViewModelTest' --console=plain
-```
-
-2026-09-07：84 项 JVM（5 提取、4 提交校验、2 批次规划、73 ViewModel）全部通过，主代码与 AndroidTest Kotlin 编译通过。覆盖继承摘要游标后 600 条批次、来源删除/修改/选择变化、较早修订、摘要变化与进度竞争、取消、损坏结果重试以及快照读取失败。首轮一项测试使用与实体默认值相同的结构正文，修正为真实变化样本后通过；没有修改代码绕过拒绝条件。
-
-新增 Room 用例覆盖真实快照读取、编辑后拒绝、触发器注入保存故障后进度保留、正常重试与重复提交拒绝；该用例仅编译，没有设备运行。JVM 提交测试验证的是事务内部校验逻辑与 DAO 调用，不冒充 Room 原子性运行证据。没有打包、真实模型调用、用户服务重启或新性能指标；既有 Gradle 输出清理 DryRun 保留，未删除用户内容或改变正式数据库。
-
-尚未完成：已保存摘要在删除/回复版本变化后的尾部失效、每条原文 200 字截断的输入预算、百科沉淀晚到写入、记忆面板实际设备交互。旧无来源数据保留原状，不宣称整个长期记忆链路已闭环。
-
-## 24. Android 撤回后的摘要尾部回退
-
-- 根因：原撤回只删除覆盖目标 ID 的摘要，较新的分段仍使 `max(endMessageId)` 游标越过空洞；继承原文的故事线可能保留依赖该剧情的后续摘要。
-- 撤回前复用有效上下文/分支查询得到受影响故事线；每条线取最早影响 ID，在同一 Room 事务中删除该线 `endMessageId >= cutoff` 的自动摘要尾部。选中回复被撤回时，使用该线可见同组最早 ID，以覆盖旧回复重新参与上下文的情况。派生媒体不参与上下文时不独立触发无关摘要失效。更早摘要、无关故事线/会话和用户纠正保留；已有来源不明的事件不批量删除。
-- 预览按相同范围计数，同一故事线去重，确认窗口说明待重整段数和手动纠正保留；提交在事务内重算，不能依赖旧预览。底层原文删除未完成改为抛错，避免摘要已经移除却以 false 正常提交。成功后既有附近历史刷新会重读摘要，ViewModel 回归明确验证面板数据变化。
-- 不改 schema 或交换格式，不触碰正式用户库；旧空洞不启动自动清扫。后续整理沿用原阈值和页大小，不承诺立即重建全部摘要。回退代码不需数据库降级，但会重新引入空洞风险，且无法恢复用户已确认撤回的原文。
-
-```powershell
-# mojing 目录，隔离 SQLite
-.\.venv\Scripts\python.exe -m pytest tests/test_android_recall_protection_sqlite.py tests/test_android_event_source_sqlite.py -q
-# android 目录，JDK 17，不打包
-.\gradlew.bat :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin :app:testDebugUnitTest --tests 'com.mojing.app.data.local.dao.MessageRecallGuardTest' --tests 'com.mojing.app.data.local.dao.MessageRecallPolicyTest' --tests 'com.mojing.app.viewmodel.ChatViewModelTest' --tests 'com.mojing.app.engine.MemoryCompactionStoreTest' --console=plain
-```
-
-2026-09-07：89 项 JVM（10 撤回保护、2 媒体计划、73 ViewModel、4 摘要提交）与 6 项桌面 SQLite 测试通过，主代码/AndroidTest Kotlin 编译通过。SQLite 使用真实 Kotlin 计数/删除 SQL，验证更早摘要、无关故事线/会话保留、游标回退，以及触发器注入失败的事务回滚；这不等同 Android Room 运行。新增 Room 用例覆盖继承线 A 清理、分叉更早的 B 保留、故障回滚/重试、纠正保留和从回退游标读取下一页；新增 Compose 用例检查影响提示与确认前不执行删除。两者仅编译，未设备运行。
-
-没有连接设备、调用真实供应商、打包或重启用户服务，没有新增性能结论。Gradle/Pytest 既有输出清理 DryRun 保留，无文件删除；正式数据库元信息与基线一致。主动切换回复、编辑后的摘要失效，长消息输入截断与百科沉淀仍待下一批处理。
-
-## 25. 最新安装包交付验证
-
-2026-09-07，用户授权打包并向 GitHub 推送代码与 APK。`testDebugUnitTest assembleRelease --console=plain` 通过，473 项 JVM 无失败/跳过；Release 完成 R8、资源压缩和 lintVital。Web `tsc --noEmit` 通过；本机 `pytest -q --disable-warnings` 最终 282 项全部通过。全量检查发现核心 API 测试仍要求十套旧目录，已按当前产品契约改为一个“雾港来信·设定集”，七条设定资料与两个角色条目；时间线事件不是百科条目。
-
-保持 `com.mojing.app`、1.0.21 / 10021、Room 19。三个 APK 使用现有本机 Android Debug 证书签名，apksigner 验证通过；是 Release 优化构建，不是可调试应用。通用版及 arm64-v8a / armeabi-v7a 分包均校验包名、版本和 ABI，并生成 SHA-256 清单。安装包放在本地正式 outputs 与 GitHub Release 附件，不加入源码 Git；构建对应的代码提交和哈希记录随包提供。没有更换签名、改版本、安装应用或操作用户数据，不将编译和测试视为真机验收。构建告警包含既有废弃 API 和 Gradle 堆空间提示，未阻止成功构建。输出及缓存 DryRun 保留，没有清理正式数据。
+提交按本批文件清单暂存，检查 `git diff --cached` 后创建独立提交。产品介绍维护在 [PROJECT.md](../PROJECT.md)，后续工作维护在[优化目标](../../docs/PRODUCT_GAP_MAP.md)。

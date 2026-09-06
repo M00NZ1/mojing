@@ -1,97 +1,78 @@
-<div align="center">
-
 # 墨境 MoJing
 
-本地优先的 AI 角色扮演、长篇对话与世界设定工作台
+本地优先的 AI 角色扮演、长篇对话与世界设定工作台。
 
-</div>
+墨境将角色、世界设定和剧情记录整合在同一创作空间，支持单角色与多角色对话、剧情分支、历史搜索、长期记忆，以及图片和语音扩展。Web 版通过本机 FastAPI 管理本地数据，Android 版使用原生 Kotlin 应用。
 
-MoJing 面向个人创作与长期角色扮演，提供角色管理、世界设定、多人对话、消息编辑、剧情分支、历史搜索、长期记忆以及图片和语音扩展。项目包含 React Web 客户端、本机 FastAPI 服务和原生 Android 应用。
+[下载 Android 应用](https://github.com/M00NZ1/mojing/releases/latest) · [运行指南](mojing/README.md) · [文档目录](mojing/docs/README.md)
 
-## 主要能力
+## 功能
 
-| 模块 | 能力 |
+| 模块 | 内容 |
 |---|---|
-| 对话 | 单角色/多角色对话、流式回复、停止、重试、继续生成 |
-| 角色 | 角色卡、用户人格、会话参与者、独立模型配置 |
-| 世界设定 | 百科、WorldInfo、世界模板、设定工坊、会话绑定 |
-| 消息与分支 | 非破坏性编辑、回复版本、剧情分支创建与切换 |
-| 长篇会话 | 游标分页、全文搜索、收藏定位、上下文预算、长期记忆 |
-| 导入导出 | 酒馆角色卡、聊天记录、WorldInfo、本地数据包 |
-| 媒体 | 图片生成、语音合成、语音输入、消息附件 |
-| 客户端 | React/Vite Web 与 Kotlin/Compose Android |
+| 对话 | 流式回复、停止、重试、继续生成、多角色参与 |
+| 角色 | 角色卡、详细资料、人格、收藏、导入导出 |
+| 世界 | 世界百科、条目关系、时间线、WorldInfo、世界模板 |
+| 剧情 | 消息编辑、回复版本、故事线与检查点 |
+| 历史 | 分页阅读、搜索、原文定位、收藏 |
+| 记忆 | 上下文预算、自动摘要、长期事实与来源 |
+| 模型 | 多平台独立配置、模型获取、手动模型列表、会话内切换 |
+| 创作 | 世界生成、文本整理、生成记录、暂停与续跑 |
+| 媒体 | 图片生成、语音合成、语音输入与消息附件 |
+
+内置“雾港来信”包含一个百科、一个世界，以及沈照、林汐两名角色。Web 创作中心的“从雾港开始”可直接创建配套会话。
+
+模型预设包括 DeepSeek、OpenAI、硅基流动、Anthropic 和自定义。每个平台独立保存地址、Key 和模型列表；聊天页按平台选择模型，从下一次发送生效。
 
 ## 快速开始
 
-正式源码位于 [`mojing/`](mojing/)。
+### Web
 
-### Web 与本机 API
-
-需要 Python 3.11+、Node.js 20+ 和 npm。
+需要 Python 3.11+、Node.js 20+ 和 npm。在仓库根目录执行：
 
 ```powershell
 Set-Location .\mojing
-
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r .\backend\requirements.txt
-Copy-Item .\.env.example .\.env
-
+if (-not (Test-Path -LiteralPath .\.env)) {
+    Copy-Item .\.env.example .\.env
+}
 Set-Location .\frontend
-npm install
+npm ci
 Set-Location ..
-
 .\一键启动.bat
 ```
 
-默认地址：
-
-- Web：<http://127.0.0.1:5175>
-- API 健康检查：<http://127.0.0.1:8000/health>
+浏览器地址为 [127.0.0.1:5175](http://127.0.0.1:5175)，本机 API 使用端口 8000。进入设置配置模型平台后即可开始对话。
 
 ### Android
 
-Android 工程需要 JDK 17 和可用的 Android SDK：
+从 [Releases](https://github.com/M00NZ1/mojing/releases/latest) 下载 APK。源码构建方法见 [Android 开发指南](mojing/docs/ANDROID.md)。
 
-```powershell
-Set-Location .\mojing\android
-.\gradlew.bat testDebugUnitTest
-.\gradlew.bat assembleDebug
-```
-
-Debug APK 生成在 `mojing/android/app/build/outputs/apk/debug/`。
-
-## 仓库结构
+## 项目结构
 
 ```text
 mojing/
-├─ backend/      # FastAPI、业务逻辑与本地存储
-├─ frontend/     # React/Vite Web 客户端
-├─ android/      # Kotlin/Compose 原生 Android 应用
-├─ data/         # 内置资源与可选导入数据
-├─ scripts/      # 启停、迁移和诊断工具
-├─ tests/        # Backend 与跨模块测试
-└─ docs/         # Android 与维护文档
-docs/            # 项目状态与公开路线图
+├─ backend/      FastAPI、业务逻辑与 SQLite
+├─ frontend/     React、TypeScript 与 Vite
+├─ android/      Kotlin、Jetpack Compose 与 Room
+├─ data/         内置资料与资源
+├─ scripts/      启停、迁移与诊断脚本
+├─ tests/        Python 与跨模块测试
+└─ docs/         技术与维护文档
+docs/            项目状态与优化目标
 ```
 
-## 数据与隐私
+## 本地数据
 
-- 核心数据默认保存在用户自己的设备，不提供账号体系或自动云同步。
-- `.env`、API Key、数据库、媒体、日志、构建产物和本机配置均被 Git 忽略。
-- Web 与 Android 使用各自的本地数据库；跨端连续性依赖显式导入/导出。
-- 本机 API 默认绑定回环地址。公开到局域网或互联网前，请自行配置 TLS、访问控制和防火墙。
+Web 数据保存在本机数据库和文件目录，Android 数据保存在应用私有存储。两端通过本地文件导入导出交换资料。模型、图片和语音请求使用各自配置的供应商。
 
-MoJing 可连接 DeepSeek、OpenAI-compatible 及其他受支持的模型供应商。源码中出现的供应商名称只表示兼容能力，不是项目名称。
-
-## 兼容提醒
-
-Android 应用标识现为 `com.mojing.app`。早期、尚未采用 MoJing 标识的 Android 构建不会被原位覆盖；升级前应先从旧应用导出数据，再在 MoJing 中导入。改名不会自动删除旧应用或旧数据。
+Android 应用标识为 `com.mojing.app`。从早期不同应用标识的版本迁移时，先在旧应用导出数据，再导入墨境。
 
 ## 文档
 
-- [完整运行说明](mojing/README.md)
 - [产品与架构](mojing/PROJECT.md)
-- [Android 开发基线](mojing/docs/ANDROID.md)
-- [构建、验证与交付](mojing/docs/MAINTENANCE.md)
-- [当前项目状态](docs/PROJECT_STATE.md)
-- [公开路线图](docs/PRODUCT_GAP_MAP.md)
+- [开发与运行](mojing/README.md)
+- [构建与维护](mojing/docs/MAINTENANCE.md)
+- [项目状态](docs/PROJECT_STATE.md)
+- [优化目标](docs/PRODUCT_GAP_MAP.md)

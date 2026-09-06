@@ -1,22 +1,16 @@
-# MoJing 开发与运行
+# 墨境开发与运行
 
-本目录是 MoJing 的正式源码根，包含本机 API、Web 客户端和原生 Android 应用。
+正式源码根为 `mojing/`，包含 Web、本机 API 与原生 Android 工程。
 
-## 目录
+## 环境
 
-```text
-backend/      FastAPI、SQLAlchemy、SQLite 与文件存储
-frontend/     React、TypeScript 与 Vite
-android/      Kotlin、Jetpack Compose 与 Room
-data/         内置内容与迁移输入
-scripts/      本地启动、停止、迁移和诊断脚本
-tests/        Backend 与跨模块自动测试
-docs/         Android 与维护说明
-```
+| 模块 | 环境 |
+|---|---|
+| 本机 API | Python 3.11+ |
+| Web | Node.js 20+、npm |
+| Android | JDK 17、Android SDK、Gradle Wrapper |
 
-## Web 与 Backend
-
-### 首次准备
+## Web 首次安装
 
 从仓库根目录执行：
 
@@ -24,85 +18,100 @@ docs/         Android 与维护说明
 Set-Location .\mojing
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r .\backend\requirements.txt
-Copy-Item .\.env.example .\.env
-
+if (-not (Test-Path -LiteralPath .\.env)) {
+    Copy-Item .\.env.example .\.env
+}
 Set-Location .\frontend
-npm install
+npm ci
 Set-Location ..
 ```
 
-`.env` 和 `mojing_config.json` 只用于本机配置，禁止提交真实密钥。
+后续命令以 `mojing/` 为起始目录。
 
-### 启动
+### 一键启动
 
 ```powershell
 .\一键启动.bat
 ```
 
-也可以分别运行：
+脚本在后台启动 API 和 Web，等待服务就绪后打开浏览器。
+
+| 入口 | 地址 |
+|---|---|
+| Web | [127.0.0.1:5175](http://127.0.0.1:5175) |
+| API 健康检查 | [127.0.0.1:8000/health](http://127.0.0.1:8000/health) |
+| API 文档 | [127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) |
+
+### 分别启动
+
+在两个终端中分别从 `mojing/` 执行：
 
 ```powershell
-# Backend
+# 终端一：本机 API
 .\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+```
 
-# Web（另一个终端）
+```powershell
+# 终端二：Web
 Set-Location .\frontend
 npm run dev
 ```
 
-常用脚本：
+Vite 将 `/api`、`/health` 和 `/storage` 代理到 `127.0.0.1:8000`。代理配置位于 [vite.config.ts](frontend/vite.config.ts)。
 
-- `一键关闭.bat`：停止本项目启动的本地进程；
-- `查看日志.bat`：打开本机日志目录；
-- `scripts/start_dev_all.ps1`：前台开发启动；
-- `scripts/start_dev_detached.ps1`：分离窗口启动。
+### 启停与日志
 
-## Android
+| 文件 | 功能 |
+|---|---|
+| [一键关闭.bat](一键关闭.bat) | 依据本目录 PID 记录和进程命令停止托管服务 |
+| [查看日志.bat](查看日志.bat) | 持续显示 API 与 Web 日志，按 Ctrl+C 退出查看 |
+| [start_dev_all.ps1](scripts/start_dev_all.ps1) | 在两个独立终端窗口启动开发服务 |
+| [start_dev_detached.ps1](scripts/start_dev_detached.ps1) | 后台启动并记录 PID 与日志 |
 
-需要 JDK 17 与 Android SDK：
+日志位于 `logs/backend.log` 和 `logs/frontend.log`。手动启动的服务可在对应终端按 Ctrl+C 停止。
+
+## 模型配置
+
+进入设置中的模型页面，添加平台并填写名称、接口地址和 Key。可通过平台获取模型列表，也可手动填写一个或多个模型名称。同类服务商可以建立多个独立配置。
+
+预设包括 DeepSeek、OpenAI、硅基流动、Anthropic 和自定义。保存默认平台后，新会话可使用默认线路；聊天页的模型入口支持为当前会话切换平台与模型。
+
+## 构建
+
+从 `mojing/` 执行 Web 生产构建：
 
 ```powershell
-Set-Location .\android
-.\gradlew.bat testDebugUnitTest
-.\gradlew.bat assembleDebug
-```
-
-Android namespace 与 application ID 均为 `com.mojing.app`。Room schema 位于 `android/app/schemas/com.mojing.app.data.local.AppDatabase/`。
-
-## 自动验证
-
-```powershell
-# Backend
-Set-Location .\mojing
-.\.venv\Scripts\python.exe -m pytest
-
-# Web
-Set-Location .\mojing\frontend
+Set-Location .\frontend
 npm run build
-
-# Android
-Set-Location .\mojing\android
-.\gradlew.bat testDebugUnitTest
-.\gradlew.bat assembleDebug
-.\gradlew.bat assembleRelease
 ```
 
-构建或测试只证明对应静态/自动化边界；真实浏览器、模拟器和真机交互需要单独记录。
+产物位于 `frontend/dist/`，静态页面运行方式见 [Web 构建说明](frontend/APP_BUILD.md)。
 
-## 本地数据
+Android 工程位于 [android/](android/)，使用 JDK 17 和 Android SDK：
 
-以下路径属于本机状态，不应提交或在清理时自动删除：
+```powershell
+# 从 mojing/ 执行
+Set-Location .\android
+.\gradlew.bat assembleDebug
+```
 
-- `.env`、`mojing_config.json`、Android `local.properties`；
-- `backend/storage/` 中的 SQLite、WAL/SHM 与媒体；
-- `data/sessions/` 中的迁移输入；
-- `.venv/`、`frontend/node_modules/`、Gradle 缓存和构建目录；
-- 日志、APK、备份以及用户导入的资源。
+构建、签名和输出目录见 [Android 开发指南](docs/ANDROID.md)。
 
-数据库或交换格式变化必须提供版本、幂等迁移、失败恢复和旧样本测试，不能通过删除旧数据库解决升级问题。
+## 数据与配置
 
-## 更多说明
+| 路径 | 内容 |
+|---|---|
+| `backend/storage/` | SQLite 数据库、媒体和导出文件 |
+| `.env` | 本机 API 环境配置 |
+| `mojing_config.json` | 本机配置文件 |
+| `android/local.properties` | Android SDK 与本机签名配置 |
+| `data/builtin_pack/` | 随源码分发的初始资料与资源 |
+
+存储目录可通过 `MOJING_STORAGE_DIR` 指定。数据库迁移与维护命令见 [构建与维护](docs/MAINTENANCE.md)。
+
+## 文档
 
 - [产品与架构](PROJECT.md)
-- [Android 开发基线](docs/ANDROID.md)
-- [构建、验证与交付](docs/MAINTENANCE.md)
+- [文档目录](docs/README.md)
+- [项目状态](../docs/PROJECT_STATE.md)
+- [优化目标](../docs/PRODUCT_GAP_MAP.md)
