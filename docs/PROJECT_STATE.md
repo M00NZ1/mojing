@@ -99,7 +99,7 @@ Android 百科编辑按一次提交处理保存，历史快照与正文在同一
 
 ## 当前交付
 
-Android 下载：[1.0.21 Release](https://github.com/M00NZ1/mojing/releases/tag/build-20260907-2e427035)。
+Android 下载：[1.0.21 · 2026-09-09](https://github.com/M00NZ1/mojing/releases/tag/build-20260909-3992bfb0)。
 
 ## 后续工作
 
