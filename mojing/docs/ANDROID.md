@@ -70,6 +70,8 @@
 
 条目编辑通过 `saveEdited` 在同一 Room 事务中读取旧正文、分配版本号、保存历史快照并更新条目。未变更内容不新增版本，保存失败整体回滚，已删除条目拒绝旧页面提交。
 
+版本页按递增记录 ID 倒序进行游标查询，每次读取十一条判断下一页，保留十条作为当前窗口。翻页替换窗口并重置阅读位置，保存完成后显示最新版本。
+
 [AppDatabase.kt](../android/app/src/main/java/com/mojing/app/data/local/AppDatabase.kt)维护 Room schema 与 migration。媒体使用应用文件或授权 URI，平台凭据由 SecureStorage 管理。
 
 初始资料从 [seed_data.json](../android/app/src/main/res/raw/seed_data.json)读取，与[内置目录](../data/builtin_pack/starter_catalog.json)对应。目录包含“雾港来信”百科、世界和两名角色，初始化记录使用 `builtin_catalog_v2`。

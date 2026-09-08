@@ -32,6 +32,34 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class EntryEditViewModelTest {
     @Test
+    fun versionPagesReplaceWindowAndKeepDraft() = runTest(dispatcher) {
+        val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, title = "百科")
+        val dao = mockk<EncyclopediaEntryDao> { coEvery { getById(8) } returns entry }
+        val rows = (25L downTo 1L).map {
+            com.mojing.app.data.local.entity.EntryVersionEntity(id = it, entryId = 8, version = it.toInt())
+        }
+        val versions = mockk<EntryVersionDao> {
+            coEvery { getPage(8, any(), 11) } coAnswers {
+                rows.filter { it.id < secondArg<Long>() }.take(11)
+            }
+        }
+        val viewModel = createViewModel(encyclopediaDao(), dao, versions)
+        viewModel.load(3, 8)
+        assertEquals(10, viewModel.state.value.versions.size)
+        viewModel.updateTitle("未保存标题")
+        viewModel.loadVersionPage(true)
+        assertEquals(15L, viewModel.state.value.versions.first().id)
+        assertEquals(10, viewModel.state.value.versions.size)
+        viewModel.loadVersionPage(true)
+        assertEquals(5, viewModel.state.value.versions.size)
+        assertFalse(viewModel.state.value.hasOlderVersions)
+        viewModel.loadVersionPage(false)
+        assertEquals(25L, viewModel.state.value.versions.first().id)
+        assertEquals("未保存标题", viewModel.state.value.title)
+        assertTrue(viewModel.state.value.isDirty)
+    }
+
+    @Test
     fun repeatedSaveCreatesOneEntryAndFailureAllowsRetry() = runTest(dispatcher) {
         val release = CompletableDeferred<Unit>()
         var failSave = true
@@ -148,7 +176,7 @@ class EntryEditViewModelTest {
             coEvery { getById(9L) } returnsMany listOf(original, original)
         }
         val versionDao = mockk<EntryVersionDao> {
-            coEvery { getByEntry(9L) } returns emptyList()
+            coEvery { getPage(9L, any(), any()) } returns emptyList()
             coEvery { maxVersionForEntry(9L) } returns 0
             coEvery { insert(any()) } returns 1L
         }
@@ -175,7 +203,7 @@ class EntryEditViewModelTest {
         val saved = EncyclopediaEntryEntity(id = 12L, encyclopediaId = 3L, title = "潮汐钟")
         val entryDao = mockk<EncyclopediaEntryDao>(relaxed = true)
         val versionDao = mockk<EntryVersionDao> {
-            coEvery { getByEntry(12L) } returns emptyList()
+            coEvery { getPage(12L, any(), any()) } returns emptyList()
         }
         val save = mockk<SaveCharacterEntryUseCase> {
             coEvery { this@mockk.saveEdited(any()) } returns saved
@@ -200,7 +228,7 @@ class EntryEditViewModelTest {
             coEvery { getById(9L) } returnsMany listOf(original, original)
         }
         val versionDao = mockk<EntryVersionDao> {
-            coEvery { getByEntry(9L) } returns emptyList()
+            coEvery { getPage(9L, any(), any()) } returns emptyList()
             coEvery { maxVersionForEntry(9L) } returns 0
             coEvery { insert(any()) } returns 1L
         }

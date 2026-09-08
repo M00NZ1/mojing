@@ -8,6 +8,9 @@ interface EntryVersionDao {
     @Query("SELECT * FROM entry_versions WHERE entryId = :entryId ORDER BY version DESC")
     suspend fun getByEntry(entryId: Long): List<EntryVersionEntity>
 
+    @Query("SELECT * FROM entry_versions WHERE entryId = :entryId AND id < :beforeId ORDER BY id DESC LIMIT :limit")
+    suspend fun getPage(entryId: Long, beforeId: Long, limit: Int): List<EntryVersionEntity>
+
     @Query("SELECT COALESCE(MAX(version), 0) FROM entry_versions WHERE entryId = :entryId")
     suspend fun maxVersionForEntry(entryId: Long): Int
 

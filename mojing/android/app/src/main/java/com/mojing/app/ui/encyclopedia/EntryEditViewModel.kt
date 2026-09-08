@@ -44,8 +44,11 @@ data class EntryEditState(
     val loadError: String? = null,
     val isPersisted: Boolean = false,
     val isDirty: Boolean = false,
-    /** 按 version 降序，仅编辑已有条目时有数据 */
+    /** 按保存顺序倒序，每页最多十条。 */
     val versions: List<EntryVersionEntity> = emptyList(),
+    val hasOlderVersions: Boolean = false,
+    val isOlderVersionPage: Boolean = false,
+    val isLoadingVersions: Boolean = false,
     val snackbar: String? = null,
     /** 用于按百科题材过滤「类型」选项（名称+简介+标签拼接） */
     val encyclopediaHint: String = "",
@@ -156,7 +159,7 @@ class EntryEditViewModel @Inject constructor(
                 currentEntry = entry
                 val loaded = if (entry != null) {
                     EntryEditState(
-                        versions = entryVersionDao.getByEntry(entry.id),
+                        versions = entryVersionDao.getPage(entry.id, Long.MAX_VALUE, 11),
                         encyclopediaHint = hint,
                         hasPublicLlmKey = secureStorage.publicApiKey.isNotBlank(),
                     ).withPersistedEntry(entry).copy(isDirty = false)
@@ -169,7 +172,7 @@ class EntryEditViewModel @Inject constructor(
                     )
                 }
                 savedDraft = loaded.toDraftSnapshot()
-                _state.value = loaded
+                _state.value = loaded.copy(versions = loaded.versions.take(10), hasOlderVersions = loaded.versions.size > 10)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -325,7 +328,7 @@ class EntryEditViewModel @Inject constructor(
 
     fun save() {
         val submittedState = _state.value
-        if (!submittedState.isLoaded || submittedState.loadError != null || submittedState.isSaving ||
+        if (!submittedState.isLoaded || submittedState.loadError != null || submittedState.isSaving || submittedState.isLoadingVersions ||
             (submittedState.isPersisted && !submittedState.isDirty)) return
         val submittedDraft = submittedState.toDraftSnapshot()
         if (submittedState.title.isBlank()) {
@@ -357,10 +360,13 @@ class EntryEditViewModel @Inject constructor(
                 )
                 val saved = saveCharacterEntry.saveEdited(toSave)
                 currentEntry = saved
-                val versions = entryVersionDao.getByEntry(saved.id)
+                val versionPage = entryVersionDao.getPage(saved.id, Long.MAX_VALUE, 11)
+                val versions = versionPage.take(10)
                 val latest = _state.value
                 val persisted = latest.withPersistedEntry(saved).copy(
                     versions = versions,
+                    hasOlderVersions = versionPage.size > 10,
+                    isOlderVersionPage = false,
                     isSaving = false,
                     isDirty = false,
                 )
@@ -368,6 +374,8 @@ class EntryEditViewModel @Inject constructor(
                 val result = if (latest.toDraftSnapshot() != submittedDraft) {
                     latest.copy(
                         versions = versions,
+                        hasOlderVersions = versionPage.size > 10,
+                        isOlderVersionPage = false,
                         isSaving = false,
                         isPersisted = true,
                         snackbar = "已保存，当前还有未保存的修改",
@@ -386,6 +394,23 @@ class EntryEditViewModel @Inject constructor(
             } finally {
                 _state.value = _state.value.copy(isSaving = false)
             }
+        }
+    }
+
+    fun loadVersionPage(older: Boolean) {
+        val state = _state.value
+        val entry = currentEntry ?: return
+        if (state.isLoadingVersions || state.isSaving || (older && !state.hasOlderVersions)) return
+        val beforeId = if (older) state.versions.lastOrNull()?.id ?: return else Long.MAX_VALUE
+        _state.value = state.copy(isLoadingVersions = true)
+        viewModelScope.launch {
+            try {
+                val page = entryVersionDao.getPage(entry.id, beforeId, 11)
+                _state.value = _state.value.copy(versions = page.take(10), hasOlderVersions = page.size > 10,
+                    isOlderVersionPage = older)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { showSnackbar("版本读取失败，请重试") }
+            finally { _state.value = _state.value.copy(isLoadingVersions = false) }
         }
     }
 

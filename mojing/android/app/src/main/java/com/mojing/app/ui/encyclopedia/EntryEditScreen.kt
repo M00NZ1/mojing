@@ -144,6 +144,7 @@ fun EntryEditScreen(
 
     val editScroll = rememberScrollState()
     val versionScroll = rememberScrollState()
+    LaunchedEffect(state.versions.firstOrNull()?.id) { versionScroll.scrollTo(0) }
     var typeExpanded by remember { mutableStateOf(false) }
     var confidenceExpanded by remember { mutableStateOf(false) }
     val typeOptions = remember(state.encyclopediaHint) { filteredEntryTypeOptions(state.encyclopediaHint) }
@@ -166,7 +167,7 @@ fun EntryEditScreen(
                 actions = {
                     IconButton(
                         onClick = { viewModel.save() },
-                        enabled = state.isLoaded && canSave && !pageBusy,
+                        enabled = state.isLoaded && canSave && !pageBusy && !state.isLoadingVersions,
                     ) {
                         if (state.isSaving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                         else Icon(Icons.Default.Save, if (canSave) "保存修改" else "已保存")
@@ -436,6 +437,16 @@ fun EntryEditScreen(
                         .padding(bottom = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        TextButton(onClick = { viewModel.loadVersionPage(false) },
+                            enabled = state.isOlderVersionPage && !state.isLoadingVersions && !state.isSaving) {
+                            Text("最新版本")
+                        }
+                        TextButton(onClick = { viewModel.loadVersionPage(true) },
+                            enabled = state.hasOlderVersions && !state.isLoadingVersions && !state.isSaving) {
+                            Text(if (state.isLoadingVersions) "读取中…" else "更早版本")
+                        }
+                    }
                     if (!state.isPersisted) {
                         Text(
                             "保存后开始记录版本",
