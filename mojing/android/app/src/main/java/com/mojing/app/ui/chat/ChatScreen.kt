@@ -36,7 +36,11 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountTree
-import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -487,7 +491,6 @@ fun ChatScreen(
         onPauseOrDispose { }
     }
 
-    val showBranchControls = state.participants.size > 1 || state.branches.size > 1
     LaunchedEffect(drawerState) {
         var prevOpen = drawerState.isOpen
         snapshotFlow { drawerState.isOpen }.collect { open ->
@@ -616,7 +619,7 @@ fun ChatScreen(
                         title = {
                             Column(Modifier.clickable(role = androidx.compose.ui.semantics.Role.Button) {
                                 dismissKeyboard(); showModelPicker = true
-                            }.padding(vertical = 4.dp)) {
+                            }.heightIn(min = 48.dp).padding(vertical = 4.dp)) {
                                 Text(stableSessionTitle.ifBlank {
                                     state.messages.firstOrNull()?.content?.take(20) ?: "对话"
                                 }, style = MaterialTheme.typography.titleMedium,
@@ -635,52 +638,49 @@ fun ChatScreen(
                             }
                         },
                         actions = {
-                            if (showBranchControls) {
-                                OutlinedButton(onClick = {
-                                    dismissKeyboard()
-                                    if (state.isGenerating) showGenerationLockedMessage() else branchMenuExpanded = true
-                                }) { Text("故事线") }
-                            } else {
-                                IconButton(onClick = {
-                                    dismissKeyboard()
-                                    if (state.isGenerating) showGenerationLockedMessage() else branchMenuExpanded = true
-                                }) {
-                                    Icon(Icons.Default.AccountTree, "故事线与切换")
-                                }
-                            }
-                            BranchSelector(
-                                expanded = branchMenuExpanded,
-                                onDismiss = { branchMenuExpanded = false },
-                                branches = listOf("main" to "主线") +
-                                    state.branches.map { it.branchId to (it.label.ifEmpty { it.branchId }) },
-                                currentBranch = state.currentBranchId,
-                                onSelect = { branchId ->
-                                    branchMenuExpanded = false
-                                    if (state.isGenerating) {
-                                        showGenerationLockedMessage()
-                                    } else if (branchId == "CREATE_NEW") {
-                                        viewModel.createBranch(state.messages.lastOrNull()?.id ?: 0L)
-                                    } else {
-                                        viewModel.switchBranch(branchId)
-                                    }
-                                },
-                                onShowBranchOverview = {
-                                    if (state.isGenerating) showGenerationLockedMessage()
-                                    else showBranchOverview = true
-                                },
-                            )
                             Box {
+                                BranchSelector(
+                                    expanded = branchMenuExpanded,
+                                    onDismiss = { branchMenuExpanded = false },
+                                    branches = listOf("main" to "主线") +
+                                        state.branches.map { it.branchId to (it.label.ifEmpty { it.branchId }) },
+                                    currentBranch = state.currentBranchId,
+                                    onSelect = { branchId ->
+                                        branchMenuExpanded = false
+                                        if (state.isGenerating) {
+                                            showGenerationLockedMessage()
+                                        } else if (branchId == "CREATE_NEW") {
+                                            viewModel.createBranch(state.messages.lastOrNull()?.id ?: 0L)
+                                        } else {
+                                            viewModel.switchBranch(branchId)
+                                        }
+                                    },
+                                    onShowBranchOverview = {
+                                        if (state.isGenerating) showGenerationLockedMessage()
+                                        else showBranchOverview = true
+                                    },
+                                )
                                 IconButton(onClick = {
                                     dismissKeyboard()
                                     topActionsMenuExpanded = true
                                 }) {
-                                    Icon(Icons.Default.MoreVert, contentDescription = "更多")
+                                    Icon(Icons.Default.MoreVert, contentDescription = "会话菜单")
                                 }
                                 DropdownMenu(
                                     expanded = topActionsMenuExpanded,
                                     onDismissRequest = { topActionsMenuExpanded = false },
                                 ) {
                                     DropdownMenuItem(
+                                        text = { Text("故事线") },
+                                        leadingIcon = { Icon(Icons.Default.AccountTree, null) },
+                                        onClick = {
+                                            topActionsMenuExpanded = false
+                                            if (state.isGenerating) showGenerationLockedMessage()
+                                            else branchMenuExpanded = true
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.Default.Search, null) },
                                         text = { Text("搜索消息") },
                                         onClick = {
                                             topActionsMenuExpanded = false
@@ -688,7 +688,9 @@ fun ChatScreen(
                                             showSearchDialog = true
                                         },
                                     )
+                                    HorizontalDivider()
                                     DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.Default.FileDownload, null) },
                                         text = {
                                             Text(
                                                 when {
@@ -711,6 +713,7 @@ fun ChatScreen(
                                         },
                                     )
                                     DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.Default.FileUpload, null) },
                                         text = { Text(if (isExportingChat) "正在导出主线聊天记录…" else "导出主线聊天记录…") },
                                         enabled = !isExportingChat && !isImportingChat,
                                         onClick = {
@@ -727,7 +730,7 @@ fun ChatScreen(
                                     if (drawerState.isClosed) drawerState.open() else drawerState.close()
                                 }
                             }) {
-                                Icon(Icons.Default.Menu, "设置")
+                                Icon(Icons.Default.Tune, "会话设置与资料")
                             }
                         }
                     )

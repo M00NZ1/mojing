@@ -1,5 +1,8 @@
 package com.mojing.app.ui.chat
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -75,6 +78,7 @@ fun InputBar(
     modifier: Modifier = Modifier,
 ) {
     var showActionSheet by remember { mutableStateOf(false) }
+    var showMacros by remember { mutableStateOf(false) }
     var showNarratorDialog by remember { mutableStateOf(false) }
     var narratorGuidance by remember { mutableStateOf("") }
     var restoreInputFocus by remember { mutableStateOf(false) }
@@ -130,7 +134,7 @@ fun InputBar(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    "已选 $pendingAttachmentCount 张图片，发送时一并发出",
+                    "已选 $pendingAttachmentCount 张图片",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -156,132 +160,129 @@ fun InputBar(
                 modifier = Modifier.padding(bottom = 6.dp),
             )
         }
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 40.dp, max = 128.dp)
-                .focusRequester(inputFocusRequester)
-                .onFocusChanged { focusState ->
-                    if (focusState.isFocused) keyboard?.show()
-                },
-            placeholder = { Text("输入消息…") },
-            shape = RoundedCornerShape(16.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
-            ),
-            minLines = 1,
-            maxLines = 4,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-            keyboardActions = KeyboardActions(
-                onSend = {
-                    if (!isGenerating && !isAddingAttachment &&
-                        (value.text.isNotBlank() || pendingAttachmentCount > 0)
-                    ) {
-                        onSend()
-                    }
-                },
-            ),
-        )
-        BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp),
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
         ) {
-            val useCompactSendAction = maxWidth < 320.dp
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(0.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (!isGenerating) {
-                        IconButton(onClick = {
-                            dismissKeyboard()
-                            onOpenEmoji()
-                        }, modifier = Modifier.size(48.dp)) {
-                            Icon(
-                                Icons.Default.EmojiEmotions,
-                                "表情",
-                                modifier = Modifier.size(22.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        IconButton(onClick = {
-                            dismissKeyboard()
-                            showActionSheet = true
-                        }, enabled = !isAddingAttachment, modifier = Modifier.size(48.dp)) {
-                            Icon(
-                                Icons.Default.Add,
-                                "更多输入工具",
-                                modifier = Modifier.size(22.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                    if (isImeOpen) {
-                        IconButton(
-                            onClick = ::dismissKeyboard,
-                            modifier = Modifier.size(48.dp),
-                        ) {
-                            Icon(
-                                Icons.Default.KeyboardHide,
-                                "收起键盘",
-                                modifier = Modifier.size(22.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                    IconButton(
-                        onClick = onPreviewSpeak,
-                        enabled = value.text.isNotBlank(),
-                        modifier = Modifier.size(48.dp),
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.VolumeUp,
-                            "试听朗读",
-                            modifier = Modifier.size(22.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                                alpha = if (value.text.isNotBlank()) 0.85f else 0.3f,
-                            ),
-                        )
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (isGenerating) {
-                        FilledTonalButton(
-                            onClick = onStop,
-                            modifier = Modifier.heightIn(min = 48.dp),
-                        ) {
-                            Icon(Icons.Default.Stop, "停止", modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(generationModeLabel?.let { "停止$it" } ?: "停止")
-                        }
-                    } else {
-                        val sendEnabled = !isAddingAttachment &&
-                            (value.text.isNotBlank() || pendingAttachmentCount > 0)
-                        if (useCompactSendAction) {
-                            FilledIconButton(
-                                onClick = onSend,
-                                enabled = sendEnabled,
-                                modifier = Modifier.size(48.dp),
+            Column(Modifier.padding(6.dp)) {
+                TextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 40.dp, max = 128.dp)
+                        .focusRequester(inputFocusRequester)
+                        .onFocusChanged { focusState ->
+                            if (focusState.isFocused) keyboard?.show()
+                        },
+                    placeholder = { Text("输入消息…") },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                    ),
+                    minLines = 1,
+                    maxLines = 4,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(
+                        onSend = {
+                            if (!isGenerating && !isAddingAttachment &&
+                                (value.text.isNotBlank() || pendingAttachmentCount > 0)
                             ) {
-                                Icon(Icons.AutoMirrored.Filled.Send, "发送", modifier = Modifier.size(20.dp))
+                                onSend()
                             }
-                        } else {
-                            Button(
-                                onClick = onSend,
-                                enabled = sendEnabled,
-                                modifier = Modifier.heightIn(min = 48.dp),
-                            ) {
-                                Icon(Icons.AutoMirrored.Filled.Send, "发送", modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("发送")
+                        },
+                    ),
+                )
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                ) {
+                    val useCompactSendAction = maxWidth < 320.dp
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(0.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (!isGenerating) {
+                                IconButton(onClick = {
+                                    dismissKeyboard()
+                                    onAttachImageClick()
+                                }, enabled = !isAddingAttachment, modifier = Modifier.size(48.dp)) {
+                                    Icon(
+                                        Icons.Default.AttachFile,
+                                        "添加图片",
+                                        modifier = Modifier.size(22.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                IconButton(onClick = {
+                                    dismissKeyboard()
+                                    showActionSheet = true
+                                }, enabled = !isAddingAttachment, modifier = Modifier.size(48.dp)) {
+                                    Icon(
+                                        Icons.Default.Add,
+                                        "更多输入工具",
+                                        modifier = Modifier.size(22.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            if (isImeOpen) {
+                                IconButton(
+                                    onClick = ::dismissKeyboard,
+                                    modifier = Modifier.size(48.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Default.KeyboardHide,
+                                        "收起键盘",
+                                        modifier = Modifier.size(22.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (isGenerating) {
+                                FilledTonalButton(
+                                    onClick = onStop,
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                ) {
+                                    Icon(Icons.Default.Stop, "停止", modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("停止")
+                                }
+                            } else {
+                                val sendEnabled = !isAddingAttachment &&
+                                    (value.text.isNotBlank() || pendingAttachmentCount > 0)
+                                if (useCompactSendAction) {
+                                    FilledIconButton(
+                                        onClick = onSend,
+                                        enabled = sendEnabled,
+                                        modifier = Modifier.size(48.dp),
+                                    ) {
+                                        Icon(Icons.AutoMirrored.Filled.Send, "发送", modifier = Modifier.size(20.dp))
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = onSend,
+                                        enabled = sendEnabled,
+                                        modifier = Modifier.heightIn(min = 48.dp),
+                                    ) {
+                                        Icon(Icons.AutoMirrored.Filled.Send, "发送", modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("发送")
+                                    }
+                                }
                             }
                         }
                     }
@@ -290,7 +291,7 @@ fun InputBar(
         }
     }
 
-    if (showActionSheet) {
+    if (showActionSheet && !isGenerating && !isAddingAttachment) {
         ModalBottomSheet(onDismissRequest = { showActionSheet = false }) {
             LazyColumn(
                 modifier = Modifier
@@ -305,68 +306,63 @@ fun InputBar(
                     )
                 }
                 item {
-                    ListItem(
-                        headlineContent = { Text("语音输入") },
-                        supportingContent = { Text("识别结果会填入输入框，由你确认后发送") },
-                        leadingContent = { Icon(Icons.Default.Mic, contentDescription = null) },
-                        modifier = Modifier.clickable(enabled = !isGenerating && !isAddingAttachment) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ChatToolTile("语音输入", "转成文字", Icons.Default.Mic, Modifier.weight(1f)) {
+                            showActionSheet = false
                             onVoiceClick()
+                        }
+                        ChatToolTile("表情", "插入到消息", Icons.Default.EmojiEmotions, Modifier.weight(1f)) {
                             showActionSheet = false
-                        },
-                    )
+                            onOpenEmoji()
+                        }
+                    }
                 }
                 item {
-                    ListItem(
-                        headlineContent = { Text("生成配图") },
-                        supportingContent = { Text("描述画面并生成一张图片，随消息发出") },
-                        leadingContent = { Icon(Icons.Default.Image, contentDescription = null) },
-                        modifier = Modifier.clickable(enabled = !isGenerating && !isAddingAttachment) {
-                            onImageGenClick()
-                            showActionSheet = false
-                        },
-                    )
-                }
-                item {
-                    ListItem(
-                        headlineContent = { Text("添加图片") },
-                        supportingContent = { Text("从相册选择一张图片，发送时作为附件带上") },
-                        leadingContent = { Icon(Icons.Default.AttachFile, contentDescription = null) },
-                        modifier = Modifier.clickable(enabled = !isGenerating && !isAddingAttachment) {
-                            onAttachImageClick()
-                            showActionSheet = false
-                        },
-                    )
-                }
-                item { HorizontalDivider(Modifier.padding(vertical = 4.dp)) }
-                item {
-                    ListItem(
-                        headlineContent = { Text("生成旁白") },
-                        supportingContent = { Text("根据当前世界与剧情描写场景、气氛或后续发展") },
-                        leadingContent = { Icon(Icons.Default.TheaterComedy, contentDescription = null) },
-                        modifier = Modifier.clickable(enabled = !isGenerating && !isAddingAttachment) {
+                    Text("创作", style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ChatToolTile("生成旁白", "场景与剧情", Icons.Default.TheaterComedy, Modifier.weight(1f)) {
                             showNarratorDialog = true
                             showActionSheet = false
-                        },
-                    )
+                        }
+                        ChatToolTile("生成配图", "描述画面", Icons.Default.Image, Modifier.weight(1f)) {
+                            showActionSheet = false
+                            onImageGenClick()
+                        }
+                    }
                 }
                 item {
-                    Text(
-                        "快捷词（点一下插入到光标处）",
-                        style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    )
-                }
-                items(ChatMacroDefinitions.ALL) { m ->
                     ListItem(
-                        headlineContent = { Text(m.label) },
-                        supportingContent = { Text(m.description) },
-                        leadingContent = { Icon(Icons.Default.DataObject, contentDescription = null) },
-                        modifier = Modifier.clickable(enabled = !isGenerating && !isAddingAttachment) {
-                            onInsertMacro(m.macro)
-                            restoreInputFocus = true
+                        headlineContent = { Text("试听朗读") },
+                        supportingContent = { Text(if (value.text.isBlank()) "输入文字后可试听" else "朗读输入框内容") },
+                        leadingContent = { Icon(Icons.AutoMirrored.Filled.VolumeUp, null) },
+                        modifier = Modifier.clickable(enabled = value.text.isNotBlank()) {
                             showActionSheet = false
+                            onPreviewSpeak()
                         },
                     )
+                    ListItem(
+                        headlineContent = { Text("快捷词") },
+                        supportingContent = { Text("角色名、时间与场景变量") },
+                        leadingContent = { Icon(Icons.Default.DataObject, null) },
+                        trailingContent = { Icon(if (showMacros) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null) },
+                        modifier = Modifier.clickable { showMacros = !showMacros },
+                    )
+                }
+                if (showMacros) {
+                    items(ChatMacroDefinitions.ALL) { m ->
+                        ListItem(
+                            headlineContent = { Text(m.label) },
+                            supportingContent = { Text(m.description) },
+                            leadingContent = { Icon(Icons.Default.DataObject, contentDescription = null) },
+                            modifier = Modifier.clickable(enabled = !isGenerating && !isAddingAttachment) {
+                                onInsertMacro(m.macro)
+                                restoreInputFocus = true
+                                showActionSheet = false
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -414,5 +410,28 @@ fun InputBar(
                 }) { Text("取消") }
             },
         )
+    }
+}
+
+@Composable
+private fun ChatToolTile(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.heightIn(min = 100.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
