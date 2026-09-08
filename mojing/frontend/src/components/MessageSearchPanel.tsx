@@ -1,4 +1,4 @@
-import { useDeferredValue, useState, type RefObject } from 'react';
+import { useDeferredValue, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { MessageSearchHit } from '../types';
@@ -22,6 +22,13 @@ export default function MessageSearchPanel({ sessionId, branchId, value, onChang
   const [navigation, setNavigation] = useState<{ scope: string; cursors: (number | undefined)[] }>({ scope: '', cursors: [undefined] });
   const [indexPaused, setIndexPaused] = useState(false);
   const cursors = navigation.scope === scope ? navigation.cursors : [undefined];
+  const listRef = useRef<HTMLUListElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const pageCursor = cursors[cursors.length - 1];
+  useLayoutEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = 0;
+    if (resultsRef.current) resultsRef.current.scrollTop = 0;
+  }, [scope, pageCursor]);
   const client = useQueryClient();
   const search = useQuery({ queryKey: ['session-message-search', sessionId, branchId, query, cursors[cursors.length - 1]],
     queryFn: ({ signal }) => api.searchMessagePage(sessionId, query, branchId, cursors[cursors.length - 1], signal, !indexPaused),
@@ -37,14 +44,14 @@ export default function MessageSearchPanel({ sessionId, branchId, value, onChang
   return <section className="message-search-panel" aria-label="故事线搜索">
     <input ref={inputRef} type="search" className="chat-message-search" placeholder="搜索当前故事线的消息" aria-label="搜索当前故事线的消息"
       value={value} maxLength={256} onChange={(event) => onChange(event.target.value)} autoComplete="off" />
-    {query && <div className="message-search-results">
+    {query && <div className="message-search-results" ref={resultsRef}>
       <div className="message-search-heading"><span>当前故事线 · 最近在前</span><button type="button" className="btn btn-ghost btn-sm" disabled={search.isFetching} onClick={() => void search.refetch()}>刷新搜索</button></div>
       {(search.isPending || stale) && <p role="status">搜索中…</p>}
       {progress && !progress.ready && <div className="message-search-index" role="status"><span>{indexPaused ? '索引已暂停' : '正在整理索引'} · 已处理 {progress.indexed_count} 条历史。完成后结果才完整。</span>
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setIndexPaused(!indexPaused); if (indexPaused) void search.refetch(); }}>{indexPaused ? '继续索引' : '暂停索引'}</button></div>}
       {search.isError && <InlineQueryError message="搜索失败" error={search.error} retrying={search.isFetching} onRetry={() => void search.refetch()} />}
       {search.isSuccess && !search.data.items.length && <p>{progress?.ready ? '无匹配消息' : '已索引部分暂无匹配消息'}</p>}
-      <ul>{search.data?.items.map((hit) => <li key={hit.id}><button type="button" disabled={locating || stale} onClick={() => onSelect(hit)}>
+      <ul ref={listRef}>{search.data?.items.map((hit) => <li key={hit.id}><button type="button" disabled={locating || stale} onClick={() => onSelect(hit)}>
         <strong>{locatingId === hit.id ? '正在定位…' : hit.character_name || ({ user: '玩家', narrator: '旁白' }[hit.speaker_type] || '角色')}{hit.branch_id !== 'main' ? ` · ${branchLabel(hit.branch_id)}` : ''}</strong>
         <span><SearchSnippet text={hit.snippet} query={query} /></span></button></li>)}</ul>
       <div className="message-search-pagination"><button type="button" className="btn btn-ghost btn-sm" disabled={cursors.length === 1 || search.isFetching || stale} onClick={() => setNavigation({ scope, cursors: cursors.slice(0, -1) })}>较新结果</button>

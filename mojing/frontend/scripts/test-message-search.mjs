@@ -118,6 +118,15 @@ try {
   assert.ok(await page.getByRole('button', { name: '更早结果' }).isDisabled());
   await page.getByRole('button', { name: '较新结果' }).click();
   await page.getByText(/^第 2 页 ·/).waitFor();
+  await results.locator('ul').evaluate((list) => { list.scrollTop = list.scrollHeight; });
+  assert.ok(await results.locator('ul').evaluate((list) => list.scrollTop > 0));
+  await page.getByRole('button', { name: '较新结果' }).click();
+  await page.getByText(/^第 1 页 ·/).waitFor();
+  assert.equal(await results.locator('ul').evaluate((list) => list.scrollTop), 0);
+  await results.locator('ul').evaluate((list) => { list.scrollTop = 80; });
+  await page.getByRole('button', { name: '刷新搜索' }).click();
+  await page.waitForFunction(() => ![...document.querySelectorAll('button')].find((b) => b.textContent === '刷新搜索').disabled);
+  assert.equal(await results.locator('ul').evaluate((list) => list.scrollTop), 80);
   // Unloaded old message, transient location failure, then successful focus.
   await searchInput.fill('旧信封');
   const oldHit = results.getByRole('button', { name: /第 3 夜/ });
