@@ -93,6 +93,12 @@ Set-Location .\mojing
 .\.venv\Scripts\python.exe -m pytest tests/test_android_library_sql.py -q
 ```
 
+消息搜索分页契约覆盖主线、继承分支、替换消息、精确匹配和部分索引：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_android_search_paging_sqlite.py -q
+```
+
 ## 数据库迁移
 
 Web 使用 Alembic，迁移脚本位于 [backend/alembic/versions/](../backend/alembic/versions/)。
