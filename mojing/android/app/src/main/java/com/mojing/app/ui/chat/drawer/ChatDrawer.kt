@@ -346,16 +346,16 @@ fun WorldConfigTab(
         return
     }
     val w = world
-    var llmKey by remember(w.id, w.updatedAt) { mutableStateOf(w.sessionLlmApiKey) }
-    var llmBase by remember(w.id, w.updatedAt) { mutableStateOf(w.sessionLlmBaseUrl) }
-    var imgKey by remember(w.id, w.updatedAt) { mutableStateOf(w.sessionImageApiKey) }
-    var imgBase by remember(w.id, w.updatedAt) { mutableStateOf(w.sessionImageBaseUrl) }
-    var imgModel by remember(w.id, w.updatedAt) { mutableStateOf(w.sessionImageModel) }
-    var voiceKey by remember(w.id, w.updatedAt) { mutableStateOf(w.sessionVoiceApiKey) }
-    var voiceBase by remember(w.id, w.updatedAt) { mutableStateOf(w.sessionVoiceBaseUrl) }
-    var voiceModel by remember(w.id, w.updatedAt) { mutableStateOf(w.sessionVoiceModel) }
-    var voiceSpeech by remember(w.id, w.updatedAt) { mutableStateOf(w.sessionVoiceSpeechVoice) }
-    var voicePreset by remember(w.id, w.updatedAt) { mutableStateOf(w.sessionVoicePresetPrefixModel) }
+    var llmKey by remember(w.id, w.sessionLlmApiKey) { mutableStateOf(w.sessionLlmApiKey) }
+    var llmBase by remember(w.id, w.sessionLlmBaseUrl) { mutableStateOf(w.sessionLlmBaseUrl) }
+    var imgKey by remember(w.id, w.sessionImageApiKey) { mutableStateOf(w.sessionImageApiKey) }
+    var imgBase by remember(w.id, w.sessionImageBaseUrl) { mutableStateOf(w.sessionImageBaseUrl) }
+    var imgModel by remember(w.id, w.sessionImageModel) { mutableStateOf(w.sessionImageModel) }
+    var voiceKey by remember(w.id, w.sessionVoiceApiKey) { mutableStateOf(w.sessionVoiceApiKey) }
+    var voiceBase by remember(w.id, w.sessionVoiceBaseUrl) { mutableStateOf(w.sessionVoiceBaseUrl) }
+    var voiceModel by remember(w.id, w.sessionVoiceModel) { mutableStateOf(w.sessionVoiceModel) }
+    var voiceSpeech by remember(w.id, w.sessionVoiceSpeechVoice) { mutableStateOf(w.sessionVoiceSpeechVoice) }
+    var voicePreset by remember(w.id, w.sessionVoicePresetPrefixModel) { mutableStateOf(w.sessionVoicePresetPrefixModel) }
 
     val credentialDirty =
         llmKey.trim() != w.sessionLlmApiKey.trim() ||
@@ -387,6 +387,7 @@ fun WorldConfigTab(
         )
     }
 
+    var routeDetailsOpen by remember(w.id) { mutableStateOf(false) }
     var voiceDetailsOpen by remember(w.id) { mutableStateOf(false) }
 
     Column(
@@ -396,7 +397,6 @@ fun WorldConfigTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("本场专用线路", style = MaterialTheme.typography.titleMedium)
         if (isGenerating) {
             Text(
                 "可先编辑线路草稿；回复完成或停止后再保存和调整本场玩法",
@@ -407,54 +407,9 @@ fun WorldConfigTab(
         if (credentialDirty) {
             AssistChip(onClick = {}, enabled = false, label = { Text("未保存") })
         }
-        Text("对话 / 旁白 / 记忆", style = MaterialTheme.typography.labelMedium)
-        OutlinedTextField(
-            value = llmKey,
-            onValueChange = { llmKey = it },
-            label = { Text("对话 API Key 覆盖") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-        )
-        OutlinedTextField(
-            value = llmBase,
-            onValueChange = { llmBase = it },
-            label = { Text("对话 URL") },
-            placeholder = { Text("空则使用角色或设置") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-        )
-        Text("生图", style = MaterialTheme.typography.labelMedium)
-        OutlinedTextField(
-            value = imgKey,
-            onValueChange = { imgKey = it },
-            label = { Text("配图 API Key 覆盖") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-        )
-        OutlinedTextField(
-            value = imgBase,
-            onValueChange = { imgBase = it },
-            label = { Text("配图 URL") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-        )
-        OutlinedTextField(
-            value = imgModel,
-            onValueChange = { imgModel = it },
-            label = { Text("生图模型 id 覆盖") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-        )
-        Button(
-            onClick = { emitSave() },
-            enabled = !isGenerating,
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("保存本场线路") }
-
-        HorizontalDivider()
         Text("本场玩法", style = MaterialTheme.typography.titleMedium)
         Text(
-            "${w.gameplayMode} · 模板 ${w.templateId}",
+            w.gameplayMode,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -548,50 +503,106 @@ fun WorldConfigTab(
             )
         }
 
+        HorizontalDivider()
         TextButton(
-            onClick = { voiceDetailsOpen = !voiceDetailsOpen },
+            onClick = { routeDetailsOpen = !routeDetailsOpen },
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text(if (voiceDetailsOpen) "收起" else "朗读覆盖")
+            Icon(Icons.Default.Tune, null)
+            Spacer(Modifier.width(8.dp))
+            Text("专用线路", modifier = Modifier.weight(1f))
+            Icon(if (routeDetailsOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
         }
-        if (voiceDetailsOpen) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = voiceKey,
-                    onValueChange = { voiceKey = it },
-                    label = { Text("朗读 API Key") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = voiceBase,
-                    onValueChange = { voiceBase = it },
-                    label = { Text("朗读 URL") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = voiceModel,
-                    onValueChange = { voiceModel = it },
-                    label = { Text("TTS 模型") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = voiceSpeech,
-                    onValueChange = { voiceSpeech = it },
-                    label = { Text("音色 voice") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = voicePreset,
-                    onValueChange = { voicePreset = it },
-                    label = { Text("音色前缀模型") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
+        if (routeDetailsOpen) {
+            Text("对话 / 旁白 / 记忆", style = MaterialTheme.typography.labelMedium)
+            OutlinedTextField(
+                value = llmKey,
+                onValueChange = { llmKey = it },
+                label = { Text("对话 API Key 覆盖") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = llmBase,
+                onValueChange = { llmBase = it },
+                label = { Text("对话 URL") },
+                placeholder = { Text("空则使用角色或设置") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            Text("生图", style = MaterialTheme.typography.labelMedium)
+            OutlinedTextField(
+                value = imgKey,
+                onValueChange = { imgKey = it },
+                label = { Text("配图 API Key 覆盖") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = imgBase,
+                onValueChange = { imgBase = it },
+                label = { Text("配图 URL") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = imgModel,
+                onValueChange = { imgModel = it },
+                label = { Text("生图模型 id 覆盖") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            TextButton(
+                onClick = { voiceDetailsOpen = !voiceDetailsOpen },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (voiceDetailsOpen) "收起" else "朗读覆盖")
             }
+            if (voiceDetailsOpen) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = voiceKey,
+                        onValueChange = { voiceKey = it },
+                        label = { Text("朗读 API Key") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = voiceBase,
+                        onValueChange = { voiceBase = it },
+                        label = { Text("朗读 URL") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = voiceModel,
+                        onValueChange = { voiceModel = it },
+                        label = { Text("TTS 模型") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = voiceSpeech,
+                        onValueChange = { voiceSpeech = it },
+                        label = { Text("音色 voice") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = voicePreset,
+                        onValueChange = { voicePreset = it },
+                        label = { Text("音色前缀模型") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                }
+            }
+            Button(
+                onClick = { emitSave() },
+                enabled = !isGenerating,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("保存本场线路") }
+
         }
 
     }
