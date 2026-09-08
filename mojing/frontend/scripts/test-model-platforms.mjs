@@ -49,7 +49,7 @@ try {
     ['deepseek_official', 'DeepSeek', 'https://api.deepseek.com'], ['openai', 'OpenAI', 'https://api.openai.com/v1'],
     ['siliconflow', '硅基流动', 'https://api.siliconflow.cn/v1'], ['anthropic', 'Anthropic', 'https://api.anthropic.com'], ['custom', '自定义', ''],
   ].map(([provider_id, label, base_url]) => ({ provider_id, label, base_url, models: [], notes: '' }));
-  const world = { template_id: 'custom', world_prompt: '', narrator_enabled: false, narrator_name: '旁白', gameplay_mode: '自由剧情', suggested_choices_json: [], choice_generation_enabled: true, max_choice_count: 3, anti_cheat_enabled: false, anti_cheat_prompt: '' };
+  const world = { template_id: 'custom', world_prompt: '', narrator_enabled: true, narrator_name: '旁白', gameplay_mode: '自由剧情', suggested_choices_json: [], choice_generation_enabled: true, max_choice_count: 3, anti_cheat_enabled: false, anti_cheat_prompt: '' };
   const chat = { id: 1, title: '隔离测试会话', summary: '', created_at: '2026-09-07T00:00:00Z', updated_at: '2026-09-07T00:00:00Z', world };
   await context.route('http://127.0.0.1:18001/api/**', async (route) => {
     const request = route.request();
@@ -183,6 +183,29 @@ try {
   if (output) await page.screenshot({ path: path.join(output, 'model-picker-mobile.png') });
   await page.keyboard.press('Escape');
   await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  await page.locator('input[type=file][accept="image/*"]').setInputFiles({
+    name: 'preview.png', mimeType: 'image/png',
+    buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'),
+  });
+  for (const width of [320, 390, 1365]) {
+    await page.setViewportSize({ width, height: 900 });
+    const composer = page.locator('.chat-inputbar-form');
+    await composer.waitFor();
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `overflow at ${width}`);
+    const inputBox = await page.getByLabel('消息内容', { exact: true }).boundingBox();
+    const sendBox = await page.locator('.chat-inputbar-send-group').boundingBox();
+    const toolBox = await page.getByRole('button', { name: '更多工具', exact: true }).boundingBox();
+    assert.ok(inputBox.y + inputBox.height <= sendBox.y + 1, 'send action below writing area');
+    assert.ok(toolBox.x + toolBox.width <= sendBox.x, 'tools and send must not overlap');
+    await page.getByRole('button', { name: '更多工具', exact: true }).click();
+    await page.getByRole('menu', { name: '更多工具' }).waitFor();
+    assert.equal(await page.getByRole('menuitem').filter({ hasText: '旁白' }).count(), 1);
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '更多工具');
+    const attachments = await page.locator('.chat-attachment-previews').boundingBox();
+    assert.ok(attachments.y >= sendBox.y + sendBox.height, 'attachments occupy their own row');
+    if (output) await page.screenshot({ path: path.join(output, `chat-composer-${width}.png`) });
+  }
   assert.equal(errors.length, 0, errors.join('\n'));
   console.log('PASS: platform save/reload, Key isolation, manual models, failed/cancelled discovery, unsaved navigation, mobile layout, 5000-model virtualization/search, selection retry/reload, chat send, Escape. Mock APIs only.');
 } finally {

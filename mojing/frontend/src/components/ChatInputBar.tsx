@@ -195,13 +195,37 @@ export default function ChatInputBar({
           ) : null}
         </div>
       ) : null}
+      <form className="chat-inputbar-form" onSubmit={onSend}>
+        <textarea
+          ref={textareaRef}
+          className="chat-inputbar-input"
+          placeholder={inputPlaceholder ?? '输入消息…'}
+          title="Enter 发送，Shift+Enter 换行"
+          value={input}
+          onChange={(event) => {
+            rememberInputSelection(event.currentTarget);
+            setInput(event.currentTarget.value);
+          }}
+          onSelect={(event) => rememberInputSelection(event.currentTarget)}
+          onBlur={(event) => rememberInputSelection(event.currentTarget)}
+          maxLength={10000}
+          rows={1}
+          aria-label="消息内容"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+              e.preventDefault();
+              onSend(e as unknown as FormEvent);
+            }
+          }}
+          onInput={(e) => {
+            const ta = e.currentTarget;
+            ta.style.height = 'auto';
+            ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+          }}
+        />
       <div className="chat-inputbar-tools compact-wrap">
         <VoiceInputButton onTranscribed={handleVoiceText} />
-        {narratorEnabled && onRequestNarrator ? (
-          <button className="chat-inputbar-btn" type="button" onClick={onRequestNarrator} disabled={isGenerating} title={narratorActionLabel ?? '来一段旁白'} aria-label={narratorActionLabel ?? '来一段旁白'}>
-            <UiIcon name="narrator" />
-          </button>
-        ) : null}
         <button
           ref={emojiTriggerRef}
           className="chat-inputbar-btn"
@@ -252,6 +276,64 @@ export default function ChatInputBar({
           }}
           hidden
         />
+        <div className="chat-inputbar-more-wrap" ref={moreToolsRef}>
+          <button
+            ref={moreToolsTriggerRef}
+            type="button"
+            className="chat-inputbar-btn chat-inputbar-more"
+            onClick={() => {
+              if (showMoreTools) closeMoreTools();
+              else {
+                setShowEmojiPicker(false);
+                setShowMoreTools(true);
+              }
+            }}
+            title={quickActionPendingLabel || '更多工具'}
+            aria-label={quickActionPendingLabel || '更多工具'}
+            aria-busy={quickActionPendingLabel ? true : undefined}
+            aria-haspopup="menu"
+            aria-expanded={showMoreTools}
+            aria-controls="more-tools-menu"
+          >
+            <UiIcon name={quickActionPendingLabel ? 'loading' : 'plus'} className={quickActionPendingLabel ? 'ui-icon-loading' : undefined} />
+          </button>
+          {showMoreTools && (
+            <div ref={moreToolsMenuRef} id="more-tools-menu" className="more-tools-menu" role="menu" aria-label="更多工具">
+              {narratorEnabled && onRequestNarrator ? (
+                <button className="more-tools-item" role="menuitem" type="button" onClick={() => { closeMoreTools(); onRequestNarrator(); }} disabled={isGenerating} title={narratorActionLabel ?? '来一段旁白'} aria-label={narratorActionLabel ?? '来一段旁白'}>
+                  <UiIcon name="narrator" /><span>{narratorActionLabel ?? '来一段旁白'}</span>
+                </button>
+              ) : null}
+              <button type="button" className="more-tools-item" role="menuitem" disabled={Boolean(quickActionPendingLabel)} onClick={() => { closeMoreTools(); onQuickAction('summarize_session_events', moreToolsTriggerRef.current); }}>
+                <UiIcon name="summary" />
+                <span>总结本次事件</span>
+              </button>
+              <button
+                type="button"
+                className="more-tools-item"
+                role="menuitem"
+                disabled={Boolean(quickActionPendingLabel)}
+                title={settingConflictHint}
+                onClick={() => { closeMoreTools(); onQuickAction('check_setting_conflicts', moreToolsTriggerRef.current); }}
+              >
+                <UiIcon name="search" />
+                <span>{settingConflictHint || '检查设定冲突'}</span>
+              </button>
+              <button
+                type="button"
+                className="more-tools-item"
+                role="menuitem"
+                disabled={!canCreateEntryFromMessage || Boolean(quickActionPendingLabel)}
+                title={canCreateEntryFromMessage ? undefined : '生成完成并保存消息后可用'}
+                onClick={() => { closeMoreTools(); onQuickAction('create_entry_from_message', moreToolsTriggerRef.current); }}
+              >
+                <UiIcon name="book" />
+                <span>{canCreateEntryFromMessage ? '沉淀为百科条目' : '消息保存后可沉淀百科'}</span>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
         {files.length > 0 && (
           <div
             className="chat-attachment-previews"
@@ -283,103 +365,15 @@ export default function ChatInputBar({
             })}
           </div>
         )}
-        <div className="chat-inputbar-more-wrap" ref={moreToolsRef}>
-          <button
-            ref={moreToolsTriggerRef}
-            type="button"
-            className="chat-inputbar-btn chat-inputbar-more"
-            onClick={() => {
-              if (showMoreTools) closeMoreTools();
-              else {
-                setShowEmojiPicker(false);
-                setShowMoreTools(true);
-              }
-            }}
-            title={quickActionPendingLabel || '更多工具'}
-            aria-label={quickActionPendingLabel || '更多工具'}
-            aria-busy={quickActionPendingLabel ? true : undefined}
-            aria-haspopup="menu"
-            aria-expanded={showMoreTools}
-            aria-controls="more-tools-menu"
-          >
-            <UiIcon name={quickActionPendingLabel ? 'loading' : 'plus'} className={quickActionPendingLabel ? 'ui-icon-loading' : undefined} />
-          </button>
-          {showMoreTools && (
-            <div ref={moreToolsMenuRef} id="more-tools-menu" className="more-tools-menu" role="menu" aria-label="更多工具">
-              <button type="button" className="more-tools-item" role="menuitem" disabled={Boolean(quickActionPendingLabel)} onClick={() => { closeMoreTools(); onQuickAction('summarize_session_events', moreToolsTriggerRef.current); }}>
-                <UiIcon name="summary" />
-                <span>总结本次事件</span>
-              </button>
-              <button
-                type="button"
-                className="more-tools-item"
-                role="menuitem"
-                disabled={Boolean(quickActionPendingLabel)}
-                title={settingConflictHint}
-                onClick={() => { closeMoreTools(); onQuickAction('check_setting_conflicts', moreToolsTriggerRef.current); }}
-              >
-                <UiIcon name="search" />
-                <span>{settingConflictHint || '检查设定冲突'}</span>
-              </button>
-              <button
-                type="button"
-                className="more-tools-item"
-                role="menuitem"
-                disabled={!canCreateEntryFromMessage || Boolean(quickActionPendingLabel)}
-                title={canCreateEntryFromMessage ? undefined : '生成完成并保存消息后可用'}
-                onClick={() => { closeMoreTools(); onQuickAction('create_entry_from_message', moreToolsTriggerRef.current); }}
-              >
-                <UiIcon name="book" />
-                <span>{canCreateEntryFromMessage ? '沉淀为百科条目' : '消息保存后可沉淀百科'}</span>
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
       {quickActionPendingLabel ? (
         <div className="chat-quick-action-status" role="status" aria-live="polite">
           <UiIcon name="loading" className="ui-icon-loading" />
           <span>{quickActionPendingLabel}</span>
         </div>
       ) : null}
-      {showEmojiPicker && (
-        <EmojiPicker
-          onSelect={insertIntoInput}
-          onClose={closeEmojiPicker}
-        />
-      )}
-      <form className="chat-inputbar-form" onSubmit={onSend}>
-        <textarea
-          ref={textareaRef}
-          className="chat-inputbar-input"
-          placeholder={inputPlaceholder ?? '输入消息…'}
-          title="Enter 发送，Shift+Enter 换行"
-          value={input}
-          onChange={(event) => {
-            rememberInputSelection(event.currentTarget);
-            setInput(event.currentTarget.value);
-          }}
-          onSelect={(event) => rememberInputSelection(event.currentTarget)}
-          onBlur={(event) => rememberInputSelection(event.currentTarget)}
-          maxLength={10000}
-          rows={1}
-          aria-label="消息内容"
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-              e.preventDefault();
-              onSend(e as unknown as FormEvent);
-            }
-          }}
-          onInput={(e) => {
-            const ta = e.currentTarget;
-            ta.style.height = 'auto';
-            ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
-          }}
-        />
-        <div className="chat-inputbar-extra">
+        {input.length >= 8000 && <div className="chat-inputbar-extra">
           <span className="chat-inputbar-count">{input.length}/10000</span>
-        </div>
+        </div>}
         <div className="chat-inputbar-send-group">
           {isGenerating && (
             <button className="chat-inputbar-stop" type="button" onClick={onStop} title="停止生成">
@@ -387,9 +381,9 @@ export default function ChatInputBar({
               <span>停止</span>
             </button>
           )}
-          <button className="chat-inputbar-send" type="submit" disabled={isPending || isGenerating || (!input.trim() && files.length === 0)} title={isPending || isGenerating ? '生成中…' : '发送消息'}>
-            {isPending || isGenerating ? <><UiIcon name="loading" className="ui-icon-loading" /><span>生成中</span></> : '发送'}
-          </button>
+          {!isGenerating && <button className="chat-inputbar-send" type="submit" disabled={isPending || isGenerating || (!input.trim() && files.length === 0)} title={isPending || isGenerating ? '生成中…' : '发送消息'}>
+            {isPending ? <><UiIcon name="loading" className="ui-icon-loading" /><span>发送中</span></> : '发送'}
+          </button>}
         </div>
         {isError && (
           <div className="chat-inputbar-error" role="alert">
@@ -409,6 +403,13 @@ export default function ChatInputBar({
           </div>
         )}
       </form>
+      {showEmojiPicker && (
+        <EmojiPicker
+          onSelect={insertIntoInput}
+          onClose={closeEmojiPicker}
+        />
+      )}
+
     </div>
   );
 }
