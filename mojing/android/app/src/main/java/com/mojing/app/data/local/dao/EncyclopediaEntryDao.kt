@@ -7,6 +7,9 @@ import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
 
 @Dao
 interface EncyclopediaEntryDao {
+    @Query("SELECT id FROM encyclopedia_entries WHERE encyclopediaId = :encId AND sourceSessionId = :sessionId AND confidence = 'inferred' AND title = :title AND content = :content AND metaJson = :meta LIMIT 1")
+    suspend fun findSedimentDuplicate(encId: Long, sessionId: Long, title: String, content: String, meta: String): Long?
+
     @Query("SELECT * FROM encyclopedia_entries WHERE encyclopediaId = :encId ORDER BY id ASC")
     suspend fun getByEncyclopedia(encId: Long): List<EncyclopediaEntryEntity>
 

@@ -62,6 +62,8 @@
 
 生成任务将内容与进度同步保存。暂停在当前步骤完成后生效，任务状态持久化，续跑读取保存的进度。
 
+自动百科整理由 `SedimentEngine` 提取条目，`SedimentStore` 管理来源快照与事务提交。快照包含百科、会话、故事线、修订和最多十条来源消息；提交时复核有效原文、修订、百科关联与自动整理开关。整批条目通过格式检查后写入，使用 `inferred` 标记，并在 `metaJson` 中记录来源消息和故事线。相同快照下标题与正文一致的内容去重；角色设定由显式编辑流程保存。
+
 ## 本地数据与资料交换
 
 [AppDatabase.kt](../android/app/src/main/java/com/mojing/app/data/local/AppDatabase.kt)维护 Room schema 与 migration。媒体使用应用文件或授权 URI，平台凭据由 SecureStorage 管理。

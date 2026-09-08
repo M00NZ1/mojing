@@ -495,7 +495,7 @@ fun WorldConfigTab(
             Column(modifier = Modifier.weight(1f)) {
                 Text("自动沉淀百科")
                 if (w.autoSedimentEnabled) {
-                    Text("每 ${w.sedimentInterval} 条", style = MaterialTheme.typography.labelSmall)
+                    Text("新事实存入百科，可查看与确认", style = MaterialTheme.typography.labelSmall)
                 }
             }
             Switch(

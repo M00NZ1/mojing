@@ -2167,6 +2167,7 @@ class ChatViewModel @Inject constructor(
                                 sedimentEngine.sedimentFromMessages(
                                     encyclopediaId = world.encyclopediaId,
                                     sessionId = sessionId,
+                                    branchId = branchId,
                                     messages = msgs.takeLast(10),
                                     apiKey = apiKey,
                                     baseUrl = llmHookBase,

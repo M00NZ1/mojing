@@ -4,27 +4,31 @@ import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
 import com.mojing.app.data.remote.ChatMessage
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import com.mojing.app.domain.usecase.SaveCharacterEntryUseCase
+import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class SedimentEngine @Inject constructor(
     private val llmRetry: LlmRetry,
-    private val saveCharacterEntry: SaveCharacterEntryUseCase,
+    private val store: SedimentStore,
 ) {
     suspend fun sedimentFromMessages(
         encyclopediaId: Long,
         sessionId: Long,
+        branchId: String,
         messages: List<com.mojing.app.data.local.entity.MessageEntity>,
         apiKey: String,
         baseUrl: String,
         model: String
     ) {
         if (messages.isEmpty()) return
-        val sourceMessageId = messages.lastOrNull()?.id?.takeIf { it > 0 }
+        val snapshot = try { store.read(encyclopediaId, sessionId, branchId, messages.takeLast(10)) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { return }
+        if (snapshot == null) return
 
-        val conversationText = messages.takeLast(30).joinToString("\n") { msg ->
+        val conversationText = snapshot.sources.joinToString("\n") { msg ->
             "${msg.speakerType}: ${ConversationMessageText.forDerivedContext(msg).take(300)}"
         }
 
@@ -49,21 +53,21 @@ class SedimentEngine @Inject constructor(
             val json = extractJson(result)
             @Suppress("UNCHECKED_CAST")
             val list = (Gson().fromJson(json, object : TypeToken<List<Map<String, Any>>>() {}.type) as? List<Map<String, Any>>) ?: emptyList()
-            for (item in list) {
-                saveCharacterEntry(
-                    EncyclopediaEntryEntity(
-                        encyclopediaId = encyclopediaId,
-                        title = (item["title"] as? String) ?: "新条目",
-                        entryType = (item["entry_type"] as? String) ?: "concept",
-                        content = (item["content"] as? String) ?: "",
-                        summary = (item["summary"] as? String) ?: "",
-                        confidence = "inferred",
-                        sourceSessionId = sessionId,
-                        sourceMessageId = sourceMessageId
-                    )
-                )
+            if (list.size > 8) return
+            val allowedTypes = setOf("world", "character", "faction", "location", "item", "event", "skill", "concept")
+            val entries = list.map { item ->
+                val title = (item["title"] as? String)?.trim()?.takeIf { it.isNotEmpty() && it.length <= 200 } ?: return
+                val content = (item["content"] as? String)?.trim()?.takeIf { it.isNotEmpty() && it.length <= 6000 } ?: return
+                val type = (item["entry_type"] as? String) ?: "concept"
+                if (type !in allowedTypes) return
+                val summary = (item["summary"] as? String).orEmpty()
+                if (summary.length > 1000) return
+                EncyclopediaEntryEntity(encyclopediaId = encyclopediaId, title = title,
+                    entryType = type, content = content, summary = summary)
             }
-        } catch (_: Exception) {}
+            store.commit(snapshot, entries)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { }
     }
 
     private fun extractJson(text: String): String {
