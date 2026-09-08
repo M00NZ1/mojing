@@ -130,8 +130,10 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
                             OutlinedButton(enabled = names.isNotEmpty() && !busy && !fetching, onClick = { modelMenu = true }) {
                                 Text("默认模型：${p.selectedModel.takeIf { it in names } ?: names.firstOrNull().orEmpty()} ▾")
                             }
-                            DropdownMenu(expanded = modelMenu, onDismissRequest = { modelMenu = false }, modifier = Modifier.heightIn(max = 240.dp)) {
-                                names.forEach { name -> DropdownMenuItem(text = { Text(name) }, onClick = { draft = p.copy(selectedModel = name); modelMenu = false }) }
+                            if (modelMenu) {
+                                ModelNamePicker(names, p.selectedModel.takeIf { it in names } ?: names.firstOrNull().orEmpty(),
+                                    onSelect = { name -> draft = p.copy(selectedModel = name); modelMenu = false },
+                                    onDismiss = { modelMenu = false })
                             }
                         }
                     }
