@@ -32,6 +32,27 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class EntryEditViewModelTest {
     @Test
+    fun loadingVersionRequiresDraftReplacementAndRejectsOtherEntries() = runTest(dispatcher) {
+        val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, title = "当前正文")
+        val version = com.mojing.app.data.local.entity.EntryVersionEntity(id = 6, entryId = 8, title = "历史正文")
+        val dao = mockk<EncyclopediaEntryDao> { coEvery { getById(8) } returns entry }
+        val versions = mockk<EntryVersionDao> { coEvery { getPage(8, any(), 11) } returns listOf(version) }
+        val viewModel = createViewModel(encyclopediaDao(), dao, versions)
+        viewModel.load(3, 8)
+        viewModel.updateTitle("未保存正文")
+        assertFalse(viewModel.applyVersionToForm(version))
+        assertEquals("未保存正文", viewModel.state.value.title)
+        assertEquals(version, viewModel.state.value.pendingVersion)
+        viewModel.dismissVersionReplacement()
+        assertEquals(null, viewModel.state.value.pendingVersion)
+        assertFalse(viewModel.applyVersionToForm(version.copy(entryId = 99), true))
+        assertTrue(viewModel.applyVersionToForm(version, true))
+        assertEquals("历史正文", viewModel.state.value.title)
+        assertTrue(viewModel.state.value.isDirty)
+        assertEquals(null, viewModel.state.value.pendingVersion)
+    }
+
+    @Test
     fun versionPagesReplaceWindowAndKeepDraft() = runTest(dispatcher) {
         val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, title = "百科")
         val dao = mockk<EncyclopediaEntryDao> { coEvery { getById(8) } returns entry }

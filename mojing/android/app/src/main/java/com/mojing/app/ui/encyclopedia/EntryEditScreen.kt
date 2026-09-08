@@ -474,9 +474,8 @@ fun EntryEditScreen(
                                         }
                                     }
                                     TextButton(onClick = {
-                                        viewModel.applyVersionToForm(v)
-                                        subTab = EntryEditSubTab.EDIT
-                                    }) { Text("载入") }
+                                        if (viewModel.applyVersionToForm(v)) subTab = EntryEditSubTab.EDIT
+                                    }, enabled = !pageBusy && !state.isLoadingVersions) { Text("载入") }
                                 }
                             }
                         }
@@ -485,6 +484,22 @@ fun EntryEditScreen(
             }
         }
         }
+    }
+
+    state.pendingVersion?.let { version ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissVersionReplacement,
+            title = { Text("载入 v${version.version}？") },
+            text = { Text("当前未保存的修改将被替换。载入后可继续编辑，再保存为新版本。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (viewModel.applyVersionToForm(version, replaceDraft = true)) subTab = EntryEditSubTab.EDIT
+                }, enabled = !pageBusy && !state.isLoadingVersions) { Text("替换并载入") }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissVersionReplacement) { Text("保留当前修改") }
+            },
+        )
     }
 
     if (showDiscardDialog) {

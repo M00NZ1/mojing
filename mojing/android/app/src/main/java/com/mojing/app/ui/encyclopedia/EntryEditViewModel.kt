@@ -49,6 +49,7 @@ data class EntryEditState(
     val hasOlderVersions: Boolean = false,
     val isOlderVersionPage: Boolean = false,
     val isLoadingVersions: Boolean = false,
+    val pendingVersion: EntryVersionEntity? = null,
     val snackbar: String? = null,
     /** 用于按百科题材过滤「类型」选项（名称+简介+标签拼接） */
     val encyclopediaHint: String = "",
@@ -414,10 +415,23 @@ class EntryEditViewModel @Inject constructor(
         }
     }
 
-    /** 将某一历史快照载入表单（需再点保存才会写回当前条目） */
-    fun applyVersionToForm(v: EntryVersionEntity) {
+    fun dismissVersionReplacement() {
+        _state.value = _state.value.copy(pendingVersion = null)
+    }
+
+    /** 将历史快照载入表单，替换草稿前确认；保存操作独立执行。 */
+    fun applyVersionToForm(v: EntryVersionEntity, replaceDraft: Boolean = false): Boolean {
+        val state = _state.value
+        if (!state.isLoaded || state.loadError != null || state.isSaving || state.isLoadingVersions ||
+            state.isAiCompleting || state.isGeneratingCover || currentEntry?.id != v.entryId ||
+            v !in state.versions) return false
+        if (state.isDirty && !replaceDraft) {
+            _state.value = state.copy(pendingVersion = v)
+            return false
+        }
         updateDraft {
             it.copy(
+                pendingVersion = null,
                 title = v.title,
                 summary = v.summary,
                 content = v.content,
@@ -426,6 +440,7 @@ class EntryEditViewModel @Inject constructor(
                 snackbar = UserFacingStrings.entryHistoryVersionLoaded(),
             )
         }
+        return true
     }
 
 }
