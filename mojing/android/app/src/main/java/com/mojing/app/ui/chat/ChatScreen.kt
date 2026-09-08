@@ -553,6 +553,7 @@ fun ChatScreen(
                         }
                     },
                     onWorldCredentialFieldsDirty = { worldCredentialFieldsDirty = it },
+                    worldCredentialFieldsDirty = worldCredentialFieldsDirty,
                     onToggleEventResolved = { viewModel.toggleEventNodeResolved(it) },
                     onDeleteEventNode = { viewModel.deleteEventNode(it) },
                     onJumpToMemorySource = { messageId ->

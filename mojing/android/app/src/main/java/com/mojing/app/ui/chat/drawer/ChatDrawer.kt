@@ -53,6 +53,7 @@ fun ChatDrawer(
     onWorldSettingChanged: (String, Boolean) -> Unit,
     onSaveSessionWorldCredentials: (SessionWorldCredentialDraft) -> Unit,
     onWorldCredentialFieldsDirty: (Boolean) -> Unit,
+    worldCredentialFieldsDirty: Boolean = false,
     onToggleEventResolved: (Long) -> Unit,
     onDeleteEventNode: (Long) -> Unit,
     onJumpToMemorySource: (Long) -> Unit,
@@ -67,20 +68,26 @@ fun ChatDrawer(
     onSessionThinkMax: (Boolean) -> Unit,
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("参与者", "世界", "记忆", "事件", "书签")
+    var pendingTab by remember { mutableStateOf<Int?>(null) }
+    val tabs = listOf("角色", "世界", "记忆", "事件", "书签")
 
-    Column(modifier = Modifier.width(320.dp)) {
+    Column(modifier = Modifier.widthIn(max = 400.dp).fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("对话设置", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), modifier = Modifier.weight(1f))
+            Text("会话资料", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), modifier = Modifier.weight(1f))
             IconButton(onClick = onClose) { Icon(Icons.Default.Close, "关闭") }
         }
         HorizontalDivider()
-        PrimaryTabRow(selectedTabIndex = selectedTab) {
+        PrimaryScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 12.dp) {
             tabs.forEachIndexed { index, title ->
-                Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(title) })
+                Tab(selected = selectedTab == index, onClick = {
+                    if (index != selectedTab) {
+                        if (selectedTab == 1 && worldCredentialFieldsDirty) pendingTab = index
+                        else selectedTab = index
+                    }
+                }, text = { Text(title, maxLines = 1) })
             }
         }
         when (selectedTab) {
@@ -128,6 +135,23 @@ fun ChatDrawer(
             4 -> BookmarksTab(bookmarks, bookmarkPreviews, onJumpToBookmark, onRemoveBookmark)
         }
     }
+    pendingTab?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingTab = null },
+            title = { Text("世界配置尚未保存") },
+            text = { Text("继续编辑，或放弃本次修改后切换资料。") },
+            confirmButton = {
+                TextButton(onClick = { pendingTab = null }) { Text("继续编辑") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    pendingTab = null
+                    onWorldCredentialFieldsDirty(false)
+                    selectedTab = target
+                }) { Text("放弃修改并切换") }
+            },
+        )
+    }
 }
 
 @Composable
@@ -142,154 +166,157 @@ fun ParticipantsTab(
     onSpeakerTurnModeChange: (String) -> Unit,
     isGenerating: Boolean = false,
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text("发言调度", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
-        if (isGenerating) {
-            Text(
-                "回复生成期间暂不可调整参与角色和发言方式",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-            )
+    LazyColumn(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(bottom = 16.dp)) {
+        item(key = "controls") {
+            Column(Modifier.fillMaxWidth()) {
+                Text("发言调度", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                if (isGenerating) {
+                    Text(
+                        "回复生成期间暂不可调整参与角色和发言方式",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected = speakerTurnMode != "manual",
+                        onClick = { onSpeakerTurnModeChange("auto") },
+                        enabled = !isGenerating,
+                        label = { Text("按发言率") },
+                    )
+                    FilterChip(
+                        selected = speakerTurnMode == "manual",
+                        onClick = { onSpeakerTurnModeChange("manual") },
+                        enabled = !isGenerating,
+                        label = { Text("手动指定") },
+                    )
+                }
+                if (speakerTurnMode == "manual") {
+                    Text(
+                        "发送前在输入栏上方点选要让谁回复；不选则只发送你的消息。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    )
+                }
+                TextButton(
+                    onClick = onAddParticipant,
+                    enabled = !isGenerating,
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                ) {
+                    Icon(Icons.Default.PersonAdd, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("添加角色到对话")
+                }
+                HorizontalDivider()
+            }
         }
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            FilterChip(
-                selected = speakerTurnMode != "manual",
-                onClick = { onSpeakerTurnModeChange("auto") },
-                enabled = !isGenerating,
-                label = { Text("按发言率") },
-            )
-            FilterChip(
-                selected = speakerTurnMode == "manual",
-                onClick = { onSpeakerTurnModeChange("manual") },
-                enabled = !isGenerating,
-                label = { Text("手动指定") },
-            )
-        }
-        if (speakerTurnMode == "manual") {
-            Text(
-                "发送前在输入栏上方点选要让谁回复；不选则只发送你的消息。",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-            )
-        }
-        TextButton(
-            onClick = onAddParticipant,
-            enabled = !isGenerating,
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
-        ) {
-            Icon(Icons.Default.PersonAdd, null)
-            Spacer(Modifier.width(8.dp))
-            Text("添加角色到对话")
-        }
-        HorizontalDivider()
-
         if (participants.isEmpty()) {
-            Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("请先添加至少一个角色", color = MaterialTheme.colorScheme.error)
-                    Text("点击上方按钮选择角色加入对话", style = MaterialTheme.typography.labelSmall)
+            item(key = "empty") {
+                Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("请先添加至少一个角色", color = MaterialTheme.colorScheme.error)
+                        Text("点击上方按钮选择角色加入对话", style = MaterialTheme.typography.labelSmall)
+                    }
                 }
             }
         } else {
-            LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                items(participants, key = { it.id }) { p ->
-                    val name = participantDisplayName(p.characterId, characterNames)
-                    val strategyLabel = participantSpeakerStrategyLabel(p.speakerStrategy)
-                    var talkativenessDraft by remember(p.id) { mutableFloatStateOf(p.talkativeness) }
-                    var isSavingTalkativeness by remember(p.id) { mutableStateOf(false) }
-                    LaunchedEffect(p.talkativeness) {
-                        if (!isSavingTalkativeness) talkativenessDraft = p.talkativeness
-                    }
-                    Card(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            items(participants, key = { it.id }) { p ->
+                val name = participantDisplayName(p.characterId, characterNames)
+                val strategyLabel = participantSpeakerStrategyLabel(p.speakerStrategy)
+                var talkativenessDraft by remember(p.id) { mutableFloatStateOf(p.talkativeness) }
+                var isSavingTalkativeness by remember(p.id) { mutableStateOf(false) }
+                LaunchedEffect(p.talkativeness) {
+                    if (!isSavingTalkativeness) talkativenessDraft = p.talkativeness
+                }
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        Column(
-                            modifier = Modifier.fillMaxWidth().padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(Icons.Default.Person, null, modifier = Modifier.size(32.dp))
-                                Spacer(Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        name,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Text(
-                                        buildString {
-                                            if (speakerTurnMode == "manual") {
-                                                append("等待手动选择")
-                                            } else {
-                                                append("$strategyLabel · 发言率 ${(talkativenessDraft * 100).toInt()}%")
-                                            }
-                                            if (isSavingTalkativeness) append(" · 保存中…")
-                                        },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text(
-                                        if (p.muted) "暂停" else "参与",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Switch(
-                                        checked = !p.muted,
-                                        onCheckedChange = { onToggleMute(p.id) },
-                                        enabled = !isGenerating,
-                                        modifier = Modifier.semantics {
-                                            contentDescription = "$name 发言状态"
-                                            stateDescription = if (p.muted) "已暂停" else "参与中"
-                                        },
-                                    )
-                                }
-                                IconButton(
-                                    onClick = { onRemoveParticipant(p.id) },
-                                    enabled = !isGenerating,
-                                    modifier = Modifier.size(48.dp),
-                                ) {
-                                    Icon(
-                                        Icons.Default.PersonRemove,
-                                        "从对话移除$name",
-                                        modifier = Modifier.size(20.dp),
-                                        tint = MaterialTheme.colorScheme.error,
-                                    )
-                                }
-                            }
-                            if (speakerTurnMode != "manual") {
-                                Slider(
-                                    value = talkativenessDraft,
-                                    onValueChange = { talkativenessDraft = it },
-                                    onValueChangeFinished = {
-                                        if (!isSavingTalkativeness) {
-                                            isSavingTalkativeness = true
-                                            onUpdateTalkativeness(p.id, talkativenessDraft) { saved ->
-                                                isSavingTalkativeness = false
-                                                if (!saved) talkativenessDraft = p.talkativeness
-                                            }
+                            Icon(Icons.Default.Person, null, modifier = Modifier.size(32.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    name,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    buildString {
+                                        if (speakerTurnMode == "manual") {
+                                            append("等待手动选择")
+                                        } else {
+                                            append("$strategyLabel · 发言率 ${(talkativenessDraft * 100).toInt()}%")
                                         }
+                                        if (isSavingTalkativeness) append(" · 保存中…")
                                     },
-                                    valueRange = 0.05f..1f,
-                                    enabled = !isSavingTalkativeness && !isGenerating,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .semantics { contentDescription = "$name 发言率" },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    if (p.muted) "暂停" else "参与",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Switch(
+                                    checked = !p.muted,
+                                    onCheckedChange = { onToggleMute(p.id) },
+                                    enabled = !isGenerating,
+                                    modifier = Modifier.semantics {
+                                        contentDescription = "$name 发言状态"
+                                        stateDescription = if (p.muted) "已暂停" else "参与中"
+                                    },
+                                )
+                            }
+                            IconButton(
+                                onClick = { onRemoveParticipant(p.id) },
+                                enabled = !isGenerating,
+                                modifier = Modifier.size(48.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.PersonRemove,
+                                    "从对话移除$name",
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+                        if (speakerTurnMode != "manual") {
+                            Slider(
+                                value = talkativenessDraft,
+                                onValueChange = { talkativenessDraft = it },
+                                onValueChangeFinished = {
+                                    if (!isSavingTalkativeness) {
+                                        isSavingTalkativeness = true
+                                        onUpdateTalkativeness(p.id, talkativenessDraft) { saved ->
+                                            isSavingTalkativeness = false
+                                            if (!saved) talkativenessDraft = p.talkativeness
+                                        }
+                                    }
+                                },
+                                valueRange = 0.05f..1f,
+                                enabled = !isSavingTalkativeness && !isGenerating,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .semantics { contentDescription = "$name 发言率" },
+                            )
                         }
                     }
                 }

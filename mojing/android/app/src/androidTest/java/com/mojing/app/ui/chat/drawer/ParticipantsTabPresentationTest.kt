@@ -1,6 +1,8 @@
 package com.mojing.app.ui.chat.drawer
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
@@ -27,7 +29,7 @@ class ParticipantsTabPresentationTest {
     fun participantCardUsesReadableLabelsAndReachableActions() {
         composeRule.setContent {
             MaterialTheme {
-                Box(Modifier.width(320.dp)) {
+                Box(Modifier.width(320.dp).height(240.dp)) {
                     ParticipantsTab(
                         participants = listOf(
                             SessionParticipantEntity(
@@ -48,7 +50,7 @@ class ParticipantsTabPresentationTest {
             }
         }
 
-        composeRule.onNodeWithText("自然发言 · 发言率 70%").assertIsDisplayed()
+        composeRule.onNodeWithText("自然发言 · 发言率 70%").performScrollTo().assertIsDisplayed()
         composeRule.onAllNodesWithText("natural").assertCountEquals(0)
         composeRule.onNodeWithContentDescription("林墨 发言状态").assertIsOn()
         composeRule.onNodeWithContentDescription("从对话移除林墨")
