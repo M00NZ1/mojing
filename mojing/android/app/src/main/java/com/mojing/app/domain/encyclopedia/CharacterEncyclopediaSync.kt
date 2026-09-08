@@ -11,6 +11,11 @@ import com.google.gson.JsonParser
  */
 object CharacterEncyclopediaSync {
 
+    /** 对话来源的独立资料在确认、改名或调整类型后仍保留原身份。 */
+    fun isConversationNote(entry: EncyclopediaEntryEntity): Boolean =
+        (entry.sourceSessionId ?: 0L) > 0L &&
+            (readLinkedCharacterId(entry.metaJson) ?: 0L) <= 0L
+
     fun readLinkedCharacterId(metaJson: String): Long? =
         runCatching {
             JsonParser.parseString(metaJson.ifBlank { "{}" }).asJsonObject

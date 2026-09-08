@@ -225,6 +225,13 @@ fun EntryEditScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text("条目内容", style = MaterialTheme.typography.titleMedium)
+                    if (state.isConversationNote) {
+                        Text(
+                            "对话资料 · 在此编辑正文与确认状态；角色设定在角色页管理。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     // 内置名称生成器（generate-names）：与 Web 一致见 [EncyclopediaUiConfig]；当前关闭且 Android 无独立入口。
                     OutlinedTextField(
                         value = state.title, onValueChange = { viewModel.updateTitle(it) },

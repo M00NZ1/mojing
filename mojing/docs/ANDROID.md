@@ -66,6 +66,8 @@
 
 ## 本地数据与资料交换
 
+`SaveCharacterEntryUseCase` 根据数据库中的来源与角色关联处理编辑保存。带会话来源且未关联角色的条目独立保存，确认状态与扩展资料编辑沿用这一身份；已有角色镜像继续通过关联 ID 同步。编辑页由持久化条目生成“对话资料”提示。
+
 [AppDatabase.kt](../android/app/src/main/java/com/mojing/app/data/local/AppDatabase.kt)维护 Room schema 与 migration。媒体使用应用文件或授权 URI，平台凭据由 SecureStorage 管理。
 
 初始资料从 [seed_data.json](../android/app/src/main/res/raw/seed_data.json)读取，与[内置目录](../data/builtin_pack/starter_catalog.json)对应。目录包含“雾港来信”百科、世界和两名角色，初始化记录使用 `builtin_catalog_v2`。

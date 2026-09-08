@@ -7,6 +7,7 @@ import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.EntryVersionDao
 import com.mojing.app.data.local.dao.EncyclopediaEntryDao
 import com.mojing.app.domain.usecase.SaveCharacterEntryUseCase
+import com.mojing.app.domain.encyclopedia.CharacterEncyclopediaSync
 import com.mojing.app.data.local.entity.EntryVersionEntity
 import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
 import com.mojing.app.data.repository.ImageRepository
@@ -24,6 +25,7 @@ import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 data class EntryEditState(
+    val isConversationNote: Boolean = false,
     val title: String = "",
     val entryType: String = "character",
     val summary: String = "",
@@ -75,6 +77,7 @@ private fun EntryEditState.toDraftSnapshot() = EntryDraftSnapshot(
 )
 
 private fun EntryEditState.withPersistedEntry(entry: EncyclopediaEntryEntity) = copy(
+    isConversationNote = CharacterEncyclopediaSync.isConversationNote(entry),
     title = entry.title,
     entryType = entry.entryType,
     summary = entry.summary,

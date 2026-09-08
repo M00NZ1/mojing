@@ -30,6 +30,19 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class EntryEditViewModelTest {
+    @Test
+    fun loadedConversationNoteKeepsItsLabelWhileEditingConfidence() = runTest {
+        val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3,
+            title = "线索", sourceSessionId = 7, confidence = "inferred")
+        val dao = mockk<EncyclopediaEntryDao> { coEvery { getById(8) } returns entry }
+        val viewModel = createViewModel(encyclopediaDao(), dao)
+        viewModel.load(3, 8)
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value.isConversationNote)
+        viewModel.updateConfidence("confirmed")
+        assertTrue(viewModel.state.value.isConversationNote)
+    }
+
     private val dispatcher = UnconfinedTestDispatcher()
 
     @Before

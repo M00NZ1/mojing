@@ -93,6 +93,29 @@ class SaveCharacterEntryUseCaseInstrumentedTest {
     }
 
     @Test
+    fun confirmingConversationNotePreservesSameNameCharacterAndMirror() = runBlocking {
+        val mirror = saveCharacterEntry(EncyclopediaEntryEntity(
+            encyclopediaId = firstEncyclopediaId, title = "林岚",
+            entryType = "character", content = "完整角色设定",
+        ))
+        val characterId = CharacterEncyclopediaSync.readLinkedCharacterId(mirror.metaJson)!!
+        val note = EncyclopediaEntryEntity(encyclopediaId = firstEncyclopediaId,
+            title = "林岚", entryType = "character", content = "对话中新线索",
+            confidence = "inferred", sourceSessionId = 7, sourceMessageId = 8)
+        val noteId = database.encyclopediaEntryDao().upsert(note)
+        val saved = saveCharacterEntry(note.copy(id = noteId, confidence = "confirmed",
+            sourceSessionId = null, metaJson = "{\"linkedCharacterId\":$characterId}"))
+        assertNull(CharacterEncyclopediaSync.readLinkedCharacterId(saved.metaJson))
+        assertEquals(7L, saved.sourceSessionId)
+        assertEquals("完整角色设定", database.characterDao().getById(characterId)?.personaPrompt)
+        assertNotNull(database.encyclopediaEntryDao().getById(mirror.id))
+        assertEquals(1, mirrors(firstEncyclopediaId, characterId).size)
+        val edited = saveCharacterEntry(saved.copy(content = "已整理的线索"))
+        assertNull(CharacterEncyclopediaSync.readLinkedCharacterId(edited.metaJson))
+        assertEquals("完整角色设定", database.characterDao().getById(characterId)?.personaPrompt)
+    }
+
+    @Test
     fun changingCharacterEntryTypeUnbindsWithoutDeletingCharacter() = runBlocking {
         val created = saveCharacterEntry(
             EncyclopediaEntryEntity(

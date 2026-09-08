@@ -32,6 +32,14 @@ class SaveCharacterEntryUseCase @Inject constructor(
                 ?.let { CharacterEncyclopediaSync.readLinkedCharacterId(it.metaJson) }
                 ?.takeIf { it > 0L }
 
+            // 使用已保存的来源身份，确认状态或可编辑的扩展资料不会触发角色绑定。
+            if (previous != null && CharacterEncyclopediaSync.isConversationNote(previous)) {
+                return@withTransaction upsertEntry(entry.withoutLinkedCharacterId().copy(
+                    sourceSessionId = previous.sourceSessionId,
+                    sourceMessageId = previous.sourceMessageId,
+                ))
+            }
+
             if (entry.entryType != "character") {
                 val saved = upsertEntry(entry.withoutLinkedCharacterId())
                 detachPreviousCharacter(previous, previousLinkedId)

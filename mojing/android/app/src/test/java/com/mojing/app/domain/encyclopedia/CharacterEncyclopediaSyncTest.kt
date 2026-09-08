@@ -13,6 +13,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CharacterEncyclopediaSyncTest {
+    @Test
+    fun conversationIdentitySurvivesConfirmationAndTypeChanges() {
+        val note = EncyclopediaEntryEntity(encyclopediaId = 9, sourceSessionId = 7,
+            entryType = "character", confidence = "inferred")
+        assertTrue(CharacterEncyclopediaSync.isConversationNote(note))
+        assertTrue(CharacterEncyclopediaSync.isConversationNote(note.copy(confidence = "confirmed", entryType = "event")))
+        assertEquals(false, CharacterEncyclopediaSync.isConversationNote(note.copy(sourceSessionId = null)))
+        assertEquals(false, CharacterEncyclopediaSync.isConversationNote(note.copy(metaJson = "{\"linkedCharacterId\":5}")))
+    }
+
     private val entryDao = mockk<EncyclopediaEntryDao>(relaxed = true)
 
     @Test
