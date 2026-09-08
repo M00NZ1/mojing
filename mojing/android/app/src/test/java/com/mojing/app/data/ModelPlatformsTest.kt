@@ -6,6 +6,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ModelPlatformsTest {
+    @Test fun draftChangesIncludeCredentialsModelsAndSelection() {
+        val original = ModelPlatform("p", "平台", "https://example.test", "test", listOf("a", "b"), "b")
+        assertFalse(ModelPlatformCodec.hasDraftChanges(original, original, "a，b\na"))
+        assertTrue(ModelPlatformCodec.hasDraftChanges(original, original.copy(apiKey = "changed"), "a\nb"))
+        assertTrue(ModelPlatformCodec.hasDraftChanges(original, original.copy(selectedModel = "a"), "a\nb"))
+        assertTrue(ModelPlatformCodec.hasDraftChanges(original, original, "b\na"))
+        assertTrue(ModelPlatformCodec.hasDraftChanges(original, original, "a\nb\nc"))
+        assertFalse(ModelPlatformCodec.hasDraftChanges(original, original.copy(name = "平台"), "a\nb"))
+    }
+
     @Test fun discoveryKeepsManualOrderAndOnlyAppendsNewNames() {
         val existing = listOf("manual", "chosen", "chat")
         val merged = ModelPlatformCodec.mergeDiscovered(existing, listOf("chat", " new ", "", "new"))

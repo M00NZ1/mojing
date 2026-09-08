@@ -15,6 +15,9 @@ data class ModelPlatform(
 )
 
 object ModelPlatformCodec {
+    fun hasDraftChanges(original: ModelPlatform, draft: ModelPlatform, modelText: String): Boolean =
+        draft.copy(models = modelNames(modelText)) != original
+
     fun mergeDiscovered(existing: List<String>, discovered: List<String>): List<String> =
         (existing + discovered).map(String::trim).filter(String::isNotEmpty).distinct()
 

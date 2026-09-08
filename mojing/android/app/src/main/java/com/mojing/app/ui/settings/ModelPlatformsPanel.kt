@@ -24,6 +24,8 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
     val initialPlatforms = remember { runCatching { viewModel.modelPlatforms() } }
     var platforms by remember { mutableStateOf(initialPlatforms.getOrDefault(emptyList())) }
     var draft by remember { mutableStateOf<ModelPlatform?>(null) }
+    var originalDraft by remember { mutableStateOf<ModelPlatform?>(null) }
+    var confirmDiscard by remember { mutableStateOf(false) }
     var modelsText by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var fetching by remember { mutableStateOf(false) }
@@ -32,6 +34,14 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
     var error by remember { mutableStateOf<String?>(null) }
     var presetMenu by remember { mutableStateOf(false) }
     var modelMenu by remember { mutableStateOf(false) }
+    fun requestClose() {
+        if (busy || fetching) return
+        val original = originalDraft
+        val current = draft
+        if (original != null && current != null && ModelPlatformCodec.hasDraftChanges(original, current, modelsText)) {
+            confirmDiscard = true
+        } else draft = null
+    }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (initialPlatforms.isFailure) {
             Text("平台配置暂时无法读取，原数据已保留。请恢复可用配置后重试。", color = MaterialTheme.colorScheme.error)
@@ -40,13 +50,14 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
             Text("我的平台", style = MaterialTheme.typography.titleMedium)
             TextButton(onClick = {
                 draft = ModelPlatform(UUID.randomUUID().toString(), "", "", "", emptyList())
+                originalDraft = draft; confirmDiscard = false
                 modelsText = ""; error = null; discoveryNotice = null
             }) { Text("添加平台") }
         }
         Text("每个平台独立保存 Key。保存后作为默认线路；聊天中可随时选择已配置的模型。",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         platforms.forEach { p ->
-            OutlinedCard(onClick = { draft = p; modelsText = p.models.joinToString("\n"); error = null; discoveryNotice = null },
+            OutlinedCard(onClick = { draft = p; originalDraft = p; confirmDiscard = false; modelsText = p.models.joinToString("\n"); error = null; discoveryNotice = null },
                 modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(p.name + if (p.id == activeId) " · 默认" else "", style = MaterialTheme.typography.titleMedium)
@@ -70,7 +81,7 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
     }
     draft?.let { p ->
         AlertDialog(
-            onDismissRequest = { if (!busy && !fetching) draft = null },
+            onDismissRequest = ::requestClose,
             title = { Text(if (platforms.any { it.id == p.id }) "编辑平台" else "添加平台") },
             text = {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -147,7 +158,20 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
                     }
                 }) { Text(if (busy) "保存中…" else "保存并设为默认") }
             },
-            dismissButton = { TextButton(enabled = !busy && !fetching, onClick = { draft = null }) { Text("取消") } },
+            dismissButton = { TextButton(enabled = !busy && !fetching, onClick = ::requestClose) { Text("取消") } },
+        )
+    }
+    if (confirmDiscard && draft != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDiscard = false },
+            title = { Text("放弃平台修改？") },
+            text = { Text("当前填写的配置尚未保存。") },
+            confirmButton = {
+                TextButton(onClick = { confirmDiscard = false; draft = null }) { Text("放弃修改") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDiscard = false }) { Text("继续编辑") }
+            },
         )
     }
 }
