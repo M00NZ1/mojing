@@ -106,6 +106,8 @@ try {
   await page.getByRole('button', { name: '继续索引', exact: true }).click();
   await page.waitForFunction(() => ![...document.querySelectorAll('button')].find((b) => b.textContent === '更早结果').disabled);
   assert.equal(await results.locator('li').count(), 25);
+  assert.equal(await results.locator('mark').count(), 25);
+  assert.equal(await results.locator('mark').first().textContent(), '线索');
   await page.getByRole('button', { name: '更早结果' }).click();
   await page.getByText(/^第 2 页 ·/).waitFor();
   await results.getByText('第 3500 夜 · 线索：码头留下的旧证词', { exact: true }).waitFor();
@@ -120,6 +122,7 @@ try {
   await searchInput.fill('旧信封');
   const oldHit = results.getByRole('button', { name: /第 3 夜/ });
   await oldHit.waitFor();
+  assert.equal(await oldHit.locator('mark').textContent(), '旧信封');
   locateFailure = true;
   await oldHit.click();
   await page.locator('.toast-error').filter({ hasText: '定位暂不可用' }).waitFor();

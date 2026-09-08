@@ -10,7 +10,8 @@
 .message-search-results li > button { width: 100%; text-align: left; padding: 10px 0; border: 0; background: transparent; color: var(--text); cursor: pointer; font-size: .82rem; }
 .message-search-results li > button:hover { background: var(--hover); }
 .message-search-results li strong { display: block; margin-bottom: 4px; }
-.message-search-results li span { display: block; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.message-search-results li span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--text-2); white-space: normal; overflow: hidden; overflow-wrap: anywhere; line-height: 1.6; }
+.message-search-results mark { color: var(--text); background: var(--hover); font-weight: 700; border-radius: 2px; text-decoration: underline; text-underline-offset: 2px; }
 .message-search-tools { margin-top: 6px; color: var(--text-2); }
 .message-search-tools summary { cursor: pointer; padding: 6px 0; }
 

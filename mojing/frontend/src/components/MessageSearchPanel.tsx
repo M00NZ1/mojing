@@ -5,6 +5,13 @@ import type { MessageSearchHit } from '../types';
 import InlineQueryError from './InlineQueryError';
 import './MessageSearchPanel.css';
 
+function SearchSnippet({ text, query }: { text: string; query: string }) {
+  if (!query) return <>{text}</>;
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return <>{text.split(new RegExp(`(${escaped})`, 'giu')).map((part, index) =>
+    index % 2 ? <mark key={index}>{part}</mark> : part)}</>;
+}
+
 export default function MessageSearchPanel({ sessionId, branchId, value, onChange, inputRef, onSelect, locatingId, locating, branchLabel }: {
   sessionId: number; branchId: string; value: string; onChange: (value: string) => void;
   inputRef: RefObject<HTMLInputElement>; onSelect: (hit: MessageSearchHit) => void;
@@ -39,7 +46,7 @@ export default function MessageSearchPanel({ sessionId, branchId, value, onChang
       {search.isSuccess && !search.data.items.length && <p>{progress?.ready ? '无匹配消息' : '已索引部分暂无匹配消息'}</p>}
       <ul>{search.data?.items.map((hit) => <li key={hit.id}><button type="button" disabled={locating || stale} onClick={() => onSelect(hit)}>
         <strong>{locatingId === hit.id ? '正在定位…' : hit.character_name || ({ user: '玩家', narrator: '旁白' }[hit.speaker_type] || '角色')}{hit.branch_id !== 'main' ? ` · ${branchLabel(hit.branch_id)}` : ''}</strong>
-        <span>{hit.snippet}</span></button></li>)}</ul>
+        <span><SearchSnippet text={hit.snippet} query={query} /></span></button></li>)}</ul>
       <div className="message-search-pagination"><button type="button" className="btn btn-ghost btn-sm" disabled={cursors.length === 1 || search.isFetching || stale} onClick={() => setNavigation({ scope, cursors: cursors.slice(0, -1) })}>较新结果</button>
         <span>第 {cursors.length} 页 · {search.data?.items.length ?? 0} 条</span><button type="button" className="btn btn-ghost btn-sm" disabled={!search.data?.next_cursor || search.isFetching || stale || !progress?.ready} onClick={() => setNavigation({ scope, cursors: [...cursors, search.data!.next_cursor!] })}>更早结果</button></div>
       <details className="message-search-tools"><summary>搜索维护</summary><p>可重建本机搜索索引，不会修改原始对话。关闭搜索会暂停尚未完成的整理。</p>
