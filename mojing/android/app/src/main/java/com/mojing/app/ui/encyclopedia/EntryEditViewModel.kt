@@ -324,19 +324,21 @@ class EntryEditViewModel @Inject constructor(
     }
 
     fun save() {
+        val submittedState = _state.value
+        if (!submittedState.isLoaded || submittedState.loadError != null || submittedState.isSaving ||
+            (submittedState.isPersisted && !submittedState.isDirty)) return
+        val submittedDraft = submittedState.toDraftSnapshot()
+        if (submittedState.title.isBlank()) {
+            showSnackbar(UserFacingStrings.entryTitleRequired())
+            return
+        }
+        val parsedMeta = runCatching { JsonParser.parseString(submittedState.metaJson.ifBlank { "{}" }) }.getOrNull()
+        if (parsedMeta == null || !parsedMeta.isJsonObject) {
+            showSnackbar("扩展资料 JSON 须为对象 {…}，请修正后重试")
+            return
+        }
+        _state.value = submittedState.copy(isSaving = true)
         viewModelScope.launch {
-            val submittedState = _state.value
-            val submittedDraft = submittedState.toDraftSnapshot()
-            if (submittedState.title.isBlank()) {
-                showSnackbar(UserFacingStrings.entryTitleRequired())
-                return@launch
-            }
-            val parsedMeta = runCatching { JsonParser.parseString(submittedState.metaJson.ifBlank { "{}" }) }.getOrNull()
-            if (parsedMeta == null || !parsedMeta.isJsonObject) {
-                showSnackbar("扩展资料 JSON 须为对象 {…}，请修正后重试")
-                return@launch
-            }
-            _state.value = _state.value.copy(isSaving = true)
             try {
                 val base = currentEntry ?: EncyclopediaEntryEntity(encyclopediaId = encId)
                 val now = System.currentTimeMillis()
@@ -394,11 +396,15 @@ class EntryEditViewModel @Inject constructor(
                     persisted.copy(snackbar = UserFacingStrings.entrySaved())
                 }
                 _state.value = result.copy(isDirty = result.toDraftSnapshot() != savedDraft)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 _state.value = _state.value.copy(
                     isSaving = false,
                     snackbar = UserFacingStrings.localSaveFailed("条目"),
                 )
+            } finally {
+                _state.value = _state.value.copy(isSaving = false)
             }
         }
     }

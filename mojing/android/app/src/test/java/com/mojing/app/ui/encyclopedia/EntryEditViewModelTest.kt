@@ -10,6 +10,7 @@ import com.mojing.app.data.repository.ImageRepository
 import com.mojing.app.domain.engine.AiCompleter
 import com.mojing.app.domain.usecase.SaveCharacterEntryUseCase
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
@@ -30,6 +31,36 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class EntryEditViewModelTest {
+    @Test
+    fun repeatedSaveCreatesOneEntryAndFailureAllowsRetry() = runTest(dispatcher) {
+        val release = CompletableDeferred<Unit>()
+        var failSave = true
+        val save = mockk<SaveCharacterEntryUseCase> {
+            coEvery { this@mockk.invoke(any()) } coAnswers {
+                release.await()
+                if (failSave) error("write failed")
+                firstArg<EncyclopediaEntryEntity>().copy(id = 12)
+            }
+        }
+        val viewModel = createViewModel(encyclopediaDao(), mockk(relaxed = true), saveEntry = save)
+        viewModel.load(3, 0)
+        viewModel.updateTitle("潮汐钟")
+        viewModel.save()
+        viewModel.save()
+        coVerify(exactly = 1) { save(any()) }
+        release.complete(Unit)
+        advanceUntilIdle()
+        assertFalse(viewModel.state.value.isSaving)
+        assertTrue(viewModel.state.value.isDirty)
+        failSave = false
+        viewModel.save()
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value.isPersisted)
+        assertFalse(viewModel.state.value.isDirty)
+        viewModel.save()
+        coVerify(exactly = 2) { save(any()) }
+    }
+
     @Test
     fun loadedConversationNoteKeepsItsLabelWhileEditingConfidence() = runTest {
         val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3,
