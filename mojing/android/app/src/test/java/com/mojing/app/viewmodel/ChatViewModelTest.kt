@@ -1,5 +1,7 @@
 package com.mojing.app.viewmodel
 
+import kotlinx.coroutines.flow.first
+
 import androidx.lifecycle.SavedStateHandle
 import android.content.Context
 import com.mojing.app.data.ChatDraftSnapshot
@@ -2226,6 +2228,9 @@ class ChatViewModelTest {
         advanceUntilIdle()
 
         vm.searchSession("钟声")
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            kotlinx.coroutines.withTimeout(5000) { vm.state.first { it.completedSearchQuery == "钟声" } }
+        }
         advanceUntilIdle()
         assertEquals(listOf(500L), vm.state.value.searchResults.map { it.id })
         assertFalse(vm.state.value.isSearchingMessages)
@@ -2260,6 +2265,9 @@ class ChatViewModelTest {
         vm.searchSession("新")
         runCurrent()
         release.complete(Unit)
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            kotlinx.coroutines.withTimeout(5000) { vm.state.first { it.completedSearchQuery == "新" } }
+        }
         advanceUntilIdle()
         assertEquals(listOf(2L), vm.state.value.searchResults.map { it.id })
         assertEquals("新", vm.state.value.completedSearchQuery)

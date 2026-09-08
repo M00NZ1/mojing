@@ -3159,7 +3159,10 @@ class ChatViewModel @Inject constructor(
                 } else {
                     messageDao.searchVisibleMessages(searchedSession, branchId, q, if (exactMatch) 1 else 0, SEARCH_RESULT_LIMIT)
                 }
-                if (isCurrent()) _state.update { it.copy(searchResults = hits, completedSearchQuery = q, isSearchingMessages = false) }
+                val previews = withContext(Dispatchers.Default) {
+                    hits.associate { it.id to ChatMessageTextFormat.searchPreview(it.content, it.speakerType, q) }
+                }
+                if (isCurrent()) _state.update { it.copy(searchResults = hits, searchPreviews = previews, completedSearchQuery = q, isSearchingMessages = false) }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
                 if (isCurrent()) _state.update { it.copy(searchResults = emptyList(), isSearchingMessages = false, error = "本会话搜索失败，请重试") }
@@ -3171,7 +3174,7 @@ class ChatViewModel @Inject constructor(
         messageSearchRevision++
         messageSearchJob?.cancel()
         messageSearchJob = null
-        _state.update { it.copy(searchResults = emptyList(), completedSearchQuery = "", isSearchingMessages = false) }
+        _state.update { it.copy(searchResults = emptyList(), searchPreviews = emptyMap(), completedSearchQuery = "", isSearchingMessages = false) }
     }
 
     /** 将主分支按固定快照上界分页写为 UTF-8 JSON；调用方持有并关闭输出流。 */

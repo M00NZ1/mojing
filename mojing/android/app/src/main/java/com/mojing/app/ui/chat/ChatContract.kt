@@ -97,6 +97,7 @@ object ChatContract {
         val bookmarkedMessageIds: Set<Long> = emptySet(),
         val bookmarkPreviews: Map<Long, String> = emptyMap(),
         val searchResults: List<MessageEntity> = emptyList(),
+        val searchPreviews: Map<Long, String> = emptyMap(),
         val isSearchingMessages: Boolean = false,
         val completedSearchQuery: String = "",
         /** 当前用户在加密偏好中的展示信息（与设置「个人资料」一致） */

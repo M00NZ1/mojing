@@ -6,6 +6,16 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class ChatMessageTextFormatTest {
+    @Test fun searchPreviewIncludesLateMatchAndKeepsUnicodeBoundaries() {
+        val raw = "😀".repeat(10000) + "灯塔线索" + "🌊".repeat(100)
+        val preview = ChatMessageTextFormat.searchPreview(raw, "user", "灯塔线索")
+        org.junit.Assert.assertTrue(preview.contains("灯塔线索"))
+        org.junit.Assert.assertTrue(preview.length <= 122)
+        assertEquals(preview, String(preview.toByteArray(Charsets.UTF_8), Charsets.UTF_8))
+        assertEquals("hello WORLD", ChatMessageTextFormat.searchPreview("hello WORLD", "user", "world"))
+        assertEquals("（无正文）", ChatMessageTextFormat.searchPreview("  ", "user", "x"))
+    }
+
 
     @Test
     fun `clipboard text follows visible structured body and excludes choices`() {

@@ -1484,12 +1484,7 @@ fun ChatScreen(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 SearchHitSnippet(
-                                    text = ChatMessageTextFormat.preview(
-                                        raw = m.content,
-                                        speakerType = m.speakerType,
-                                        maxChars = 120,
-                                        emptyText = "（无正文）",
-                                    ),
+                                    text = state.searchPreviews[m.id].orEmpty(),
                                     query = searchQuery,
                                 )
                             }
