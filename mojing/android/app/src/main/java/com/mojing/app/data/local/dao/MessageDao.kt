@@ -394,7 +394,7 @@ interface MessageDao {
             "(:exactMatch = 0 AND ((message.searchNormalized <> '' " +
             "AND instr(message.searchNormalized, :normalizedQuery) > 0) OR " +
             "(message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0)))) " +
-            "ORDER BY message.id DESC LIMIT :limit",
+            "AND message.id < :beforeMessageId ORDER BY message.id DESC LIMIT :limit",
     )
     suspend fun searchMainMessagesIndexed(
         sessionId: Long,
@@ -405,6 +405,7 @@ interface MessageDao {
         indexedThroughMessageId: Long,
         indexComplete: Int,
         limit: Int,
+        beforeMessageId: Long = Long.MAX_VALUE,
     ): List<MessageEntity>
 
     suspend fun searchMainMessages(
@@ -412,6 +413,7 @@ interface MessageDao {
         query: String,
         exactMatch: Int,
         limit: Int,
+        beforeMessageId: Long = Long.MAX_VALUE,
     ): List<MessageEntity> {
         val state = currentSearchIndexState()
         return searchMainMessagesIndexed(
@@ -423,6 +425,7 @@ interface MessageDao {
             indexedThroughMessageId = state.indexedThroughMessageId,
             indexComplete = if (state.isComplete) 1 else 0,
             limit = limit,
+            beforeMessageId = beforeMessageId,
         )
     }
 
@@ -524,7 +527,7 @@ interface MessageDao {
             "(:exactMatch = 0 AND ((message.searchNormalized <> '' " +
             "AND instr(message.searchNormalized, :normalizedQuery) > 0) OR " +
             "(message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0)))) " +
-            "ORDER BY message.id DESC LIMIT :limit",
+            "AND message.id < :beforeMessageId ORDER BY message.id DESC LIMIT :limit",
     )
     suspend fun searchVisibleMessagesIndexed(
         sessionId: Long,
@@ -536,6 +539,7 @@ interface MessageDao {
         indexedThroughMessageId: Long,
         indexComplete: Int,
         limit: Int,
+        beforeMessageId: Long = Long.MAX_VALUE,
     ): List<MessageEntity>
 
     suspend fun searchVisibleMessages(
@@ -544,6 +548,7 @@ interface MessageDao {
         query: String,
         exactMatch: Int,
         limit: Int,
+        beforeMessageId: Long = Long.MAX_VALUE,
     ): List<MessageEntity> {
         val state = currentSearchIndexState()
         return searchVisibleMessagesIndexed(
@@ -556,6 +561,7 @@ interface MessageDao {
             indexedThroughMessageId = state.indexedThroughMessageId,
             indexComplete = if (state.isComplete) 1 else 0,
             limit = limit,
+            beforeMessageId = beforeMessageId,
         )
     }
 

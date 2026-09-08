@@ -2218,7 +2218,7 @@ class ChatViewModelTest {
             MessageEntity(id = id, sessionId = 42L, content = "新消息$id")
         }
         coEvery {
-            messageDao.searchMainMessages(42L, "钟声", 0, 100)
+            messageDao.searchMainMessages(42L, "钟声", 0, 101, Long.MAX_VALUE)
         } returns listOf(target)
         coEvery { messageDao.getMainMessageById(42L, 500L) } returns target
         coEvery { messageDao.getMainMessagesBefore(42L, 500L, 41) } returns before
@@ -2250,11 +2250,11 @@ class ChatViewModelTest {
     fun clearedOrSupersededSearchCannotPublishLateResults() = runTest(testDispatcher) {
         val dao = mockk<MessageDao>(relaxed = true)
         val release = kotlinx.coroutines.CompletableDeferred<Unit>()
-        coEvery { dao.searchMainMessages(42L, "旧", 0, 100) } coAnswers {
+        coEvery { dao.searchMainMessages(42L, "旧", 0, 101, Long.MAX_VALUE) } coAnswers {
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { release.await() }
             listOf(MessageEntity(id = 1, sessionId = 42, content = "旧"))
         }
-        coEvery { dao.searchMainMessages(42L, "新", 0, 100) } returns
+        coEvery { dao.searchMainMessages(42L, "新", 0, 101, Long.MAX_VALUE) } returns
             listOf(MessageEntity(id = 2, sessionId = 42, content = "新"))
         val vm = createViewModel(messageDao = dao)
         advanceUntilIdle()
@@ -2274,6 +2274,36 @@ class ChatViewModelTest {
         assertFalse(vm.state.value.isSearchingMessages)
         vm.clearSearch()
         assertTrue(vm.state.value.searchResults.isEmpty())
+    }
+
+    @Test
+    fun searchPagesUseLastVisibleIdAndReplaceTheWindow() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        val rows = (250L downTo 1L).map { MessageEntity(id = it, sessionId = 42, content = "线索 $it") }
+        coEvery { dao.searchMainMessages(42L, "线索", 0, 101, any()) } coAnswers {
+            rows.filter { it.id < arg<Long>(4) }.take(101)
+        }
+        val vm = createViewModel(messageDao = dao)
+        advanceUntilIdle()
+        suspend fun awaitPage(firstId: Long) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                kotlinx.coroutines.withTimeout(5000) { vm.state.first { it.searchResults.firstOrNull()?.id == firstId && !it.isSearchingMessages } }
+            }
+        }
+        vm.searchSession("线索")
+        awaitPage(250)
+        assertEquals(100, vm.state.value.searchResults.size)
+        vm.olderSearchResults()
+        awaitPage(150)
+        assertEquals(100, vm.state.value.searchResults.size)
+        assertEquals(151L, vm.state.value.searchBeforeId)
+        vm.olderSearchResults()
+        awaitPage(50)
+        assertEquals(50, vm.state.value.searchResults.size)
+        assertFalse(vm.state.value.searchHasOlder)
+        vm.searchSession("线索")
+        awaitPage(250)
+        assertEquals(Long.MAX_VALUE, vm.state.value.searchBeforeId)
     }
 
     @Test

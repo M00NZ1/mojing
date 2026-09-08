@@ -100,6 +100,9 @@ object ChatContract {
         val searchPreviews: Map<Long, String> = emptyMap(),
         val isSearchingMessages: Boolean = false,
         val completedSearchQuery: String = "",
+        val searchHasOlder: Boolean = false,
+        val searchBeforeId: Long = Long.MAX_VALUE,
+        val searchExactMatch: Boolean = false,
         /** 当前用户在加密偏好中的展示信息（与设置「个人资料」一致） */
         val userDisplayName: String = "",
         val userAvatarImagePath: String = "",

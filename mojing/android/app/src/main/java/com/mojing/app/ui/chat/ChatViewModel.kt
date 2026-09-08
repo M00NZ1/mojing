@@ -3143,7 +3143,7 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun searchSession(query: String, exactMatch: Boolean = false) {
+    fun searchSession(query: String, exactMatch: Boolean = false, beforeMessageId: Long = Long.MAX_VALUE) {
         clearSearch()
         val q = query.trim()
         if (q.isEmpty()) return
@@ -3154,15 +3154,16 @@ class ChatViewModel @Inject constructor(
         _state.update { it.copy(isSearchingMessages = true) }
         messageSearchJob = viewModelScope.launch {
             try {
-                val hits = if (branchId == "main") {
-                    messageDao.searchMainMessages(searchedSession, q, if (exactMatch) 1 else 0, SEARCH_RESULT_LIMIT)
+                val page = if (branchId == "main") {
+                    messageDao.searchMainMessages(searchedSession, q, if (exactMatch) 1 else 0, SEARCH_RESULT_LIMIT + 1, beforeMessageId)
                 } else {
-                    messageDao.searchVisibleMessages(searchedSession, branchId, q, if (exactMatch) 1 else 0, SEARCH_RESULT_LIMIT)
+                    messageDao.searchVisibleMessages(searchedSession, branchId, q, if (exactMatch) 1 else 0, SEARCH_RESULT_LIMIT + 1, beforeMessageId)
                 }
+                val hits = page.take(SEARCH_RESULT_LIMIT)
                 val previews = withContext(Dispatchers.Default) {
                     hits.associate { it.id to ChatMessageTextFormat.searchPreview(it.content, it.speakerType, q) }
                 }
-                if (isCurrent()) _state.update { it.copy(searchResults = hits, searchPreviews = previews, completedSearchQuery = q, isSearchingMessages = false) }
+                if (isCurrent()) _state.update { it.copy(searchResults = hits, searchPreviews = previews, completedSearchQuery = q, searchHasOlder = page.size > SEARCH_RESULT_LIMIT, searchBeforeId = beforeMessageId, searchExactMatch = exactMatch, isSearchingMessages = false) }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
                 if (isCurrent()) _state.update { it.copy(searchResults = emptyList(), isSearchingMessages = false, error = "本会话搜索失败，请重试") }
@@ -3170,11 +3171,18 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun olderSearchResults() {
+        val state = _state.value
+        if (state.isSearchingMessages || !state.searchHasOlder) return
+        val beforeId = state.searchResults.lastOrNull()?.id ?: return
+        searchSession(state.completedSearchQuery, state.searchExactMatch, beforeId)
+    }
+
     fun clearSearch() {
         messageSearchRevision++
         messageSearchJob?.cancel()
         messageSearchJob = null
-        _state.update { it.copy(searchResults = emptyList(), searchPreviews = emptyMap(), completedSearchQuery = "", isSearchingMessages = false) }
+        _state.update { it.copy(searchResults = emptyList(), searchPreviews = emptyMap(), completedSearchQuery = "", searchHasOlder = false, searchBeforeId = Long.MAX_VALUE, isSearchingMessages = false) }
     }
 
     /** 将主分支按固定快照上界分页写为 UTF-8 JSON；调用方持有并关闭输出流。 */

@@ -1462,6 +1462,12 @@ fun ChatScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        TextButton(enabled = !state.isSearchingMessages && state.searchBeforeId != Long.MAX_VALUE,
+                            onClick = { submitSearch() }) { Text("最新结果") }
+                        TextButton(enabled = !state.isSearchingMessages && state.searchHasOlder,
+                            onClick = { viewModel.olderSearchResults() }) { Text("更早结果") }
+                    }
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1489,16 +1495,7 @@ fun ChatScreen(
                                 )
                             }
                         }
-                        if (state.searchResults.size >= 100) {
-                            item(key = "search-result-limit") {
-                                Text(
-                                    "仅显示最近 100 条匹配，可增加关键词缩小范围",
-                                    modifier = Modifier.padding(12.dp),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
+
                     }
                 }
             },
