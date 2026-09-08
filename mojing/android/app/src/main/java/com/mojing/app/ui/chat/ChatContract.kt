@@ -67,6 +67,7 @@ object ChatContract {
         val messageAttachments: Map<Long, List<MessageAttachmentEntity>> = emptyMap(),
         val streamingText: String = "",
         val isGenerating: Boolean = false,
+        val memoryCompactionChunk: Int? = null,
         /** 会话创建时配置的展示用上下文上限（tokens），仅用于聊天页统计条 */
         val displayContextTokenLimit: Int = 1_000_000,
         /** 本对话纳入上下文的消息正文 token 估算之和（仅展示） */

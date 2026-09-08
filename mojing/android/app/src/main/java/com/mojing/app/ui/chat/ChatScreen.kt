@@ -834,6 +834,7 @@ fun ChatScreen(
                             isGenerating = state.isGenerating,
                             isAddingAttachment = isAddingAttachment,
                             generationModeLabel = when {
+                                state.isGenerating && state.memoryCompactionChunk != null -> "整理记忆 · 第 ${state.memoryCompactionChunk} 段"
                                 state.isGenerating && state.streamingText.isNotBlank() && state.streamingText.length < 12 -> "角色回复"
                                 state.isGenerating && state.streamingText.isBlank() -> "处理中"
                                 else -> null

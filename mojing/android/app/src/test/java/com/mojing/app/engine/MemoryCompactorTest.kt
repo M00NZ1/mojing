@@ -42,7 +42,7 @@ class MemoryCompactorTest {
             )
         }
         val saved = slot<SessionMemorySegmentEntity>()
-        val requestMessages = slot<List<ChatMessage>>()
+        val requestMessages = mutableListOf<List<ChatMessage>>()
         val snapshot = MemoryCompactionSnapshot(7, "edit_42", listOf(previous), 0, nextBatch, 600)
         coEvery { store.read(7L, "edit_42", 600) } returns snapshot
         coEvery {
@@ -72,7 +72,7 @@ class MemoryCompactorTest {
         assertEquals("edit_42", saved.captured.branchId)
         assertEquals("抵达月港", saved.captured.summary)
         assertEquals("[\"门已开启\"]", saved.captured.keyFactsJson)
-        assertTrue(requestMessages.captured.last().content.contains("之前摘要：此前剧情"))
+        assertTrue(requestMessages.first().last().content.contains("之前摘要：此前剧情"))
         coVerify(exactly = 1) {
             store.commit(snapshot, any())
         }
@@ -145,5 +145,38 @@ class MemoryCompactorTest {
         coEvery { store.read(any(), any(), any()) } throws IllegalStateException("read failed")
         org.junit.Assert.assertFalse(compactor.compactIfNeeded(2, "main", "k", "url", "m"))
         coVerify(exactly = 0) { llmRetry.chatCompletionWithRetry(any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test fun longMessageTailReachesModelBeforeOneFinalCommit() = runTest {
+        val source = MessageEntity(id = 1, sessionId = 2, speakerType = "user", content = "正文".repeat(3500) + "结尾的约定")
+        val snapshot = MemoryCompactionSnapshot(2, "main", emptyList(), 0, listOf(source), 1)
+        coEvery { store.read(2, "main", 1) } returns snapshot
+        val requests = mutableListOf<List<ChatMessage>>()
+        val progress = mutableListOf<Int>()
+        coEvery { llmRetry.chatCompletionWithRetry(any(), any(), any(), capture(requests), any(), any(), any()) } returns """{"summary":"保留约定","key_facts":["尚待履行"]}"""
+        coEvery { store.commit(snapshot, any()) } returns true
+        assertTrue(compactor.compactIfNeeded(2, "main", "k", "url", "m", 1, progress::add))
+        assertTrue(requests.size > 1)
+        assertTrue(requests.last().last().content.contains("结尾的约定"))
+        assertEquals((1..requests.size).toList(), progress)
+        assertTrue(requests.all { com.mojing.app.domain.engine.MemoryCompactionInput.weight(it.joinToString { message -> message.content }) < 7200 })
+        coVerify(exactly = 1) { store.commit(snapshot, any()) }
+    }
+
+    @Test fun lateChunkFailureOrCancellationNeverAdvancesCoverage() = runTest {
+        val source = MessageEntity(id = 1, sessionId = 2, content = "长消息".repeat(2000))
+        coEvery { store.read(2, "main", 1) } returns MemoryCompactionSnapshot(2, "main", emptyList(), 0, listOf(source), 1)
+        for (cancel in listOf(false, true)) {
+            var count = 0
+            coEvery { llmRetry.chatCompletionWithRetry(any(), any(), any(), any(), any(), any(), any()) } answers {
+                if (++count == 1) """{"summary":"第一段"}"""
+                else if (cancel) throw CancellationException("stop") else "broken"
+            }
+            try {
+                org.junit.Assert.assertFalse(compactor.compactIfNeeded(2, "main", "k", "url", "m", 1))
+                org.junit.Assert.assertFalse(cancel)
+            } catch (_: CancellationException) { assertTrue(cancel) }
+        }
+        coVerify(exactly = 0) { store.commit(any(), any()) }
     }
 }

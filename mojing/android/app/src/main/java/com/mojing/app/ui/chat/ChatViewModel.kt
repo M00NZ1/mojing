@@ -332,6 +332,7 @@ class ChatViewModel @Inject constructor(
         activeGeneration = generation
         _state.value = _state.value.copy(
             isGenerating = true,
+            memoryCompactionChunk = null,
             streamingText = "",
             pendingRoundSpeakers = emptyList(),
             speakerPlanSummary = null,
@@ -360,6 +361,7 @@ class ChatViewModel @Inject constructor(
     private fun resetGenerationUi(clearError: Boolean = true) {
         _state.value = _state.value.copy(
             isGenerating = false,
+            memoryCompactionChunk = null,
             streamingText = "",
             pendingRoundSpeakers = emptyList(),
             speakerPlanSummary = null,
@@ -1974,14 +1976,22 @@ class ChatViewModel @Inject constructor(
 
         if (runMemoryCompact) {
             val compactThreshold = secureStorage.memoryCompactThreshold.coerceIn(10, 2000)
-            val compacted = memoryCompactor.compactIfNeeded(
+            val compacted = try { memoryCompactor.compactIfNeeded(
                 sessionId = sessionId,
                 branchId = branchId,
                 apiKey = apiKey,
                 baseUrl = preStreamBase,
                 model = model,
                 threshold = compactThreshold,
-            )
+                onProgress = { chunk ->
+                    generation.ensureCurrent()
+                    _state.update { it.copy(memoryCompactionChunk = chunk) }
+                },
+            ) } finally {
+                if (activeGeneration === generation) {
+                    _state.update { it.copy(memoryCompactionChunk = null) }
+                }
+            }
             if (compacted) {
                 generation.ensureCurrent()
                 try {
