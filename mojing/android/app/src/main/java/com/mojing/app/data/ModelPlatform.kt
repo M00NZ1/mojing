@@ -15,6 +15,9 @@ data class ModelPlatform(
 )
 
 object ModelPlatformCodec {
+    fun mergeDiscovered(existing: List<String>, discovered: List<String>): List<String> =
+        (existing + discovered).map(String::trim).filter(String::isNotEmpty).distinct()
+
     fun modelNames(text: String): List<String> = text.split(Regex("[,，\\n\\r]+"))
         .map(String::trim).filter(String::isNotEmpty).distinct()
 

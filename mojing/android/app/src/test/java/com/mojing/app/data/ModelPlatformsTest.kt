@@ -6,6 +6,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ModelPlatformsTest {
+    @Test fun discoveryKeepsManualOrderAndOnlyAppendsNewNames() {
+        val existing = listOf("manual", "chosen", "chat")
+        val merged = ModelPlatformCodec.mergeDiscovered(existing, listOf("chat", " new ", "", "new"))
+        assertEquals(listOf("manual", "chosen", "chat", "new"), merged)
+        assertEquals(merged, ModelPlatformCodec.mergeDiscovered(merged, listOf("chat", "new")))
+        assertEquals(existing, ModelPlatformCodec.mergeDiscovered(existing, emptyList()))
+    }
+
     private fun storage(values: MutableMap<String, String>): SecureStorage {
         val prefs = mockk<SharedPreferences>()
         every { prefs.getString(any(), any()) } answers { values[firstArg()] ?: secondArg() }

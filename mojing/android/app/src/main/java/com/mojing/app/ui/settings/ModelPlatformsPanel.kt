@@ -28,6 +28,7 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
     var busy by remember { mutableStateOf(false) }
     var fetching by remember { mutableStateOf(false) }
     var fetchJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var discoveryNotice by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var presetMenu by remember { mutableStateOf(false) }
     var modelMenu by remember { mutableStateOf(false) }
@@ -39,13 +40,13 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
             Text("我的平台", style = MaterialTheme.typography.titleMedium)
             TextButton(onClick = {
                 draft = ModelPlatform(UUID.randomUUID().toString(), "", "", "", emptyList())
-                modelsText = ""; error = null
+                modelsText = ""; error = null; discoveryNotice = null
             }) { Text("添加平台") }
         }
         Text("每个平台独立保存 Key。保存后作为默认线路；聊天中可随时选择已配置的模型。",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         platforms.forEach { p ->
-            OutlinedCard(onClick = { draft = p; modelsText = p.models.joinToString("\n"); error = null },
+            OutlinedCard(onClick = { draft = p; modelsText = p.models.joinToString("\n"); error = null; discoveryNotice = null },
                 modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(p.name + if (p.id == activeId) " · 默认" else "", style = MaterialTheme.typography.titleMedium)
@@ -83,23 +84,26 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
                                         draft = p.copy(id = if (p.baseUrl != preset.baseUrl) UUID.randomUUID().toString() else p.id,
                                             name = preset.label, baseUrl = preset.baseUrl, apiKey = if (p.baseUrl == preset.baseUrl) p.apiKey else "",
                                             models = emptyList(), selectedModel = "")
-                                        modelsText = ""; presetMenu = false; error = null
+                                        modelsText = ""; presetMenu = false; error = null; discoveryNotice = null
                                     })
                                 }
                             }
                         }
                     }
                     item { OutlinedTextField(p.name, { draft = p.copy(name = it) }, label = { Text("平台名称") }, enabled = !busy && !fetching, singleLine = true) }
-                    item { OutlinedTextField(p.baseUrl, { draft = p.copy(baseUrl = it, apiKey = "", models = emptyList(), selectedModel = ""); modelsText = "" }, label = { Text("服务地址") }, enabled = !busy && !fetching, singleLine = true) }
+                    item { OutlinedTextField(p.baseUrl, { draft = p.copy(baseUrl = it, apiKey = "", models = emptyList(), selectedModel = ""); modelsText = ""; discoveryNotice = null }, label = { Text("服务地址") }, enabled = !busy && !fetching, singleLine = true) }
                     item { OutlinedTextField(p.apiKey, { draft = p.copy(apiKey = it) }, label = { Text("API Key") }, visualTransformation = PasswordVisualTransformation(), enabled = !busy && !fetching, singleLine = true) }
                     item {
                         OutlinedButton(enabled = !busy && p.apiKey.isNotBlank() && p.baseUrl.isNotBlank(), onClick = {
                             if (fetching) { fetchJob?.cancel(); return@OutlinedButton }
-                            fetching = true; error = null
+                            fetching = true; error = null; discoveryNotice = null
                             fetchJob = scope.launch {
                                 try {
                                     val names = viewModel.fetchPlatformModels(p.baseUrl, p.apiKey)
-                                    modelsText = (names + ModelPlatformCodec.modelNames(modelsText)).distinct().joinToString("\n")
+                                    val existing = ModelPlatformCodec.modelNames(modelsText)
+                                    val merged = ModelPlatformCodec.mergeDiscovered(existing, names)
+                                    modelsText = merged.joinToString("\n")
+                                    discoveryNotice = "已补充 ${merged.size - existing.size} 个模型，共 ${merged.size} 个。"
                                 } catch (_: kotlinx.coroutines.TimeoutCancellationException) { error = "获取超时，可重试或手动填写模型名称" }
                                 catch (e: CancellationException) { throw e }
                                 catch (_: Exception) { error = "未能获取模型。请检查地址与 Key，或在下方手动填写；已有模型已保留。" }
@@ -107,7 +111,8 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
                             }
                         }) { Text(if (fetching) "取消获取" else "通过 Key 获取全部模型") }
                     }
-                    item { OutlinedTextField(modelsText, { modelsText = it }, label = { Text("模型名称") }, supportingText = { Text("每行一个，也可用逗号分隔。第一项作为默认模型。") }, minLines = 3, maxLines = 8, enabled = !busy && !fetching) }
+                    discoveryNotice?.let { message -> item { Text(message, style = MaterialTheme.typography.bodySmall) } }
+                    item { OutlinedTextField(modelsText, { modelsText = it; discoveryNotice = null }, label = { Text("模型名称") }, supportingText = { Text("每行一个，也可用逗号分隔。默认模型可在下方选择。") }, minLines = 3, maxLines = 8, enabled = !busy && !fetching) }
                     item {
                         val names = ModelPlatformCodec.modelNames(modelsText)
                         Box {
