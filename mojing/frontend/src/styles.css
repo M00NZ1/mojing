@@ -6439,3 +6439,32 @@ img {
 @media (pointer: coarse) {
   .chat-contextbar button { min-height: 44px; }
 }
+
+.chat-msg-menu-divider { border-top: 1px solid var(--line); margin: 4px 0; }
+.msg-actions-heading { grid-column: 1 / -1; padding: 4px 0 8px; }
+.msg-actions-mobile-primary {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.msg-actions-mobile .msg-actions-mobile-primary .btn {
+  grid-column: auto;
+  min-height: 64px;
+  flex-direction: column;
+  gap: 6px;
+}
+.msg-actions-mobile > .btn-danger { grid-column: 1 / -1; margin-top: 6px; }
+@media (max-width: 768px) {
+  .msg-actions-mobile {
+    border-radius: 20px 20px 0 0;
+    padding: 16px;
+    max-height: 70dvh;
+  }
+}
+
+.chat-msg-tools:has(.chat-msg-more-menu) { opacity: 1; transition: none; }
+.chat-msg-more-menu { background: var(--surface); backdrop-filter: none; }

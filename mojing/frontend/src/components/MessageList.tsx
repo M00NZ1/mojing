@@ -599,9 +599,7 @@ export default function MessageList({
                       {onEditMessage && (
                         <ActionButton icon="edit" label="编辑旁白" className="chat-tool-btn" iconOnly editTriggerId={message.id} onClick={() => onEditMessage(message)} />
                       )}
-                      {onDeleteMessage && (
-                        <ActionButton icon="delete" label="删除旁白" className="chat-tool-btn chat-tool-btn-danger" iconOnly onClick={() => onDeleteMessage(message)} />
-                      )}
+                      <ActionButton icon="copy" label="复制" className="chat-tool-btn" iconOnly onClick={() => { void handleCopy(visibleContent); }} />
                       <div className="chat-msg-more-wrap">
                         <ActionButton
                           icon="more"
@@ -615,13 +613,15 @@ export default function MessageList({
                         />
                         {showMsgMenuId === message.id && (
                           <div className="chat-msg-more-menu" role="menu" aria-label="旁白操作">
-                            <ActionButton icon="copy" label="复制" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); void handleCopy(visibleContent); }} />
+
                             {onPlayVoice && <ActionButton icon="volume" label="播放语音" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onPlayVoice(message); }} />}
                             {onBookmarkMessage && <ActionButton icon="bookmark" label="收藏" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onBookmarkMessage(message); }} />}
                             {onSetMessageContext && <ActionButton icon="book" label={message.include_in_context === false ? "恢复到上下文" : "排除上下文"} className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onSetMessageContext(message); }} />}
                             {onQuoteMessage && <ActionButton icon="quote" label="引用回复" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onQuoteMessage(message); }} />}
                             {onCreateBranch && <ActionButton icon="branch" label="从此创建故事线" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onCreateBranch(message); }} />}
-                          </div>
+                          <div className="chat-msg-menu-divider" role="separator" />
+                              {onDeleteMessage && <ActionButton icon="delete" label="删除旁白" className="chat-msg-more-item chat-tool-btn-danger" role="menuitem" onClick={() => { setShowMsgMenuId(null); onDeleteMessage(message); }} />}
+                            </div>
                         )}
                       </div>
                     </div>
@@ -709,9 +709,8 @@ export default function MessageList({
                         {onEditMessage && (
                           <ActionButton icon="edit" label="编辑消息" className="chat-tool-btn" iconOnly editTriggerId={message.id} onClick={() => onEditMessage(message)} />
                         )}
-                        {onDeleteMessage && (
-                          <ActionButton icon="delete" label="删除消息" className="chat-tool-btn chat-tool-btn-danger" iconOnly onClick={() => onDeleteMessage(message)} />
-                        )}
+                        <ActionButton icon="copy" label="复制" className="chat-tool-btn" iconOnly onClick={() => { void handleCopy(visibleContent); }} />
+                        {onRegenerateBranch && !isUser && <ActionButton icon="regenerate" label="重新生成" className="chat-tool-btn" iconOnly onClick={() => onRegenerateBranch(message)} />}
                         <div className="chat-msg-more-wrap">
                           <ActionButton
                             icon="more"
@@ -725,13 +724,15 @@ export default function MessageList({
                           />
                           {showMsgMenuId === message.id && (
                             <div className="chat-msg-more-menu" role="menu" aria-label="消息操作">
-                              <ActionButton icon="copy" label="复制" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); void handleCopy(visibleContent); }} />
+
                               {onPlayVoice && message.speaker_type !== 'user' && <ActionButton icon="volume" label="播放语音" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onPlayVoice(message); }} />}
                               {onBookmarkMessage && <ActionButton icon="bookmark" label="收藏" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onBookmarkMessage(message); }} />}
                               {onSetMessageContext && <ActionButton icon="book" label={message.include_in_context === false ? "恢复到上下文" : "排除上下文"} className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onSetMessageContext(message); }} />}
                               {onQuoteMessage && <ActionButton icon="quote" label="引用回复" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onQuoteMessage(message); }} />}
                               {onCreateBranch && <ActionButton icon="branch" label="从此创建故事线" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onCreateBranch(message); }} />}
-                              {onRegenerateBranch && !isUser && <ActionButton icon="regenerate" label="重新生成" className="chat-msg-more-item" role="menuitem" onClick={() => { setShowMsgMenuId(null); onRegenerateBranch(message); }} />}
+
+                            <div className="chat-msg-menu-divider" role="separator" />
+                              {onDeleteMessage && <ActionButton icon="delete" label="删除消息" className="chat-msg-more-item chat-tool-btn-danger" role="menuitem" onClick={() => { setShowMsgMenuId(null); onDeleteMessage(message); }} />}
                             </div>
                           )}
                         </div>
@@ -791,9 +792,14 @@ export default function MessageList({
             if (event.target === event.currentTarget) closeMobileMenu();
           }}>
             <div ref={mobileMenuRef} className="msg-actions-mobile" role="dialog" aria-label="消息操作" aria-modal="true">
+              <strong className="msg-actions-heading">消息操作</strong>
+              <div className="msg-actions-mobile-primary">
               <ActionButton icon="copy" label="复制" className="btn btn-sm" onClick={() => { closeMobileMenu(); void handleCopy(visibleContent); }} />
               {onEditMessage && <ActionButton icon="edit" label="编辑" className="btn btn-sm" onClick={() => { closeMobileMenu(); onEditMessage(msg); }} />}
-              {onDeleteMessage && <ActionButton icon="delete" label="删除" className="btn btn-sm btn-danger" onClick={() => { closeMobileMenu(); onDeleteMessage(msg); }} />}
+              {onRegenerateBranch && !isUserMessage && !isNarratorMessage && (
+                <ActionButton icon="regenerate" label="重新生成" className="btn btn-sm" onClick={() => { closeMobileMenu(); onRegenerateBranch(msg); }} />
+              )}
+              </div>
               {onSetMessageContext && <ActionButton icon="book" label={msg.include_in_context === false ? '恢复到上下文' : '排除上下文'} className="btn btn-sm" onClick={() => { closeMobileMenu(); onSetMessageContext(msg); }} />}
               {onPlayVoice && !isUserMessage && (
                 <ActionButton icon="volume" label="播放语音" className="btn btn-sm" onClick={() => { closeMobileMenu(); onPlayVoice(msg); }} />
@@ -807,9 +813,7 @@ export default function MessageList({
               {onCreateBranch && (
                 <ActionButton icon="branch" label="创建故事线" className="btn btn-sm" onClick={() => { closeMobileMenu(); onCreateBranch(msg); }} />
               )}
-              {onRegenerateBranch && !isUserMessage && !isNarratorMessage && (
-                <ActionButton icon="regenerate" label="重新生成" className="btn btn-sm" onClick={() => { closeMobileMenu(); onRegenerateBranch(msg); }} />
-              )}
+              {onDeleteMessage && <ActionButton icon="delete" label="删除" className="btn btn-sm btn-danger" onClick={() => { closeMobileMenu(); onDeleteMessage(msg); }} />}
               <ActionButton icon="close" label="关闭" className="btn btn-ghost btn-sm" onClick={closeMobileMenu} />
             </div>
           </div>

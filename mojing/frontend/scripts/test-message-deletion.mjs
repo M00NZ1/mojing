@@ -106,7 +106,19 @@ try {
     const row = page.locator(`[data-chat-message-id="${id}"]`);
     await row.scrollIntoViewIfNeeded();
     await row.hover();
-    await row.getByRole('button', { name: '删除消息', exact: true }).click();
+    await row.getByRole('button', { name: '更多消息操作', exact: true }).click();
+    if (page.viewportSize().width > 768) {
+      assert.equal(await row.locator('.chat-msg-tools').evaluate((el) => getComputedStyle(el).opacity), '1');
+    }
+    if (output) {
+      await mkdir(output, { recursive: true });
+      await page.screenshot({ path: path.join(output, `message-actions-${page.viewportSize().width}.png`) });
+    }
+    if (page.viewportSize().width <= 768) {
+      await page.getByRole('dialog', { name: '消息操作', exact: true }).getByRole('button', { name: '删除', exact: true }).click();
+    } else {
+      await row.getByRole('menuitem', { name: '删除消息', exact: true }).click();
+    }
     await dialog.waitFor();
   }
   await page.goto(`http://127.0.0.1:${port}/chat/1`, { waitUntil: 'domcontentloaded' });
