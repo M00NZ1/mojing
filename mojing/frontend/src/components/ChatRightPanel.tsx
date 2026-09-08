@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { MemoryCorrection, MemorySegment, Participant, SessionCharacterState, SessionEventNode, WorldTemplate } from '../types';
 import type { SpeakerTurnMode } from '../utils/speakerTurnMode';
 import { findStoryLineDisplayLabel, storyLineDisplayLabel } from '../utils/storyLinePresentation';
@@ -7,6 +7,7 @@ import { confirmModal } from './ConfirmModal';
 import UiIcon from './UiIcon';
 
 interface ChatRightPanelProps {
+  sessionOptions?: ReactNode;
   show: boolean;
   onClose: () => void;
   modal?: boolean;
@@ -87,7 +88,7 @@ function correctionStatusLabel(status: PromptTraceMemoryCorrection['status']): s
 }
 
 export default function ChatRightPanel({
-  show, onClose, modal = false, tab, onTabChange,
+  sessionOptions, show, onClose, modal = false, tab, onTabChange,
   participantsQuery,
   worldTemplateId, onWorldTemplateIdChange,
   encyclopediaId, onEncyclopediaIdChange,
@@ -310,6 +311,7 @@ export default function ChatRightPanel({
 
       {tab === 'config' && (
         <div style={{padding: '4px 0'}} onClick={(e) => e.stopPropagation()}>
+          {sessionOptions}
           {worldLoadError != null && !worldReady && (
             <InlineQueryError
               message="会话世界配置加载失败"

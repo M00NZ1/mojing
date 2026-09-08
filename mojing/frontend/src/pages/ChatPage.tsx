@@ -1486,64 +1486,6 @@ export default function ChatPage() {
         <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--text-2)' }}>{flatMessages.length} 条</span>
       </button>
 
-      {/* ================= 左侧面板 ================= */}
-      <div className="chat-sidebar">
-        <div className="card-header">
-          <div>
-            <p className="eyebrow">当前对话</p>
-            <h2>{sessionTitle}</h2>
-          </div>
-        </div>
-
-        <div className="participant-strip">
-          {participantsQuery.data?.map((item) => (
-            <span key={item.id} className="participant-chip is-static" title="会话角色">
-              {item.character.avatar_image_path ? (
-                <span className="chip-avatar" style={{backgroundImage: `url(${api.mediaRefUrl(item.character.avatar_image_path)})`}} />
-              ) : (
-                <span style={{backgroundColor: item.character.avatar_color}} />
-              )}
-              {item.character.name}
-            </span>
-          ))}
-        </div>
-
-        <label style={{marginTop: 8, display:'block', fontSize:'0.82rem'}}>
-          当前故事线
-          <select value={selectedBranchId} onChange={(event) => switchBranch(event.target.value)} style={{marginTop: 4, width:'100%'}}>
-            {branchOptions.map((item) => (
-              <option key={item.branch_id} value={item.branch_id}>{storyLineDisplayLabel(item.branch_id, item.label)} · {item.message_count} 条</option>
-            ))}
-          </select>
-        </label>
-
-        <div className="mini-card" style={{ marginTop: 12, padding: 10 }}>
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: '0.85rem' }}>
-            <input
-              type="checkbox"
-              checked={Boolean(sessionDetailQuery.data?.think_max_enabled)}
-              disabled={!localConfigQuery.data?.allow_session_think_max || updateSessionThinkMutation.isPending}
-              onChange={(e) => {
-                if (!localConfigQuery.data?.allow_session_think_max) {
-                  showToast('请先在「设置 → 公共 API」中勾选「允许在对话页…思考/Max」', 'warn');
-                  return;
-                }
-                updateSessionThinkMutation.mutate(e.target.checked);
-              }}
-              style={{ marginTop: 2 }}
-            />
-            <span>
-              <strong>本会话思考 / Max</strong>
-              <div style={{ color: 'var(--text-2)', fontSize: '0.78rem', marginTop: 4 }}>
-                {localConfigQuery.data?.allow_session_think_max
-                  ? '开启后本会话内回复走思考线路（仍受角色「思考」开关或模型映射影响）。'
-                  : '需先在设置里允许对话页使用此项。'}
-              </div>
-            </span>
-          </label>
-        </div>
-      </div>
-
       {/* ================= 中央聊天区 ================= */}
       <div className="chat-main">
         {/* 顶部栏 */}
@@ -1581,9 +1523,6 @@ export default function ChatPage() {
           <div className="chat-topbar-info">
             <div className="chat-topbar-name">{sessionTitle}</div>
             <ChatModelPicker key={sessionId} sessionId={sessionId} onBusyChange={onModelChoiceBusyChange} />
-            <div className="chat-topbar-status">
-              {activeBranchLabel} · {flatMessages.length} 条消息
-            </div>
           </div>
           <button
             type="button"
@@ -1609,6 +1548,16 @@ export default function ChatPage() {
             <UiIcon name="panel" />
           </button>
         </div>
+
+        <nav className="chat-contextbar" aria-label="当前会话资料">
+          <button type="button" onClick={openBranchTree} aria-label={`故事线：${activeBranchLabel}`}>
+            <UiIcon name="branch" /><span>{activeBranchLabel}</span>
+          </button>
+          <button type="button" onClick={() => openRightPanel('participants')} aria-label="查看参与角色">
+            <span>{participantsQuery.data?.map((item) => item.character.name).join('、') || '参与角色'}</span>
+            <span className="chat-contextbar-count">{participantsQuery.data?.length ?? 0}</span>
+          </button>
+        </nav>
 
         {switchingBranchId && (
           <div className="branch-switch-notice is-loading" role="status" aria-live="polite">
@@ -1843,6 +1792,33 @@ export default function ChatPage() {
         />
       )}
       <ChatRightPanel
+        sessionOptions={
+          <div className="mini-card" style={{ marginTop: 12, padding: 10 }}>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: '0.85rem' }}>
+            <input
+              type="checkbox"
+              checked={Boolean(sessionDetailQuery.data?.think_max_enabled)}
+              disabled={!localConfigQuery.data?.allow_session_think_max || updateSessionThinkMutation.isPending}
+              onChange={(e) => {
+                if (!localConfigQuery.data?.allow_session_think_max) {
+                  showToast('请先在「设置 → 公共 API」中勾选「允许在对话页…思考/Max」', 'warn');
+                  return;
+                }
+                updateSessionThinkMutation.mutate(e.target.checked);
+              }}
+              style={{ marginTop: 2 }}
+            />
+            <span>
+              <strong>本会话思考 / Max</strong>
+              <div style={{ color: 'var(--text-2)', fontSize: '0.78rem', marginTop: 4 }}>
+                {localConfigQuery.data?.allow_session_think_max
+                  ? '开启后本会话内回复走思考线路（仍受角色「思考」开关或模型映射影响）。'
+                  : '需先在设置里允许对话页使用此项。'}
+              </div>
+            </span>
+          </label>
+        </div>
+        }
         show={showRightPanel}
         onClose={requestCloseRightPanel}
         modal={isCompactLayout}

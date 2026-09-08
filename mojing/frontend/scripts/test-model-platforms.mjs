@@ -189,6 +189,19 @@ try {
   });
   for (const width of [320, 390, 1365]) {
     await page.setViewportSize({ width, height: 900 });
+    assert.equal(await page.locator('.chat-sidebar').count(), 0);
+    await page.getByRole('button', { name: '查看参与角色', exact: true }).click();
+    await page.locator('#chat-right-panel').waitFor();
+    await page.locator('#chat-right-panel').getByRole('button', { name: '世界配置', exact: true }).click();
+    await page.getByText('本会话思考 / Max', { exact: true }).waitFor();
+    await page.locator('#chat-right-panel').getByRole('button', { name: '关闭会话详情', exact: true }).click();
+    await page.locator('#chat-right-panel').waitFor({ state: 'hidden' });
+    await page.getByRole('button', { name: /^故事线：/ }).click();
+    await page.getByRole('button', { name: '关闭故事线总览', exact: true }).click();
+    if (width === 1365) {
+      const readingArea = await page.locator('.chat-main').boundingBox();
+      assert.ok(readingArea.width > 1000, 'desktop reading area uses recovered sidebar space');
+    }
     const composer = page.locator('.chat-inputbar-form');
     await composer.waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `overflow at ${width}`);
