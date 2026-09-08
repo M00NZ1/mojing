@@ -25,6 +25,8 @@ class AndroidLibrarySqlTest(unittest.TestCase):
         schema = json.loads((ANDROID / "schemas/com.mojing.app.data.local.AppDatabase/19.json").read_text())
         for entity in schema["database"]["entities"]:
             self.db.execute(entity["createSql"].replace("${TABLE_NAME}", entity["tableName"]))
+            for index in entity.get("indices", []):
+                self.db.execute(index["createSql"].replace("${TABLE_NAME}", entity["tableName"]))
         self.characters = queries("CharacterDao.kt")
         self.tasks = queries("GenerationTaskDao.kt")
 
@@ -46,6 +48,43 @@ class AndroidLibrarySqlTest(unittest.TestCase):
         for method in ("getAll", "observeAll", "getAllBound", "observeByEncyclopedia"):
             rows = self.db.execute(self.characters[method], {"encyclopediaId": 7})
             self.assertEqual(expected, [r["id"] for r in rows])
+
+    def test_revision_pages_cover_large_interleaved_history_without_duplicates(self):
+        query = queries("EntryVersionDao.kt")["getPage"]
+        seed = self.insert("entry_versions", entryId=7, content="旧正文" * 400)
+        self.db.executemany(
+            "INSERT INTO entry_versions (entryId, version, title, summary, content, tags, metaSnapshotJson, changeNote, createdBy, createdAt) "
+            "SELECT ?, ?, title, summary, content, tags, metaSnapshotJson, changeNote, createdBy, createdAt FROM entry_versions WHERE id = ?",
+            ((7 if n % 2 else 8, n, seed) for n in range(1, 20001)),
+        )
+        expected = [r[0] for r in self.db.execute("SELECT id FROM entry_versions WHERE entryId = 7 ORDER BY id DESC")]
+        before = 2**63 - 1
+        seen = []
+        while True:
+            rows = list(self.db.execute(query, {"entryId": 7, "beforeId": before, "limit": 11}))
+            self.assertLessEqual(len(rows), 11)
+            page = rows[:10]
+            self.assertTrue(all(r["entryId"] == 7 and r["content"] == "旧正文" * 400 for r in page))
+            seen.extend(r["id"] for r in page)
+            if len(rows) <= 10:
+                break
+            before = page[-1]["id"]
+        self.assertEqual(expected, seen)
+        plan = " ".join(r[3] for r in self.db.execute("EXPLAIN QUERY PLAN " + query,
+            {"entryId": 7, "beforeId": before, "limit": 11}))
+        self.assertIn("index_entry_versions_entryId", plan)
+        self.assertNotIn("TEMP B-TREE", plan)
+
+    def test_revision_cursor_survives_deleted_boundary_and_newer_insert(self):
+        query = queries("EntryVersionDao.kt")["getPage"]
+        ids = [self.insert("entry_versions", entryId=7, version=n) for n in range(25)]
+        first = list(self.db.execute(query, {"entryId": 7, "beforeId": 2**63 - 1, "limit": 11}))[:10]
+        boundary = first[-1]["id"]
+        self.db.execute("DELETE FROM entry_versions WHERE id = ?", (boundary,))
+        newest = self.insert("entry_versions", entryId=7, version=26)
+        older = list(self.db.execute(query, {"entryId": 7, "beforeId": boundary, "limit": 11}))[:10]
+        self.assertEqual(list(reversed(ids[:15]))[:10], [r["id"] for r in older])
+        self.assertNotIn(newest, [r["id"] for r in older])
 
     def test_failed_retry_keeps_saved_progress_and_only_changes_failed_rows(self):
         task = self.insert("generation_tasks", status="FAILED", progressDone=3, progressTotal=5)

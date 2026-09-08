@@ -86,6 +86,13 @@ Set-Location .\mojing\android
 
 测试位于 `app/src/test/` 和 `app/src/androidTest/`。签名、ABI 与 APK 输出见 [Android 开发指南](ANDROID.md)。
 
+本机 SQLite 契约测试从 Room schema 和 DAO 读取表、索引与查询，覆盖角色排序、任务状态和百科版本分页。版本用例包含两万条交错记录、删除游标边界与新增记录：
+
+```powershell
+Set-Location .\mojing
+.\.venv\Scripts\python.exe -m pytest tests/test_android_library_sql.py -q
+```
+
 ## 数据库迁移
 
 Web 使用 Alembic，迁移脚本位于 [backend/alembic/versions/](../backend/alembic/versions/)。
