@@ -25,7 +25,13 @@ import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -56,7 +62,7 @@ import com.mojing.app.ui.theme.NarratorBubble
 import com.mojing.app.ui.theme.UserBubble
 
 @Composable
-private fun MessageBubbleContextMenuItems(
+internal fun MessageActionPanelContent(
     message: MessageEntity,
     isBookmarked: Boolean,
     canContinueReply: Boolean,
@@ -67,18 +73,30 @@ private fun MessageBubbleContextMenuItems(
     onDismiss: () -> Unit,
     onAction: (MessageAction) -> Unit,
 ) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        MessageQuickAction("复制", Icons.Default.ContentCopy, Modifier.weight(1f)) {
+            onDismiss(); onAction(MessageAction.Copy(message))
+        }
+        MessageQuickAction("编辑", Icons.Default.Edit, Modifier.weight(1f), enabled = !isGenerating) {
+            onDismiss(); onAction(MessageAction.Edit(message))
+        }
+        if (canRegenerate) {
+            MessageQuickAction("重新生成", Icons.Default.Refresh, Modifier.weight(1f), enabled = !isGenerating) {
+                onDismiss(); onAction(MessageAction.Regenerate(message))
+            }
+        }
+    }
+    HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
     DropdownMenuItem(
+        modifier = Modifier.fillMaxWidth(),
         text = { Text("引用回复") },
+        enabled = !isGenerating,
         onClick = { onAction(MessageAction.Quote(message)); onDismiss() },
         leadingIcon = { Icon(Icons.AutoMirrored.Filled.Reply, null) },
     )
-    DropdownMenuItem(
-        text = { Text("复制") },
-        onClick = { onAction(MessageAction.Copy(message)); onDismiss() },
-        leadingIcon = { Icon(Icons.Default.ContentCopy, null) },
-    )
     if (imageAttachmentCount > 0) {
         DropdownMenuItem(
+            modifier = Modifier.fillMaxWidth(),
             text = {
                 Text(
                     when {
@@ -94,11 +112,7 @@ private fun MessageBubbleContextMenuItems(
         )
     }
     DropdownMenuItem(
-        text = { Text("编辑") },
-        onClick = { onAction(MessageAction.Edit(message)); onDismiss() },
-        leadingIcon = { Icon(Icons.Default.Edit, null) },
-    )
-    DropdownMenuItem(
+        modifier = Modifier.fillMaxWidth(),
         text = { Text(if (isBookmarked) "取消收藏" else "收藏消息") },
         onClick = { onAction(MessageAction.ToggleBookmark(message)); onDismiss() },
         leadingIcon = {
@@ -109,32 +123,31 @@ private fun MessageBubbleContextMenuItems(
         },
     )
     DropdownMenuItem(
+        modifier = Modifier.fillMaxWidth(),
         text = { Text("朗读本句") },
         onClick = { onAction(MessageAction.Speak(message)); onDismiss() },
         leadingIcon = { Icon(Icons.AutoMirrored.Filled.VolumeUp, null) },
     )
+    HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
     if (canContinueReply) {
         DropdownMenuItem(
+            modifier = Modifier.fillMaxWidth(),
             text = { Text("继续生成回复") },
             enabled = !isGenerating,
             onClick = { onAction(MessageAction.ContinueReply(message)); onDismiss() },
             leadingIcon = { Icon(Icons.Default.PlayArrow, null) },
         )
     }
-    if (canRegenerate) {
-        DropdownMenuItem(
-            text = { Text("重新生成") },
-            enabled = !isGenerating,
-            onClick = { onAction(MessageAction.Regenerate(message)); onDismiss() },
-            leadingIcon = { Icon(Icons.Default.Refresh, null) },
-        )
-    }
     DropdownMenuItem(
+        modifier = Modifier.fillMaxWidth(),
         text = { Text("从此处分支") },
+        enabled = !isGenerating,
         onClick = { onAction(MessageAction.CreateBranch(message)); onDismiss() },
         leadingIcon = { Icon(Icons.AutoMirrored.Filled.CallSplit, null) },
     )
+    HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
     DropdownMenuItem(
+        modifier = Modifier.fillMaxWidth(),
         text = { Text("撤回", color = MaterialTheme.colorScheme.error) },
         enabled = !isGenerating,
         onClick = { onAction(MessageAction.Recall(message)); onDismiss() },
@@ -142,7 +155,33 @@ private fun MessageBubbleContextMenuItems(
     )
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun MessageQuickAction(
+    label: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.heightIn(min = 80.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            val color = if (enabled) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+            Icon(icon, null, tint = color, modifier = Modifier.size(22.dp))
+            Text(label, style = MaterialTheme.typography.labelLarge, color = color)
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun MessageBubble(
     message: MessageEntity,
@@ -166,7 +205,7 @@ fun MessageBubble(
     showSenderHeader: Boolean = false,
     timeText: String = "",
 ) {
-    var showMenu by remember { mutableStateOf(false) }
+    var showMenu by remember(message.id) { mutableStateOf(false) }
     var previewImagePath by remember(message.id) { mutableStateOf<String?>(null) }
     val dismissMenu = { showMenu = false }
     val imageAttachmentCount = attachments.count { attachment ->
@@ -174,20 +213,21 @@ fun MessageBubble(
             (attachment.assetType.equals("image", ignoreCase = true) ||
                 attachment.mimeType.startsWith("image/", ignoreCase = true))
     }
-    @Composable
-    fun AnchoredMenu() {
-        DropdownMenu(expanded = showMenu, onDismissRequest = dismissMenu) {
-            MessageBubbleContextMenuItems(
-                message,
-                isBookmarked,
-                canContinueReply,
-                canRegenerate,
-                isGenerating,
-                imageAttachmentCount,
-                isSavingImages,
-                dismissMenu,
-                onAction,
-            )
+    if (showMenu) {
+        ModalBottomSheet(onDismissRequest = dismissMenu) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 16.dp)) {
+                Text("消息操作", style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
+                if (isGenerating) {
+                    Text("生成中，可复制、收藏、朗读或保存图片", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
+                }
+                MessageActionPanelContent(
+                    message, isBookmarked, canContinueReply, canRegenerate, isGenerating,
+                    imageAttachmentCount, isSavingImages, dismissMenu, onAction,
+                )
+            }
         }
     }
     when (message.speakerType) {
@@ -204,7 +244,6 @@ fun MessageBubble(
             onClick = { showMenu = true },
             onLongPress = { showMenu = true },
             onImageClick = { previewImagePath = it },
-            menu = { AnchoredMenu() },
         )
         "character" -> CharacterMessageBubble(
             message,
@@ -220,7 +259,6 @@ fun MessageBubble(
             onClick = { showMenu = true },
             onLongPress = { showMenu = true },
             onImageClick = { previewImagePath = it },
-            menu = { AnchoredMenu() },
         )
         "narrator" -> Box {
             NarratorMessageBubble(
@@ -228,7 +266,6 @@ fun MessageBubble(
                 showHistoricalChoices = !isCurrentChoiceMessage,
                 modifier = Modifier.combinedClickable(onClick = { showMenu = true }, onLongClick = { showMenu = true }),
             )
-            AnchoredMenu()
         }
         else -> UserMessageBubble(
             message,
@@ -243,7 +280,6 @@ fun MessageBubble(
             onClick = { showMenu = true },
             onLongPress = { showMenu = true },
             onImageClick = { previewImagePath = it },
-            menu = { AnchoredMenu() },
         )
     }
     previewImagePath?.let { path ->
