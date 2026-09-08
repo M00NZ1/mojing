@@ -230,6 +230,8 @@ class ChatViewModel @Inject constructor(
     private var branchTransitionJob: Job? = null
     private var initializationJob: Job? = null
     private var historyLoadJob: Job? = null
+    private var messageSearchJob: Job? = null
+    private var messageSearchRevision = 0L
     private var activeDraftSubmissionId: String? = null
 
     private fun persistCurrentDraft() {
@@ -3142,55 +3144,34 @@ class ChatViewModel @Inject constructor(
     }
 
     fun searchSession(query: String, exactMatch: Boolean = false) {
-        viewModelScope.launch {
-            val q = query.trim()
-            if (q.isEmpty()) {
-                _state.value = _state.value.copy(
-                    searchResults = emptyList(),
-                    isSearchingMessages = false,
-                )
-                return@launch
-            }
-            val branchId = currentBranchId()
-            _state.update { it.copy(searchResults = emptyList(), isSearchingMessages = true) }
-            runCatching {
-                if (branchId == "main") {
-                    messageDao.searchMainMessages(
-                        sessionId, q, if (exactMatch) 1 else 0, SEARCH_RESULT_LIMIT,
-                    )
+        clearSearch()
+        val q = query.trim()
+        if (q.isEmpty()) return
+        val revision = messageSearchRevision
+        val searchedSession = sessionId
+        val branchId = currentBranchId()
+        fun isCurrent() = revision == messageSearchRevision && sessionId == searchedSession && currentBranchId() == branchId
+        _state.update { it.copy(isSearchingMessages = true) }
+        messageSearchJob = viewModelScope.launch {
+            try {
+                val hits = if (branchId == "main") {
+                    messageDao.searchMainMessages(searchedSession, q, if (exactMatch) 1 else 0, SEARCH_RESULT_LIMIT)
                 } else {
-                    messageDao.searchVisibleMessages(
-                        sessionId, branchId, q, if (exactMatch) 1 else 0, SEARCH_RESULT_LIMIT,
-                    )
+                    messageDao.searchVisibleMessages(searchedSession, branchId, q, if (exactMatch) 1 else 0, SEARCH_RESULT_LIMIT)
                 }
-            }.fold(
-                onSuccess = { hits ->
-                    if (currentBranchId() == branchId) {
-                        _state.update {
-                            it.copy(searchResults = hits, isSearchingMessages = false)
-                        }
-                    }
-                },
-                onFailure = {
-                    if (currentBranchId() == branchId) {
-                        _state.update {
-                            it.copy(
-                                searchResults = emptyList(),
-                                isSearchingMessages = false,
-                                error = "本会话搜索失败，请重试",
-                            )
-                        }
-                    }
-                },
-            )
+                if (isCurrent()) _state.update { it.copy(searchResults = hits, completedSearchQuery = q, isSearchingMessages = false) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (isCurrent()) _state.update { it.copy(searchResults = emptyList(), isSearchingMessages = false, error = "本会话搜索失败，请重试") }
+            }
         }
     }
 
     fun clearSearch() {
-        _state.value = _state.value.copy(
-            searchResults = emptyList(),
-            isSearchingMessages = false,
-        )
+        messageSearchRevision++
+        messageSearchJob?.cancel()
+        messageSearchJob = null
+        _state.update { it.copy(searchResults = emptyList(), completedSearchQuery = "", isSearchingMessages = false) }
     }
 
     /** 将主分支按固定快照上界分页写为 UTF-8 JSON；调用方持有并关闭输出流。 */

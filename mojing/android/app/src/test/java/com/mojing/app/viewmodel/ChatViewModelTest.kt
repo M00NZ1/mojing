@@ -2242,6 +2242,33 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun clearedOrSupersededSearchCannotPublishLateResults() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery { dao.searchMainMessages(42L, "旧", 0, 100) } coAnswers {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { release.await() }
+            listOf(MessageEntity(id = 1, sessionId = 42, content = "旧"))
+        }
+        coEvery { dao.searchMainMessages(42L, "新", 0, 100) } returns
+            listOf(MessageEntity(id = 2, sessionId = 42, content = "新"))
+        val vm = createViewModel(messageDao = dao)
+        advanceUntilIdle()
+        vm.searchSession("旧")
+        runCurrent()
+        vm.clearSearch()
+        assertEquals("", vm.state.value.completedSearchQuery)
+        vm.searchSession("新")
+        runCurrent()
+        release.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf(2L), vm.state.value.searchResults.map { it.id })
+        assertEquals("新", vm.state.value.completedSearchQuery)
+        assertFalse(vm.state.value.isSearchingMessages)
+        vm.clearSearch()
+        assertTrue(vm.state.value.searchResults.isEmpty())
+    }
+
+    @Test
     fun tavernImportUsesOneStableAtomicBatchAndSkipsDuplicateRetry() = runTest(testDispatcher) {
         val messageDao = mockk<MessageDao>(relaxed = true)
         val participantDao = mockk<ParticipantDao>(relaxed = true)

@@ -1421,18 +1421,18 @@ fun ChatScreen(
                     ) {
                         FilterChip(
                             selected = !searchExactMatch,
-                            onClick = { searchExactMatch = false },
+                            onClick = { searchExactMatch = false; viewModel.clearSearch() },
                             label = { Text("模糊") },
                         )
                         FilterChip(
                             selected = searchExactMatch,
-                            onClick = { searchExactMatch = true },
+                            onClick = { searchExactMatch = true; viewModel.clearSearch() },
                             label = { Text("精确") },
                         )
                     }
                     OutlinedTextField(
                         value = searchQuery,
-                        onValueChange = { searchQuery = it },
+                        onValueChange = { searchQuery = it; viewModel.clearSearch() },
                         label = { Text("关键词") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -1452,7 +1452,7 @@ fun ChatScreen(
                         },
                         modifier = Modifier.padding(top = 4.dp)
                     ) { Text(if (state.isSearchingMessages) "搜索中…" else "搜索") }
-                    if (searchQuery.isNotBlank() &&
+                    if (searchQuery.isNotBlank() && state.completedSearchQuery == searchQuery.trim() &&
                         !state.isSearchingMessages &&
                         state.searchResults.isEmpty()
                     ) {
