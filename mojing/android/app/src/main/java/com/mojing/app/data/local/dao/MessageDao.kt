@@ -304,7 +304,8 @@ interface MessageDao {
         if (branchId.isBlank() || gid.isBlank()) return 0
         val visibleVariants = visibleSwipeVariants(sessionId, branchId, gid)
         if (visibleVariants.none { it.id == messageId }) return 0
-        if (effectiveSwipeSelection(sessionId, branchId, gid, visibleVariants) == messageId) return 1
+        val previousId = effectiveSwipeSelection(sessionId, branchId, gid, visibleVariants)
+        if (previousId == messageId) return 1
         upsertBranchSwipeSelectionRaw(
             BranchSwipeSelectionEntity(
                 sessionId = sessionId,
@@ -313,6 +314,7 @@ interface MessageDao {
                 selectedMessageId = messageId,
             ),
         )
+        deleteMemorySegmentTail(sessionId, branchId, minOf(previousId ?: messageId, messageId))
         invalidateContextMemoryForBranch(sessionId, branchId, System.currentTimeMillis())
         return 1
     }
@@ -627,9 +629,11 @@ interface MessageDao {
         val existingGroupId = target.swipeGroupId?.takeIf { it.isNotBlank() }
         require(existingGroupId == null || existingGroupId == groupId) { "回复版本组已变化" }
         if (existingGroupId == null) updateSwipeGroupId(targetMessageId, groupId)
-        check(visibleSwipeVariants(entity.sessionId, branchId, groupId).any { it.id == targetMessageId }) {
+        val visibleVariants = visibleSwipeVariants(entity.sessionId, branchId, groupId)
+        check(visibleVariants.any { it.id == targetMessageId }) {
             "原回复已不属于当前故事线"
         }
+        val previousId = effectiveSwipeSelection(entity.sessionId, branchId, groupId, visibleVariants)
         val id = insert(entity.copy(includeInContext = false))
         upsertBranchSwipeSelectionRaw(
             BranchSwipeSelectionEntity(
@@ -639,6 +643,7 @@ interface MessageDao {
                 selectedMessageId = id,
             ),
         )
+        deleteMemorySegmentTail(entity.sessionId, branchId, minOf(previousId ?: targetMessageId, id))
         invalidateContextMemoryForBranch(entity.sessionId, branchId, System.currentTimeMillis())
         return id
     }
@@ -657,15 +662,17 @@ interface MessageDao {
     @Transaction
     suspend fun updateContent(id: Long, content: String) {
         val current = getById(id) ?: return
+        if (current.content == content) return
         val affectedBranches = contextMemoryBranchesAffectedBy(current)
         val indexed = MessageSearchTokenizer.index(current.copy(content = content))
-        updateContentRaw(
+        check(updateContentRaw(
             id = id,
             content = content,
             searchNormalized = indexed.searchNormalized,
             searchTerms = indexed.searchTerms,
-        )
+        ) == 1) { "消息已不存在" }
         affectedBranches.forEach { branchId ->
+            deleteMemorySegmentTail(current.sessionId, branchId, id)
             invalidateContextMemoryForBranch(current.sessionId, branchId, System.currentTimeMillis())
         }
     }

@@ -1901,24 +1901,34 @@ class ChatViewModelTest {
         )
         val messageDao = mockk<MessageDao>(relaxed = true)
         val branchDao = mockk<SessionBranchDao>(relaxed = true)
+        val segmentDao = mockk<com.mojing.app.data.local.dao.SessionMemorySegmentDao>(relaxed = true)
+        val earlier = com.mojing.app.data.local.entity.SessionMemorySegmentEntity(id = 1, sessionId = 42, endMessageId = 3, summary = "早期剧情")
+        val obsolete = earlier.copy(id = 2, endMessageId = 10, summary = "旧回复摘要")
+        var committed = false
+        coEvery { segmentDao.getRecentForBranch(42, branch.branchId, any()) } answers {
+            if (committed) listOf(earlier) else listOf(obsolete, earlier)
+        }
         coEvery { branchDao.getBySession(42L) } returns listOf(branch)
         coEvery { messageDao.getVisibleMessagesTail(42L, branch.branchId, any()) } returns listOf(target)
         coEvery { messageDao.getVisibleMessageById(42L, branch.branchId, target.id) } returns target
         coEvery {
             messageDao.selectSwipeVariantForBranch(42L, branch.branchId, "group", target.id)
-        } returns 1
+        } answers { committed = true; 1 }
         val vm = createViewModel(
             messageDao = messageDao,
             sessionBranchDao = branchDao,
+            memorySegmentDao = segmentDao,
             uiPreferencesRepository = uiPreferences(branch.branchId),
         )
         advanceUntilIdle()
 
+        assertEquals(listOf(obsolete, earlier), vm.state.value.memorySegments)
         val selected = CompletableDeferred<Boolean>()
         vm.selectSwipeVariant("group", target.id) { selected.complete(it) }
         advanceUntilIdle()
 
         assertTrue(selected.await())
+        assertEquals(listOf(earlier), vm.state.value.memorySegments)
         assertEquals(branch.branchId, vm.state.value.currentBranchId)
         coVerify(exactly = 1) {
             messageDao.selectSwipeVariantForBranch(42L, branch.branchId, "group", target.id)

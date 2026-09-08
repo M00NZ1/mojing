@@ -24,8 +24,36 @@ private const val VISIBLE_MEMORY_SEGMENTS_QUERY = """
            AND replacement_visibility.sourceBranchId = replacement.branchId
            AND replacement.id <= replacement_visibility.maxMessageId
           WHERE replacement.sessionId = :sessionId
-            AND replacement.regeneratedFromMessageId BETWEEN memory.startMessageId AND memory.endMessageId
+            AND replacement.regeneratedFromMessageId <= memory.endMessageId
             AND replacement.branchId <> memory.branchId
+      )
+      AND (
+          memory.branchId = :branchId OR NOT EXISTS (
+              SELECT 1
+              FROM branch_swipe_selections AS choice
+              WHERE choice.sessionId = :sessionId
+                AND choice.branchId IN (:branchId, memory.branchId)
+                AND COALESCE((
+                    SELECT selectedMessageId FROM branch_swipe_selections
+                    WHERE sessionId = :sessionId AND branchId = :branchId
+                      AND swipeGroupId = choice.swipeGroupId
+                ), -1) <> COALESCE((
+                    SELECT selectedMessageId FROM branch_swipe_selections
+                    WHERE sessionId = :sessionId AND branchId = memory.branchId
+                      AND swipeGroupId = choice.swipeGroupId
+                ), -1)
+                AND EXISTS (
+                    SELECT 1 FROM messages AS source
+                    JOIN branch_visibility_segments AS source_visibility
+                      ON source_visibility.sessionId = source.sessionId
+                     AND source_visibility.targetBranchId = :branchId
+                     AND source_visibility.sourceBranchId = source.branchId
+                     AND source.id <= source_visibility.maxMessageId
+                    WHERE source.sessionId = :sessionId
+                      AND source.swipeGroupId = choice.swipeGroupId
+                      AND source.id <= memory.endMessageId
+                )
+          )
       )
 """
 
