@@ -2280,7 +2280,9 @@ class ChatViewModelTest {
     fun searchPagesUseLastVisibleIdAndReplaceTheWindow() = runTest(testDispatcher) {
         val dao = mockk<MessageDao>(relaxed = true)
         val rows = (250L downTo 1L).map { MessageEntity(id = it, sessionId = 42, content = "线索 $it") }
+        var failOlder = false
         coEvery { dao.searchMainMessages(42L, "线索", 0, 101, any()) } coAnswers {
+            if (failOlder) error("read failed")
             rows.filter { it.id < arg<Long>(4) }.take(101)
         }
         val vm = createViewModel(messageDao = dao)
@@ -2293,8 +2295,16 @@ class ChatViewModelTest {
         vm.searchSession("线索")
         awaitPage(250)
         assertEquals(100, vm.state.value.searchResults.size)
+        failOlder = true
+        vm.olderSearchResults()
+        advanceUntilIdle()
+        assertEquals(250L, vm.state.value.searchResults.first().id)
+        assertTrue(vm.state.value.searchHasOlder)
+        assertTrue(vm.state.value.searchError != null)
+        failOlder = false
         vm.olderSearchResults()
         awaitPage(150)
+        assertEquals(null, vm.state.value.searchError)
         assertEquals(100, vm.state.value.searchResults.size)
         assertEquals(151L, vm.state.value.searchBeforeId)
         vm.olderSearchResults()

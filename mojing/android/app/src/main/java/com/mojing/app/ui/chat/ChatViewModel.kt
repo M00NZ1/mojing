@@ -3144,6 +3144,7 @@ class ChatViewModel @Inject constructor(
     }
 
     fun searchSession(query: String, exactMatch: Boolean = false, beforeMessageId: Long = Long.MAX_VALUE) {
+        val previous = _state.value
         clearSearch()
         val q = query.trim()
         if (q.isEmpty()) return
@@ -3151,7 +3152,14 @@ class ChatViewModel @Inject constructor(
         val searchedSession = sessionId
         val branchId = currentBranchId()
         fun isCurrent() = revision == messageSearchRevision && sessionId == searchedSession && currentBranchId() == branchId
-        _state.update { it.copy(isSearchingMessages = true) }
+        _state.update {
+            if (previous.completedSearchQuery == q && previous.searchExactMatch == exactMatch) {
+                it.copy(isSearchingMessages = true, searchResults = previous.searchResults,
+                    searchPreviews = previous.searchPreviews, completedSearchQuery = q,
+                    searchBeforeId = previous.searchBeforeId, searchHasOlder = previous.searchHasOlder,
+                    searchExactMatch = exactMatch)
+            } else it.copy(isSearchingMessages = true)
+        }
         messageSearchJob = viewModelScope.launch {
             try {
                 val page = if (branchId == "main") {
@@ -3166,7 +3174,7 @@ class ChatViewModel @Inject constructor(
                 if (isCurrent()) _state.update { it.copy(searchResults = hits, searchPreviews = previews, completedSearchQuery = q, searchHasOlder = page.size > SEARCH_RESULT_LIMIT, searchBeforeId = beforeMessageId, searchExactMatch = exactMatch, isSearchingMessages = false) }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
-                if (isCurrent()) _state.update { it.copy(searchResults = emptyList(), isSearchingMessages = false, error = "本会话搜索失败，请重试") }
+                if (isCurrent()) _state.update { it.copy(isSearchingMessages = false, searchError = "搜索未完成，请重试") }
             }
         }
     }
@@ -3182,7 +3190,7 @@ class ChatViewModel @Inject constructor(
         messageSearchRevision++
         messageSearchJob?.cancel()
         messageSearchJob = null
-        _state.update { it.copy(searchResults = emptyList(), searchPreviews = emptyMap(), completedSearchQuery = "", searchHasOlder = false, searchBeforeId = Long.MAX_VALUE, isSearchingMessages = false) }
+        _state.update { it.copy(searchResults = emptyList(), searchPreviews = emptyMap(), completedSearchQuery = "", searchHasOlder = false, searchBeforeId = Long.MAX_VALUE, isSearchingMessages = false, searchError = null) }
     }
 
     /** 将主分支按固定快照上界分页写为 UTF-8 JSON；调用方持有并关闭输出流。 */

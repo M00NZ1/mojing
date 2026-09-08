@@ -103,6 +103,7 @@ object ChatContract {
         val searchHasOlder: Boolean = false,
         val searchBeforeId: Long = Long.MAX_VALUE,
         val searchExactMatch: Boolean = false,
+        val searchError: String? = null,
         /** 当前用户在加密偏好中的展示信息（与设置「个人资料」一致） */
         val userDisplayName: String = "",
         val userAvatarImagePath: String = "",

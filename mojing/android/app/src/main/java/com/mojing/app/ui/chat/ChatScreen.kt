@@ -1452,8 +1452,9 @@ fun ChatScreen(
                         },
                         modifier = Modifier.padding(top = 4.dp)
                     ) { Text(if (state.isSearchingMessages) "搜索中…" else "搜索") }
+                    state.searchError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     if (searchQuery.isNotBlank() && state.completedSearchQuery == searchQuery.trim() &&
-                        !state.isSearchingMessages &&
+                        !state.isSearchingMessages && state.searchError == null &&
                         state.searchResults.isEmpty()
                     ) {
                         Text(
@@ -1476,6 +1477,7 @@ fun ChatScreen(
                     ) {
                         items(state.searchResults, key = { it.id }) { m ->
                             TextButton(
+                                enabled = !state.isSearchingMessages,
                                 onClick = {
                                     if (state.isGenerating) {
                                         showGenerationLockedMessage()
