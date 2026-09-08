@@ -20,6 +20,7 @@ export function ModelPlatformsPanel({ onDirtyChange }: { onDirtyChange: (dirty: 
   const [original, setOriginal] = useState('');
   const [modelText, setModelText] = useState('');
   const [error, setError] = useState('');
+  const [discoveryNotice, setDiscoveryNotice] = useState('');
   const [fetching, setFetching] = useState(false);
   const fetchRef = useRef<AbortController | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
@@ -44,24 +45,27 @@ export function ModelPlatformsPanel({ onDirtyChange }: { onDirtyChange: (dirty: 
     if (dirty && !await confirmModal('放弃未保存的修改？', '当前平台的修改尚未保存。', 'warning', { confirmLabel: '放弃修改' })) return;
     fetchRef.current?.abort();
     const value = platform ?? emptyPlatform();
-    setDraft(value); setOriginal(JSON.stringify(value)); setModelText(value.models.join('\n')); setError('');
+    setDraft(value); setOriginal(JSON.stringify(value)); setModelText(value.models.join('\n')); setError(''); setDiscoveryNotice('');
   }
   useEffect(() => { if (draft) editorRef.current?.querySelector<HTMLInputElement>('input')?.focus(); }, [draft?.id]);
   function changeAddress(address: string) {
     fetchRef.current?.abort();
     setDraft((value) => value && ({ ...value, base_url: address, api_key: '', models: [], selected_model: '' }));
-    setModelText(''); setError('');
+    setModelText(''); setError(''); setDiscoveryNotice('');
   }
   async function discover() {
     if (!draft) return;
     const controller = new AbortController();
     fetchRef.current?.abort(); fetchRef.current = controller;
-    setFetching(true); setError('');
+    setFetching(true); setError(''); setDiscoveryNotice('');
     try {
       const result = await api.discoverModels(draft, controller.signal);
       if (controller.signal.aborted) return;
-      setModelText(result.models.join('\n'));
-      setDraft((value) => value && ({ ...value, selected_model: result.models.includes(value.selected_model) ? value.selected_model : result.models[0] ?? '' }));
+      const existing = parseModelNames(modelText);
+      const merged = [...new Set([...existing, ...result.models])];
+      setModelText(merged.join('\n'));
+      setDraft((value) => value && ({ ...value, selected_model: merged.includes(value.selected_model) ? value.selected_model : merged[0] ?? '' }));
+      setDiscoveryNotice(`已补充 ${merged.length - existing.length} 个模型，共 ${merged.length} 个。`);
     } catch (e) { if (!controller.signal.aborted) setError(errorText(e)); }
     finally { if (fetchRef.current === controller) { fetchRef.current = null; setFetching(false); } }
   }
@@ -88,12 +92,13 @@ export function ModelPlatformsPanel({ onDirtyChange }: { onDirtyChange: (dirty: 
           if (!preset) return;
           fetchRef.current?.abort();
           // A preset switch starts a new platform, preserving the original Key.
-          setDraft({ ...emptyPlatform(), name: preset.label, base_url: preset.base_url }); setModelText(''); setError('');
+          setDraft({ ...emptyPlatform(), name: preset.label, base_url: preset.base_url }); setModelText(''); setError(''); setDiscoveryNotice('');
         }}><option value="">选择预设填写地址</option>{providers.data?.map((p) => <option value={p.provider_id} key={p.provider_id}>{p.label}</option>)}</select></label>
         <label className="model-platform-wide">API 地址<input value={draft.base_url} onChange={(e) => changeAddress(e.target.value)} placeholder="https://…/v1" /></label>
         <label className="model-platform-wide">API Key<input type="password" autoComplete="off" value={draft.api_key} onChange={(e) => { fetchRef.current?.abort(); setDraft({ ...draft, api_key: e.target.value }); }} placeholder="填写当前平台的 Key" /><small>更改地址会清空 Key 与模型，请重新填写。</small></label>
         <div className="model-platform-wide model-platform-actions"><button type="button" className="btn btn-sm" disabled={fetching || !draft.api_key || !draft.base_url} onClick={() => { void discover(); }}>{fetching ? '正在获取…' : '获取平台全部模型'}</button>
           {fetching && <button type="button" className="btn btn-ghost btn-sm" onClick={() => fetchRef.current?.abort()}>取消获取</button>}</div>
+        {discoveryNotice && <p className="model-platform-wide" role="status">{discoveryNotice}</p>}
         <label className="model-platform-wide">模型名称 · {models.length} 个<textarea rows={6} value={modelText} disabled={fetching} onChange={(e) => setModelText(e.target.value)} placeholder="每行一个，也可用逗号分隔；不支持获取时直接填写。" /></label>
         <label className="model-platform-wide">默认模型<select value={draft.selected_model} onChange={(e) => setDraft({ ...draft, selected_model: e.target.value })}><option value="">选择默认模型</option>{models.map((model) => <option value={model} key={model}>{model}</option>)}</select></label>
       </div></fieldset>

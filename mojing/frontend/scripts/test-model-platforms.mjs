@@ -118,11 +118,18 @@ try {
   await page.getByRole('button', { name: '取消获取' }).click();
   await page.getByRole('button', { name: '获取平台全部模型' }).waitFor();
   await page.getByLabel(/^默认模型/).selectOption('manual-b');
+  discoveryMode = 'success';
+  await page.getByRole('button', { name: '获取平台全部模型' }).click();
+  await page.getByRole('status').filter({ hasText: '已补充 3 个模型，共 5 个。' }).waitFor();
+  assert.equal(await page.getByLabel(/^默认模型/).inputValue(), 'manual-b');
+  assert.equal(await page.getByLabel(/模型名称 ·/).inputValue(), 'manual-a\nmanual-b\nchat\nreason\nimage-model');
+  await page.getByRole('button', { name: '获取平台全部模型' }).click();
+  await page.getByRole('status').filter({ hasText: '已补充 0 个模型，共 5 个。' }).waitFor();
   await page.getByRole('button', { name: '保存平台', exact: true }).click();
   await page.locator('.model-platform-row').filter({ hasText: 'OpenAI' }).waitFor();
   assert.equal(catalog.platforms.length, 2);
   assert.equal(catalog.platforms[0].id, firstId);
-  assert.deepEqual(catalog.platforms[1].models, ['manual-a', 'manual-b']);
+  assert.deepEqual(catalog.platforms[1].models, ['manual-a', 'manual-b', 'chat', 'reason', 'image-model']);
   await page.reload();
   await page.locator('.model-platform-row').filter({ hasText: 'OpenAI' }).waitFor();
   if (output) { await mkdir(output, { recursive: true }); await page.screenshot({ path: path.join(output, 'platforms-desktop.png') }); }
