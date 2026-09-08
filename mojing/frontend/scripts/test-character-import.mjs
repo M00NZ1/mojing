@@ -29,9 +29,16 @@ try {
     await context.route('**/*', (route) => route.request().url().startsWith(`http://127.0.0.1:${port}`) ? route.continue() : route.abort());
     const character = (id, name, favorite = false) => ({ id, name, favorite, persona_prompt: '已有设定', api_key: '', api_base_url: '', model_name: '', temperature: .9, max_tokens: 1200, avatar_color: '#537e86', created_at: `2026-09-0${id}T00:00:00Z`, updated_at: '2026-09-07T00:00:00Z' });
     let rows = [character(1, '收藏角色', true), character(2, '普通角色')], imports = 0, fail = true, gate = null, waiting = false;
+    let exportRequests = 0, exportFail = true, exportGate = null;
     await context.route('http://127.0.0.1:18001/api/**', async (route) => {
       const req = route.request(), endpoint = new URL(req.url()).pathname.replace('/api', '');
       let status = 200, data = [];
+      if (endpoint.endsWith('/export-card')) {
+        exportRequests++;
+        if (exportFail) return route.fulfill({ status: 422, contentType: 'application/json', body: JSON.stringify({ detail: '角色图片无法读取，请更换图片后重试' }) });
+        await new Promise((resolve) => { exportGate = resolve; });
+        return route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aPioAAAAASUVORK5CYII=', 'base64') });
+      }
       if (endpoint === '/characters' && req.method() === 'GET') data = rows;
       else if (endpoint === '/characters' && req.method() === 'POST') { data = { ...character(5, req.postDataJSON().name), ...req.postDataJSON(), id: 5 }; rows.push(data); }
       else if (endpoint.startsWith('/characters/import-')) {
@@ -85,8 +92,28 @@ try {
     await page.locator('[data-character-id="5"]').waitFor();
     assert.deepEqual(await page.locator('[data-character-id]').evaluateAll((nodes) => nodes.map((node) => Number(node.dataset.characterId))), [1, 5, 3, 2]);
     await page.locator('[data-character-id="2"]').click();
+    await page.getByRole('tab', { name: '资料工具' }).click();
+    const exportButton = page.getByRole('button', { name: '导出 PNG 角色卡', exact: true });
+    await exportButton.click();
+    await page.locator('.toast-error').filter({ hasText: '角色图片无法读取，请更换图片后重试' }).waitFor();
+    assert.equal(exportRequests, 1);
+    exportFail = false;
+    await exportButton.click();
+    const exporting = page.getByRole('button', { name: '正在导出…', exact: true });
+    await exporting.waitFor();
+    assert.equal(await exporting.isDisabled(), true);
+    const exportDeadline = Date.now() + 3000;
+    while (!exportGate && Date.now() < exportDeadline) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(exportGate);
+    const download = page.waitForEvent('download');
+    exportGate();
+    await download;
+    await exportButton.waitFor();
+    assert.equal(exportRequests, 2);
+    await page.getByRole('tab', { name: '角色设定' }).click();
     await page.getByPlaceholder('给角色起个名字').fill('尚未保存的名字');
     await page.getByRole('tab', { name: '资料工具' }).click();
+    assert.equal(await exportButton.isDisabled(), true);
     await page.getByRole('tabpanel').getByRole('button', { name: '导入角色', exact: true }).click();
     dialog = page.getByRole('dialog', { name: '导入角色', exact: true });
     await dialog.getByLabel('资料格式').selectOption('portable');
@@ -104,7 +131,7 @@ try {
     assert.equal(errors.length, 0, errors.join('\n'));
     await context.close();
   }
-  console.log('PASS: desktop/mobile import entry, failure retry, pending single request, success navigation, favorite/created ordering, new role search clearing, and unsaved editor protection. Mock APIs only.');
+  console.log('PASS: desktop/mobile import entry, failure retry, pending single request, success navigation, favorite/created ordering, new role search clearing, and unsaved editor protection. PNG export retry, pending state, download, and unsaved export guard. Mock APIs only.');
 } finally {
   await browser?.close();
   if (child.exitCode === null) { child.kill(); await once(child, 'exit'); }

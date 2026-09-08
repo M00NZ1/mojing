@@ -30,7 +30,7 @@ from ..services.character_card_service import (
     convert_internal_to_v2,
     convert_v2_to_internal,
     read_character_card_from_png_bytes,
-    write_character_card_to_png)
+    render_character_card_png)
 from ..services.character_portable_service import (
     PORTABLE_KIND,
     PORTABLE_VERSION,
@@ -603,27 +603,21 @@ def export_character_card(character_id: int, db: Session = Depends(get_db)):
     avatar_path = None
     if character.avatar_image_path:
         avatar_candidate = STORAGE_DIR / character.avatar_image_path
-        if avatar_candidate.exists():
+        if avatar_candidate.is_file():
             avatar_path = avatar_candidate
 
-    export_dir = STORAGE_DIR / "exports" / "cards"
-    export_dir.mkdir(parents=True, exist_ok=True)
-    output_path = export_dir / f"{character.name}_card.png"
+    try:
+        png = render_character_card_png(card_data, avatar_path)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="角色图片无法读取，请更换图片后重试") from exc
 
-    if avatar_path and avatar_path.suffix.lower() == ".png":
-        write_character_card_to_png(avatar_path, card_data, output_path)
-    else:
-        # 没有 PNG 头像时，创建一个纯色 PNG 作为载体
-        from PIL import Image as PILImage
-        img = PILImage.new("RGBA", (512, 512), (30, 41, 49, 255))
-        img.save(str(output_path), "PNG")
-        write_character_card_to_png(output_path, card_data, output_path)
-
-    from fastapi.responses import FileResponse
-    return FileResponse(
-        str(output_path),
+    from urllib.parse import quote
+    filename = quote(f"{character.name}_chara_card_v2.png", safe="")
+    return Response(
+        png,
         media_type="image/png",
-        filename=f"{character.name}_chara_card_v2.png")
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
 
 
 @router.delete("/{character_id}", summary="删除角色")

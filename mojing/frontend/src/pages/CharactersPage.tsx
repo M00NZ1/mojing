@@ -78,6 +78,11 @@ export default function CharactersPage() {
   const [sourceFilename, setSourceFilename] = useState('persona.txt');
   const [sourceText, setSourceText] = useState('');
   const [importOpen, setImportOpen] = useState(false);
+  const cardExportMutation = useMutation({
+    mutationFn: (characterId: number) => api.exportCharacterCard(characterId),
+    onSuccess: () => showToast('角色卡已下载', 'success'),
+    onError: (error) => showToast(error instanceof Error ? error.message : '角色卡导出失败，请重试', 'error'),
+  });
   const [revealId, setRevealId] = useState<number | null>(null);
   const libraryRef = useRef<HTMLDivElement>(null);
   const [assetSearch, setAssetSearch] = useState('');
@@ -875,7 +880,13 @@ export default function CharactersPage() {
                     <div className="form-group full-row">
                       <div className="form-section-title">导出</div>
                       <div className="button-row" style={{ flexWrap: 'wrap', gap: 8 }}>
-                        <button className="btn btn-ghost btn-sm" type="button" onClick={() => void api.exportCharacterCard(editing.id!).then(() => showToast('\u5f62\u8c61\u5361\u5df2\u5f00\u59cb\u4e0b\u8f7d', 'success')).catch((e) => showToast(e instanceof Error ? e.message : '\u5f62\u8c61\u5361\u5bfc\u51fa\u5931\u8d25', 'error'))}>{'\u5bfc\u51fa PNG \u5f62\u8c61\u5361'}</button>
+                        <button className="btn btn-ghost btn-sm" type="button"
+                          disabled={cardExportMutation.isPending || isCharacterDirty}
+                          title={isCharacterDirty ? '请先保存角色修改' : '导出完整角色设定与图片'}
+                          onClick={() => cardExportMutation.mutate(editing.id!)}>
+                          {cardExportMutation.isPending ? '正在导出…' : '导出 PNG 角色卡'}
+                        </button>
+                        {isCharacterDirty && <span className="hint">保存修改后可导出 PNG 角色卡</span>}
                         <button className="btn btn-ghost btn-sm" type="button" onClick={() => api.downloadCharacterPortable(editing.id!, 'json', 'raw').catch((e) => showToast(String(e), 'error'))}>便携 JSON</button>
                         <button className="btn btn-ghost btn-sm" type="button" onClick={() => api.downloadCharacterPortable(editing.id!, 'txt', 'raw').catch((e) => showToast(String(e), 'error'))}>便携 TXT</button>
                         <button className="btn btn-ghost btn-sm" type="button" onClick={() => api.downloadCharacterPortable(editing.id!, 'docx', 'raw').catch((e) => showToast(String(e), 'error'))}>便携 DOCX</button>
