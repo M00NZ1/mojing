@@ -93,6 +93,30 @@ class SaveCharacterEntryUseCaseInstrumentedTest {
     }
 
     @Test
+    fun editAndHistoryCommitTogetherAndFailedEditLeavesNoVersion() = runBlocking {
+        val original = saveCharacterEntry(EncyclopediaEntryEntity(
+            encyclopediaId = firstEncyclopediaId, title = "旧标题", content = "旧正文",
+        ))
+        val updated = saveCharacterEntry.saveEdited(original.copy(content = "新正文"))
+        assertEquals("新正文", database.encyclopediaEntryDao().getById(original.id)?.content)
+        assertEquals("旧正文", database.entryVersionDao().getByEntry(original.id).single().content)
+        saveCharacterEntry.saveEdited(updated)
+        assertEquals(1, database.entryVersionDao().getByEntry(original.id).size)
+        try {
+            saveCharacterEntry.saveEdited(updated.copy(encyclopediaId = secondEncyclopediaId, content = "失败正文"))
+            fail("跨百科编辑应失败")
+        } catch (_: IllegalArgumentException) { }
+        assertEquals(1, database.entryVersionDao().getByEntry(original.id).size)
+        assertEquals("新正文", database.encyclopediaEntryDao().getById(original.id)?.content)
+        database.encyclopediaEntryDao().delete(original.id)
+        try {
+            saveCharacterEntry.saveEdited(updated.copy(content = "迟到的编辑"))
+            fail("已删除条目不可恢复写入")
+        } catch (_: IllegalArgumentException) { }
+        assertNull(database.encyclopediaEntryDao().getById(original.id))
+    }
+
+    @Test
     fun confirmingConversationNotePreservesSameNameCharacterAndMirror() = runBlocking {
         val mirror = saveCharacterEntry(EncyclopediaEntryEntity(
             encyclopediaId = firstEncyclopediaId, title = "林岚",

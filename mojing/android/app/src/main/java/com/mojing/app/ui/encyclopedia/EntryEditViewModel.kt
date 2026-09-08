@@ -355,27 +355,7 @@ class EntryEditViewModel @Inject constructor(
                     updatedAt = now,
                     createdAt = if (base.id == 0L) now else base.createdAt
                 )
-                val existingId = base.id
-                if (existingId > 0L) {
-                    val existing = entryDao.getById(existingId)
-                    if (existing != null && entryContentDiffers(existing, toSave)) {
-                        val nextVer = entryVersionDao.maxVersionForEntry(existingId) + 1
-                        entryVersionDao.insert(
-                            EntryVersionEntity(
-                                entryId = existingId,
-                                version = nextVer,
-                                title = existing.title,
-                                summary = existing.summary,
-                                content = existing.content,
-                                tags = existing.tags,
-                                metaSnapshotJson = existing.metaJson,
-                                changeNote = existing.changeNote,
-                                createdBy = "local"
-                            )
-                        )
-                    }
-                }
-                val saved = saveCharacterEntry(toSave)
+                val saved = saveCharacterEntry.saveEdited(toSave)
                 currentEntry = saved
                 val versions = entryVersionDao.getByEntry(saved.id)
                 val latest = _state.value
@@ -423,15 +403,4 @@ class EntryEditViewModel @Inject constructor(
         }
     }
 
-    private fun entryContentDiffers(a: EncyclopediaEntryEntity, b: EncyclopediaEntryEntity): Boolean =
-        a.title != b.title ||
-            a.entryType != b.entryType ||
-            a.summary != b.summary ||
-            a.content != b.content ||
-            a.tags != b.tags ||
-            a.confidence != b.confidence ||
-            a.metaJson != b.metaJson ||
-            a.isFeatured != b.isFeatured ||
-            a.changeNote != b.changeNote ||
-            a.coverImagePath != b.coverImagePath
 }

@@ -2,6 +2,7 @@ package com.mojing.app.domain.usecase
 
 import androidx.room.withTransaction
 import com.mojing.app.data.local.AppDatabase
+import com.mojing.app.data.local.entity.EntryVersionEntity
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
 import com.mojing.app.domain.encyclopedia.CharacterEncyclopediaSync
@@ -19,6 +20,27 @@ import javax.inject.Singleton
 class SaveCharacterEntryUseCase @Inject constructor(
     private val database: AppDatabase,
 ) {
+    /** 编辑入口：旧正文快照与新条目共享一次事务。 */
+    suspend fun saveEdited(entry: EncyclopediaEntryEntity): EncyclopediaEntryEntity = database.withTransaction {
+        val previous = if (entry.id > 0L) database.encyclopediaEntryDao().getById(entry.id) else null
+        require(entry.id == 0L || previous != null) { "条目已被删除，请返回百科重新打开" }
+        if (previous != null && entryContentDiffers(previous, entry)) {
+            val versions = database.entryVersionDao()
+            versions.insert(EntryVersionEntity(
+                entryId = previous.id,
+                version = versions.maxVersionForEntry(previous.id) + 1,
+                title = previous.title,
+                summary = previous.summary,
+                content = previous.content,
+                tags = previous.tags,
+                metaSnapshotJson = previous.metaJson,
+                changeNote = previous.changeNote,
+                createdBy = "local",
+            ))
+        }
+        invoke(entry)
+    }
+
     suspend operator fun invoke(entry: EncyclopediaEntryEntity): EncyclopediaEntryEntity =
         database.withTransaction {
             val entryDao = database.encyclopediaEntryDao()
@@ -159,4 +181,16 @@ class SaveCharacterEntryUseCase @Inject constructor(
         runCatching { JsonParser.parseString(metaJson.ifBlank { "{}" }).asJsonObject }
             .getOrNull()
             ?: JsonObject()
+
+    private fun entryContentDiffers(a: EncyclopediaEntryEntity, b: EncyclopediaEntryEntity): Boolean =
+        a.title != b.title ||
+            a.entryType != b.entryType ||
+            a.summary != b.summary ||
+            a.content != b.content ||
+            a.tags != b.tags ||
+            a.confidence != b.confidence ||
+            a.metaJson != b.metaJson ||
+            a.isFeatured != b.isFeatured ||
+            a.changeNote != b.changeNote ||
+            a.coverImagePath != b.coverImagePath
 }

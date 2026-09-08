@@ -36,7 +36,7 @@ class EntryEditViewModelTest {
         val release = CompletableDeferred<Unit>()
         var failSave = true
         val save = mockk<SaveCharacterEntryUseCase> {
-            coEvery { this@mockk.invoke(any()) } coAnswers {
+            coEvery { this@mockk.saveEdited(any()) } coAnswers {
                 release.await()
                 if (failSave) error("write failed")
                 firstArg<EncyclopediaEntryEntity>().copy(id = 12)
@@ -47,7 +47,7 @@ class EntryEditViewModelTest {
         viewModel.updateTitle("潮汐钟")
         viewModel.save()
         viewModel.save()
-        coVerify(exactly = 1) { save(any()) }
+        coVerify(exactly = 1) { save.saveEdited(any()) }
         release.complete(Unit)
         advanceUntilIdle()
         assertFalse(viewModel.state.value.isSaving)
@@ -58,7 +58,7 @@ class EntryEditViewModelTest {
         assertTrue(viewModel.state.value.isPersisted)
         assertFalse(viewModel.state.value.isDirty)
         viewModel.save()
-        coVerify(exactly = 2) { save(any()) }
+        coVerify(exactly = 2) { save.saveEdited(any()) }
     }
 
     @Test
@@ -153,7 +153,7 @@ class EntryEditViewModelTest {
             coEvery { insert(any()) } returns 1L
         }
         val save = mockk<SaveCharacterEntryUseCase> {
-            coEvery { this@mockk.invoke(any()) } returns persisted
+            coEvery { this@mockk.saveEdited(any()) } returns persisted
         }
         val viewModel = createViewModel(encyclopediaDao(), entryDao, versionDao, save)
 
@@ -178,7 +178,7 @@ class EntryEditViewModelTest {
             coEvery { getByEntry(12L) } returns emptyList()
         }
         val save = mockk<SaveCharacterEntryUseCase> {
-            coEvery { this@mockk.invoke(any()) } returns saved
+            coEvery { this@mockk.saveEdited(any()) } returns saved
         }
         val viewModel = createViewModel(encyclopediaDao(), entryDao, versionDao, save)
 
@@ -205,7 +205,7 @@ class EntryEditViewModelTest {
             coEvery { insert(any()) } returns 1L
         }
         val save = mockk<SaveCharacterEntryUseCase> {
-            coEvery { this@mockk.invoke(any()) } coAnswers {
+            coEvery { this@mockk.saveEdited(any()) } coAnswers {
                 saveRelease.await()
                 persisted
             }
