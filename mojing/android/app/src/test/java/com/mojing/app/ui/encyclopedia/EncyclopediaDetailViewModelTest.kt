@@ -123,4 +123,73 @@ class EncyclopediaDetailViewModelTest {
         assertEquals(listOf(entry), viewModel.state.value.entries)
         assertFalse(viewModel.state.value.pickerEntries.isEmpty())
     }
+    @Test
+    fun renameFailureKeepsDraftAndRetryClosesOnlyAfterSave() = runTest(dispatcher) {
+        val dao = mockk<EncyclopediaDao> {
+            coEvery { getById(3L) } returns EncyclopediaEntity(id = 3L, name = "雾海")
+            coEvery { updateName(3L, any(), any()) } throws IllegalStateException("database unavailable")
+        }
+        val vm = createViewModel(dao)
+        vm.load(3L)
+        vm.beginRename()
+        vm.editRename("  新雾海  ")
+        vm.updateEncyclopediaName()
+        assertEquals("  新雾海  ", vm.state.value.renameDraft)
+        assertEquals("雾海", vm.state.value.encyclopedia?.name)
+        assertNotNull(vm.state.value.renameError)
+        assertFalse(vm.state.value.renameSaving)
+        coEvery { dao.updateName(3L, "新雾海", any()) } returns 1
+        vm.updateEncyclopediaName()
+        assertEquals("新雾海", vm.state.value.encyclopedia?.name)
+        assertEquals(null, vm.state.value.renameDraft)
+        assertEquals(null, vm.state.value.renameError)
+    }
+
+    @Test
+    fun renameInFlightBlocksDismissAndDuplicateAndSurvivesReload() = runTest(dispatcher) {
+        val gate = kotlinx.coroutines.CompletableDeferred<Int>()
+        val dao = mockk<EncyclopediaDao> {
+            coEvery { getById(3L) } returns EncyclopediaEntity(id = 3L, name = "雾海")
+            coEvery { updateName(3L, any(), any()) } coAnswers { gate.await() }
+        }
+        val vm = createViewModel(dao)
+        vm.load(3L)
+        vm.beginRename()
+        vm.editRename("新雾海")
+        vm.updateEncyclopediaName()
+        vm.dismissRename()
+        vm.editRename("其他名字")
+        vm.load(3L)
+        vm.updateEncyclopediaName()
+        assertTrue(vm.state.value.renameSaving)
+        assertEquals("新雾海", vm.state.value.renameDraft)
+        gate.complete(1)
+        io.mockk.coVerify(exactly = 1) { dao.updateName(3L, "新雾海", any()) }
+        assertEquals("新雾海", vm.state.value.encyclopedia?.name)
+        assertFalse(vm.state.value.renameSaving)
+    }
+
+    @Test
+    fun deletedTargetRetainsDraftAndChangingTargetIgnoresOldCompletion() = runTest(dispatcher) {
+        val gate = kotlinx.coroutines.CompletableDeferred<Int>()
+        val dao = mockk<EncyclopediaDao> {
+            coEvery { getById(any()) } answers { EncyclopediaEntity(id = firstArg(), name = "原名称") }
+            coEvery { updateName(3L, any(), any()) } returns 0
+        }
+        val vm = createViewModel(dao)
+        vm.load(3L)
+        vm.beginRename()
+        vm.editRename("修改名称")
+        vm.updateEncyclopediaName()
+        assertNotNull(vm.state.value.renameError)
+        assertEquals("修改名称", vm.state.value.renameDraft)
+        coEvery { dao.updateName(3L, any(), any()) } coAnswers { gate.await() }
+        vm.updateEncyclopediaName()
+        vm.load(4L)
+        gate.complete(1)
+        assertEquals(4L, vm.state.value.encyclopedia?.id)
+        assertEquals("原名称", vm.state.value.encyclopedia?.name)
+        assertEquals(null, vm.state.value.renameDraft)
+    }
+
 }

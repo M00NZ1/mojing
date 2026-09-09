@@ -168,8 +168,6 @@ fun EncyclopediaDetailScreen(
     var showBatchMetaConfirm by remember { mutableStateOf(false) }
     var showBatchDialog by remember { mutableStateOf(false) }
     var showEncyclopediaMenu by remember { mutableStateOf(false) }
-    var showRenameDialog by remember { mutableStateOf(false) }
-    var renameDraft by remember { mutableStateOf("") }
     var deleteEntryTarget by remember { mutableStateOf<EncyclopediaEntryEntity?>(null) }
     var timelineDetailTarget by remember { mutableStateOf<TimelineEventEntity?>(null) }
     var timelineDeleteTarget by remember { mutableStateOf<TimelineEventEntity?>(null) }
@@ -328,8 +326,7 @@ fun EncyclopediaDetailScreen(
                                 text = { Text("重命名百科") },
                                 onClick = {
                                     showEncyclopediaMenu = false
-                                    renameDraft = state.encyclopedia?.name.orEmpty()
-                                    showRenameDialog = true
+                                    viewModel.beginRename()
                                 },
                             )
                             DropdownMenuItem(
@@ -1045,27 +1042,30 @@ fun EncyclopediaDetailScreen(
         )
     }
 
-    if (showRenameDialog) {
+    state.renameDraft?.let { draft ->
         AlertDialog(
-            onDismissRequest = { showRenameDialog = false },
+            onDismissRequest = viewModel::dismissRename,
             title = { Text("重命名百科") },
             text = {
                 OutlinedTextField(
-                    value = renameDraft,
-                    onValueChange = { renameDraft = it },
+                    value = draft,
+                    onValueChange = viewModel::editRename,
                     label = { Text("名称") },
                     singleLine = true,
+                    enabled = !state.renameSaving,
+                    isError = state.renameError != null,
+                    supportingText = { state.renameError?.let { Text(it) } },
                     modifier = Modifier.fillMaxWidth(),
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
-                    viewModel.updateEncyclopediaName(renameDraft)
-                    showRenameDialog = false
-                }) { Text("确定") }
+                TextButton(enabled = !state.renameSaving && draft.isNotBlank(),
+                    onClick = viewModel::updateEncyclopediaName) {
+                    Text(if (state.renameSaving) "保存中…" else "保存")
+                }
             },
             dismissButton = {
-                TextButton(onClick = { showRenameDialog = false }) { Text("取消") }
+                TextButton(enabled = !state.renameSaving, onClick = viewModel::dismissRename) { Text("取消") }
             },
         )
     }

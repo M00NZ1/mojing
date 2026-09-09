@@ -65,6 +65,9 @@ data class EncyclopediaDetailState(
     val worldInfoImportBusy: Boolean = false,
     val isLoaded: Boolean = false,
     val loadError: String? = null,
+    val renameDraft: String? = null,
+    val renameSaving: Boolean = false,
+    val renameError: String? = null,
 ) {
     /** 是否有百科「扩展 meta」批量补全任务在排队或执行（用于禁用重复提交） */
     val isEncyclopediaMetaFillQueued: Boolean
@@ -101,6 +104,7 @@ class EncyclopediaDetailViewModel @Inject constructor(
     }
 
     fun load(id: Long) {
+        val renameState = _state.value.takeIf { encId == id }
         if (encId != id) hadActiveGenerationForEnc = false
         encId = id
         genObserveJob?.cancel()
@@ -108,6 +112,9 @@ class EncyclopediaDetailViewModel @Inject constructor(
         _state.value = EncyclopediaDetailState(
             isLoaded = false,
             hasPublicLlmKey = secureStorage.publicApiKey.isNotBlank(),
+            renameDraft = renameState?.renameDraft,
+            renameSaving = renameState?.renameSaving ?: false,
+            renameError = renameState?.renameError,
         )
         viewModelScope.launch {
             try {
@@ -312,21 +319,54 @@ class EncyclopediaDetailViewModel @Inject constructor(
         refreshTimelineAndRelations()
     }
 
-    fun updateEncyclopediaName(name: String) {
+    fun beginRename() {
+        if (_state.value.renameSaving) return
+        val name = _state.value.encyclopedia?.name ?: return
+        _state.value = _state.value.copy(renameDraft = name, renameError = null)
+    }
+
+    fun editRename(name: String) {
+        if (!_state.value.renameSaving) {
+            _state.value = _state.value.copy(renameDraft = name, renameError = null)
+        }
+    }
+
+    fun dismissRename() {
+        if (!_state.value.renameSaving) {
+            _state.value = _state.value.copy(renameDraft = null, renameError = null)
+        }
+    }
+
+    fun updateEncyclopediaName() {
+        if (_state.value.renameSaving) return
+        val trimmed = _state.value.renameDraft?.trim() ?: return
+        if (trimmed.isBlank()) {
+            _state.value = _state.value.copy(renameError = "百科名称不能为空")
+            return
+        }
+        val targetId = encId
+        _state.value = _state.value.copy(renameSaving = true, renameError = null)
         viewModelScope.launch {
-            val trimmed = name.trim()
-            if (trimmed.isBlank()) {
-                showSnackbar("百科名称不能为空")
-                return@launch
+            try {
+                val now = System.currentTimeMillis()
+                val updated = encyclopediaDao.updateName(targetId, trimmed, now)
+                if (encId != targetId) return@launch
+                if (updated == 0) {
+                    _state.value = _state.value.copy(renameError = "百科已不存在，未保存名称")
+                } else {
+                    _state.value = _state.value.copy(
+                        encyclopedia = _state.value.encyclopedia?.copy(name = trimmed, updatedAt = now),
+                        renameDraft = null,
+                    )
+                    showSnackbar("已更新百科名称")
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (encId == targetId) _state.value = _state.value.copy(renameError = "名称保存失败，请重试")
+            } finally {
+                if (encId == targetId) _state.value = _state.value.copy(renameSaving = false)
             }
-            val enc = encyclopediaDao.getById(encId) ?: return@launch
-            val now = System.currentTimeMillis()
-            if (encyclopediaDao.updateName(encId, trimmed, now) == 0) {
-                showSnackbar("百科库已删除，未保存名称")
-                return@launch
-            }
-            _state.value = _state.value.copy(encyclopedia = enc.copy(name = trimmed, updatedAt = now))
-            showSnackbar("已更新百科名称")
         }
     }
 
