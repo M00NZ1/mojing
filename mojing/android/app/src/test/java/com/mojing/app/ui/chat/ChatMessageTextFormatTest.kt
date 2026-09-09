@@ -6,6 +6,21 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class ChatMessageTextFormatTest {
+    @Test fun userActionsPreserveLiteralModelTagsWhileGeneratedActionsUseProse() {
+        val raw = "<SPEECH>字面文本</SPEECH><CHOICES><OPTION>选项原文</OPTION></CHOICES>"
+        assertEquals(raw, ChatMessageTextFormat.visibleBody(raw, "user"))
+        assertEquals(raw, ChatMessageTextFormat.forClipboard(raw, "user"))
+        assertEquals(raw, ChatMessageTextFormat.quoteSnippet(raw, 120, "user"))
+        assertEquals("字面文本", ChatMessageTextFormat.visibleBody(raw, "character"))
+        assertEquals("字面文本", ChatMessageTextFormat.forClipboard(raw, "character"))
+    }
+
+    @Test fun userChoiceOnlyLiteralRemainsQuotableButGeneratedOptionsDoNot() {
+        val raw = "<CHOICES><OPTION>保留</OPTION></CHOICES>"
+        assertEquals(raw, ChatMessageTextFormat.quoteSnippet(raw, 120, "user"))
+        assertEquals("", ChatMessageTextFormat.quoteSnippet(raw, 120, "character"))
+        assertEquals("", ChatMessageTextFormat.quoteSnippet("> 林汐：旧引用\n\n", 120, "user"))
+    }
     @Test fun quotingReplyUsesItsOwnBodyAndPreservesUserLiteralTags() {
         val reply = "> 林汐：码头见\n\n我马上来"
         assertEquals("我马上来", ChatMessageTextFormat.quoteSnippet(reply, 120, "user"))

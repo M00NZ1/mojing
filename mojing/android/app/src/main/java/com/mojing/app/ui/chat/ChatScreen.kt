@@ -1027,10 +1027,10 @@ fun ChatScreen(
                                     is MessageAction.Recall -> { recallMessage = action.message }
                                     is MessageAction.Edit -> {
                                         editingMessage = action.message
-                                        editContent = ChatMessageTextFormat.visibleBody(action.message.content)
+                                        editContent = ChatMessageTextFormat.visibleBody(action.message.content, action.message.speakerType)
                                     }
                                     is MessageAction.Copy -> {
-                                        val copyText = ChatMessageTextFormat.forClipboard(action.message.content)
+                                        val copyText = ChatMessageTextFormat.forClipboard(action.message.content, action.message.speakerType)
                                         if (copyText.isBlank()) {
                                             scope.launch { snackbarHostState.showSnackbar(UserFacingStrings.messageHasNoCopyableText()) }
                                         } else {

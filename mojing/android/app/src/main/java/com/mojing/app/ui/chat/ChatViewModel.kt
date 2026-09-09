@@ -2756,7 +2756,7 @@ class ChatViewModel @Inject constructor(
     }
 
     fun setQuotingMessage(message: MessageEntity?) {
-        if (message != null && ChatMessageTextFormat.visibleBody(message.content).isBlank()) {
+        if (message != null && ChatMessageTextFormat.quoteSnippet(message.content, 120, message.speakerType).isBlank()) {
             _state.value = _state.value.copy(error = UserFacingStrings.messageHasNoQuotableText())
             return
         }
@@ -3399,7 +3399,7 @@ class ChatViewModel @Inject constructor(
 
     fun handleMessageAction(action: MessageAction) {
         when (action) {
-            is MessageAction.Speak -> speakMessage(ChatMessageTextFormat.visibleBody(action.message.content))
+            is MessageAction.Speak -> speakMessage(ChatMessageTextFormat.visibleBody(action.message.content, action.message.speakerType))
             is MessageAction.Copy -> Unit // 剪贴板：由 ChatScreen 处理
             is MessageAction.ContinueReply -> {
                 val message = action.message

@@ -39,8 +39,8 @@ object ChatMessageTextFormat {
     }
 
     /** 用户实际可读的消息正文；供复制、朗读、引用和编辑等气泡动作共用。 */
-    fun visibleBody(raw: String): String {
-        if (!StructuredParser.isStructured(raw)) return forBubbleDisplay(raw)
+    fun visibleBody(raw: String, speakerType: String? = null): String {
+        if (speakerType == "user" || !StructuredParser.isStructured(raw)) return forBubbleDisplay(raw)
         val reply = StructuredParser.parse(raw)
         val parts = buildList {
             reply.narrations.forEach { text ->
@@ -57,11 +57,11 @@ object ChatMessageTextFormat {
         return parts.joinToString("\n\n")
     }
 
-    fun forClipboard(raw: String): String = visibleBody(raw)
+    fun forClipboard(raw: String, speakerType: String? = null): String = visibleBody(raw, speakerType)
 
     fun quoteSnippet(raw: String, maxChars: Int, speakerType: String? = null): String {
         val ownBody = if (speakerType == null || speakerType == "user") splitQuote(raw).body else raw
-        val visible = if (speakerType == "user") forBubbleDisplay(ownBody) else visibleBody(ownBody)
+        val visible = visibleBody(ownBody, speakerType)
         val line = visible.lineSequence().firstOrNull().orEmpty()
         var end = maxChars.coerceAtLeast(0).coerceAtMost(line.length)
         if (end > 0 && end < line.length && line[end - 1].isHighSurrogate() && line[end].isLowSurrogate()) end--
