@@ -1845,6 +1845,28 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun historyJumpReportsBusyAndAcceptsRetryAfterCurrentLoad() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        val release = CompletableDeferred<MessageEntity?>()
+        coEvery { dao.getMainMessageById(42L, 500L) } coAnswers { release.await() }
+        coEvery { dao.getMainMessageById(42L, 600L) } returns MessageEntity(id = 600, sessionId = 42, content = "第二个来源")
+        val vm = createViewModel(messageDao = dao)
+        advanceUntilIdle()
+        assertTrue(vm.openMessageInHistory(500L))
+        runCurrent()
+        assertTrue(vm.state.value.isLoadingHistory)
+        assertFalse(vm.openMessageInHistory(600L))
+        coVerify(exactly = 0) { dao.getMainMessageById(42L, 600L) }
+        release.complete(MessageEntity(id = 500, sessionId = 42, content = "第一个来源"))
+        advanceUntilIdle()
+        assertEquals(500L, vm.state.value.focusedMessageId)
+        assertFalse(vm.state.value.isLoadingHistory)
+        assertTrue(vm.openMessageInHistory(600L))
+        advanceUntilIdle()
+        assertEquals(600L, vm.state.value.focusedMessageId)
+    }
+
+    @Test
     fun recallKeepsTheWindowNearAnOldMessage() = runTest(testDispatcher) {
         val messageDao = mockk<MessageDao>(relaxed = true)
         val segmentDao = mockk<com.mojing.app.data.local.dao.SessionMemorySegmentDao>(relaxed = true)

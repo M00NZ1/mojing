@@ -1340,11 +1340,11 @@ class ChatViewModel @Inject constructor(
 
     private fun launchHistoryLoad(
         block: suspend (branchId: String) -> Unit,
-    ) {
+    ): Boolean {
         if (activeGeneration != null ||
             historyLoadJob?.isActive == true ||
             branchTransitionJob?.isActive == true
-        ) return
+        ) return false
         val branchId = currentBranchId()
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             val owner = coroutineContext[Job]
@@ -1366,6 +1366,7 @@ class ChatViewModel @Inject constructor(
         historyLoadJob = job
         _state.update { it.copy(isLoadingHistory = true) }
         job.start()
+        return true
     }
 
     private suspend fun applyHistoryWindow(
@@ -1458,7 +1459,7 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun openMessageInHistory(messageId: Long) {
+    fun openMessageInHistory(messageId: Long): Boolean =
         launchHistoryLoad { branchId ->
             val target = getVisibleMessage(branchId, messageId)
             if (target == null) {
@@ -1476,7 +1477,6 @@ class ChatViewModel @Inject constructor(
                 focusedMessageId = target.id,
             )
         }
-    }
 
     fun clearFocusedMessage() {
         _state.update { it.copy(focusedMessageId = null) }

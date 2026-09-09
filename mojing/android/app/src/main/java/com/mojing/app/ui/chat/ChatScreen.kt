@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -508,6 +509,11 @@ fun ChatScreen(
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet {
+                if (state.isLoadingHistory) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Text("正在加载历史消息…", modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.bodySmall)
+                }
                 ChatDrawer(
                     participants = state.participants,
                     world = state.world,
@@ -526,8 +532,7 @@ fun ChatScreen(
                     onJumpToBookmark = { mid ->
                         if (state.isGenerating) {
                             showGenerationLockedMessage()
-                        } else {
-                            viewModel.openMessageInHistory(mid)
+                        } else if (viewModel.openMessageInHistory(mid)) {
                             scope.launch { drawerState.close() }
                         }
                     },
@@ -565,8 +570,7 @@ fun ChatScreen(
                     onJumpToMemorySource = { messageId ->
                         if (state.isGenerating) {
                             showGenerationLockedMessage()
-                        } else {
-                            viewModel.openMessageInHistory(messageId)
+                        } else if (viewModel.openMessageInHistory(messageId)) {
                             scope.launch { drawerState.close() }
                         }
                     },
@@ -1474,12 +1478,11 @@ fun ChatScreen(
                     ) {
                         items(state.searchResults, key = { it.id }) { m ->
                             TextButton(
-                                enabled = !state.isSearchingMessages,
+                                enabled = !state.isSearchingMessages && !state.isLoadingHistory,
                                 onClick = {
                                     if (state.isGenerating) {
                                         showGenerationLockedMessage()
-                                    } else {
-                                        viewModel.openMessageInHistory(m.id)
+                                    } else if (viewModel.openMessageInHistory(m.id)) {
                                         showSearchDialog = false
                                         searchQuery = ""
                                         searchExactMatch = false
