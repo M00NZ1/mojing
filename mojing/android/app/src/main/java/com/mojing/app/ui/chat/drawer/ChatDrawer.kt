@@ -672,20 +672,61 @@ fun MemoryTab(
                 Column(Modifier.fillMaxWidth().padding(12.dp)) {
                     Text("长期记忆", style = MaterialTheme.typography.titleMedium)
                     if (memoryOperationRunning) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
-                    var expanded by remember { mutableStateOf(false) }
-                    Text(contextMemoryText.ifBlank { "暂无长期记忆，可从当前故事线重建。" },
-                        maxLines = if (expanded) Int.MAX_VALUE else 6,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodyMedium)
-                    if (contextMemoryText.isNotBlank()) TextButton(onClick = { expanded = !expanded }) {
-                        Text(if (expanded) "收起" else "展开长期记忆")
+                    ExpandableMemoryText(contextMemoryText.ifBlank { "暂无长期记忆，可从当前故事线重建。" }, collapsedLines = 6)
+                }
+            }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("用户纠正", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    Button(
+                        enabled = !isGenerating,
+                        onClick = { onAddCorrection("", null) },
+                    ) { Text("新增") }
+                }
+                Text(
+                    "纠正会优先注入后续角色回复和旁白。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+            }
+            if (corrections.isEmpty()) {
+                item { Text("暂无用户纠正", modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            } else {
+                items(corrections, key = { "correction:${it.id}" }) { correction ->
+                    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            AssistChip(
+                                onClick = {}, enabled = false,
+                                label = { Text(if (correction.branchId == null) "整个对话" else "仅当前故事线") },
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            ExpandableMemoryText(correction.content)
+                            correction.sourceMessageId?.let { sourceId ->
+                                TextButton(
+                                    enabled = !isGenerating,
+                                    onClick = { onJumpToSource(sourceId) },
+                                ) { Text("查看来源") }
+                            }
+                            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                TextButton(enabled = !isGenerating, onClick = { onEditCorrection(correction) }) { Text("编辑") }
+                                TextButton(enabled = !isGenerating, onClick = { onDeleteCorrection(correction) }) { Text("删除") }
+                            }
+                        }
                     }
                 }
             }
             item {
                 val currentTrace = promptTrace?.takeIf { it.branchId == currentBranchId }
                 Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
-                    Text("最近一次提示依据", style = MaterialTheme.typography.titleMedium)
+                    var showTrace by remember(currentBranchId) { mutableStateOf(false) }
+                    TextButton(onClick = { showTrace = !showTrace }) {
+                        Text(if (showTrace) "收起提示依据" else "查看最近一次提示依据")
+                    }
+                    if (showTrace) {
                     if (currentTrace == null) {
                         Text(
                             "本故事线尚未构造可追踪的角色或旁白请求",
@@ -727,54 +768,8 @@ fun MemoryTab(
                         )
                     }
                 }
+                }
                 HorizontalDivider()
-            }
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("用户纠正", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    Button(
-                        enabled = !isGenerating,
-                        onClick = { onAddCorrection("", null) },
-                    ) { Text("新增") }
-                }
-                Text(
-                    "纠正会优先注入后续角色回复和旁白。",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
-            }
-            if (corrections.isEmpty()) {
-                item { Text("暂无用户纠正", modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            } else {
-                items(corrections, key = { it.id }) { correction ->
-                    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            AssistChip(
-                                onClick = {}, enabled = false,
-                                label = { Text(if (correction.branchId == null) "整个对话" else "仅当前故事线") },
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            var expanded by remember(correction.id) { mutableStateOf(false) }
-                            Text(correction.content, maxLines = if (expanded) Int.MAX_VALUE else 4,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                            TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起" else "展开全文") }
-                            correction.sourceMessageId?.let { sourceId ->
-                                TextButton(
-                                    enabled = !isGenerating,
-                                    onClick = { onJumpToSource(sourceId) },
-                                ) { Text("查看来源") }
-                            }
-                            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                                TextButton(enabled = !isGenerating, onClick = { onEditCorrection(correction) }) { Text("编辑") }
-                                TextButton(enabled = !isGenerating, onClick = { onDeleteCorrection(correction) }) { Text("删除") }
-                            }
-                        }
-                    }
-                }
             }
             item {
                 Spacer(Modifier.height(8.dp))
@@ -783,7 +778,7 @@ fun MemoryTab(
             if (segments.isEmpty()) {
                 item { Text("对话积累后会自动整理摘要。暂未整理或整理失败时，原文仍完整保留，后续对话会再次尝试。", modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
             } else {
-                items(segments, key = { it.id }) { segment ->
+                items(segments, key = { "summary:${it.id}" }) { segment ->
                     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -791,13 +786,13 @@ fun MemoryTab(
                                 Text(segment.emotionalTone, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Spacer(Modifier.height(8.dp))
-                            Text(segment.summary, style = MaterialTheme.typography.bodyMedium)
+                            ExpandableMemoryText(segment.summary)
                             TextButton(
                                 enabled = !isGenerating,
                                 onClick = { onAddCorrection(segment.summary, segment.startMessageId.takeIf { it > 0L }) },
                             ) { Text("纠正这段记忆") }
                             val facts = try { Gson().fromJson(segment.keyFactsJson, List::class.java).orEmpty() } catch (_: Exception) { emptyList<Any>() }
-                            facts.take(3).forEach { fact -> Text("• $fact", style = MaterialTheme.typography.labelSmall) }
+                            facts.take(3).forEach { fact -> ExpandableMemoryText("• $fact", collapsedLines = 2) }
                             val source = segment.sourceReference()
                             Spacer(Modifier.height(4.dp))
                             if (source == null) {
@@ -951,4 +946,18 @@ fun AddParticipantDialog(
             TextButton(onClick = onDismiss, enabled = !isSubmitting) { Text("取消") }
         }
     )
+}
+
+@Composable
+internal fun ExpandableMemoryText(text: String, collapsedLines: Int = 4) {
+    var expanded by remember(text) { mutableStateOf(false) }
+    var overflowing by remember(text, collapsedLines) { mutableStateOf(false) }
+    Text(text, style = MaterialTheme.typography.bodyMedium,
+        maxLines = if (expanded) Int.MAX_VALUE else collapsedLines,
+        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        onTextLayout = { if (!expanded) overflowing = it.hasVisualOverflow },
+    )
+    if (expanded || overflowing) TextButton(onClick = { expanded = !expanded }) {
+        Text(if (expanded) "收起" else "展开全文")
+    }
 }
