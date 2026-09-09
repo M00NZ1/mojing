@@ -826,6 +826,59 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun modelPickerChangesEngineRouteForCharactersAndNarrator() = runTest(testDispatcher) {
+        for (narrator in listOf(false, true)) {
+            val a = com.mojing.app.data.ModelPlatform("a", "A", "https://a.test/v1", "fake-a", listOf("a-one", "a-two"))
+            val b = com.mojing.app.data.ModelPlatform("b", "B", "https://b.test/v1", "fake-b", listOf("b-one"))
+            var selection = "a" to "a-one"
+            val storage = validSecureStorage()
+            every { storage.modelPlatforms() } returns listOf(a, b)
+            every { storage.sessionModelSelection(42L) } answers { selection }
+            every { storage.selectSessionModel(42L, any(), any()) } answers {
+                selection = secondArg<String>() to thirdArg<String>()
+            }
+            every { storage.speakerTurnMode } returns "manual"
+            val routes = mutableListOf<List<String>>()
+            val engine = mockk<ChatEngine>(relaxed = true)
+            every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+                routes.add(listOf(args[3] as String, args[4] as String, args[5] as String))
+                flowOf(StreamState.Done("旁白测试回复"))
+            }
+            every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+                routes.add(listOf(args[6] as String, args[7] as String, args[8] as String))
+                flowOf(StreamState.Done("角色测试回复"))
+            }
+            val world = mockk<SessionWorldDao>(relaxed = true)
+            coEvery { world.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L)
+            val characters = mockk<CharacterDao>(relaxed = true)
+            coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "测试角色", modelName = "old-character-model")
+            val participants = mockk<ParticipantDao>(relaxed = true)
+            coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 3L))
+            val vm = createViewModel(secureStorage = storage, sessionWorldDao = world,
+                characterDao = characters, participantDao = participants, chatEngine = engine,
+                llmApiService = validLlmApiService())
+            advanceUntilIdle()
+            vm.setManualReplyCharacterId(3L)
+            for ((platform, model) in listOf("a" to "a-one", "a" to "a-two", "b" to "b-one")) {
+                val saved = CompletableDeferred<Unit>()
+                vm.selectChatModel(platform, model) { saved.complete(Unit) }
+                saved.await()
+                if (narrator) assertTrue(vm.requestNarrator()) else {
+                    vm.setManualReplyCharacterId(3L)
+                    vm.updateInput("测试 $model")
+                    vm.sendMessage()
+                }
+                advanceUntilIdle()
+            }
+            assertEquals("narrator=$narrator error=${vm.state.value.error}", listOf(
+                listOf("fake-a", "https://a.test/v1", "a-one"),
+                listOf("fake-a", "https://a.test/v1", "a-two"),
+                listOf("fake-b", "https://b.test/v1", "b-one"),
+            ), routes)
+        }
+    }
+
+    @Test
     fun selectedPlatformIsFrozenForCurrentRoundAndChangesOnNextSend() = runTest(testDispatcher) {
         val a = com.mojing.app.data.ModelPlatform("a", "A", "https://a.test/v1", "test-a", listOf("a-model"))
         val b = com.mojing.app.data.ModelPlatform("b", "B", "https://b.test/v1", "test-b", listOf("b-model"))
