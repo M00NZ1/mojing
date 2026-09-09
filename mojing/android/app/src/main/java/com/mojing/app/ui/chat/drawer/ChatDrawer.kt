@@ -832,6 +832,18 @@ fun TimelineTab(
     onDelete: (Long) -> Unit,
     onJumpToSource: (Long) -> Unit,
 ) {
+    var deleteTarget by remember { mutableStateOf<Long?>(null) }
+    val pendingDelete = events.firstOrNull { it.id == deleteTarget }
+    LaunchedEffect(pendingDelete?.id) { if (pendingDelete == null) deleteTarget = null }
+    pendingDelete?.let { event ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("删除这条事件？") },
+            text = { Text("${event.title}\n\n仅删除事件记录，原对话与百科资料保留。") },
+            confirmButton = { TextButton(onClick = { deleteTarget = null; onDelete(event.id) }) { Text("删除事件") } },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("保留事件") } },
+        )
+    }
     if (events.isEmpty()) {
         Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
             Text("当前故事线暂无事件。对话推进后会自动整理，可从事件返回原文。", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -856,7 +868,10 @@ fun TimelineTab(
                             }
                             repeat(event.importance.coerceIn(1, 5)) { Text("★", color = MaterialTheme.colorScheme.primary) }
                         }
-                        if (event.description.isNotBlank()) { Spacer(Modifier.height(4.dp)); Text(event.description, style = MaterialTheme.typography.bodyMedium, maxLines = 3) }
+                        if (event.description.isNotBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            ExpandableMemoryText(event.description, collapsedLines = 3)
+                        }
                         val source = event.sourceReference()
                         if (source == null) {
                             Text(
@@ -878,7 +893,7 @@ fun TimelineTab(
                                 Text(if (event.resolved) "标为未解决" else "标为已解决")
                             }
                             Spacer(Modifier.weight(1f))
-                            IconButton(onClick = { onDelete(event.id) }) {
+                            IconButton(onClick = { deleteTarget = event.id }) {
                                 Icon(Icons.Default.Delete, "删除事件", tint = MaterialTheme.colorScheme.error)
                             }
                         }
