@@ -76,6 +76,8 @@ export default function EditMessageModal({
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      // 输入法选词使用 Escape/Tab；部分浏览器仅提供兼容键码。
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();

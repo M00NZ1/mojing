@@ -133,6 +133,19 @@ try {
   const editor = page.getByRole('dialog', { name: '编辑消息', exact: true });
   const editedDraft = '保留我的编辑草稿。'.repeat(100);
   await editor.getByRole('textbox').fill(editedDraft);
+  await editor.getByRole('textbox').evaluate((element) => {
+    element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true, cancelable: true }));
+  });
+  assert.equal(await editor.locator('[data-edit-discard-confirm]').count(), 0, 'IME Escape must not open discard confirmation');
+  await editor.getByRole('textbox').evaluate((element) => {
+    element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 229, bubbles: true, cancelable: true }));
+  });
+  assert.equal(await editor.locator('[data-edit-discard-confirm]').count(), 0, 'IME compatibility key must not discard');
+  await page.keyboard.press('Escape');
+  await editor.getByRole('button', { name: '继续编辑', exact: true }).click();
+  assert.equal(await editor.getByRole('textbox').inputValue(), editedDraft);
+
+
   await editor.getByRole('button', { name: '创建编辑故事线', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('[aria-busy="true"].edit-message-dialog'));
   await page.keyboard.press('Escape');
@@ -145,9 +158,16 @@ try {
   await editor.getByRole('button', { name: '创建编辑故事线', exact: true }).click();
   await editor.getByRole('alert').filter({ hasText: '编辑保存暂不可用' }).waitFor();
   assert.equal(editRequests, 2);
+  await page.setViewportSize({ width: 390, height: 640 });
+  const retryButton = editor.getByRole('button', { name: '创建编辑故事线', exact: true });
+  await retryButton.scrollIntoViewIfNeeded();
+  const retryBounds = await retryButton.boundingBox();
+  assert.ok(retryBounds && retryBounds.x >= 0 && retryBounds.x + retryBounds.width <= 390 && retryBounds.y >= 0 && retryBounds.y + retryBounds.height <= 640);
+
   await editor.getByRole('button', { name: '取消', exact: true }).click();
   await editor.getByRole('button', { name: '放弃修改', exact: true }).click();
   await editor.waitFor({ state: 'hidden' });
+  await page.setViewportSize({ width: 1365, height: 900 });
   await page.getByRole('button', { name: '打开会话详情', exact: true }).click();
   await page.getByRole('button', { name: '记忆', exact: true }).click();
   await page.getByText('旧信封中的自动记忆', { exact: true }).waitFor();
@@ -279,7 +299,7 @@ try {
   await page.getByRole('group', { name: '本回合可选行动' }).waitFor({ state: 'hidden' });
   assert.ok(await tailRow.getByRole('button', { name: '前往旧灯塔' }).isDisabled());
   assert.equal(errors.length, 0, errors.join('\n'));
-  console.log('PASS: edit failure keeps draft and inline error, saving dismissal guard and retry; deletion protection and memory refresh; context exclude/restore, original retained, strict request, cancel, save/readback retry, reload/search, desktop/mobile. Mock APIs only.');
+  console.log('PASS: IME Escape protection and narrow edit actions; edit failure keeps draft and inline error, saving dismissal guard and retry; deletion protection and memory refresh; context exclude/restore, original retained, strict request, cancel, save/readback retry, reload/search, desktop/mobile. Mock APIs only.');
 } finally {
   await browser?.close();
   if (child.exitCode === null) { child.kill(); await once(child, 'exit'); }
