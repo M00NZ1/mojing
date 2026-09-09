@@ -228,7 +228,7 @@ fun StorySimulationScreen(
             )
 
             val availableCharacters = state.characters.items.filter { character ->
-                state.selectedEncyclopediaId == null || character.boundEncyclopediaId == state.selectedEncyclopediaId
+                state.selectedEncyclopediaId == null || character.boundEncyclopediaId <= 0L || character.boundEncyclopediaId == state.selectedEncyclopediaId
             }
             ExposedDropdownMenuBox(
                 expanded = charactersExpanded,

@@ -32,6 +32,8 @@ import com.google.gson.Gson
 fun ChatDrawer(
     participants: List<SessionParticipantEntity>,
     world: SessionWorldEntity? = null,
+    contextMemoryText: String = "",
+    memoryOperationRunning: Boolean = false,
     memorySegments: List<SessionMemorySegmentEntity> = emptyList(),
     memoryCorrections: List<SessionMemoryCorrectionEntity> = emptyList(),
     memoryCorrectionPromptTrace: MemoryCorrectionPromptTrace? = null,
@@ -125,6 +127,8 @@ fun ChatDrawer(
                 onAddMemoryCorrection,
                 onEditMemoryCorrection,
                 onDeleteMemoryCorrection,
+                contextMemoryText,
+                memoryOperationRunning,
             )
             3 -> TimelineTab(
                 eventNodes,
@@ -621,6 +625,8 @@ fun MemoryTab(
     onAddCorrection: (String, Long?) -> Unit,
     onEditCorrection: (SessionMemoryCorrectionEntity) -> Unit,
     onDeleteCorrection: (SessionMemoryCorrectionEntity) -> Unit,
+    contextMemoryText: String = "",
+    memoryOperationRunning: Boolean = false,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -629,6 +635,7 @@ fun MemoryTab(
         ) {
             OutlinedButton(
                 onClick = onRebuildContextMemory,
+                enabled = !isGenerating && !memoryOperationRunning,
                 modifier = Modifier.weight(1f),
             ) {
                 Icon(Icons.Default.Refresh, contentDescription = "重建当前会话记忆")
@@ -637,6 +644,7 @@ fun MemoryTab(
             }
             OutlinedButton(
                 onClick = onClearContextMemory,
+                enabled = !isGenerating && !memoryOperationRunning,
                 modifier = Modifier.weight(1f),
             ) {
                 Icon(Icons.Default.DeleteSweep, contentDescription = "清空当前会话记忆")
@@ -646,6 +654,20 @@ fun MemoryTab(
         }
         HorizontalDivider()
         LazyColumn(modifier = Modifier.fillMaxWidth()) {
+            item {
+                Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                    Text("长期记忆", style = MaterialTheme.typography.titleMedium)
+                    if (memoryOperationRunning) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                    var expanded by remember { mutableStateOf(false) }
+                    Text(contextMemoryText.ifBlank { "暂无长期记忆，可从当前故事线重建。" },
+                        maxLines = if (expanded) Int.MAX_VALUE else 6,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyMedium)
+                    if (contextMemoryText.isNotBlank()) TextButton(onClick = { expanded = !expanded }) {
+                        Text(if (expanded) "收起" else "展开长期记忆")
+                    }
+                }
+            }
             item {
                 val currentTrace = promptTrace?.takeIf { it.branchId == currentBranchId }
                 Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
@@ -671,6 +693,7 @@ fun MemoryTab(
                             currentTrace.corrections.forEachIndexed { index, correction ->
                                 Text(
                                     "${index + 1}. ${if (correction.branchId == null) "全会话" else "本分支"} · ${correction.content}",
+                                    maxLines = 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                     modifier = Modifier.padding(top = 6.dp),
                                 )
                                 correction.sourceMessageId?.let {
@@ -721,7 +744,10 @@ fun MemoryTab(
                                 label = { Text(if (correction.branchId == null) "整个对话" else "仅当前故事线") },
                             )
                             Spacer(Modifier.height(4.dp))
-                            Text(correction.content)
+                            var expanded by remember(correction.id) { mutableStateOf(false) }
+                            Text(correction.content, maxLines = if (expanded) Int.MAX_VALUE else 4,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                            TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起" else "展开全文") }
                             correction.sourceMessageId?.let { sourceId ->
                                 TextButton(
                                     enabled = !isGenerating,

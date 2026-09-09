@@ -55,11 +55,8 @@ import androidx.compose.ui.unit.sp
 import com.mojing.app.data.local.entity.MessageAttachmentEntity
 import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.domain.engine.StructuredParser
-import com.mojing.app.ui.theme.AiBubble
 import com.mojing.app.ui.common.avatarImageModel
 import com.mojing.app.ui.common.ImagePreviewDialog
-import com.mojing.app.ui.theme.NarratorBubble
-import com.mojing.app.ui.theme.UserBubble
 
 @Composable
 internal fun MessageActionPanelContent(
@@ -319,9 +316,8 @@ fun UserMessageBubble(
         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End,
         verticalAlignment = Alignment.Top,
     ) {
-        Spacer(Modifier.weight(1f))
-        Row(verticalAlignment = Alignment.Top) {
-            Box {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.TopEnd) {
                 Column(horizontalAlignment = Alignment.End) {
                     if (clusterInlineHeader) {
                         if (showSenderHeader) {
@@ -345,7 +341,7 @@ fun UserMessageBubble(
                     }
                     Surface(
                         shape = RoundedCornerShape(d.bubbleCornerOuter, d.bubbleCornerOuter, d.bubbleCornerInner, d.bubbleCornerOuter),
-                        color = UserBubble,
+                        color = MaterialTheme.colorScheme.primaryContainer,
                         modifier = Modifier
                             .widthIn(max = d.bubbleMaxWidth)
                             .combinedClickable(onClick = onClick, onLongClick = onLongPress),
@@ -369,9 +365,20 @@ fun UserMessageBubble(
                             val showCaption = message.content.isNotBlank() &&
                                 (message.content != "[图片]" || attachments.isEmpty())
                             if (showCaption) {
+                                val quoted = ChatMessageTextFormat.splitQuote(message.content)
+                                quoted.quote?.let { source ->
+                                    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        shape = RoundedCornerShape(8.dp)) {
+                                        Text("引用 · $source", modifier = Modifier.padding(10.dp),
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            maxLines = 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                    }
+                                    Spacer(Modifier.height(8.dp))
+                                }
                                 Text(
-                                    text = ChatMessageTextFormat.forBubbleDisplay(message.content),
-                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    text = ChatMessageTextFormat.forBubbleDisplay(quoted.body),
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
                                     style = d.bodyTextStyle(),
                                 )
                             }
@@ -588,7 +595,7 @@ fun CharacterMessageBubble(
                         if (body.isBlank()) return@forEach
                         Surface(
                             shape = RoundedCornerShape(d.bubbleCornerOuter),
-                            color = NarratorBubble,
+                            color = MaterialTheme.colorScheme.surfaceContainer,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text(
@@ -618,7 +625,7 @@ fun CharacterMessageBubble(
                         Row(modifier = Modifier.padding(top = 4.dp)) {
                             Surface(
                                 shape = RoundedCornerShape(d.bubbleCornerInner, d.bubbleCornerOuter, d.bubbleCornerOuter, d.bubbleCornerOuter),
-                                color = AiBubble,
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                 modifier = Modifier.widthIn(max = d.bubbleMaxWidth),
                             ) {
                                 Text(
@@ -640,7 +647,7 @@ fun CharacterMessageBubble(
                                     d.bubbleCornerOuter,
                                     d.bubbleCornerOuter,
                                 ),
-                                color = AiBubble,
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                 modifier = Modifier.widthIn(max = d.bubbleMaxWidth),
                             ) {
                                 Text(
@@ -682,7 +689,7 @@ fun CharacterMessageBubble(
                         Row {
                             Surface(
                                 shape = RoundedCornerShape(d.bubbleCornerInner, d.bubbleCornerOuter, d.bubbleCornerOuter, d.bubbleCornerOuter),
-                                color = AiBubble,
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                 modifier = Modifier.widthIn(max = d.bubbleMaxWidth),
                             ) {
                                 Text(
@@ -737,7 +744,7 @@ fun NarratorMessageBubble(
     val body = ChatMessageTextFormat.forBubbleDisplay(rawBody)
     Surface(
         shape = RoundedCornerShape(d.bubbleCornerOuter),
-        color = NarratorBubble,
+        color = MaterialTheme.colorScheme.surfaceContainer,
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = d.narratorHorizontal, vertical = d.narratorVertical)

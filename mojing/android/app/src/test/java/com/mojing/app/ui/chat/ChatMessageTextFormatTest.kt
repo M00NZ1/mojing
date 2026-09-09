@@ -6,6 +6,15 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class ChatMessageTextFormatTest {
+    @org.junit.Test
+    fun quoteCardSeparatesSourceFromBodyAndPreservesOrdinaryText() {
+        val quote = ChatMessageTextFormat.splitQuote("> 林汐：码头见\n\n我马上来")
+        org.junit.Assert.assertEquals("林汐：码头见", quote.quote)
+        org.junit.Assert.assertEquals("我马上来", quote.body)
+        org.junit.Assert.assertNull(ChatMessageTextFormat.splitQuote("普通消息").quote)
+        org.junit.Assert.assertEquals("> 未完成", ChatMessageTextFormat.splitQuote("> 未完成").body)
+    }
+
     @Test fun searchPreviewIncludesLateMatchAndKeepsUnicodeBoundaries() {
         val raw = "😀".repeat(10000) + "灯塔线索" + "🌊".repeat(100)
         val preview = ChatMessageTextFormat.searchPreview(raw, "user", "灯塔线索")

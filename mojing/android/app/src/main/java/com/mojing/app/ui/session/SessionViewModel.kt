@@ -146,7 +146,7 @@ class SessionViewModel @Inject constructor(
     suspend fun loadNewSessionDialogData(): NewSessionDialogData = NewSessionDialogData(
         templates = worldTemplateDao.getAll(),
         encyclopedias = encyclopediaDao.getAll(),
-        boundCharacters = characterDao.getAllBound(),
+        boundCharacters = characterDao.getAll(),
     )
 
     fun createSessionWithOptions(

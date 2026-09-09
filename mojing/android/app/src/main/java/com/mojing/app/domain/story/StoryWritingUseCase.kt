@@ -49,6 +49,7 @@ class StoryWritingUseCase @Inject constructor(
             appendLine("请把用户提供的故事背景直接写成长篇小说开篇，共 $chapterCount 章。")
             appendLine("只返回合法 JSON，不要 Markdown 或解释。")
             appendLine("JSON 格式：{\"title\":\"小说名\",\"chapters\":[{\"title\":\"第一章标题\",\"content\":\"完整小说正文\"}],\"next_choices\":[\"后续走向一\",\"后续走向二\"]}。")
+            appendLine("即使只生成 1 章，chapters 也必须是只含一个章节对象的数组；next_choices 始终是字符串数组。")
             appendLine("要求：这是小说正文，不是大纲、分析或候选方案；每章约 900～1800 个中文字符，包含场景、动作、人物对话、心理与因果推进，章节连续。")
             appendLine("最后一章停在可继续的位置；next_choices 根据刚写出的情节动态生成 2～4 个不同后续走向。")
             appendLine(StoryCanon.promptRules)
@@ -75,11 +76,17 @@ class StoryWritingUseCase @Inject constructor(
 
     internal fun parse(raw: String, expectedChapterCount: Int, premise: String = ""): StoryWritingResult {
         val root = extractJsonObject(raw) ?: throw StoryWritingException("模型没有返回可识别的小说正文")
-        val array = root.getAsJsonArray("chapters") ?: throw StoryWritingException("模型返回缺少章节正文")
-        if (array.size() != expectedChapterCount) {
+        val chapterValue = root.get("chapters")
+        val chapterItems = when {
+            chapterValue == null || chapterValue.isJsonNull -> throw StoryWritingException("模型返回缺少章节正文，请重试")
+            chapterValue.isJsonArray -> chapterValue.asJsonArray.toList()
+            chapterValue.isJsonObject && expectedChapterCount == 1 -> listOf(chapterValue)
+            else -> throw StoryWritingException("模型返回的章节格式不正确，请重试")
+        }
+        if (chapterItems.size != expectedChapterCount) {
             throw StoryWritingException("模型没有返回完整的 $expectedChapterCount 章正文，请重试")
         }
-        val chapters = array.mapIndexed { index, element ->
+        val chapters = chapterItems.mapIndexed { index, element ->
             val obj = element.takeIf { it.isJsonObject }?.asJsonObject
                 ?: throw StoryWritingException("模型返回的章节格式不完整")
             val content = obj.string("content").ifBlank { obj.string("narrative") }.trim()
@@ -90,7 +97,11 @@ class StoryWritingUseCase @Inject constructor(
                 content = content,
             )
         }
-        val choices = StoryCanon.filterChoices(root.getAsJsonArray("next_choices")
+        val choiceValue = root.get("next_choices")
+        if (choiceValue != null && !choiceValue.isJsonNull && !choiceValue.isJsonArray) {
+            throw StoryWritingException("模型返回的后续剧情选项格式不正确，请重试")
+        }
+        val choices = StoryCanon.filterChoices(choiceValue?.takeIf { it.isJsonArray }?.asJsonArray
             ?.mapNotNull { it.takeIf { value -> value.isJsonPrimitive }?.asString?.trim()?.takeIf(String::isNotEmpty) }
             .orEmpty(), premise).take(4)
         if (choices.size < 2) throw StoryWritingException("模型没有生成可用的后续剧情选项，请重试")

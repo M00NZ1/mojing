@@ -629,7 +629,7 @@ fun SessionListScreen(
                 val selectableCharacters = remember(selectedEncId, allBoundCharacters) {
                     when (val id = selectedEncId) {
                         null -> allBoundCharacters
-                        else -> allBoundCharacters.filter { it.boundEncyclopediaId == id }
+                        else -> allBoundCharacters.filter { (it.boundEncyclopediaId <= 0L || it.boundEncyclopediaId == id) }
                     }
                 }
                 LaunchedEffect(selectedEncId, allBoundCharacters) {
@@ -639,7 +639,7 @@ fun SessionListScreen(
                 Text("参与角色", style = MaterialTheme.typography.labelMedium)
                 if (allBoundCharacters.isEmpty()) {
                     Text(
-                        "完整故事需要至少一名已绑定百科的角色；也可以先进入空白对话，稍后再添加。",
+                        "选择角色开始故事，也可以先进入空白对话，稍后再添加。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -673,7 +673,7 @@ fun SessionListScreen(
                     }
                 } else {
                     Text(
-                        "默认全选；绑定百科时仅列出该库角色。",
+                        "百科提供世界设定；未绑定百科的角色也可参与。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

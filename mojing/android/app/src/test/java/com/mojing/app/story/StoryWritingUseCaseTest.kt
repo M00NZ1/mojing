@@ -14,6 +14,34 @@ class StoryWritingUseCaseTest {
     private val useCase = StoryWritingUseCase(mockk<LlmRetry>())
 
     @Test
+    fun singleChapterObjectIsAcceptedWithoutLosingItsBody() {
+        val result = useCase.parse(
+            """{"title":"雾港","chapters":{"title":"来信","content":"灯塔下出现了一封信。"},"next_choices":["拆开信封","寻找送信人"]}""",
+            1,
+        )
+        assertEquals("灯塔下出现了一封信。", result.chapters.single().content)
+        assertEquals("来信", result.chapters.single().title)
+    }
+
+    @Test
+    fun malformedFieldsProduceStoryErrorsInsteadOfInternalCastErrors() {
+        listOf(
+            """{"chapters":null}""",
+            """{"chapters":"一章正文"}""",
+            """{"chapters":[{"content":"正文"}],"next_choices":{}}""",
+            """{"chapters":[{"content":"正文"}],"next_choices":null}""",
+        ).forEach { raw ->
+            val error = runCatching { useCase.parse(raw, 1) }.exceptionOrNull()
+            assertTrue("Expected a story format error, got $error", error is StoryWritingException)
+        }
+    }
+
+    @Test(expected = StoryWritingException::class)
+    fun singleChapterObjectCannotSatisfyTwoChapterRequest() {
+        useCase.parse("""{"chapters":{"content":"正文"},"next_choices":["向东","向西"]}""", 2)
+    }
+
+    @Test
     fun parseAcceptsWrappedJsonAndLegacyNarrativeField() {
         val result = useCase.parse(
             """结果如下：{"title":"十八岁系统","chapters":[

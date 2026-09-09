@@ -50,8 +50,8 @@ private val storyCreationSection = CreationSection(
 
 private val creationResourceSections = listOf(
     CreationSection("角色", "编辑人物设定、形象和对话参数", Icons.Default.Badge, Routes.CHARACTER_LIST),
-    CreationSection("世界百科", "管理世界规则、地点、势力、事件与人物关系", Icons.AutoMirrored.Filled.MenuBook, Routes.ENCYCLOPEDIA_LIST),
-    CreationSection("设定工坊", "创建、导入和复用世界设定模板", Icons.Default.Public, Routes.WORKBENCH),
+    CreationSection("世界百科", "保存世界知识：地点、势力、人物关系与剧情事件", Icons.AutoMirrored.Filled.MenuBook, Routes.ENCYCLOPEDIA_LIST),
+    CreationSection("设定工坊", "配置开局玩法、叙事规则与可复用的世界模板", Icons.Default.Public, Routes.WORKBENCH),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -86,7 +86,7 @@ fun CreationHubScreen(navController: NavHostController) {
             ) {
                 Text("创作工作区", style = MaterialTheme.typography.headlineSmall)
                 Text(
-                    "管理小说创作、角色档案、世界百科和设定模板。",
+                    "角色决定谁参与，百科提供世界知识，工坊配置开局玩法。创作时按需组合，也可以只选角色开始。",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Card(

@@ -149,7 +149,7 @@ class SessionViewModelTest {
         val character = CharacterEntity(id = 4L, boundEncyclopediaId = 3L)
         coEvery { worldTemplateDao.getAll() } returns listOf(template)
         coEvery { encyclopediaDao.getAll() } returns listOf(encyclopedia)
-        coEvery { characterDao.getAllBound() } returns listOf(character)
+        coEvery { characterDao.getAll() } returns listOf(character)
 
         val data = createViewModel().loadNewSessionDialogData()
 
@@ -166,7 +166,7 @@ class SessionViewModelTest {
 
         assertTrue(result.isFailure)
         coVerify(exactly = 0) { encyclopediaDao.getAll() }
-        coVerify(exactly = 0) { characterDao.getAllBound() }
+        coVerify(exactly = 0) { characterDao.getAll() }
     }
 
     @Test

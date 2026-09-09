@@ -5,6 +5,16 @@ import com.mojing.app.domain.engine.StructuredParser
 
 /** 气泡内展示：压缩连续空白与过多换行，减轻模型输出里的「大块空白」观感。 */
 object ChatMessageTextFormat {
+    data class QuotedBody(val quote: String?, val body: String)
+
+    fun splitQuote(raw: String): QuotedBody {
+        val normalized = raw.replace("\r\n", "\n")
+        val end = normalized.indexOf("\n\n")
+        return if (normalized.startsWith("> ") && end > 0) {
+            QuotedBody(normalized.substring(2, end), normalized.substring(end + 2))
+        } else QuotedBody(null, raw)
+    }
+
     fun searchPreview(raw: String, speakerType: String?, query: String, maxChars: Int = 120): String {
         val text = ConversationMessageText.forUserVisibleText(raw, speakerType)
             .replace(Regex("\\s+"), " ").trim()

@@ -56,10 +56,9 @@ class CreateSessionUseCase @Inject constructor(
 
     suspend fun createForCharacter(characterId: Long): Result {
         val character = characterDao.getById(characterId) ?: return Result.CharacterNotFound
-        if (character.boundEncyclopediaId <= 0L) return Result.UnboundCharacter
         return create(
             title = "${character.name.trim().ifBlank { "未命名角色" }} · 新故事",
-            encyclopediaId = character.boundEncyclopediaId,
+            encyclopediaId = character.boundEncyclopediaId.takeIf { it > 0L },
             narratorEnabled = secureStorage.defaultNarratorEnabled,
             choiceEnabled = secureStorage.defaultChoiceGenerationEnabled,
             antiCheatEnabled = secureStorage.defaultAntiCheatEnabled,
@@ -88,8 +87,7 @@ class CreateSessionUseCase @Inject constructor(
         if (validIds.isEmpty() && !allowNoParticipants) return Result.EmptyParticipants
         val encId = encyclopediaId?.takeIf { it > 0L }
         val characters = validIds.map { characterDao.getById(it) ?: return Result.CharacterNotFound }
-        if (characters.any { it.boundEncyclopediaId <= 0L }) return Result.UnboundCharacter
-        if (encId != null && characters.any { it.boundEncyclopediaId != encId }) {
+        if (encId != null && characters.any { it.boundEncyclopediaId > 0L && it.boundEncyclopediaId != encId }) {
             return Result.EncyclopediaMismatch
         }
 

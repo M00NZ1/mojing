@@ -414,7 +414,7 @@ fun ChatScreen(
                 allCharacters = raw
                     .asSequence()
                     .filter { it.id !in existingIds }
-                    .filter { enc == null || it.boundEncyclopediaId == enc }
+                    .filter { enc == null || it.boundEncyclopediaId <= 0L || it.boundEncyclopediaId == enc }
                     .toList()
             } catch (e: CancellationException) {
                 throw e
@@ -509,6 +509,8 @@ fun ChatScreen(
                     participants = state.participants,
                     world = state.world,
                     memorySegments = state.memorySegments,
+                    contextMemoryText = state.contextMemoryText,
+                    memoryOperationRunning = state.memoryOperationRunning,
                     memoryCorrections = state.memoryCorrections,
                     memoryCorrectionPromptTrace = state.lastMemoryCorrectionPromptTrace,
                     currentBranchId = state.currentBranchId,

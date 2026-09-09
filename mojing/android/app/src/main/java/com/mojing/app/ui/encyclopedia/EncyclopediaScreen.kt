@@ -77,6 +77,10 @@ fun EncyclopediaScreen(
         viewModel.syncPublicLlmKeyFromStorage()
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+    var renameTarget by remember { mutableStateOf<EncyclopediaEntity?>(null) }
+    var renameDraft by remember { mutableStateOf("") }
+    var renameError by remember { mutableStateOf<String?>(null) }
+    var renaming by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<EncyclopediaEntity?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var isImportingDocument by remember { mutableStateOf(false) }
@@ -351,6 +355,9 @@ fun EncyclopediaScreen(
                             onDelete = { deleteTarget = enc },
                             onClick = { onDetail(enc.id) },
                             menuExtras = {
+                                DropdownMenuItem(text = { Text("重命名") }, onClick = {
+                                    renameTarget = enc; renameDraft = enc.name; renameError = null
+                                })
                                 DropdownMenuItem(
                                     text = { Text(if (isCoverTaskBusy) "正在处理封面…" else "从相册设置封面") },
                                     enabled = !isCoverTaskBusy && enc.id !in coverGeneratingEncyclopediaIds,
@@ -382,6 +389,9 @@ fun EncyclopediaScreen(
                                 onDelete = { deleteTarget = enc },
                                 onClick = { onDetail(enc.id) },
                                 menuExtras = {
+                                DropdownMenuItem(text = { Text("重命名") }, onClick = {
+                                    renameTarget = enc; renameDraft = enc.name; renameError = null
+                                })
                                     DropdownMenuItem(
                                         text = { Text(if (isCoverTaskBusy) "正在处理封面…" else "从相册设置封面") },
                                         enabled = !isCoverTaskBusy && enc.id !in coverGeneratingEncyclopediaIds,
@@ -429,6 +439,32 @@ fun EncyclopediaScreen(
             Toast.makeText(ctx, UserFacingStrings.cardImageProcessFailed(), Toast.LENGTH_SHORT).show()
         },
     )
+
+    renameTarget?.let { enc ->
+        AlertDialog(
+            onDismissRequest = { if (!renaming) renameTarget = null },
+            title = { Text("重命名百科") },
+            text = {
+                OutlinedTextField(value = renameDraft,
+                    onValueChange = { renameDraft = it; renameError = null },
+                    label = { Text("百科名称") }, singleLine = true,
+                    enabled = !renaming, isError = renameError != null,
+                    supportingText = { renameError?.let { Text(it) } })
+            },
+            confirmButton = {
+                TextButton(enabled = !renaming && renameDraft.isNotBlank(), onClick = {
+                    renaming = true
+                    scope.launch {
+                        try {
+                            renameError = viewModel.rename(enc.id, renameDraft)
+                            if (renameError == null) renameTarget = null
+                        } finally { renaming = false }
+                    }
+                }) { Text(if (renaming) "保存中…" else "保存") }
+            },
+            dismissButton = { TextButton(enabled = !renaming, onClick = { renameTarget = null }) { Text("取消") } },
+        )
+    }
 
     deleteTarget?.let { enc ->
         AlertDialog(

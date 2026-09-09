@@ -1,6 +1,11 @@
 package com.mojing.app.ui.common
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -24,24 +29,20 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
 
 /**
  * 列表行左滑露出「置顶 / 删除」；长按菜单备用。
@@ -59,13 +60,9 @@ fun SwipeRevealListRow(
     menuExtras: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
     var menuExpanded by remember { mutableStateOf(false) }
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { value ->
-            value != SwipeToDismissBoxValue.StartToEnd
-        },
-    )
+    var offsetPx by remember { mutableStateOf(0f) }
+    LaunchedEffect(swipeEnabled) { if (!swipeEnabled) offsetPx = 0f }
 
     val pinBg = Color(0xFF3D4FA8)
     val delBg = Color(0xFFC62828)
@@ -75,19 +72,15 @@ fun SwipeRevealListRow(
             .fillMaxWidth()
             .heightIn(min = 56.dp),
     ) {
+        val rowWidth = maxWidth
         val actionW = remember(maxWidth) {
             (maxWidth * 0.22f).coerceIn(68.dp, 96.dp)
         }
-        SwipeToDismissBox(
-            modifier = Modifier.fillMaxWidth(),
-            state = dismissState,
-            enableDismissFromStartToEnd = false,
-            enableDismissFromEndToStart = swipeEnabled,
-            backgroundContent = {
+        val revealWidth = with(LocalDensity.current) { (actionW * if (showPinAction) 2 else 1).toPx() }
+        Box(Modifier.fillMaxWidth().clipToBounds()) {
                 Row(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight()
+                        .matchParentSize()
                         .background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.9f)),
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically,
@@ -101,7 +94,7 @@ fun SwipeRevealListRow(
                                 .background(pinBg)
                                 .clickable(interactionSource = pinInteraction, indication = null) {
                                     onPinToggle()
-                                    scope.launch { dismissState.snapTo(SwipeToDismissBoxValue.Settled) }
+                                    offsetPx = 0f
                                 },
                             contentAlignment = Alignment.Center,
                         ) {
@@ -125,7 +118,7 @@ fun SwipeRevealListRow(
                             .background(delBg)
                             .clickable(interactionSource = delInteraction, indication = null) {
                                 onDelete()
-                                scope.launch { dismissState.snapTo(SwipeToDismissBoxValue.Settled) }
+                                offsetPx = 0f
                             },
                         contentAlignment = Alignment.Center,
                     ) {
@@ -135,17 +128,29 @@ fun SwipeRevealListRow(
                         }
                     }
                 }
-            },
-            content = {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight()
+                        .width(rowWidth + with(LocalDensity.current) { offsetPx.toDp() })
+                        .draggable(
+                            orientation = Orientation.Horizontal,
+                            enabled = swipeEnabled,
+                            state = rememberDraggableState { delta ->
+                                offsetPx = (offsetPx + delta).coerceIn(-revealWidth, 0f)
+                            },
+                            onDragStopped = { velocity ->
+                                offsetPx = when {
+                                    velocity > 400f -> 0f
+                                    velocity < -400f -> -revealWidth
+                                    offsetPx < -revealWidth / 2 -> -revealWidth
+                                    else -> 0f
+                                }
+                            },
+                        )
                         .background(MaterialTheme.colorScheme.surface)
                         .combinedClickable(
                             onClick = {
-                                if (dismissState.currentValue == SwipeToDismissBoxValue.EndToStart) {
-                                    scope.launch { dismissState.snapTo(SwipeToDismissBoxValue.Settled) }
+                                if (offsetPx != 0f) {
+                                    offsetPx = 0f
                                 } else {
                                     onClick()
                                 }
@@ -155,8 +160,7 @@ fun SwipeRevealListRow(
                 ) {
                     content()
                 }
-            },
-        )
+        }
 
         DropdownMenu(
             expanded = menuExpanded,
@@ -168,7 +172,7 @@ fun SwipeRevealListRow(
                     text = { Text(if (isPinned) "取消置顶" else "置顶") },
                     onClick = {
                         menuExpanded = false
-                        scope.launch { dismissState.snapTo(SwipeToDismissBoxValue.Settled) }
+                        offsetPx = 0f
                         onPinToggle()
                     },
                 )

@@ -16,13 +16,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
-import com.mojing.app.ui.theme.NarratorBubble
 
 @Composable
 fun NarratorBubble(narration: String) {
     Surface(
         shape = RoundedCornerShape(12.dp),
-        color = NarratorBubble,
+        color = MaterialTheme.colorScheme.surfaceContainer,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 6.dp)
     ) {
         Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {

@@ -119,7 +119,7 @@ class StorySimulationViewModel @Inject constructor(
                         encyclopedias = StoryOptionLoadState(items = items, isLoading = false),
                         selectedEncyclopediaId = selectedId,
                         selectedCharacterIds = current.selectedCharacterIds.filterTo(mutableSetOf()) { characterId ->
-                            selectedId == null || current.characters.items.firstOrNull { it.id == characterId }?.boundEncyclopediaId == selectedId
+                            selectedId == null || current.characters.items.firstOrNull { it.id == characterId }?.let { it.boundEncyclopediaId <= 0L || it.boundEncyclopediaId == selectedId } == true
                         },
                     )
                 }
@@ -134,13 +134,13 @@ class StorySimulationViewModel @Inject constructor(
         characterLoadJob = viewModelScope.launch {
             _state.update { it.copy(characters = it.characters.copy(isLoading = true, error = null)) }
             try {
-                val items = characterDao.getAllBound()
+                val items = characterDao.getAll()
                 _state.update { current ->
                     current.copy(
                         characters = StoryOptionLoadState(items = items, isLoading = false),
                         selectedCharacterIds = current.selectedCharacterIds.filterTo(mutableSetOf()) { characterId ->
                             items.firstOrNull { it.id == characterId }?.let { character ->
-                                current.selectedEncyclopediaId == null || character.boundEncyclopediaId == current.selectedEncyclopediaId
+                                current.selectedEncyclopediaId == null || character.boundEncyclopediaId <= 0L || character.boundEncyclopediaId == current.selectedEncyclopediaId
                             } == true
                         },
                     )
@@ -177,7 +177,7 @@ class StorySimulationViewModel @Inject constructor(
         current.copy(
             selectedEncyclopediaId = id,
             selectedCharacterIds = current.selectedCharacterIds.filterTo(mutableSetOf()) { characterId ->
-                id == null || current.characters.items.firstOrNull { it.id == characterId }?.boundEncyclopediaId == id
+                id == null || current.characters.items.firstOrNull { it.id == characterId }?.let { it.boundEncyclopediaId <= 0L || it.boundEncyclopediaId == id } == true
             },
         )
     }
@@ -244,8 +244,15 @@ class StorySimulationViewModel @Inject constructor(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
+                    val formatError = e is com.mojing.app.domain.story.StoryWritingException
+                    com.mojing.app.util.UsbSessionLog.w(
+                        "StoryWriting",
+                        "chapters=${requestContext.chapterCount} stage=${if (formatError) "parse" else "request"} exception=${e.javaClass.simpleName}",
+                    )
                     if (creationContext(_state.value) == requestContext) {
-                        _state.update { it.copy(error = UserFacingStrings.remoteRequestFailed(e)) }
+                        val error = if (formatError) e.message ?: "小说返回格式不正确，请重试"
+                            else UserFacingStrings.remoteRequestFailed(e)
+                        _state.update { it.copy(error = error) }
                     }
                     null
                 }

@@ -191,6 +191,15 @@ class EncyclopediaListViewModel @Inject constructor(
         }
     }
 
+    suspend fun rename(id: Long, name: String): String? {
+        if (name.isBlank()) return "请输入百科名称"
+        return try {
+            if (encyclopediaDao.updateName(id, name.trim(), System.currentTimeMillis()) == 0) "百科已不存在"
+            else { _encyclopedias.value = encyclopediaDao.getAll(); null }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { "名称保存失败，请重试" }
+    }
+
     fun delete(id: Long) {
         viewModelScope.launch {
             characterDao.deleteByEncyclopediaId(id)

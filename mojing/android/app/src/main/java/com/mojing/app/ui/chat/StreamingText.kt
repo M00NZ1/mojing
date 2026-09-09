@@ -22,7 +22,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
-import com.mojing.app.ui.theme.AiBubble
 
 @Composable
 fun StreamingText(text: String) {
@@ -45,7 +44,7 @@ fun StreamingText(text: String) {
     ) {
         Surface(
             shape = RoundedCornerShape(d.bubbleCornerInner, d.bubbleCornerOuter, d.bubbleCornerOuter, d.bubbleCornerOuter),
-            color = AiBubble,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
             modifier = Modifier.widthIn(max = d.bubbleMaxWidth)
         ) {
             Text(

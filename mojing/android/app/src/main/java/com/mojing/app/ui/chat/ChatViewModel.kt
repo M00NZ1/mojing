@@ -893,6 +893,7 @@ class ChatViewModel @Inject constructor(
             isLoadingHistory = false,
             messageAttachments = attMap,
             participants = participants, world = world,
+            contextMemoryText = universalContextMemoryManager.getFormattedMemory(sessionId, initialBranchId),
             memorySegments = memorySegments, eventNodes = eventNodes, branches = branches,
             memoryCorrections = memoryCorrections,
             currentBranchId = initialBranchId,
@@ -1294,6 +1295,7 @@ class ChatViewModel @Inject constructor(
         val convEst = msgs.filter { it.includeInContext }
             .sumOf { TokenCounter.estimateScaledPrefix(ConversationMessageText.forDerivedContext(it)) }
         val memorySegments = memorySegmentDao.getRecentForBranch(sessionId, branchId)
+        val contextMemoryText = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
         val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, branchId)
         val roundChoices = buildRoundChoiceSnapshot(world, msgs)
         val events = eventNodeDao.getForBranch(sessionId, branchId)
@@ -1313,6 +1315,7 @@ class ChatViewModel @Inject constructor(
             branches = branches,
             branchSourcePreviews = sourcePreviews,
             currentBranchId = branchId,
+            contextMemoryText = contextMemoryText,
             memorySegments = memorySegments,
             memoryCorrections = memoryCorrections,
             roundChoiceOptions = roundChoices.options,
@@ -1776,21 +1779,6 @@ class ChatViewModel @Inject constructor(
         if (generationJob?.isActive == true || _state.value.isGenerating) return
         val draftSubmissionId = UUID.randomUUID().toString()
         if (!beginDraftSubmission(draftSubmissionId)) return
-        if (current.world?.gameplayMode == "小说创作" && pendingImageLocalPaths.isEmpty()) {
-            val launched = requestNarrator(
-                guidance = text,
-                draftSubmissionId = draftSubmissionId,
-            ) {
-                _state.update { state ->
-                    state.copy(
-                        inputText = if (activeDraftSubmissionId == draftSubmissionId) "" else state.inputText,
-                    )
-                }
-                finishDraftSubmission(draftSubmissionId)
-            }
-            if (!launched) finishDraftSubmission(draftSubmissionId)
-            return
-        }
         val quote = _state.value.quotingMessage
         val quotedPrefix = quote?.let { q ->
             val label = when (q.speakerType) {
@@ -1802,6 +1790,23 @@ class ChatViewModel @Inject constructor(
             if (snippet.isNotEmpty()) "> $label：$snippet\n\n" else "> $label\n\n"
         }.orEmpty()
         val outboundText = quotedPrefix + text
+        if (current.world?.gameplayMode == "小说创作" && pendingImageLocalPaths.isEmpty()) {
+            val launched = requestNarrator(
+                guidance = outboundText,
+                draftSubmissionId = draftSubmissionId,
+            ) {
+                _state.update { state ->
+                    state.copy(
+                        inputText = if (activeDraftSubmissionId == draftSubmissionId) "" else state.inputText,
+                        quotingMessage = if (state.quotingMessage?.id == quote?.id) null else state.quotingMessage,
+                    )
+                }
+                finishDraftSubmission(draftSubmissionId)
+            }
+            if (!launched) finishDraftSubmission(draftSubmissionId)
+            return
+        }
+
 
         val launched = launchSingleGeneration(draftSubmissionId = draftSubmissionId) sendGeneration@{ generation ->
             _state.value = _state.value.copy(
@@ -2155,6 +2160,8 @@ class ChatViewModel @Inject constructor(
                                 activeCharacterNames = _state.value.characterNames.values.toList(),
                             )
                             reportFullMemoryRebuildIfNeeded(memoryResult)
+                            val updatedMemory = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
+                            _state.update { if (it.currentBranchId == branchId) it.copy(contextMemoryText = updatedMemory) else it }
                             memoryV2Manager.extractEventNodes(
                                 sessionId = sessionId,
                                 branchId = branchId,
@@ -2441,6 +2448,19 @@ class ChatViewModel @Inject constructor(
                                             activeCharacterNames = _state.value.characterNames.values.toList(),
                                         )
                                         reportFullMemoryRebuildIfNeeded(memoryResult)
+                                        val updatedMemory = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
+                                        _state.update { if (it.currentBranchId == branchId) it.copy(contextMemoryText = updatedMemory) else it }
+                                        val recentMessages = getContextMessagesForBranch(branchId).takeLast(20)
+                                        memoryV2Manager.extractEventNodes(sessionId, branchId, null, recentMessages, apiKey, nb, model)
+                                        refreshEventNodesForBranch(branchId)
+                                        if (world.autoSedimentEnabled && world.encyclopediaId != null) {
+                                            sedimentEngine.sedimentFromMessages(
+                                                encyclopediaId = world.encyclopediaId, sessionId = sessionId,
+                                                branchId = branchId, messages = recentMessages.takeLast(10),
+                                                apiKey = apiKey, baseUrl = nb, model = model,
+                                            )
+                                        }
+
                                     }
                                 }
                                 is StreamState.Error -> {
@@ -2639,7 +2659,7 @@ class ChatViewModel @Inject constructor(
                 }
                 val world = sessionWorldDao.getBySession(sessionId)
                 val encyclopediaId = world?.encyclopediaId?.takeIf { it > 0L }
-                if (encyclopediaId != null && character.boundEncyclopediaId != encyclopediaId) {
+                if (encyclopediaId != null && character.boundEncyclopediaId > 0L && character.boundEncyclopediaId != encyclopediaId) {
                     _state.update { it.copy(error = "该角色与当前世界不匹配，请重新选择") }
                     onResult(false)
                     return@launch
@@ -2776,7 +2796,7 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    suspend fun getAllCharacters(): List<CharacterEntity> = characterDao.getAllBound()
+    suspend fun getAllCharacters(): List<CharacterEntity> = characterDao.getAll()
 
     fun stopGeneration() {
         val job = generationJob
@@ -3250,7 +3270,10 @@ class ChatViewModel @Inject constructor(
     }
 
     fun rebuildCurrentContextMemory(onDone: (String) -> Unit = {}) {
+        if (_state.value.memoryOperationRunning || _state.value.isGenerating) return
+        _state.update { it.copy(memoryOperationRunning = true) }
         viewModelScope.launch {
+          try {
             val branchId = currentBranchId()
             val world = sessionWorldDao.getBySession(sessionId)
             val firstCharacter = _state.value.participants.firstOrNull()?.let { participant ->
@@ -3275,7 +3298,12 @@ class ChatViewModel @Inject constructor(
                 worldText = world?.worldPrompt.orEmpty(),
                 activeCharacterNames = _state.value.characterNames.values.toList(),
             )
+            val memory = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
+            _state.update { if (it.currentBranchId == branchId) it.copy(contextMemoryText = memory) else it }
             onDone(if (ok) "已重建当前会话记忆" else "重建失败，现有记忆未被清空")
+          } catch (cancelled: CancellationException) { throw cancelled }
+          catch (_: Exception) { onDone("重建失败，请重试") }
+          finally { _state.update { it.copy(memoryOperationRunning = false) } }
         }
     }
 
@@ -3289,9 +3317,17 @@ class ChatViewModel @Inject constructor(
     }
 
     fun clearCurrentContextMemory(onDone: (String) -> Unit = {}) {
+        if (_state.value.memoryOperationRunning || _state.value.isGenerating) return
+        _state.update { it.copy(memoryOperationRunning = true) }
+        val branchId = currentBranchId()
         viewModelScope.launch {
-            universalContextMemoryManager.clear(sessionId, currentBranchId())
-            onDone("已清空当前会话记忆")
+            try {
+                universalContextMemoryManager.clear(sessionId, branchId)
+                _state.update { if (it.currentBranchId == branchId) it.copy(contextMemoryText = "") else it }
+                onDone("已清空长期记忆；后续对话会重新整理")
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { onDone("清空失败，请重试") }
+            finally { _state.update { it.copy(memoryOperationRunning = false) } }
         }
     }
 

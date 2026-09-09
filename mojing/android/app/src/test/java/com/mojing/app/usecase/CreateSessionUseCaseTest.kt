@@ -102,13 +102,13 @@ class CreateSessionUseCaseTest {
     }
 
     @Test
-    fun characterShortcutRejectsUnboundCharacterWithoutWritingSession() = runTest {
+    fun characterShortcutCreatesUnboundCharacterSession() = runTest {
         coEvery { characterDao.getById(5L) } returns CharacterEntity(id = 5L, boundEncyclopediaId = 0L)
 
         val result = useCase.createForCharacter(5L)
 
-        assertEquals(CreateSessionUseCase.Result.UnboundCharacter, result)
-        coVerify(exactly = 0) { transaction(any(), any(), any()) }
+        assertTrue(result is CreateSessionUseCase.Result.Created)
+        coVerify { transaction(any(), match { it.encyclopediaId == null }, match { it.single().characterId == 5L }) }
     }
 
     @Test

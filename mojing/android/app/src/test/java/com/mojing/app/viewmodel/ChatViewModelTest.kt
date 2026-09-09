@@ -126,6 +126,7 @@ class ChatViewModelTest {
         memoryCorrectionDao: SessionMemoryCorrectionDao = mockk(relaxed = true),
         eventNodeDao: SessionEventNodeDao = mockk(relaxed = true),
         memorySegmentDao: com.mojing.app.data.local.dao.SessionMemorySegmentDao = mockk(relaxed = true),
+        contextMemory: com.mojing.app.domain.engine.UniversalContextMemoryManager = mockk(relaxed = true),
         participantDao: ParticipantDao = mockk(relaxed = true),
         chatDraftStore: ChatDraftStore = emptyDraftStore(),
         secureStorage: SecureStorage = mockk(relaxed = true) { every { sessionModelSelection(any()) } returns null },
@@ -154,7 +155,7 @@ class ChatViewModelTest {
         slidingWindowBuilder = mockk(relaxed = true),
         snapshotExtractor = mockk(relaxed = true),
         memoryV2Manager = mockk(relaxed = true),
-        universalContextMemoryManager = mockk(relaxed = true),
+        universalContextMemoryManager = contextMemory,
         sedimentEngine = mockk(relaxed = true),
         characterStateDao = mockk(relaxed = true),
         attachmentDao = attachmentDao,
@@ -182,6 +183,25 @@ class ChatViewModelTest {
     }
 
     private fun validLlmApiService(): LlmApiService = LlmApiService()
+
+    @Test
+    fun clearingContextMemoryUpdatesDisplayedMemoryAndKeepsStateOnFailure() = runTest(testDispatcher) {
+        val memory = mockk<com.mojing.app.domain.engine.UniversalContextMemoryManager>(relaxed = true)
+        coEvery { memory.getFormattedMemory(42L, "main") } returns "码头约定"
+        val vm = createViewModel(contextMemory = memory)
+        advanceUntilIdle()
+        assertEquals("码头约定", vm.state.value.contextMemoryText)
+        coEvery { memory.clear(42L, "main") } throws IllegalStateException("busy")
+        vm.clearCurrentContextMemory()
+        advanceUntilIdle()
+        assertEquals("码头约定", vm.state.value.contextMemoryText)
+        assertFalse(vm.state.value.memoryOperationRunning)
+        coEvery { memory.clear(42L, "main") } returns Unit
+        vm.clearCurrentContextMemory()
+        advanceUntilIdle()
+        assertEquals("", vm.state.value.contextMemoryText)
+        assertFalse(vm.state.value.memoryOperationRunning)
+    }
 
     @Test
     fun exposesSessionIdFromSavedState() = runTest(testDispatcher) {
@@ -1372,12 +1392,15 @@ class ChatViewModelTest {
         )
         advanceUntilIdle()
 
+        vm.setQuotingMessage(MessageEntity(id = 7L, sessionId = 42L, speakerType = "narrator", content = "码头见"))
         vm.updateInput("不要丢失的下一段走向")
         vm.sendMessage()
         advanceUntilIdle()
 
         assertEquals("不要丢失的下一段走向", vm.state.value.inputText)
         assertEquals("剧情走向保存失败，请重试", vm.state.value.error)
+        assertEquals(7L, vm.state.value.quotingMessage?.id)
+        coVerify { messageDao.insert(match { it.content.startsWith("> 旁白：码头见\n\n") }) }
         verify(exactly = 0) { draftStore.save(42L, ChatDraftSnapshot()) }
     }
 
