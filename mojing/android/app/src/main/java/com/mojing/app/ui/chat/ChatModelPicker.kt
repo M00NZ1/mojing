@@ -10,12 +10,16 @@ import androidx.compose.ui.unit.dp
 import com.mojing.app.data.ModelPlatform
 
 @Composable
-fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, onSelect: (String, String) -> Unit) {
+fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selectedLabel: String = "", lastRequestModel: String? = null, isGenerating: Boolean = false, onSelect: (String, String) -> Unit) {
     var query by remember { mutableStateOf("") }
     AlertDialog(onDismissRequest = onDismiss, title = { Text("选择对话模型") }, text = {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("从下一次发送生效，当前回复继续使用原模型。选择后，本场角色与旁白统一使用该线路。",
                 style = MaterialTheme.typography.bodySmall)
+            if (selectedLabel.isNotBlank()) Text("下次发送：$selectedLabel", style = MaterialTheme.typography.bodyMedium)
+            if (lastRequestModel != null || isGenerating) Text(
+                lastRequestModel?.let { "最近请求：$it" } ?: "本轮正在准备上下文",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(query, { query = it }, label = { Text("搜索平台或模型") }, singleLine = true)
             LazyColumn(Modifier.heightIn(max = 380.dp)) {
                 platforms.forEach { p ->

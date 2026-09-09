@@ -2077,6 +2077,8 @@ class ChatViewModel @Inject constructor(
             }
             var lastUiUpdateAt = 0L
             var lastUiLen = 0
+            generation.ensureCurrent()
+            _state.update { it.copy(lastRequestModel = model) }
             chatEngine.streamGenerateWithMemory(
                 sessionId, character, recentHistory, context.systemPrompt, snapshot, budget,
                 apiKey, streamBase, model, secureStorage.userName, secureStorage.userDescription,
@@ -2377,6 +2379,8 @@ class ChatViewModel @Inject constructor(
                         var lastUiUpdateAt = 0L
                         var lastUiLen = 0
                         var errMsg: String? = null
+                        generation.ensureCurrent()
+                        _state.update { it.copy(lastRequestModel = model) }
                         chatEngine.streamGenerate(
                             sessionId = sessionId,
                             character = character.copy(personaPrompt = narratorPrompt),

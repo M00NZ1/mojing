@@ -127,7 +127,8 @@ fun ChatScreen(
     val modelLabel by viewModel.modelSelectionLabel.collectAsStateWithLifecycle()
     var showModelPicker by remember { mutableStateOf(false) }
     if (showModelPicker) {
-        ChatModelPicker(viewModel.availableModelPlatforms(), onDismiss = { showModelPicker = false }) { platform, model ->
+        ChatModelPicker(viewModel.availableModelPlatforms(), onDismiss = { showModelPicker = false },
+            selectedLabel = modelLabel, lastRequestModel = state.lastRequestModel, isGenerating = state.isGenerating) { platform, model ->
             viewModel.selectChatModel(platform, model) { showModelPicker = false }
         }
     }
@@ -628,7 +629,7 @@ fun ChatScreen(
                                     state.messages.firstOrNull()?.content?.take(20) ?: "对话"
                                 }, style = MaterialTheme.typography.titleMedium,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("$modelLabel ▾", style = MaterialTheme.typography.labelMedium,
+                                Text((if (state.isGenerating) "下次发送：" else "") + "$modelLabel ▾", style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.primary, maxLines = 1,
                                     overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
                             }

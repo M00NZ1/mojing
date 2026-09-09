@@ -838,13 +838,16 @@ class ChatViewModelTest {
                 selection = secondArg<String>() to thirdArg<String>()
             }
             every { storage.speakerTurnMode } returns "manual"
+            lateinit var vm: ChatViewModel
             val routes = mutableListOf<List<String>>()
             val engine = mockk<ChatEngine>(relaxed = true)
             every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+                assertEquals(args[5], vm.state.value.lastRequestModel)
                 routes.add(listOf(args[3] as String, args[4] as String, args[5] as String))
                 flowOf(StreamState.Done("旁白测试回复"))
             }
             every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+                assertEquals(args[8], vm.state.value.lastRequestModel)
                 routes.add(listOf(args[6] as String, args[7] as String, args[8] as String))
                 flowOf(StreamState.Done("角色测试回复"))
             }
@@ -854,7 +857,7 @@ class ChatViewModelTest {
             coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "测试角色", modelName = "old-character-model")
             val participants = mockk<ParticipantDao>(relaxed = true)
             coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 3L))
-            val vm = createViewModel(secureStorage = storage, sessionWorldDao = world,
+            vm = createViewModel(secureStorage = storage, sessionWorldDao = world,
                 characterDao = characters, participantDao = participants, chatEngine = engine,
                 llmApiService = validLlmApiService())
             advanceUntilIdle()
@@ -869,6 +872,7 @@ class ChatViewModelTest {
                     vm.sendMessage()
                 }
                 advanceUntilIdle()
+                assertEquals(model, vm.state.value.lastRequestModel)
             }
             assertEquals("narrator=$narrator error=${vm.state.value.error}", listOf(
                 listOf("fake-a", "https://a.test/v1", "a-one"),
