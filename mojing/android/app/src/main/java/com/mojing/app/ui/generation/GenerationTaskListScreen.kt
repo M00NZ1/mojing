@@ -37,6 +37,7 @@ fun GenerationTaskListScreen(
     val tasks by viewModel.tasks.collectAsStateWithLifecycle()
     val paused by viewModel.queuePaused.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
+    val retryingIds by viewModel.retryingTaskIds.collectAsStateWithLifecycle()
     val message by viewModel.snackbar.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var filter by rememberSaveable { mutableIntStateOf(0) }
@@ -46,9 +47,7 @@ fun GenerationTaskListScreen(
     val active = tasks.count { it.isActive() }
     val failed = tasks.count { it.status == GenerationTaskStatus.FAILED }
     val visible = tasks.filter { when (filter) { 1 -> it.isActive(); 2 -> it.status == GenerationTaskStatus.FAILED; else -> true } }
-    LaunchedEffect(message) {
-        message?.let { viewModel.consumeSnackbar(); snackbar.showSnackbar(it) }
-    }
+    GenerationTaskFeedback(message, snackbar, viewModel::consumeSnackbar)
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }, topBar = {
         TopAppBar(title = { Text("生成记录") }, navigationIcon = {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
@@ -89,6 +88,7 @@ fun GenerationTaskListScreen(
                 }
             }
             items(visible, key = { it.id }) { t ->
+                val retrying = t.id in retryingIds
                 val color = when (t.status) {
                     GenerationTaskStatus.FAILED -> MaterialTheme.colorScheme.error
                     GenerationTaskStatus.RUNNING -> MaterialTheme.colorScheme.primary
@@ -117,7 +117,13 @@ fun GenerationTaskListScreen(
                                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             if (t.isActive()) TextButton(enabled = !busy, onClick = { cancelTarget = t }) { Text("取消") }
                             if (t.status == GenerationTaskStatus.FAILED && isRetryableKind(t.taskKind)) {
-                                TextButton(enabled = !busy, onClick = { viewModel.retryFailedTask(t) }) { Text("继续尝试") }
+                                TextButton(enabled = !busy && !retrying, onClick = { viewModel.retryFailedTask(t) }) {
+                                    if (retrying) {
+                                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                        Spacer(Modifier.width(6.dp))
+                                    }
+                                    Text(if (retrying) "重新排队中" else "继续尝试")
+                                }
                             }
                             TextButton(onClick = { detail = t }) { Text("详情") }
                         }
@@ -173,4 +179,15 @@ private fun statusLabel(s: String): String = when (s) {
     GenerationTaskStatus.FAILED -> "失败"
     GenerationTaskStatus.CANCELLED -> "已取消"
     else -> s
+}
+
+@Composable
+internal fun GenerationTaskFeedback(message: String?, host: SnackbarHostState, onConsumed: (String) -> Unit) {
+    val consume by rememberUpdatedState(onConsumed)
+    LaunchedEffect(message, host) {
+        message?.let {
+            host.showSnackbar(it)
+            consume(it)
+        }
+    }
 }

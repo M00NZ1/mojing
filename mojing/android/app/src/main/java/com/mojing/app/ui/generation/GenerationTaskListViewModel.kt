@@ -31,10 +31,11 @@ class GenerationTaskListViewModel @Inject constructor(
     private val _snackbar = MutableStateFlow<String?>(null)
     val snackbar: StateFlow<String?> = _snackbar.asStateFlow()
 
-    private val retryingIds = mutableSetOf<Long>()
+    private val _retryingIds = MutableStateFlow<Set<Long>>(emptySet())
+    val retryingTaskIds: StateFlow<Set<Long>> = _retryingIds.asStateFlow()
 
-    fun consumeSnackbar() {
-        _snackbar.value = null
+    fun consumeSnackbar(expectedMessage: String) {
+        _snackbar.compareAndSet(expectedMessage, null)
     }
 
     private fun runAction(success: String, action: suspend () -> Unit) {
@@ -58,12 +59,12 @@ class GenerationTaskListViewModel @Inject constructor(
             _snackbar.value = "仅失败任务可重新排队"
             return
         }
-        if (task.id in retryingIds) {
+        if (task.id in _retryingIds.value) {
             _snackbar.value = "正在重新排队…"
             return
         }
         val total = processor.resolveRetryTotalForUi(task)
-        retryingIds.add(task.id)
+        _retryingIds.value = _retryingIds.value + task.id
         _snackbar.value = "正在重新排队（${task.progressDone}/$total）…"
         viewModelScope.launch {
             try {
@@ -77,7 +78,7 @@ class GenerationTaskListViewModel @Inject constructor(
             } catch (_: Exception) {
                 _snackbar.value = "继续失败，请重试"
             } finally {
-                retryingIds.remove(task.id)
+                _retryingIds.value = _retryingIds.value - task.id
             }
         }
     }
