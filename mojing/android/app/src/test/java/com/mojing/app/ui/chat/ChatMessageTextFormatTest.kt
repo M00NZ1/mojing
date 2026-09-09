@@ -6,6 +6,20 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class ChatMessageTextFormatTest {
+    @Test fun quotingReplyUsesItsOwnBodyAndPreservesUserLiteralTags() {
+        val reply = "> 林汐：码头见\n\n我马上来"
+        assertEquals("我马上来", ChatMessageTextFormat.quoteSnippet(reply, 120, "user"))
+        val literal = "我输入 <CHOICES><OPTION>保留原文</OPTION></CHOICES>"
+        assertEquals(literal, ChatMessageTextFormat.quoteSnippet(literal, 120, "user"))
+        assertEquals("> 风起了", ChatMessageTextFormat.quoteSnippet("> 风起了\n\n他关上窗。", 120, "character"))
+    }
+
+    @Test fun quoteLengthLimitKeepsEmojiWhole() {
+        assertEquals("甲", ChatMessageTextFormat.quoteSnippet("甲😀乙", 2, "user"))
+        assertEquals("甲😀", ChatMessageTextFormat.quoteSnippet("甲😀乙", 3, "user"))
+        assertEquals("", ChatMessageTextFormat.quoteSnippet("😀", 1, "user"))
+        assertEquals("", ChatMessageTextFormat.quoteSnippet("正文", -1, "user"))
+    }
     @org.junit.Test
     fun quoteCardSeparatesSourceFromBodyAndPreservesOrdinaryText() {
         val quote = ChatMessageTextFormat.splitQuote("> 林汐：码头见\n\n我马上来")

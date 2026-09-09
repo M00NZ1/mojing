@@ -1789,7 +1789,7 @@ class ChatViewModel @Inject constructor(
                 "narrator" -> _state.value.world?.narratorName?.ifBlank { "\u65c1\u767d" } ?: "\u65c1\u767d"
                 else -> q.characterId?.let { _state.value.characterNames[it] } ?: "\u89d2\u8272"
             }
-            val snippet = ChatMessageTextFormat.quoteSnippet(q.content, 120)
+            val snippet = ChatMessageTextFormat.quoteSnippet(q.content, 120, q.speakerType)
             if (snippet.isNotEmpty()) "> $label：$snippet\n\n" else "> $label\n\n"
         }.orEmpty()
         val outboundText = quotedPrefix + text

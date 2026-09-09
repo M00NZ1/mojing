@@ -811,23 +811,10 @@ fun ChatScreen(
                             )
                         }
                         state.quotingMessage?.let { q ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 10.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    "引用：${ChatMessageTextFormat.quoteSnippet(q.content, 48)}",
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                TextButton(onClick = { viewModel.setQuotingMessage(null) }) {
-                                    Text("取消")
-                                }
-                            }
+                            QuoteDraftPreview(
+                                text = ChatMessageTextFormat.quoteSnippet(q.content, 120, q.speakerType),
+                                onCancel = { viewModel.setQuotingMessage(null) },
+                            )
                         }
                         InputBar(
                             value = inputFieldValue,

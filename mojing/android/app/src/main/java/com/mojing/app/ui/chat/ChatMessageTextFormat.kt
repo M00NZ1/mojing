@@ -59,11 +59,14 @@ object ChatMessageTextFormat {
 
     fun forClipboard(raw: String): String = visibleBody(raw)
 
-    fun quoteSnippet(raw: String, maxChars: Int): String = visibleBody(raw)
-        .lineSequence()
-        .firstOrNull()
-        ?.take(maxChars.coerceAtLeast(0))
-        .orEmpty()
+    fun quoteSnippet(raw: String, maxChars: Int, speakerType: String? = null): String {
+        val ownBody = if (speakerType == null || speakerType == "user") splitQuote(raw).body else raw
+        val visible = if (speakerType == "user") forBubbleDisplay(ownBody) else visibleBody(ownBody)
+        val line = visible.lineSequence().firstOrNull().orEmpty()
+        var end = maxChars.coerceAtLeast(0).coerceAtMost(line.length)
+        if (end > 0 && end < line.length && line[end - 1].isHighSurrogate() && line[end].isLowSurrogate()) end--
+        return line.substring(0, end)
+    }
 
     /** 搜索、收藏、分支和会话列表共用的单行摘要。 */
     fun preview(
