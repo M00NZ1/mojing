@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
@@ -27,7 +28,7 @@ import java.util.Locale
 private fun GenerationTaskEntity.isActive() = status in setOf(
     GenerationTaskStatus.QUEUED, GenerationTaskStatus.RUNNING, GenerationTaskStatus.PAUSED)
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun GenerationTaskListScreen(
     onBack: () -> Unit,
@@ -134,9 +135,9 @@ fun GenerationTaskListScreen(
                             Text(t.errorMessage, maxLines = 2, overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.bodySmall, color = color)
                         }
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text(dateFormat.format(Date(t.createdAt)), Modifier.weight(1f),
-                                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(dateFormat.format(Date(t.createdAt)),
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             if (t.isActive()) TextButton(enabled = !busy, onClick = { cancelTarget = t }) { Text("取消") }
                             if (t.status == GenerationTaskStatus.FAILED && isRetryableKind(t.taskKind)) {
                                 TextButton(enabled = !busy && !retrying, onClick = { viewModel.retryFailedTask(t) }) {
@@ -172,13 +173,55 @@ fun GenerationTaskListScreen(
     }
     detail?.let { original ->
         val t = tasks.firstOrNull { it.id == original.id } ?: original
-        AlertDialog(onDismissRequest = { detail = null }, title = { Text(t.title) }, text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("${kindLabel(t.taskKind)} · ${statusLabel(t.status)}")
-                Text("已完成 ${t.progressDone} / ${t.progressTotal}")
-                if (t.errorMessage.isNotBlank()) Text(t.errorMessage)
+        GenerationTaskDetailSheet(t, onDismiss = { detail = null },
+            canOpen = openingResultId == null, onOpen = {
+                detail = null
+                viewModel.openResult(t, onOpenResult)
+            })
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun GenerationTaskDetailSheet(
+    task: GenerationTaskEntity,
+    onDismiss: () -> Unit,
+    canOpen: Boolean,
+    onOpen: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(horizontal = 24.dp)) {
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text("${kindLabel(task.taskKind)} · ${statusLabel(task.status)}",
+                    style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                SelectionContainer { Text(task.title, style = MaterialTheme.typography.headlineSmall) }
+                if (task.progressTotal > 0) {
+                    LinearProgressIndicator(
+                        progress = { (task.progressDone.toFloat() / task.progressTotal).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth())
+                    Text("已完成 ${task.progressDone} / ${task.progressTotal}")
+                }
+                if (task.errorMessage.isNotBlank()) {
+                    Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(12.dp)) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("生成反馈", style = MaterialTheme.typography.titleSmall)
+                            SelectionContainer { Text(task.errorMessage, style = MaterialTheme.typography.bodyMedium) }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
             }
-        }, confirmButton = { TextButton(onClick = { detail = null }) { Text("关闭") } })
+            Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (task.progressDone > 0 || task.status == GenerationTaskStatus.COMPLETED) {
+                    Button(onClick = onOpen, enabled = canOpen, modifier = Modifier.fillMaxWidth()) {
+                        Text("查看已生成内容")
+                    }
+                }
+                TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("关闭") }
+            }
+        }
     }
 }
 
