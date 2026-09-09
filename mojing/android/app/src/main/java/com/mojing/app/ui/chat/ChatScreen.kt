@@ -510,6 +510,7 @@ fun ChatScreen(
                     world = state.world,
                     memorySegments = state.memorySegments,
                     contextMemoryText = state.contextMemoryText,
+                    encyclopediaFoundation = state.encyclopediaFoundation,
                     memoryOperationRunning = state.memoryOperationRunning,
                     memoryCorrections = state.memoryCorrections,
                     memoryCorrectionPromptTrace = state.lastMemoryCorrectionPromptTrace,

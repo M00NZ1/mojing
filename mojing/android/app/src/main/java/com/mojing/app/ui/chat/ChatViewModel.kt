@@ -893,6 +893,7 @@ class ChatViewModel @Inject constructor(
             isLoadingHistory = false,
             messageAttachments = attMap,
             participants = participants, world = world,
+            encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world),
             contextMemoryText = universalContextMemoryManager.getFormattedMemory(sessionId, initialBranchId),
             memorySegments = memorySegments, eventNodes = eventNodes, branches = branches,
             memoryCorrections = memoryCorrections,
@@ -1296,6 +1297,7 @@ class ChatViewModel @Inject constructor(
             .sumOf { TokenCounter.estimateScaledPrefix(ConversationMessageText.forDerivedContext(it)) }
         val memorySegments = memorySegmentDao.getRecentForBranch(sessionId, branchId)
         val contextMemoryText = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
+        val encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world)
         val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, branchId)
         val roundChoices = buildRoundChoiceSnapshot(world, msgs)
         val events = eventNodeDao.getForBranch(sessionId, branchId)
@@ -1316,6 +1318,7 @@ class ChatViewModel @Inject constructor(
             branchSourcePreviews = sourcePreviews,
             currentBranchId = branchId,
             contextMemoryText = contextMemoryText,
+            encyclopediaFoundation = encyclopediaFoundation,
             memorySegments = memorySegments,
             memoryCorrections = memoryCorrections,
             roundChoiceOptions = roundChoices.options,

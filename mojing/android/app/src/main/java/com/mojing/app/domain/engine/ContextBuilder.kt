@@ -30,6 +30,7 @@ class ContextBuilder @Inject constructor(
     private val encyclopediaSearcher: EncyclopediaSearcher,
     private val loreSearcher: LoreSearcher,
     private val characterBookSearcher: CharacterBookSearcher,
+    private val encyclopediaDao: com.mojing.app.data.local.dao.EncyclopediaDao,
 ) {
     suspend fun buildFullContext(
         character: CharacterEntity,
@@ -80,13 +81,25 @@ class ContextBuilder @Inject constructor(
         )
     }
 
+    suspend fun encyclopediaFoundation(world: SessionWorldEntity?): String {
+        val id = world?.encyclopediaId?.takeIf { it > 0L } ?: return ""
+        val encyclopedia = encyclopediaDao.getById(id) ?: return ""
+        return listOf(encyclopedia.description.trim(), encyclopedia.worldPrompt.trim())
+            .filter { it.isNotBlank() && !world.worldPrompt.contains(it) }
+            .distinct().joinToString("\n\n")
+    }
+
     suspend fun searchWorldContext(
         world: SessionWorldEntity?,
         recallQueryText: String,
     ): SharedWorldContext {
         val encyclopediaHits = if (world?.encyclopediaId != null) {
-            encyclopediaSearcher.search(world.encyclopediaId, recallQueryText)
-                .map { "[${it.title}] ${it.content.take(200)}" }
+            val foundation = encyclopediaFoundation(world)
+            buildList {
+                if (foundation.isNotBlank()) add("[百科基础背景] $foundation")
+                addAll(encyclopediaSearcher.search(world.encyclopediaId, recallQueryText)
+                    .map { "[${it.title}] ${it.content.take(200)}" })
+            }
         } else {
             emptyList()
         }

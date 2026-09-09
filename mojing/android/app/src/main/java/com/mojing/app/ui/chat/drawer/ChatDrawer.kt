@@ -32,6 +32,7 @@ import com.google.gson.Gson
 fun ChatDrawer(
     participants: List<SessionParticipantEntity>,
     world: SessionWorldEntity? = null,
+    encyclopediaFoundation: String = "",
     contextMemoryText: String = "",
     memoryOperationRunning: Boolean = false,
     memorySegments: List<SessionMemorySegmentEntity> = emptyList(),
@@ -106,6 +107,7 @@ fun ChatDrawer(
             )
             1 -> WorldConfigTab(
                 world = world,
+                encyclopediaFoundation = encyclopediaFoundation,
                 onWorldSettingChanged = onWorldSettingChanged,
                 onSaveSessionWorldCredentials = onSaveSessionWorldCredentials,
                 onCredentialFieldsDirty = onWorldCredentialFieldsDirty,
@@ -332,6 +334,7 @@ fun ParticipantsTab(
 @Composable
 fun WorldConfigTab(
     world: SessionWorldEntity?,
+    encyclopediaFoundation: String = "",
     onWorldSettingChanged: (String, Boolean) -> Unit,
     onSaveSessionWorldCredentials: (SessionWorldCredentialDraft) -> Unit,
     onCredentialFieldsDirty: (Boolean) -> Unit,
@@ -442,6 +445,17 @@ fun WorldConfigTab(
                     enabled = !isGenerating && (allowSessionThinkMax || sessionThinkMaxEnabled),
                 )
             }
+        }
+        val sceneText = listOf(w.worldPrompt.trim(), encyclopediaFoundation.trim())
+            .filter(String::isNotBlank).distinct().joinToString("\n\n")
+        if (sceneText.isNotBlank()) {
+            var expanded by remember(w.encyclopediaId, w.templateId) { mutableStateOf(false) }
+            Text("本场基础设定", style = MaterialTheme.typography.titleSmall)
+            Text(sceneText, maxLines = if (expanded) Int.MAX_VALUE else 4,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起设定" else "展开设定") }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
