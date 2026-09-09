@@ -192,4 +192,65 @@ class EncyclopediaDetailViewModelTest {
         assertEquals(null, vm.state.value.renameDraft)
     }
 
+    @Test
+    fun olderLoadCannotReplaceNewPageEvenWhenReadIgnoresCancellation() = runTest(dispatcher) {
+        val gate = kotlinx.coroutines.CompletableDeferred<EncyclopediaEntity?>()
+        val dao = mockk<EncyclopediaDao> {
+            coEvery { getById(3L) } coAnswers {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { gate.await() }
+            }
+            coEvery { getById(4L) } returns EncyclopediaEntity(id = 4L, name = "新百科")
+        }
+        val vm = createViewModel(dao)
+        vm.load(3L)
+        vm.load(4L)
+        gate.complete(EncyclopediaEntity(id = 3L, name = "旧百科"))
+        assertEquals(4L, vm.state.value.encyclopedia?.id)
+        assertEquals("新百科", vm.state.value.encyclopedia?.name)
+        assertEquals(null, vm.state.value.loadError)
+    }
+
+    @Test
+    fun reloadSnapshotCannotUndoRenameCompletedDuringRead() = runTest(dispatcher) {
+        val dao = mockk<EncyclopediaDao> {
+            coEvery { getById(3L) } returns EncyclopediaEntity(id = 3L, name = "旧名称")
+            coEvery { updateName(3L, any(), any()) } returns 1
+        }
+        val entries = mockk<EncyclopediaEntryDao>(relaxed = true)
+        val vm = createViewModel(dao, entries)
+        vm.load(3L)
+        vm.beginRename()
+        vm.editRename("新名称")
+        val gate = kotlinx.coroutines.CompletableDeferred<List<EncyclopediaEntryEntity>>()
+        coEvery { entries.getByEncyclopedia(3L) } coAnswers { gate.await() }
+        vm.load(3L)
+        vm.updateEncyclopediaName()
+        gate.complete(emptyList())
+        assertEquals("新名称", vm.state.value.encyclopedia?.name)
+        assertEquals(null, vm.state.value.renameDraft)
+        assertTrue(vm.state.value.isLoaded)
+    }
+
+    @Test
+    fun returningToSameIdDoesNotLetOldSaveCloseNewDraft() = runTest(dispatcher) {
+        val gate = kotlinx.coroutines.CompletableDeferred<Int>()
+        val dao = mockk<EncyclopediaDao> {
+            coEvery { getById(any()) } answers { EncyclopediaEntity(id = firstArg(), name = "原名称") }
+            coEvery { updateName(3L, any(), any()) } coAnswers { gate.await() }
+        }
+        val vm = createViewModel(dao)
+        vm.load(3L)
+        vm.beginRename()
+        vm.editRename("旧提交")
+        vm.updateEncyclopediaName()
+        vm.load(4L)
+        vm.load(3L)
+        vm.beginRename()
+        vm.editRename("新草稿")
+        gate.complete(1)
+        assertEquals("新草稿", vm.state.value.renameDraft)
+        assertEquals("原名称", vm.state.value.encyclopedia?.name)
+        assertFalse(vm.state.value.renameSaving)
+    }
+
 }

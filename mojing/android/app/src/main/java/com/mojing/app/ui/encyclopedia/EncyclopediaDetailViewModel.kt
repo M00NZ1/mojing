@@ -91,6 +91,13 @@ class EncyclopediaDetailViewModel @Inject constructor(
     val state: StateFlow<EncyclopediaDetailState> = _state.asStateFlow()
 
     private var encId: Long = 0
+    private var loadJob: Job? = null
+    // 同一百科的多次读取也必须按最后一次请求发布。
+    private var loadRevision = 0L
+    // 离开再返回相同 ID 仍是新的页面归属。
+    private var pageRevision = 0L
+    // 读取多个表期间保存的名称优先于读取开始时的快照。
+    private var nameRevision = 0L
     private var genObserveJob: Job? = null
     /** 曾观察到本百科有进行中的生成任务；用于在「进行中 → 无」时提示一次批量结束（避免重复空列表误报） */
     private var hadActiveGenerationForEnc: Boolean = false
@@ -105,20 +112,28 @@ class EncyclopediaDetailViewModel @Inject constructor(
 
     fun load(id: Long) {
         val renameState = _state.value.takeIf { encId == id }
-        if (encId != id) hadActiveGenerationForEnc = false
+        if (encId != id) {
+            hadActiveGenerationForEnc = false
+            pageRevision++
+        }
+        val requestRevision = ++loadRevision
+        val initialNameRevision = nameRevision
+        loadJob?.cancel()
         encId = id
         genObserveJob?.cancel()
         genObserveJob = null
         _state.value = EncyclopediaDetailState(
+            encyclopedia = renameState?.encyclopedia,
             isLoaded = false,
             hasPublicLlmKey = secureStorage.publicApiKey.isNotBlank(),
             renameDraft = renameState?.renameDraft,
             renameSaving = renameState?.renameSaving ?: false,
             renameError = renameState?.renameError,
         )
-        viewModelScope.launch {
+        loadJob = viewModelScope.launch {
             try {
                 val encyclopedia = encyclopediaDao.getById(id)
+                if (requestRevision != loadRevision) return@launch
                 if (encyclopedia == null) {
                     _state.value = _state.value.copy(
                         isLoaded = true,
@@ -130,8 +145,12 @@ class EncyclopediaDetailViewModel @Inject constructor(
                 val events = timelineEventDao.getByEncyclopedia(id)
                 val relations = entryRelationDao.getByEncyclopedia(id)
                 val sediment = entryDao.getSedimentEntries(id)
+                if (requestRevision != loadRevision) return@launch
+                val current = _state.value.encyclopedia
                 _state.value = _state.value.copy(
-                    encyclopedia = encyclopedia,
+                    encyclopedia = if (nameRevision != initialNameRevision && current?.id == id) {
+                        encyclopedia.copy(name = current.name, updatedAt = current.updatedAt)
+                    } else encyclopedia,
                     entries = entries,
                     timelineEvents = events,
                     relations = relations,
@@ -145,6 +164,7 @@ class EncyclopediaDetailViewModel @Inject constructor(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
+                if (requestRevision != loadRevision) return@launch
                 _state.value = _state.value.copy(
                     isLoaded = true,
                     loadError = "读取百科失败，请重试",
@@ -345,15 +365,17 @@ class EncyclopediaDetailViewModel @Inject constructor(
             return
         }
         val targetId = encId
+        val targetPage = pageRevision
         _state.value = _state.value.copy(renameSaving = true, renameError = null)
         viewModelScope.launch {
             try {
                 val now = System.currentTimeMillis()
                 val updated = encyclopediaDao.updateName(targetId, trimmed, now)
-                if (encId != targetId) return@launch
+                if (pageRevision != targetPage) return@launch
                 if (updated == 0) {
                     _state.value = _state.value.copy(renameError = "百科已不存在，未保存名称")
                 } else {
+                    nameRevision++
                     _state.value = _state.value.copy(
                         encyclopedia = _state.value.encyclopedia?.copy(name = trimmed, updatedAt = now),
                         renameDraft = null,
@@ -363,9 +385,9 @@ class EncyclopediaDetailViewModel @Inject constructor(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                if (encId == targetId) _state.value = _state.value.copy(renameError = "名称保存失败，请重试")
+                if (pageRevision == targetPage) _state.value = _state.value.copy(renameError = "名称保存失败，请重试")
             } finally {
-                if (encId == targetId) _state.value = _state.value.copy(renameSaving = false)
+                if (pageRevision == targetPage) _state.value = _state.value.copy(renameSaving = false)
             }
         }
     }
