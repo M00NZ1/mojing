@@ -10,6 +10,7 @@ interface EditMessageModalProps {
   originalContent: string;
   regenerateAfterSave: boolean;
   isSaving: boolean;
+  saveError?: string | null;
   onContentChange: (content: string) => void;
   onSave: (messageId: number, content: string) => void | Promise<void>;
   onClose: () => void;
@@ -28,6 +29,7 @@ export default function EditMessageModal({
   originalContent,
   regenerateAfterSave,
   isSaving,
+  saveError,
   onContentChange,
   onSave,
   onClose,
@@ -215,6 +217,8 @@ export default function EditMessageModal({
             disabled={isSaving}
           />
         </label>
+
+        {saveError && <p className="edit-message-error" role="alert">{saveError}</p>}
 
         {discardPending ? (
           <div className="edit-message-discard" role="alert" aria-labelledby={discardTitleId} data-edit-discard-confirm>

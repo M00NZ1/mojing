@@ -178,6 +178,8 @@ export default function ChatPage() {
   } | null>(null);
   const [editMessageId, setEditMessageId] = useState<number | null>(null);
   const [editContent, setEditContent] = useState('');
+  const [editSaveError, setEditSaveError] = useState<string | null>(null);
+  const [editSavePending, setEditSavePending] = useState(false);
   const [editOriginalContent, setEditOriginalContent] = useState('');
   const [settingConflictResult, setSettingConflictResult] = useState<SettingConflictResult | null>(null);
   const [activeQuickAction, setActiveQuickAction] = useState<string | null>(null);
@@ -1101,22 +1103,29 @@ export default function ChatPage() {
   async function saveEditedMessage(messageId: number, content: string) {
     const original = flatMessages.find((message) => message.id === messageId);
     if (!original) {
-      showToast('当前页面已找不到这条消息，请刷新后重试', 'error');
+      setEditSaveError('当前页面已找不到这条消息，请关闭编辑后重新定位');
       return;
     }
-    if (!reserveGeneration()) return;
+    if (!reserveGeneration()) {
+      setEditSaveError('当前有操作正在进行，请稍后重试');
+      return;
+    }
+    setEditSaveError(null);
+    setEditSavePending(true);
     let regenerationStarted = false;
+    let editCommitted = false;
     try {
       const replacement = await editMessageMutation.mutateAsync({
         messageId,
         content,
         branchId: selectedBranchId,
       });
+      editCommitted = true;
+      setEditMessageId(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['sessions'] }),
         queryClient.invalidateQueries({ queryKey: ['session-branches', sessionId] }),
       ]);
-      setEditMessageId(null);
       pendingBranchMessageFocusRef.current = {
         branchId: replacement.branch_id,
         messageId: replacement.id,
@@ -1136,8 +1145,10 @@ export default function ChatPage() {
       }
     } catch (error) {
       pendingBranchMessageFocusRef.current = null;
-      showToast(toastErrorMessage(error), 'error');
+      if (editCommitted) showToast('编辑故事线已保存，后续加载失败，请从故事线入口重新打开', 'warn');
+      else setEditSaveError(toastErrorMessage(error));
     } finally {
+      setEditSavePending(false);
       if (!regenerationStarted) releaseGeneration();
     }
   }
@@ -1699,6 +1710,7 @@ export default function ChatPage() {
             }
             setEditContent(visibleContent);
             setEditOriginalContent(visibleContent);
+            setEditSaveError(null);
             setEditMessageId(message.id);
           }}
           expressionMap={expressionMap}
@@ -1874,8 +1886,9 @@ export default function ChatPage() {
         content={editContent}
         originalContent={editOriginalContent}
         regenerateAfterSave={flatMessages.find((message) => message.id === editMessageId)?.speaker_type === 'user'}
-        isSaving={editMessageMutation.isPending}
-        onContentChange={setEditContent}
+        isSaving={editSavePending}
+        saveError={editSaveError}
+        onContentChange={(content) => { setEditContent(content); setEditSaveError(null); }}
         onSave={saveEditedMessage}
         onClose={() => setEditMessageId(null)}
       />

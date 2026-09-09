@@ -5102,6 +5102,14 @@ html[data-theme="paper"] .chat-bubble-text hr {
   min-height: 44px;
 }
 
+.edit-message-error {
+  margin: 12px 0 0;
+  color: var(--danger, #e45454);
+  overflow-wrap: anywhere;
+  max-height: 6em;
+  overflow-y: auto;
+}
+
 .edit-message-status {
   flex: 1;
   color: var(--text-2);

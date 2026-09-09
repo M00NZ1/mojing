@@ -42,6 +42,8 @@ try {
   const world = { template_id: 'custom', world_prompt: '', narrator_enabled: false, narrator_name: '旁白', gameplay_mode: '自由剧情', suggested_choices_json: [], choice_generation_enabled: true, max_choice_count: 3, anti_cheat_enabled: false, anti_cheat_prompt: '' };
   const chat = { id: 1, title: '雾港 · 长篇历史', summary: '', created_at: '2026-09-07T00:00:00Z', world };
   let history = Array.from({ length: 6000 }, (_, i) => ({ id: i + 1, session_id: 1, branch_id: 'main', speaker_type: 'user', character_id: null, content: `第 ${i + 1} 夜。${i === 2 ? '旧信封的秘密。' : ''}${(i + 1) % 100 === 0 ? '线索：' : ''}${'雨声渐密，沈照与林汐对照航海日志，准备去灯塔寻找失踪的守夜人。'.repeat(8)}`, structured_content: {}, created_at: '2026-09-07T00:00:00Z' }));
+  let editRequests = 0;
+  let releaseEdit;
   let previewFailure = false, deleteFailure = '', deletionRequests = 0;
   let memoryRemoved = false, memoryReads = 0;
   let contextFailure = false, windowFailure = false, contextRequests = 0;
@@ -68,7 +70,11 @@ try {
       }
     } else if (matched) {
       const id = Number(matched[1]);
-      if (matched[2]) {
+      if (route.request().method() === 'PUT') {
+        editRequests++;
+        if (editRequests === 1) await new Promise((resolve) => { releaseEdit = resolve; });
+        status = 500; data = { detail: '编辑保存暂不可用' };
+      } else if (matched[2]) {
         if (previewFailure) { status = 500; data = { detail: '检查暂不可用' }; }
         else data = { can_delete: !blocked.has(id), memory_segments_removed: 2, memory_events_removed: 2, summary_reset: true, reason: blocked.has(id) ? '这条消息是故事线或编辑版本的来源，删除会使相关剧情无法读取。请保留原文，使用编辑创建新的故事线。' : '', reference_count: blocked.has(id) ? 1 : 0, branches: blocked.has(id) ? [{ branch_id: 'A', label: '灯塔的另一种结局', is_checkpoint: false }] : [] };
       } else if (route.request().method() === 'DELETE') {
@@ -122,6 +128,26 @@ try {
     await dialog.waitFor();
   }
   await page.goto(`http://127.0.0.1:${port}/chat/1`, { waitUntil: 'domcontentloaded' });
+  await page.locator('[data-chat-message-id="6000"]').hover();
+  await page.locator('[data-message-edit-trigger="6000"]').click();
+  const editor = page.getByRole('dialog', { name: '编辑消息', exact: true });
+  const editedDraft = '保留我的编辑草稿。'.repeat(100);
+  await editor.getByRole('textbox').fill(editedDraft);
+  await editor.getByRole('button', { name: '创建编辑故事线', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[aria-busy="true"].edit-message-dialog'));
+  await page.keyboard.press('Escape');
+  assert.ok(await editor.isVisible());
+  assert.ok(await editor.getByRole('textbox').isDisabled());
+  assert.equal(editRequests, 1);
+  releaseEdit();
+  await editor.getByRole('alert').filter({ hasText: '编辑保存暂不可用' }).waitFor();
+  assert.equal(await editor.getByRole('textbox').inputValue(), editedDraft);
+  await editor.getByRole('button', { name: '创建编辑故事线', exact: true }).click();
+  await editor.getByRole('alert').filter({ hasText: '编辑保存暂不可用' }).waitFor();
+  assert.equal(editRequests, 2);
+  await editor.getByRole('button', { name: '取消', exact: true }).click();
+  await editor.getByRole('button', { name: '放弃修改', exact: true }).click();
+  await editor.waitFor({ state: 'hidden' });
   await page.getByRole('button', { name: '打开会话详情', exact: true }).click();
   await page.getByRole('button', { name: '记忆', exact: true }).click();
   await page.getByText('旧信封中的自动记忆', { exact: true }).waitFor();
@@ -253,7 +279,7 @@ try {
   await page.getByRole('group', { name: '本回合可选行动' }).waitFor({ state: 'hidden' });
   assert.ok(await tailRow.getByRole('button', { name: '前往旧灯塔' }).isDisabled());
   assert.equal(errors.length, 0, errors.join('\n'));
-  console.log('PASS: deletion protection and memory refresh; context exclude/restore, original retained, strict request, cancel, save/readback retry, reload/search, desktop/mobile. Mock APIs only.');
+  console.log('PASS: edit failure keeps draft and inline error, saving dismissal guard and retry; deletion protection and memory refresh; context exclude/restore, original retained, strict request, cancel, save/readback retry, reload/search, desktop/mobile. Mock APIs only.');
 } finally {
   await browser?.close();
   if (child.exitCode === null) { child.kill(); await once(child, 'exit'); }
