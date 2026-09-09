@@ -6,22 +6,36 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.mojing.app.data.ModelPlatform
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selectedLabel: String = "", lastRequestModel: String? = null, isGenerating: Boolean = false, onSelect: (String, String) -> Unit) {
     var query by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("选择对话模型") }, text = {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("从下一次发送生效，当前回复继续使用原模型。选择后，本场角色与旁白统一使用该线路。",
-                style = MaterialTheme.typography.bodySmall)
-            if (selectedLabel.isNotBlank()) Text("下次发送：$selectedLabel", style = MaterialTheme.typography.bodyMedium)
-            if (lastRequestModel != null || isGenerating) Text(
-                lastRequestModel?.let { "最近请求：$it" } ?: "本轮正在准备上下文",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedTextField(query, { query = it }, label = { Text("搜索平台或模型") }, singleLine = true)
-            LazyColumn(Modifier.heightIn(max = 380.dp)) {
+    ModalBottomSheet(onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(horizontal = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("选择对话模型", modifier = Modifier.weight(1f).padding(top = 8.dp),
+                    style = MaterialTheme.typography.titleLarge)
+                TextButton(onClick = onDismiss) { Text("关闭") }
+            }
+            OutlinedTextField(query, { query = it }, modifier = Modifier.fillMaxWidth(),
+                label = { Text("搜索平台或模型") }, singleLine = true)
+            LazyColumn(Modifier.weight(1f).testTag("chat-model-list"), contentPadding = PaddingValues(bottom = 24.dp)) {
+                item(key = "request-info") {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("从下一次发送生效，当前回复继续使用原模型。选择后，本场角色与旁白统一使用该线路。",
+                            style = MaterialTheme.typography.bodySmall)
+                        if (selectedLabel.isNotBlank()) Text("下次发送：$selectedLabel", style = MaterialTheme.typography.bodyMedium)
+                        if (lastRequestModel != null || isGenerating) Text(
+                            lastRequestModel?.let { "最近请求：$it" } ?: "本轮正在准备上下文",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
                 platforms.forEach { p ->
                     val names = p.models.filter { p.name.contains(query, true) || it.contains(query, true) }
                     if (names.isNotEmpty()) {
@@ -41,5 +55,5 @@ fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selec
                 }
             }
         }
-    }, confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } })
+    }
 }
