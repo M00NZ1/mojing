@@ -22,6 +22,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -181,7 +182,8 @@ fun StorySimulationScreen(
                 OutlinedTextField(
                     value = selected?.label?.ifBlank { selected.templateId } ?: "不绑定世界模板",
                     onValueChange = {}, readOnly = true, singleLine = true,
-                    label = { Text("世界模板（可选）") },
+                    label = { Text("开局玩法 · 来自设定工坊") },
+                    supportingText = { Text("选择叙事规则与世界模板，可留空") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(templateExpanded) },
                     modifier = Modifier.fillMaxWidth().menuAnchor(),
                     enabled = !isBusy,
@@ -208,7 +210,8 @@ fun StorySimulationScreen(
                 OutlinedTextField(
                     value = selected?.name?.ifBlank { "百科 ${selected.id}" } ?: "不绑定百科",
                     onValueChange = {}, readOnly = true, singleLine = true,
-                    label = { Text("百科（可选）") },
+                    label = { Text("世界知识 · 来自百科") },
+                    supportingText = { Text("提供背景、地点与人物关系，可留空") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(encyclopediaExpanded) },
                     modifier = Modifier.fillMaxWidth().menuAnchor(),
                     enabled = !isBusy,
@@ -226,6 +229,24 @@ fun StorySimulationScreen(
                 emptyText = "暂无百科，可继续使用不绑定模式",
                 onRetry = viewModel::retryEncyclopedias,
             )
+
+            val selectedTemplate = state.templates.items.firstOrNull { it.id == state.selectedTemplateId }
+            val selectedEncyclopedia = state.encyclopedias.items.firstOrNull { it.id == state.selectedEncyclopediaId }
+            if (selectedTemplate != null || selectedEncyclopedia != null) {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("本次使用的设定", style = MaterialTheme.typography.titleSmall)
+                        selectedTemplate?.let { template ->
+                            StorySettingPreview("玩法 · ${template.label.ifBlank { template.templateId }}",
+                                listOf(template.summary, template.worldPrompt).filter(String::isNotBlank).distinct().joinToString("\n"))
+                        }
+                        selectedEncyclopedia?.let { encyclopedia ->
+                            StorySettingPreview("百科 · ${encyclopedia.name}",
+                                listOf(encyclopedia.description, encyclopedia.worldPrompt).filter(String::isNotBlank).distinct().joinToString("\n"))
+                        }
+                    }
+                }
+            }
 
             val availableCharacters = state.characters.items.filter { character ->
                 state.selectedEncyclopediaId == null || character.boundEncyclopediaId <= 0L || character.boundEncyclopediaId == state.selectedEncyclopediaId
@@ -274,12 +295,12 @@ fun StorySimulationScreen(
             Text("首次连续生成", style = MaterialTheme.typography.labelLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 (1..3).forEach { count ->
-                    OutlinedButton(
+                    FilterChip(
+                        selected = state.chapterCount == count,
                         onClick = { viewModel.updateChapterCount(count) },
-                        enabled = !isBusy && state.chapterCount != count,
-                    ) {
-                        Text("$count 章")
-                    }
+                        enabled = !isBusy,
+                        label = { Text("$count 章") },
+                    )
                 }
             }
             Text(
@@ -416,4 +437,23 @@ private fun StoryOptionLoadStatus(
         )
     }
 
+}
+
+@Composable
+private fun StorySettingPreview(title: String, content: String) {
+    var expanded by remember(title, content) { mutableStateOf(false) }
+    var hasOverflow by remember(title, content) { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(title, style = MaterialTheme.typography.labelLarge)
+        Text(content.ifBlank { "尚未填写背景设定" },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = if (expanded) Int.MAX_VALUE else 3,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            onTextLayout = { if (!expanded) hasOverflow = it.hasVisualOverflow },
+        )
+        if (expanded || hasOverflow) TextButton(onClick = { expanded = !expanded }) {
+            Text(if (expanded) "收起" else "展开设定")
+        }
+    }
 }
