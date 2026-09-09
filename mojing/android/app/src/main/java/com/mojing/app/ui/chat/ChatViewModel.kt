@@ -206,13 +206,17 @@ class ChatViewModel @Inject constructor(
             ?: "${secureStorage.publicModel.ifBlank { "选择模型" }} · 默认线路"
     }.getOrDefault("请选择模型")
 
+    fun refreshModelSelection() {
+        _modelSelectionLabel.value = currentModelLabel()
+    }
+
     fun selectChatModel(platformId: String, model: String, onSaved: () -> Unit = {}) {
         if (modelSelectionSaving) return
         modelSelectionSaving = true
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) { secureStorage.selectSessionModel(sessionId, platformId, model) }
-                _modelSelectionLabel.value = currentModelLabel()
+                refreshModelSelection()
                 onSaved()
             } catch (_: Exception) {
                 _state.update { it.copy(error = "模型选择未保存，请检查平台配置后重试") }

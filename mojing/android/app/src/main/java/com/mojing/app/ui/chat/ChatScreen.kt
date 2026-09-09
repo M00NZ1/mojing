@@ -488,6 +488,7 @@ fun ChatScreen(
     }
 
     LifecycleResumeEffect(sessionId) {
+        viewModel.refreshModelSelection()
         viewModel.refreshParticipantCharacterMeta()
         onPauseOrDispose { }
     }

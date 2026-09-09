@@ -826,6 +826,38 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun resumeRefreshesDefaultModelLabelWithoutReplacingSessionSelection() = runTest(testDispatcher) {
+        val storage = validSecureStorage()
+        var defaultModel = "old-default"
+        var selection: Pair<String, String>? = null
+        var platform = com.mojing.app.data.ModelPlatform("a", "A", "https://a.test/v1", "test-key", listOf("session-model"))
+        every { storage.publicModel } answers { defaultModel }
+        every { storage.sessionModelSelection(42L) } answers { selection }
+        every { storage.modelPlatforms() } answers { listOf(platform) }
+        val vm = createViewModel(secureStorage = storage)
+        advanceUntilIdle()
+        assertEquals("old-default · 默认线路", vm.modelSelectionLabel.value)
+
+        defaultModel = "new-default"
+        vm.refreshModelSelection()
+        assertEquals("new-default · 默认线路", vm.modelSelectionLabel.value)
+
+        selection = "a" to "session-model"
+        vm.refreshModelSelection()
+        assertEquals("A · session-model", vm.modelSelectionLabel.value)
+        platform = platform.copy(name = "Renamed")
+        defaultModel = "another-default"
+        vm.refreshModelSelection()
+        assertEquals("Renamed · session-model", vm.modelSelectionLabel.value)
+
+        platform = platform.copy(models = listOf("replacement"))
+        vm.refreshModelSelection()
+        assertEquals("请选择模型", vm.modelSelectionLabel.value)
+        assertEquals("a" to "session-model", selection)
+        verify(exactly = 0) { storage.selectSessionModel(any(), any(), any()) }
+    }
+
+    @Test
     fun modelPickerChangesEngineRouteForCharactersAndNarrator() = runTest(testDispatcher) {
         for (narrator in listOf(false, true)) {
             val a = com.mojing.app.data.ModelPlatform("a", "A", "https://a.test/v1", "fake-a", listOf("a-one", "a-two"))
@@ -900,6 +932,8 @@ class ChatViewModelTest {
         assertTrue(vm.state.value.isGenerating)
         assertEquals(a, route.invoke(vm))
         selection = "b" to "b-model"
+        vm.refreshModelSelection()
+        assertEquals("B · b-model", vm.modelSelectionLabel.value)
         assertEquals(a, route.invoke(vm))
         vm.stopGeneration()
         advanceUntilIdle()
