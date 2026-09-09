@@ -59,6 +59,11 @@ object ChatMessageTextFormat {
 
     fun forClipboard(raw: String, speakerType: String? = null): String = visibleBody(raw, speakerType)
 
+    fun hasEditChanges(raw: String, speakerType: String?, edited: String): Boolean {
+        val candidate = edited.trim()
+        return candidate.isNotEmpty() && candidate != visibleBody(raw, speakerType).trim()
+    }
+
     fun quoteSnippet(raw: String, maxChars: Int, speakerType: String? = null): String {
         val ownBody = if (speakerType == null || speakerType == "user") splitQuote(raw).body else raw
         val visible = visibleBody(ownBody, speakerType)

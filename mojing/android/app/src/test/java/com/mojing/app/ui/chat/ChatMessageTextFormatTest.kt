@@ -6,6 +6,23 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class ChatMessageTextFormatTest {
+    @Test fun unchangedEditorBodyDoesNotCreateAStructuredReplyBranch() {
+        val raw = "<NARRATION>雨落在窗上。</NARRATION><SPEECH>别回头。</SPEECH>" +
+            "<CHOICES><OPTION>继续</OPTION></CHOICES>"
+        val initial = ChatMessageTextFormat.visibleBody(raw, "character")
+        assertFalse(ChatMessageTextFormat.hasEditChanges(raw, "character", initial))
+        assertFalse(ChatMessageTextFormat.hasEditChanges(raw, "character", "  $initial\n"))
+        org.junit.Assert.assertTrue(ChatMessageTextFormat.hasEditChanges(raw, "character", "$initial\n门开了。"))
+    }
+
+    @Test fun editComparisonUsesDisplayedWhitespaceAndPreservesUserTags() {
+        val raw = "第一段。  空格。\n\n\n第二段。"
+        assertFalse(ChatMessageTextFormat.hasEditChanges(raw, "user", ChatMessageTextFormat.visibleBody(raw, "user")))
+        assertFalse(ChatMessageTextFormat.hasEditChanges(raw, "user", "  "))
+        val literal = "<SPEECH>字面文本</SPEECH>"
+        assertFalse(ChatMessageTextFormat.hasEditChanges(literal, "user", literal))
+        org.junit.Assert.assertTrue(ChatMessageTextFormat.hasEditChanges(literal, "user", "字面文本"))
+    }
     @Test fun userActionsPreserveLiteralModelTagsWhileGeneratedActionsUseProse() {
         val raw = "<SPEECH>字面文本</SPEECH><CHOICES><OPTION>选项原文</OPTION></CHOICES>"
         assertEquals(raw, ChatMessageTextFormat.visibleBody(raw, "user"))

@@ -1349,8 +1349,8 @@ fun ChatScreen(
             },
             confirmButton = {
                 androidx.compose.material3.TextButton(
-                    enabled = editContent.trim().isNotEmpty() &&
-                        editContent.trim() != messageBeingEdited.content.trim(),
+                    enabled = !state.isGenerating && ChatMessageTextFormat.hasEditChanges(
+                        messageBeingEdited.content, messageBeingEdited.speakerType, editContent),
                     onClick = {
                         viewModel.editMessage(messageBeingEdited.id, editContent) {
                             editingMessage = null

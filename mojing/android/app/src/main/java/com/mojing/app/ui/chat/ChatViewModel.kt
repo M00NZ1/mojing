@@ -3026,7 +3026,7 @@ class ChatViewModel @Inject constructor(
                     _state.value = _state.value.copy(error = "消息不存在或不属于当前故事线")
                     return@editTransition
                 }
-                if (original.content.trim() == content) {
+                if (!ChatMessageTextFormat.hasEditChanges(original.content, original.speakerType, content)) {
                     _state.value = _state.value.copy(error = "内容没有变化")
                     return@editTransition
                 }
