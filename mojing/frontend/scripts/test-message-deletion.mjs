@@ -43,6 +43,7 @@ try {
   const chat = { id: 1, title: '雾港 · 长篇历史', summary: '', created_at: '2026-09-07T00:00:00Z', world };
   let history = Array.from({ length: 6000 }, (_, i) => ({ id: i + 1, session_id: 1, branch_id: 'main', speaker_type: 'user', character_id: null, content: `第 ${i + 1} 夜。${i === 2 ? '旧信封的秘密。' : ''}${(i + 1) % 100 === 0 ? '线索：' : ''}${'雨声渐密，沈照与林汐对照航海日志，准备去灯塔寻找失踪的守夜人。'.repeat(8)}`, structured_content: {}, created_at: '2026-09-07T00:00:00Z' }));
   let editRequests = 0;
+  let staleBranchRequests = 0;
   let releaseEdit;
   let previewFailure = false, deleteFailure = '', deletionRequests = 0;
   let memoryRemoved = false, memoryReads = 0;
@@ -52,6 +53,7 @@ try {
   await context.route('http://127.0.0.1:18001/api/**', async (route) => {
     const url = new URL(route.request().url());
     const endpoint = url.pathname.replace('/api', '');
+    if (route.request().url().includes('edit_stale') || route.request().postData()?.includes('edit_stale')) staleBranchRequests++;
     let data = [], status = 200;
     const matched = endpoint.match(/^\/sessions\/1\/messages\/(\d+)(?:\/(deletion-impact))?$/);
     const contextChange = endpoint.match(/^\/sessions\/1\/messages\/(\d+)\/context$/);
@@ -72,8 +74,9 @@ try {
       const id = Number(matched[1]);
       if (route.request().method() === 'PUT') {
         editRequests++;
-        if (editRequests === 1) await new Promise((resolve) => { releaseEdit = resolve; });
-        status = 500; data = { detail: '编辑保存暂不可用' };
+        if (editRequests === 1 || editRequests === 3) await new Promise((resolve) => { releaseEdit = resolve; });
+        if (editRequests === 3) { data = { ...history.at(-1), id: 7000, branch_id: 'edit_stale' }; }
+        else { status = 500; data = { detail: '编辑保存暂不可用' }; }
       } else if (matched[2]) {
         if (previewFailure) { status = 500; data = { detail: '检查暂不可用' }; }
         else data = { can_delete: !blocked.has(id), memory_segments_removed: 2, memory_events_removed: 2, summary_reset: true, reason: blocked.has(id) ? '这条消息是故事线或编辑版本的来源，删除会使相关剧情无法读取。请保留原文，使用编辑创建新的故事线。' : '', reference_count: blocked.has(id) ? 1 : 0, branches: blocked.has(id) ? [{ branch_id: 'A', label: '灯塔的另一种结局', is_checkpoint: false }] : [] };
@@ -298,8 +301,28 @@ try {
   await contextDialog.waitFor({ state: 'hidden' });
   await page.getByRole('group', { name: '本回合可选行动' }).waitFor({ state: 'hidden' });
   assert.ok(await tailRow.getByRole('button', { name: '前往旧灯塔' }).isDisabled());
+  await tailRow.hover();
+  await tailRow.locator('[data-message-edit-trigger="6000"]').click();
+  await editor.getByRole('textbox').fill('旧页面提交');
+  await editor.getByRole('button', { name: '创建编辑故事线', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[aria-busy="true"].edit-message-dialog'));
+  await page.evaluate(() => { history.pushState({}, '', '/'); window.dispatchEvent(new PopStateEvent('popstate')); });
+  await editor.waitFor({ state: 'hidden' });
+  await page.evaluate(() => { history.pushState({}, '', '/chat/1'); window.dispatchEvent(new PopStateEvent('popstate')); });
+  await page.locator('[data-chat-message-id="6000"]').hover();
+  await page.locator('[data-message-edit-trigger="6000"]').click();
+  await editor.getByRole('textbox').fill('新页面草稿');
+  const oldResponse = page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/messages/6000'));
+  releaseEdit();
+  await oldResponse;
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await editor.getByRole('textbox').inputValue(), '新页面草稿');
+  assert.ok(await editor.getByRole('button', { name: '创建编辑故事线', exact: true }).isEnabled());
+  await page.waitForLoadState('networkidle');
+  assert.equal(editRequests, 3);
+  assert.equal(staleBranchRequests, 0, 'old edit response must not activate or generate in its branch');
   assert.equal(errors.length, 0, errors.join('\n'));
-  console.log('PASS: IME Escape protection and narrow edit actions; edit failure keeps draft and inline error, saving dismissal guard and retry; deletion protection and memory refresh; context exclude/restore, original retained, strict request, cancel, save/readback retry, reload/search, desktop/mobile. Mock APIs only.');
+  console.log('PASS: departed edit response cannot activate branch or close new draft; IME Escape protection and narrow edit actions; edit failure keeps draft and inline error, saving dismissal guard and retry; deletion protection and memory refresh; context exclude/restore, original retained, strict request, cancel, save/readback retry, reload/search, desktop/mobile. Mock APIs only.');
 } finally {
   await browser?.close();
   if (child.exitCode === null) { child.kill(); await once(child, 'exit'); }

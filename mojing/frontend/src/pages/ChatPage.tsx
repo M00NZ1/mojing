@@ -180,6 +180,7 @@ export default function ChatPage() {
   const [editContent, setEditContent] = useState('');
   const [editSaveError, setEditSaveError] = useState<string | null>(null);
   const [editSavePending, setEditSavePending] = useState(false);
+  const editSaveOwnerRef = useRef<symbol | null>(null);
   const [editOriginalContent, setEditOriginalContent] = useState('');
   const [settingConflictResult, setSettingConflictResult] = useState<SettingConflictResult | null>(null);
   const [activeQuickAction, setActiveQuickAction] = useState<string | null>(null);
@@ -219,6 +220,18 @@ export default function ChatPage() {
   function releaseGeneration() {
     generationGateRef.current = false;
   }
+
+  useEffect(() => {
+    setEditMessageId(null);
+    setEditSaveError(null);
+    setEditSavePending(false);
+    return () => {
+      if (editSaveOwnerRef.current !== null) {
+        editSaveOwnerRef.current = null;
+        releaseGeneration();
+      }
+    };
+  }, [sessionId]);
 
   inputDraftMirrorRef.current = input;
 
@@ -429,7 +442,7 @@ export default function ChatPage() {
     applyMessageContext,
   } = useSessionMessages(sessionId, selectedBranchId);
 
-  async function activateBranch(branchId: string) {
+  async function activateBranch(branchId: string, isOwnerCurrent: () => boolean = () => true) {
     const normalizedBranchId = normalizeBranchId(branchId);
     if (normalizedBranchId === selectedBranchRef.current) return refreshMessages();
 
@@ -437,6 +450,7 @@ export default function ChatPage() {
     setSwitchingBranchId(normalizedBranchId);
     setBranchSwitchFailure(null);
     const result = await switchMessagesToBranch(normalizedBranchId);
+    if (!isOwnerCurrent()) return { ...result, ok: false, superseded: true };
     if (requestId !== branchSwitchRequestRef.current) return result;
 
     setSwitchingBranchId(null);
@@ -1110,6 +1124,11 @@ export default function ChatPage() {
       setEditSaveError('当前有操作正在进行，请稍后重试');
       return;
     }
+    const owner = Symbol('message-edit');
+    editSaveOwnerRef.current = owner;
+    const ownerSession = sessionId;
+    const ownerBranch = selectedBranchRef.current;
+    const isCurrent = () => editSaveOwnerRef.current === owner && sessionIdRef.current === ownerSession;
     setEditSaveError(null);
     setEditSavePending(true);
     let regenerationStarted = false;
@@ -1118,19 +1137,22 @@ export default function ChatPage() {
       const replacement = await editMessageMutation.mutateAsync({
         messageId,
         content,
-        branchId: selectedBranchId,
+        branchId: ownerBranch,
       });
       editCommitted = true;
+      if (!isCurrent() || selectedBranchRef.current !== ownerBranch) return;
       setEditMessageId(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['sessions'] }),
         queryClient.invalidateQueries({ queryKey: ['session-branches', sessionId] }),
       ]);
+      if (!isCurrent() || selectedBranchRef.current !== ownerBranch) return;
       pendingBranchMessageFocusRef.current = {
         branchId: replacement.branch_id,
         messageId: replacement.id,
       };
-      const activation = await activateBranch(replacement.branch_id);
+      const activation = await activateBranch(replacement.branch_id, isCurrent);
+      if (!isCurrent()) return;
       if (!activation.ok) {
         pendingBranchMessageFocusRef.current = null;
         showToast('编辑故事线已经保存，但暂时无法打开；当前故事线保持不变，可从故事线入口重试', 'warn');
@@ -1144,12 +1166,16 @@ export default function ChatPage() {
         showToast('已创建编辑故事线，原剧情保持不变', 'success');
       }
     } catch (error) {
+      if (!isCurrent()) return;
       pendingBranchMessageFocusRef.current = null;
       if (editCommitted) showToast('编辑故事线已保存，后续加载失败，请从故事线入口重新打开', 'warn');
       else setEditSaveError(toastErrorMessage(error));
     } finally {
-      setEditSavePending(false);
-      if (!regenerationStarted) releaseGeneration();
+      if (editSaveOwnerRef.current === owner) {
+        editSaveOwnerRef.current = null;
+        setEditSavePending(false);
+        if (!regenerationStarted) releaseGeneration();
+      }
     }
   }
 
