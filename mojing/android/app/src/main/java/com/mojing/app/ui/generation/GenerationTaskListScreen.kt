@@ -35,6 +35,8 @@ fun GenerationTaskListScreen(
     viewModel: GenerationTaskListViewModel = hiltViewModel(),
 ) {
     val tasks by viewModel.tasks.collectAsStateWithLifecycle()
+    val loading by viewModel.loading.collectAsStateWithLifecycle()
+    val loadError by viewModel.loadError.collectAsStateWithLifecycle()
     val paused by viewModel.queuePaused.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
     val retryingIds by viewModel.retryingTaskIds.collectAsStateWithLifecycle()
@@ -55,7 +57,26 @@ fun GenerationTaskListScreen(
     }) { padding ->
         LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item {
+            if (loading) item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Text("正在读取生成记录…", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            loadError?.let { error ->
+                item {
+                    Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(12.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                            Text(error, color = MaterialTheme.colorScheme.onErrorContainer)
+                            if (tasks.isNotEmpty()) Text("已显示的记录保留，更新暂时不可用。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer)
+                            TextButton(onClick = viewModel::retryLoad) { Text("重新读取") }
+                        }
+                    }
+                }
+            }
+            if (tasks.isNotEmpty() || (!loading && loadError == null)) item {
                 Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(20.dp)) {
                     Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(if (paused) if (tasks.any { it.status == GenerationTaskStatus.RUNNING }) "正在完成当前步骤" else "生成已暂停" else if (active > 0) "正在为你的世界添笔" else "每一次灵感，都有迹可循",
@@ -79,7 +100,7 @@ fun GenerationTaskListScreen(
                     }
                 }
             }
-            if (visible.isEmpty()) item {
+            if (visible.isEmpty() && !loading && loadError == null) item {
                 Column(Modifier.fillMaxWidth().padding(vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(if (tasks.isEmpty()) "还没有生成记录" else "这里暂时没有任务", style = MaterialTheme.typography.titleMedium)

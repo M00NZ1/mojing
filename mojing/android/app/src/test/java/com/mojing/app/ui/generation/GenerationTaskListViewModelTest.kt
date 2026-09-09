@@ -3,6 +3,7 @@ package com.mojing.app.ui.generation
 import com.mojing.app.data.local.dao.GenerationTaskDao
 import com.mojing.app.domain.generation.GenerationQueueProcessor
 import io.mockk.*
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
@@ -17,6 +18,39 @@ class GenerationTaskListViewModelTest {
     private val dispatcher = StandardTestDispatcher()
     @Before fun setup() { Dispatchers.setMain(dispatcher) }
     @After fun teardown() { Dispatchers.resetMain() }
+
+    @Test fun readFailureRetainsRowsAndRetryRestartsOnlyTheSubscription() = runTest {
+        val processor = mockk<GenerationQueueProcessor>()
+        every { processor.pausedState } returns MutableStateFlow(false)
+        val dao = mockk<GenerationTaskDao>()
+        val task = com.mojing.app.data.local.entity.GenerationTaskEntity(id = 9L,
+            title = "原有记录", taskKind = "encyclopedia_entries", payloadJson = "{}",
+            status = com.mojing.app.data.local.entity.GenerationTaskStatus.COMPLETED)
+        var reads = 0
+        every { dao.observeQueueVisible() } returns kotlinx.coroutines.flow.flow {
+            reads++
+            if (reads == 1) {
+                emit(listOf(task))
+                throw IllegalStateException("read unavailable")
+            }
+            emit(emptyList())
+        }
+        val vm = GenerationTaskListViewModel(dao, processor)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.tasks.collect {} }
+        runCurrent()
+        assertEquals(listOf(task), vm.tasks.value)
+        assertFalse(vm.loading.value)
+        assertEquals("生成记录读取失败，请重试", vm.loadError.value)
+        assertEquals(1, reads)
+        vm.retryLoad(); vm.retryLoad()
+        runCurrent()
+        assertEquals(2, reads)
+        assertTrue(vm.tasks.value.isEmpty())
+        assertFalse(vm.loading.value)
+        assertNull(vm.loadError.value)
+        coVerify(exactly = 0) { processor.resumeAll() }
+        coVerify(exactly = 0) { processor.requeueFailedTask(any()) }
+    }
 
     @Test fun retryTracksOnlyItsTaskAndReleasesOnFailure() = runTest {
         val processor = mockk<GenerationQueueProcessor>()

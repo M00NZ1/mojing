@@ -12,6 +12,10 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.retryWhen
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -21,7 +25,33 @@ class GenerationTaskListViewModel @Inject constructor(
     private val processor: GenerationQueueProcessor,
 ) : ViewModel() {
 
+    private val retryLoads = Channel<Unit>(Channel.CONFLATED)
+    private val _loading = MutableStateFlow(true)
+    val loading: StateFlow<Boolean> = _loading.asStateFlow()
+    private val _loadError = MutableStateFlow<String?>(null)
+    val loadError: StateFlow<String?> = _loadError.asStateFlow()
+
+    fun retryLoad() {
+        if (_loadError.value == null) return
+        _loadError.value = null
+        _loading.value = true
+        retryLoads.trySend(Unit)
+    }
+
     val tasks = taskDao.observeQueueVisible()
+        .onStart {
+            retryLoads.tryReceive()
+            _loading.value = true
+            _loadError.value = null
+        }
+        .onEach { _loading.value = false; _loadError.value = null }
+        .retryWhen { cause, _ ->
+            if (cause is kotlinx.coroutines.CancellationException) throw cause
+            _loading.value = false
+            _loadError.value = "生成记录读取失败，请重试"
+            retryLoads.receive()
+            true
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val queuePaused: StateFlow<Boolean> = processor.pausedState
