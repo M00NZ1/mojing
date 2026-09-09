@@ -86,6 +86,31 @@ Set-Location .\mojing\android
 
 测试位于 `app/src/test/` 和 `app/src/androidTest/`。签名、ABI 与 APK 输出见 [Android 开发指南](ANDROID.md)。
 
+### 独立模拟器交互回归
+
+使用专用测试 AVD，数据放在 `.codex-work/`；通过设备序列号明确指定安装和测试目标。以下命令从 Android 目录执行，`$testDevice` 填写专用模拟器的实际序列号：
+
+```powershell
+$testDevice = 'emulator-5580'
+$testAdb = Join-Path $env:ANDROID_HOME 'platform-tools/adb.exe'
+.\gradlew.bat assembleDebug assembleDebugAndroidTest --console=plain
+& $testAdb -s $testDevice install -r app/build/outputs/apk/debug/app-universal-debug.apk
+& $testAdb -s $testDevice install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+$testClasses = @(
+    'com.mojing.app.ui.chat.SwipeRevealListRowTest'
+    'com.mojing.app.ui.chat.MemoryPanelPresentationTest'
+    'com.mojing.app.ui.chat.GenerationTaskFeedbackTest'
+    'com.mojing.app.ui.chat.MessageActionPanelTest'
+    'com.mojing.app.ui.chat.drawer.ChatDrawerNavigationTest'
+    'com.mojing.app.ui.chat.drawer.ParticipantsTabPresentationTest'
+    'com.mojing.app.ui.chat.InputBarAttachmentStateTest'
+    'com.mojing.app.ui.chat.MessageBubbleLayoutTest'
+) -join ','
+& $testAdb -s $testDevice shell am instrument -w -r -e class $testClasses com.mojing.app.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+以测试输出中的 `OK` 或失败报告判断结果。2026-09-10 使用 Android 35、Pixel 6 配置完成上述 12 项用例；原始结果保存在 `.codex-work/android-ui-20260910/`。头像用例在 280dp 宽度下检查 40dp 尺寸与明暗主题文字颜色。
+
 本机 SQLite 契约测试从 Room schema 和 DAO 读取表、索引与查询，覆盖角色排序、任务状态和百科版本分页。版本用例包含两万条交错记录、删除游标边界与新增记录：
 
 ```powershell
