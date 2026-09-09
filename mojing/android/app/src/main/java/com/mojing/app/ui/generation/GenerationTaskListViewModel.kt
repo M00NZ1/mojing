@@ -23,7 +23,25 @@ import javax.inject.Inject
 class GenerationTaskListViewModel @Inject constructor(
     taskDao: GenerationTaskDao,
     private val processor: GenerationQueueProcessor,
+    private val resultResolver: com.mojing.app.domain.generation.GenerationResultResolver,
 ) : ViewModel() {
+
+    private val _openingResultId = MutableStateFlow<Long?>(null)
+    val openingResultId: StateFlow<Long?> = _openingResultId.asStateFlow()
+
+    fun openResult(task: GenerationTaskEntity, onOpen: (com.mojing.app.domain.generation.GenerationResultTarget) -> Unit) {
+        if (_openingResultId.value != null) return
+        _openingResultId.value = task.id
+        viewModelScope.launch {
+            try {
+                val target = resultResolver.resolve(task)
+                if (target == null) _snackbar.value = "生成内容已不存在或未关联，记录仍保留"
+                else onOpen(target)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { _snackbar.value = "生成内容暂时无法打开，请重试" }
+            finally { _openingResultId.value = null }
+        }
+    }
 
     private val retryLoads = Channel<Unit>(Channel.CONFLATED)
     private val _loading = MutableStateFlow(true)

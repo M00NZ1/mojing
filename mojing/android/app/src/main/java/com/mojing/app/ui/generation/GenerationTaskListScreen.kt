@@ -31,10 +31,11 @@ private fun GenerationTaskEntity.isActive() = status in setOf(
 @Composable
 fun GenerationTaskListScreen(
     onBack: () -> Unit,
-    onOpenResult: (GenerationTaskEntity) -> Unit = {},
+    onOpenResult: (com.mojing.app.domain.generation.GenerationResultTarget) -> Unit = {},
     viewModel: GenerationTaskListViewModel = hiltViewModel(),
 ) {
     val tasks by viewModel.tasks.collectAsStateWithLifecycle()
+    val openingResultId by viewModel.openingResultId.collectAsStateWithLifecycle()
     val loading by viewModel.loading.collectAsStateWithLifecycle()
     val loadError by viewModel.loadError.collectAsStateWithLifecycle()
     val paused by viewModel.queuePaused.collectAsStateWithLifecycle()
@@ -149,7 +150,10 @@ fun GenerationTaskListScreen(
                             TextButton(onClick = { detail = t }) { Text("详情") }
                         }
                         if (t.progressDone > 0 || t.status == GenerationTaskStatus.COMPLETED) {
-                            OutlinedButton(onClick = { onOpenResult(t) }, modifier = Modifier.fillMaxWidth()) { Text("查看已生成内容") }
+                            OutlinedButton(enabled = openingResultId == null,
+                                onClick = { viewModel.openResult(t, onOpenResult) }, modifier = Modifier.fillMaxWidth()) {
+                                Text(if (openingResultId == t.id) "正在打开…" else "查看已生成内容")
+                            }
                         }
                     }
                 }

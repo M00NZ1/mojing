@@ -19,6 +19,33 @@ class GenerationTaskListViewModelTest {
     @Before fun setup() { Dispatchers.setMain(dispatcher) }
     @After fun teardown() { Dispatchers.resetMain() }
 
+    @Test fun resultLookupBlocksDuplicateNavigationAndKeepsMissingRecord() = runTest {
+        val processor = mockk<GenerationQueueProcessor>()
+        every { processor.pausedState } returns MutableStateFlow(false)
+        val dao = mockk<GenerationTaskDao>()
+        every { dao.observeQueueVisible() } returns flowOf(emptyList())
+        val resolver = mockk<com.mojing.app.domain.generation.GenerationResultResolver>()
+        val gate = kotlinx.coroutines.CompletableDeferred<com.mojing.app.domain.generation.GenerationResultTarget?>()
+        coEvery { resolver.resolve(any()) } coAnswers { gate.await() }
+        val vm = GenerationTaskListViewModel(dao, processor, resolver)
+        val task = com.mojing.app.data.local.entity.GenerationTaskEntity(id = 9L, title = "角色生成",
+            taskKind = "character_persona_ai", payloadJson = "{}", status = "COMPLETED")
+        val opened = mutableListOf<com.mojing.app.domain.generation.GenerationResultTarget>()
+        vm.openResult(task, opened::add); vm.openResult(task, opened::add)
+        runCurrent()
+        assertEquals(9L, vm.openingResultId.value)
+        coVerify(exactly = 1) { resolver.resolve(task) }
+        gate.complete(null)
+        advanceUntilIdle()
+        assertTrue(opened.isEmpty())
+        assertNull(vm.openingResultId.value)
+        assertEquals("生成内容已不存在或未关联，记录仍保留", vm.snackbar.value)
+        coEvery { resolver.resolve(task) } returns com.mojing.app.domain.generation.GenerationResultTarget.Character(7L)
+        vm.openResult(task, opened::add)
+        advanceUntilIdle()
+        assertEquals(listOf(com.mojing.app.domain.generation.GenerationResultTarget.Character(7L)), opened)
+    }
+
     @Test fun readFailureRetainsRowsAndRetryRestartsOnlyTheSubscription() = runTest {
         val processor = mockk<GenerationQueueProcessor>()
         every { processor.pausedState } returns MutableStateFlow(false)
@@ -35,7 +62,7 @@ class GenerationTaskListViewModelTest {
             }
             emit(emptyList())
         }
-        val vm = GenerationTaskListViewModel(dao, processor)
+        val vm = GenerationTaskListViewModel(dao, processor, mockk(relaxed = true))
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.tasks.collect {} }
         runCurrent()
         assertEquals(listOf(task), vm.tasks.value)
@@ -60,7 +87,7 @@ class GenerationTaskListViewModelTest {
         coEvery { processor.requeueFailedTask(any()) } coAnswers { gate.await() }
         val dao = mockk<GenerationTaskDao>()
         every { dao.observeQueueVisible() } returns flowOf(emptyList())
-        val vm = GenerationTaskListViewModel(dao, processor)
+        val vm = GenerationTaskListViewModel(dao, processor, mockk(relaxed = true))
         val task = com.mojing.app.data.local.entity.GenerationTaskEntity(id = 7L,
             taskKind = "encyclopedia_entries", title = "测试", payloadJson = "{}",
             status = com.mojing.app.data.local.entity.GenerationTaskStatus.FAILED)
@@ -92,7 +119,7 @@ class GenerationTaskListViewModelTest {
         coEvery { processor.pauseAll() } throws IllegalStateException("disk")
         val dao = mockk<GenerationTaskDao>()
         every { dao.observeQueueVisible() } returns flowOf(emptyList())
-        val vm = GenerationTaskListViewModel(dao, processor)
+        val vm = GenerationTaskListViewModel(dao, processor, mockk(relaxed = true))
         vm.pauseQueue(); vm.pauseQueue()
         advanceUntilIdle()
         coVerify(exactly = 1) { processor.pauseAll() }
