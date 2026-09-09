@@ -12,7 +12,7 @@ import com.mojing.app.data.ModelPlatform
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selectedLabel: String = "", lastRequestModel: String? = null, isGenerating: Boolean = false, onSelect: (String, String) -> Unit) {
+fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selectedLabel: String = "", lastRequestModel: String? = null, isGenerating: Boolean = false, isSaving: Boolean = false, saveError: String? = null, onSelect: (String, String) -> Unit) {
     var query by remember { mutableStateOf("") }
     ModalBottomSheet(onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
@@ -25,6 +25,12 @@ fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selec
             }
             OutlinedTextField(query, { query = it }, modifier = Modifier.fillMaxWidth(),
                 label = { Text("搜索平台或模型") }, singleLine = true)
+            if (isSaving) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text("正在保存模型选择…", style = MaterialTheme.typography.bodySmall)
+            } else if (saveError != null) {
+                Text(saveError, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
             LazyColumn(Modifier.weight(1f).testTag("chat-model-list"), contentPadding = PaddingValues(bottom = 24.dp)) {
                 item(key = "request-info") {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -44,7 +50,7 @@ fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selec
                                 style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                         }
                         items(names, key = { "${p.id}:$it" }) { name ->
-                            TextButton(onClick = { onSelect(p.id, name) }, enabled = p.apiKey.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+                            TextButton(onClick = { onSelect(p.id, name) }, enabled = !isSaving && p.apiKey.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
                                 Text(name, modifier = Modifier.fillMaxWidth())
                             }
                         }

@@ -826,6 +826,35 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun failedModelSelectionKeepsOldLabelAndCanRetry() = runTest(testDispatcher) {
+        val storage = validSecureStorage()
+        val platform = com.mojing.app.data.ModelPlatform("a", "A", "https://a.test", "test-key", listOf("old", "new"))
+        var selection = "a" to "old"
+        every { storage.modelPlatforms() } returns listOf(platform)
+        every { storage.sessionModelSelection(42L) } answers { selection }
+        every { storage.selectSessionModel(42L, "a", "new") } throws IllegalStateException("write failed")
+        val vm = createViewModel(secureStorage = storage)
+        advanceUntilIdle()
+        var saved = false
+        vm.selectChatModel("a", "new") { saved = true }
+        assertTrue(vm.state.value.modelSelectionSaving)
+        vm.selectChatModel("a", "new") { saved = true }
+        vm.state.first { !it.modelSelectionSaving }
+        assertFalse(saved)
+        assertNotNull(vm.state.value.modelSelectionError)
+        assertEquals("A · old", vm.modelSelectionLabel.value)
+        verify(exactly = 1) { storage.selectSessionModel(42L, "a", "new") }
+
+        every { storage.selectSessionModel(42L, "a", "new") } answers { selection = "a" to "new" }
+        vm.selectChatModel("a", "new") { saved = true }
+        assertEquals(null, vm.state.value.modelSelectionError)
+        vm.state.first { !it.modelSelectionSaving }
+        assertTrue(saved)
+        assertEquals("A · new", vm.modelSelectionLabel.value)
+        assertEquals(null, vm.state.value.modelSelectionError)
+    }
+
+    @Test
     fun resumeRefreshesDefaultModelLabelWithoutReplacingSessionSelection() = runTest(testDispatcher) {
         val storage = validSecureStorage()
         var defaultModel = "old-default"

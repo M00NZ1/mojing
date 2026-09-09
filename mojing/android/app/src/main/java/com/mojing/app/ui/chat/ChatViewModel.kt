@@ -184,7 +184,6 @@ class ChatViewModel @Inject constructor(
     private val eventRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     val state: StateFlow<ChatContract.State> = _state.asStateFlow()
     private var roundPlatform: com.mojing.app.data.ModelPlatform? = null
-    private var modelSelectionSaving = false
     private val _modelSelectionLabel = MutableStateFlow(currentModelLabel())
     val modelSelectionLabel: StateFlow<String> = _modelSelectionLabel.asStateFlow()
 
@@ -211,17 +210,19 @@ class ChatViewModel @Inject constructor(
     }
 
     fun selectChatModel(platformId: String, model: String, onSaved: () -> Unit = {}) {
-        if (modelSelectionSaving) return
-        modelSelectionSaving = true
+        if (_state.value.modelSelectionSaving) return
+        _state.update { it.copy(modelSelectionSaving = true, modelSelectionError = null) }
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) { secureStorage.selectSessionModel(sessionId, platformId, model) }
                 refreshModelSelection()
                 onSaved()
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
-                _state.update { it.copy(error = "模型选择未保存，请检查平台配置后重试") }
+                _state.update { it.copy(modelSelectionError = "模型选择未保存，请检查平台配置后重试") }
             } finally {
-                modelSelectionSaving = false
+                _state.update { it.copy(modelSelectionSaving = false) }
             }
         }
     }
@@ -296,7 +297,7 @@ class ChatViewModel @Inject constructor(
         block: suspend (GenerationContext) -> Unit,
     ): Boolean {
         if (activeGeneration != null || branchTransitionJob?.isActive == true) return false
-        if (modelSelectionSaving) {
+        if (_state.value.modelSelectionSaving) {
             _state.update { it.copy(error = "模型选择正在保存，请稍候再发送") }
             return false
         }
