@@ -75,7 +75,32 @@ try {
     await page.waitForFunction(() => window.confirmOutcome === false);
     assert.equal(await page.getByRole('dialog').count(), 0);
   }
-  console.log('PASS: desktop and 320px long confirmation, fixed actions, keyboard description scrolling, IME Escape protection and cancellation.');
+  await page.evaluate(async () => {
+    const { confirmModal } = await import('/src/components/ConfirmModal.tsx');
+    window.confirmResults = [];
+    window.oldConfirmationAbort = new AbortController();
+    window.newConfirmationAbort = new AbortController();
+    confirmModal('第一个确认', '旧请求', 'default', { signal: window.oldConfirmationAbort.signal })
+      .then(value => window.confirmResults.push(['old', value]));
+    confirmModal('第二个确认', '新请求', 'default', { signal: window.newConfirmationAbort.signal })
+      .then(value => window.confirmResults.push(['new', value]));
+  });
+  await page.getByRole('heading', { name: '第二个确认' }).waitFor();
+  await page.waitForFunction(() => window.confirmResults.length === 1);
+  assert.deepEqual(await page.evaluate(() => window.confirmResults), [['old', false]]);
+  await page.evaluate(() => window.oldConfirmationAbort.abort());
+  assert.equal(await page.getByRole('heading', { name: '第二个确认' }).count(), 1);
+  await page.evaluate(() => window.newConfirmationAbort.abort());
+  await page.waitForFunction(() => window.confirmResults.length === 2);
+  assert.deepEqual(await page.evaluate(() => window.confirmResults), [['old', false], ['new', false]]);
+  await page.evaluate(async () => {
+    const { confirmModal } = await import('/src/components/ConfirmModal.tsx');
+    confirmModal('最终确认', '继续执行').then(value => window.confirmResults.push(['final', value]));
+  });
+  await page.getByRole('button', { name: '确认', exact: true }).click();
+  await page.waitForFunction(() => window.confirmResults.length === 3);
+  assert.deepEqual(await page.evaluate(() => window.confirmResults), [['old', false], ['new', false], ['final', true]]);
+  console.log('PASS: long confirmation desktop/mobile, keyboard/IME, replacement settles old request, stale abort preserves new dialog, active abort and confirmation.');
 } finally {
   await browser?.close();
   if (child.exitCode === null) { child.kill(); await once(child, 'exit'); }

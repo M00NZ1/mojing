@@ -52,14 +52,16 @@ export function confirmModal(
         confirmLabel: options.confirmLabel,
         cancelLabel: options.cancelLabel,
         resolve: settle,
+        handled: false,
       },
     });
     window.dispatchEvent(event);
+    if (!event.detail.handled) settle(false);
   });
 }
 
 export function ConfirmModalProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<ConfirmModalProps & { resolve?: (v: boolean) => void }>({
+  const [state, setState] = useState<ConfirmModalProps>({
     open: false, title: '', message: '', onConfirm: () => {}, onCancel: () => {},
   });
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -69,10 +71,21 @@ export function ConfirmModalProvider({ children }: { children: React.ReactNode }
   const titleId = useId();
   const descriptionId = useId();
   const [inputValue, setInputValue] = useState('');
+  const activeRequestRef = useRef<{ requestId: number; resolve: (value: boolean) => void } | null>(null);
 
   useEffect(() => {
+    function finish(requestId: number, value: boolean) {
+      const active = activeRequestRef.current;
+      if (!active || active.requestId !== requestId) return;
+      activeRequestRef.current = null;
+      active.resolve(value);
+      setState((previous) => previous.requestId === requestId ? { ...previous, open: false } : previous);
+    }
     function handler(e: Event) {
       const detail = (e as CustomEvent).detail;
+      detail.handled = true;
+      activeRequestRef.current?.resolve(false);
+      activeRequestRef.current = { requestId: detail.requestId, resolve: detail.resolve };
       setState({
         open: true,
         requestId: detail.requestId,
@@ -81,29 +94,22 @@ export function ConfirmModalProvider({ children }: { children: React.ReactNode }
         variant: detail.variant || 'default',
         confirmLabel: detail.confirmLabel,
         cancelLabel: detail.cancelLabel,
-        resolve: detail.resolve,
-        onConfirm: () => {
-          detail.resolve(true);
-          setState((prev) => ({ ...prev, open: false }));
-        },
-        onCancel: () => {
-          detail.resolve(false);
-          setState((prev) => ({ ...prev, open: false }));
-        },
+        onConfirm: () => finish(detail.requestId, true),
+        onCancel: () => finish(detail.requestId, false),
       });
       setInputValue('');
     }
     function dismissHandler(e: Event) {
       const requestId = (e as CustomEvent).detail?.requestId;
-      setState((previous) => previous.requestId === requestId
-        ? { ...previous, open: false }
-        : previous);
+      finish(requestId, false);
     }
     window.addEventListener('show-confirm', handler);
     window.addEventListener('dismiss-confirm', dismissHandler);
     return () => {
       window.removeEventListener('show-confirm', handler);
       window.removeEventListener('dismiss-confirm', dismissHandler);
+      activeRequestRef.current?.resolve(false);
+      activeRequestRef.current = null;
     };
   }, []);
 
