@@ -64,6 +64,8 @@ data class CharacterEditState(
     val isSaving: Boolean = false,
     val saveError: String? = null,
     val isAiCompleting: Boolean = false,
+    val isRefreshingPersona: Boolean = false,
+    val personaRefreshError: String? = null,
     val isLoaded: Boolean = false,
     val loadError: String? = null,
     val isPersisted: Boolean = false,
@@ -222,6 +224,7 @@ class CharacterEditViewModel @Inject constructor(
     private var lastLoadedCharacterId: Long? = null
     private var genObserveJob: Job? = null
     private var personaWatchdogJob: Job? = null
+    private var personaReadRevision = 0L
     private var prevCharacterGenBusy = false
     private var savedDraft = _state.value.toDraftSnapshot()
 
@@ -240,29 +243,9 @@ class CharacterEditViewModel @Inject constructor(
         genObserveJob = viewModelScope.launch {
             generationQueueProcessor.observeActiveForCharacter(id).collectLatest { list ->
                 val busy = list.isNotEmpty()
-                if (prevCharacterGenBusy && !busy && lastLoadedCharacterId == id) {
-                    val c = characterDao.getById(id)
-                    if (c != null) {
-                        val current = _state.value
-                        val previousSavedDraft = savedDraft
-                        val persisted = current.withPersistedDraft(
-                            entity = c,
-                            profileJson = previousSavedDraft.characterCardJsonRaw,
-                        ).copy(isDirty = false)
-                        savedDraft = persisted.toDraftSnapshot()
-                        val updated = if (current.toDraftSnapshot() != previousSavedDraft) {
-                            current.copy(
-                                personaPrompt = c.personaPrompt,
-                                isPersisted = true,
-                            )
-                        } else {
-                            persisted
-                        }
-                        currentEntity = c
-                        _state.value = updated.copy(isDirty = updated.toDraftSnapshot() != savedDraft)
-                    }
-                    notifyPersonaTaskFinished(id)
-                }
+                if (lastLoadedCharacterId != id) return@collectLatest
+                val shouldRefresh = prevCharacterGenBusy && !busy
+                if (busy) personaReadRevision++
                 if (busy && !prevCharacterGenBusy) {
                     personaWatchdogJob?.cancel()
                     personaWatchdogJob = viewModelScope.launch {
@@ -276,13 +259,61 @@ class CharacterEditViewModel @Inject constructor(
                     personaWatchdogJob = null
                 }
                 prevCharacterGenBusy = busy
-                _state.value = _state.value.copy(isAiCompleting = busy)
+                _state.value = _state.value.copy(isAiCompleting = busy, isRefreshingPersona = false)
+                if (shouldRefresh) {
+                    _state.value = _state.value.copy(isRefreshingPersona = true)
+                    refreshPersonaResult(id)
+                }
+            }
+        }
+    }
+
+    fun retryPersonaRefresh() {
+        val id = lastLoadedCharacterId ?: return
+        val s = _state.value
+        if (s.personaRefreshError == null || s.isRefreshingPersona || s.isAiCompleting || s.isSaving) return
+        _state.value = s.copy(isRefreshingPersona = true)
+        viewModelScope.launch { refreshPersonaResult(id) }
+    }
+
+    private suspend fun refreshPersonaResult(id: Long) {
+        val revision = ++personaReadRevision
+        try {
+            val entity = characterDao.getById(id) ?: throw IllegalStateException("Character missing")
+            if (lastLoadedCharacterId != id || revision != personaReadRevision || _state.value.isAiCompleting) return
+            val current = _state.value
+            val previous = savedDraft
+            val persisted = current.withPersistedDraft(entity, previous.characterCardJsonRaw)
+            val manuallyEdited = current.personaPrompt != previous.personaPrompt
+            val updated = if (current.toDraftSnapshot() != previous) {
+                current.copy(personaPrompt = if (manuallyEdited) current.personaPrompt else entity.personaPrompt, isPersisted = true)
+            } else persisted
+            currentEntity = entity
+            savedDraft = persisted.toDraftSnapshot()
+            _state.value = updated.copy(personaRefreshError = null,
+                isDirty = updated.saveError != null || updated.toDraftSnapshot() != savedDraft)
+            if (manuallyEdited) showSnackbar("补全已结束，手动修改的人设已保留")
+            else {
+                try { notifyPersonaTaskFinished(id) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { /* Result is already loaded; task feedback is optional. */ }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            if (lastLoadedCharacterId == id && revision == personaReadRevision) {
+                _state.value = _state.value.copy(personaRefreshError = "暂时无法读取补全结果，编辑内容已保留。请重新读取后继续保存。")
+            }
+        } finally {
+            if (lastLoadedCharacterId == id && revision == personaReadRevision) {
+                _state.value = _state.value.copy(isRefreshingPersona = false)
             }
         }
     }
 
     private suspend fun notifyPersonaTaskFinished(characterId: Long) {
         val task = generationQueueProcessor.getLatestPersonaTaskForCharacter(characterId) ?: return
+        if (lastLoadedCharacterId != characterId || _state.value.isAiCompleting) return
         when (task.status) {
             GenerationTaskStatus.COMPLETED -> {
                 if (task.errorMessage.trim() == "人设未变化") {
@@ -304,11 +335,15 @@ class CharacterEditViewModel @Inject constructor(
 
     fun load(id: Long) {
         viewModelScope.launch {
-            startCharacterQueueObservation(id)
             val current = _state.value
             val alreadyLoaded = current.isLoaded && lastLoadedCharacterId == id &&
                 ((id > 0L && currentEntity != null) || (id <= 0L && current.loadError == null))
-            if (alreadyLoaded) return@launch
+            if (alreadyLoaded) {
+                if (genObserveJob?.isActive != true) startCharacterQueueObservation(id)
+                return@launch
+            }
+            genObserveJob?.cancel()
+            personaWatchdogJob?.cancel()
             lastLoadedCharacterId = id
             _state.value = current.copy(isLoaded = false, loadError = null)
             try {
@@ -338,6 +373,7 @@ class CharacterEditViewModel @Inject constructor(
                 }
                 savedDraft = loaded.toDraftSnapshot()
                 _state.value = loaded
+                startCharacterQueueObservation(id)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -521,6 +557,7 @@ class CharacterEditViewModel @Inject constructor(
 
     fun aiCompletePersona() {
         val s = _state.value
+        if (s.isSaving || s.isAiCompleting || s.isRefreshingPersona || s.personaRefreshError != null) return
         if (!s.isPersisted) {
             showSnackbar("请先保存角色，再补全人设")
             return
@@ -575,7 +612,7 @@ class CharacterEditViewModel @Inject constructor(
 
     fun save(routeCharacterId: Long) {
         val submittedState = _state.value
-        if (submittedState.isSaving || submittedState.isAiCompleting || !submittedState.isLoaded || submittedState.loadError != null) return
+        if (submittedState.isSaving || submittedState.isAiCompleting || submittedState.isRefreshingPersona || submittedState.personaRefreshError != null || !submittedState.isLoaded || submittedState.loadError != null) return
         val submittedDraft = submittedState.toDraftSnapshot()
         submittedState.samplingError()?.let {
             showSnackbar(it)

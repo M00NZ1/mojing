@@ -355,4 +355,63 @@ class CharacterEditViewModelTest {
         assertEquals("修改", vm.state.value.name)
     }
 
+    @Test
+    fun personaCompletionKeepsManualInputAndUsesGeneratedBaseline() = runTest(dispatcher) {
+        val original = CharacterEntity(id = 7, name = "林云", personaPrompt = "旧人设")
+        val task = GenerationTaskEntity(taskKind = "character_persona_ai", title = "补全", status = "RUNNING", payloadJson = "{}", targetCharacterId = 7)
+        val tasks = MutableStateFlow(listOf(task))
+        val dao = mockk<CharacterDao> { coEvery { getById(7) } returns original }
+        val vm = createSubject(dao, activeTasks = tasks).viewModel
+        vm.load(7)
+        assertTrue(vm.state.value.isAiCompleting)
+        vm.load(7)
+        vm.updatePersonaPrompt("手动人设")
+        coEvery { dao.getById(7) } returns original.copy(personaPrompt = "生成的人设")
+        tasks.value = emptyList()
+        advanceUntilIdle()
+        assertEquals("手动人设", vm.state.value.personaPrompt)
+        assertFalse(vm.state.value.isAiCompleting)
+        assertTrue(vm.state.value.isDirty)
+        vm.updatePersonaPrompt("生成的人设")
+        assertFalse(vm.state.value.isDirty)
+    }
+
+    @Test
+    fun personaReadFailureCanRetryAndOldRetryCannotReplaceNewCompletion() = runTest(dispatcher) {
+        val original = CharacterEntity(id = 7, name = "林云", personaPrompt = "旧人设")
+        val task = GenerationTaskEntity(taskKind = "character_persona_ai", title = "补全", status = "RUNNING", payloadJson = "{}", targetCharacterId = 7)
+        val tasks = MutableStateFlow(listOf(task))
+        val dao = mockk<CharacterDao> { coEvery { getById(7) } returns original }
+        val subject = createSubject(dao, activeTasks = tasks)
+        val vm = subject.viewModel
+        vm.load(7)
+        coEvery { dao.getById(7) } throws IllegalStateException("read")
+        tasks.value = emptyList()
+        advanceUntilIdle()
+        assertFalse(vm.state.value.isAiCompleting)
+        assertNotNull(vm.state.value.personaRefreshError)
+        vm.save(7)
+        coVerify(exactly = 0) { subject.saveCharacterBinding(any()) }
+        vm.retryPersonaRefresh()
+        assertNotNull(vm.state.value.personaRefreshError)
+        val oldRead = CompletableDeferred<CharacterEntity>()
+        coEvery { dao.getById(7) } coAnswers { oldRead.await() }
+        vm.retryPersonaRefresh()
+        vm.retryPersonaRefresh()
+        assertTrue(vm.state.value.isRefreshingPersona)
+        coVerify(exactly = 4) { dao.getById(7) }
+        vm.updateName("手动改名")
+        tasks.value = listOf(task)
+        advanceUntilIdle()
+        coEvery { dao.getById(7) } returns original.copy(personaPrompt = "最新人设")
+        tasks.value = emptyList()
+        advanceUntilIdle()
+        oldRead.complete(original.copy(personaPrompt = "过时人设"))
+        advanceUntilIdle()
+        assertEquals("最新人设", vm.state.value.personaPrompt)
+        assertEquals("手动改名", vm.state.value.name)
+        assertEquals(null, vm.state.value.personaRefreshError)
+        assertFalse(vm.state.value.isRefreshingPersona)
+    }
+
 }

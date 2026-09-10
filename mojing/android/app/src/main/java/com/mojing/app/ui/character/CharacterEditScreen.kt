@@ -96,7 +96,7 @@ fun CharacterEditScreen(
     var pendingExport by remember { mutableStateOf<PendingExport?>(null) }
     var isWritingExport by remember { mutableStateOf(false) }
 
-    val canSave = state.loadError == null && (!state.isPersisted || state.isDirty || state.saveError != null)
+    val canSave = state.loadError == null && state.personaRefreshError == null && !state.isRefreshingPersona && (!state.isPersisted || state.isDirty || state.saveError != null)
     val pageBusy = state.isSaving || isAvatarImporting || isCardImageProcessing ||
         state.isGeneratingCardImage || state.isPreparingExport || pendingExport != null || isWritingExport
 
@@ -191,7 +191,7 @@ fun CharacterEditScreen(
                         enabled = state.isLoaded && canSave && !pageBusy && !state.isAiCompleting,
                     ) {
                         if (state.isSaving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Default.Save, if (canSave) "保存修改" else "已保存")
+                        else Icon(Icons.Default.Save, if (state.personaRefreshError != null || state.isRefreshingPersona) "等待读取补全结果" else if (canSave) "保存修改" else "已保存")
                     }
                 }
             )
@@ -278,6 +278,21 @@ fun CharacterEditScreen(
                     }
                 }
             }
+            if (state.personaRefreshError != null || state.isRefreshingPersona) {
+                Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("更新角色人设", style = MaterialTheme.typography.titleSmall)
+                        Text(state.personaRefreshError ?: "正在读取补全结果…",
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedButton(onClick = viewModel::retryPersonaRefresh,
+                            enabled = !state.isRefreshingPersona && !state.isAiCompleting,
+                            modifier = Modifier.fillMaxWidth()) {
+                            Text(if (state.isRefreshingPersona) "读取中…" else "重新读取")
+                        }
+                    }
+                }
+            }
             MoJingLongTextField(value = state.personaPrompt, onValueChange = { viewModel.updatePersonaPrompt(it) }, label = "人设提示词", placeholder = "描述角色的性格、背景、说话风格...", modifier = Modifier.fillMaxWidth())
             TextButton(onClick = { focusManager.clearFocus(); showMacroSheet = true }, modifier = Modifier.align(Alignment.Start)) {
                 Text("插入宏变量")
@@ -285,7 +300,7 @@ fun CharacterEditScreen(
 
             Button(
                 onClick = { viewModel.aiCompletePersona() },
-                enabled = state.isPersisted && !state.isDirty && !state.isAiCompleting && !pageBusy,
+                enabled = state.isPersisted && !state.isDirty && !state.isAiCompleting && !state.isRefreshingPersona && state.personaRefreshError == null && !pageBusy,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp),
