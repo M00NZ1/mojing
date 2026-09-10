@@ -4,6 +4,7 @@ import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { confirmModal } from './ConfirmModal';
+import { ModelNamePicker } from './ModelNamePicker';
 import './ModelPlatforms.css';
 
 import type { ModelPlatform, ModelCatalog, ModelSelection } from '../types';
@@ -100,7 +101,7 @@ export function ModelPlatformsPanel({ onDirtyChange }: { onDirtyChange: (dirty: 
           {fetching && <button type="button" className="btn btn-ghost btn-sm" onClick={() => fetchRef.current?.abort()}>取消获取</button>}</div>
         {discoveryNotice && <p className="model-platform-wide" role="status">{discoveryNotice}</p>}
         <label className="model-platform-wide">模型名称 · {models.length} 个<textarea rows={6} value={modelText} disabled={fetching} onChange={(e) => setModelText(e.target.value)} placeholder="每行一个，也可用逗号分隔；不支持获取时直接填写。" /></label>
-        <label className="model-platform-wide">默认模型<select value={draft.selected_model} onChange={(e) => setDraft({ ...draft, selected_model: e.target.value })}><option value="">选择默认模型</option>{models.map((model) => <option value={model} key={model}>{model}</option>)}</select></label>
+        <div className="model-platform-wide model-platform-model-field"><span>默认模型</span><ModelNamePicker models={models} value={draft.selected_model} onChange={(model) => setDraft({ ...draft, selected_model: model })} /></div>
       </div></fieldset>
       <div className="model-platform-actions"><button type="button" className="btn btn-primary" disabled={save.isPending || fetching || !draft.name.trim() || !draft.api_key.trim() || !models.includes(draft.selected_model)} onClick={() => save.mutate({ ...draft, models })}>{save.isPending ? '正在保存…' : '保存平台'}</button>
         <button type="button" className="btn btn-ghost" disabled={save.isPending} onClick={async () => { if (!dirty || await confirmModal('放弃未保存的修改？', '已保存的平台不会受到影响。', 'warning', { confirmLabel: '放弃修改' })) { fetchRef.current?.abort(); setDraft(null); setError(''); } }}>取消</button></div>

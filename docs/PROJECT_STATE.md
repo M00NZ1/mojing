@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Web 默认模型选择组件 | 生产构建与 Chrome 模拟 API 回归通过；5000 模型下验证每页十项、翻页、搜索末项、空结果恢复、键盘展开/关闭和焦点返回；移动端组件截图检查通过 | `test-model-platforms.mjs`；`.codex-work/web-default-model-20260910/default-model-picker.png` |
 | Web 模型列表键盘导航 | 生产构建与 Chrome 模拟 API 回归通过；5000 模型下验证跨窗口连续导航、首尾定位、跳过缺少 Key 项、Enter 选择、输入法保护及有界 DOM | `test-model-platforms.mjs` |
 | Web 模型面板布局与反馈 | 生产构建及 Chrome 模拟 API 回归通过，覆盖 5000 模型虚拟列表、320×480 固定入口、选中状态、恢复默认、保存中关闭保护、失败重试与输入法保护；390px 截图检查通过 | `test-model-platforms.mjs`；`.codex-work/web-model-panel-20260910/model-picker-mobile.png` |
 | Android 恢复默认模型配置 | 88 项聊天 ViewModel 与 7 项平台存储测试通过，覆盖恢复失败重试、会话隔离、重复恢复与重新读取；Android 35、320dp 下 5 项模型面板测试通过；Debug 应用与测试 APK 构建通过 | `ChatViewModelTest`、`ModelPlatformsTest`、`ChatModelPickerTest`；`.codex-work/android-ui-20260910/model-follow-tests.txt` |

@@ -41,6 +41,16 @@
 .chat-model-option[aria-pressed="true"] small { color: var(--text); }
 .chat-model-virtual-option .chat-model-check { display: inline; margin-left: 8px; }
 .chat-model-saving { color: var(--text-2); }
+.model-platform-model-field { display: grid; gap: 8px; font-size: .88rem; }
+.model-name-trigger { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 44px; padding: 10px 12px; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.model-name-trigger > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-name-trigger:disabled { opacity: .5; cursor: default; }
+.model-name-panel { margin-top: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.model-name-results { max-height: 280px; overflow-y: auto; overscroll-behavior: contain; margin-top: 8px; }
+.model-name-results .chat-model-option { min-height: 44px; }
+.model-name-results p { padding: 12px; color: var(--text-2); }
+.model-name-pagination { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.model-name-pagination > span { color: var(--text-2); font-size: .78rem; }
 .chat-model-dialog > [role="alert"] { max-height: min(18dvh, 9rem); overflow-y: auto; overflow-wrap: anywhere; }
 @media (max-height: 560px) {
   .chat-model-dialog[open] { gap: 6px; padding: 12px; }
