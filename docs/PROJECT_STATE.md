@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Web 世界完整度检查 | Web 生产构建与 Chrome 浏览器回归通过，覆盖未保存世界、已保存世界关联资料、输入快照、报告过期、失败重试、切换世界和窄屏操作 | `test-world-quality-review.mjs`，本地 API 模拟 |
 | Web 工坊世界编辑 | Web 生产构建与 Chrome 浏览器回归通过，覆盖保存期间新编辑、切换世界、首次创建后更新、保存失败、删除其他世界及 320px 长设定展开 | `test-world-template-save.mjs`，本地 API 模拟 |
 | Web 百科保存期间编辑 | Web 生产构建与 Chrome 浏览器回归通过，覆盖条目与百科库的保存后新编辑保留、创建 ID 复用、失败重试及封面生成与保存互斥 | `test-encyclopedia-save-races.mjs`、`test-encyclopedia-covers.mjs`，本地 API 模拟 |
 | Web 百科封面流程 | Web 生产构建与 Chrome 浏览器回归通过，覆盖取消旧草稿、切换已保存条目、失败重试、请求快照、生成期间编辑及 320px 长描述展开收起 | `test-encyclopedia-covers.mjs`，本地 API 模拟 |

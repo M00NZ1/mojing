@@ -446,48 +446,47 @@ export default function WorkbenchPage() {
     onError: (e) => showToast(String(e), 'error'),
   });
 
-  const [manageQualityReport, setManageQualityReport] = useState<WorldQualityReport | null>(null);
+  const [manageQualityReport, setManageQualityReport] = useState<{ report: WorldQualityReport; snapshot: string } | null>(null);
+  const [manageQualityError, setManageQualityError] = useState<string | null>(null);
+  const qualitySubmitting = useRef(false);
   const reviewManageQualityMutation = useMutation({
-    mutationFn: async () => {
-      let lore_entries: {
-        title: string;
-        entry_type: string;
-        keywords_json: string[];
-        content: string;
-        sort_order: number;
-        is_core: boolean;
-      }[] = [];
-      const tid = templateEditing?.template_id || templateId.trim();
-      if (tid) {
-        const lore = await api.listWorldLoreEntries(tid);
-        lore_entries = lore.map((r) => ({
-          title: r.title,
-          entry_type: r.entry_type,
-          keywords_json: r.keywords_json ?? [],
-          content: r.content,
-          sort_order: r.sort_order,
-          is_core: r.is_core,
-        }));
-      }
+    mutationFn: async (request: { snapshot: string; revision: number; savedId: string | null }) => {
+      const draft = JSON.parse(request.snapshot) as {
+        templateId: string; templateLabel: string; templateCategory: string; templateSummary: string;
+        templateGameplayMode: string; templatePrompt: string; templateCoverImagePath: string;
+        templateChoices: string; templateAntiCheat: string;
+      };
+      const lore = request.savedId ? await api.listWorldLoreEntries(request.savedId) : [];
       return api.reviewWorldQuality({
-        template_id: tid || 'preview',
-        label: templateLabel,
-        category: templateCategory,
-        summary: templateSummary,
-        gameplay_mode: templateGameplayMode,
-        world_prompt: templatePrompt,
-        cover_image_path: templateCoverImagePath,
-        suggested_choices: templateChoices.split('\n').map((item) => item.trim()).filter(Boolean),
-        anti_cheat_prompt: templateAntiCheat,
-        lore_entries,
+        template_id: request.savedId || draft.templateId || 'preview',
+        label: draft.templateLabel, category: draft.templateCategory, summary: draft.templateSummary,
+        gameplay_mode: draft.templateGameplayMode, world_prompt: draft.templatePrompt,
+        cover_image_path: draft.templateCoverImagePath,
+        suggested_choices: draft.templateChoices.split('\n').map(item => item.trim()).filter(Boolean),
+        anti_cheat_prompt: draft.templateAntiCheat,
+        lore_entries: lore.map(r => ({ title: r.title, entry_type: r.entry_type, keywords_json: r.keywords_json ?? [],
+          content: r.content, sort_order: r.sort_order, is_core: r.is_core })),
       });
     },
-    onSuccess: (report) => {
-      setManageQualityReport(report);
-      showToast('已生成完整质量报告（含 Lore）', 'success');
+    onSuccess: (report, request) => {
+      if (templateFormRevision.current !== request.revision) return;
+      setManageQualityReport({ report, snapshot: request.snapshot });
+      setManageQualityError(null);
     },
-    onError: (e) => showToast(String(e), 'error'),
+    onError: (error, request) => {
+      if (templateFormRevision.current !== request.revision) return;
+      setManageQualityError(error instanceof Error ? error.message : '完整度检查失败，请重试');
+    },
+    onSettled: () => { qualitySubmitting.current = false; },
   });
+  function reviewTemplateQuality() {
+    if (qualitySubmitting.current) return;
+    qualitySubmitting.current = true;
+    setManageQualityError(null);
+    reviewManageQualityMutation.mutate({ snapshot: templateDraftSnapshot,
+      revision: templateFormRevision.current, savedId: templateEditing?.template_id ?? null });
+  }
+
 
   function fillWithRandom() {
     const themes = [
@@ -524,6 +523,7 @@ export default function WorkbenchPage() {
   function fillTemplateForm(template: WorldTemplate) {
     templateFormRevision.current++;
     setManageQualityReport(null);
+    setManageQualityError(null);
     setTemplateEditing(template); setTemplateId(template.template_id); setTemplateLabel(template.label);
     setTemplateCategory(template.category); setTemplateSummary(template.summary); setTemplateGameplayMode(template.gameplay_mode);
     setTemplatePrompt(template.world_prompt); setTemplateCoverImagePath(template.cover_image_path ?? '');
@@ -537,6 +537,7 @@ export default function WorkbenchPage() {
     setTemplateSummary(''); setTemplateGameplayMode('自由剧情'); setTemplatePrompt(''); setTemplateCoverImagePath('');
     setTemplateChoices(''); setTemplateAntiCheat('');
     setManageQualityReport(null);
+    setManageQualityError(null);
     setTemplateBaseline('');
   }
 
@@ -862,15 +863,18 @@ export default function WorkbenchPage() {
                     type="button"
                     className="btn btn-ghost"
                     disabled={reviewManageQualityMutation.isPending}
-                    onClick={() => reviewManageQualityMutation.mutate()}
+                    onClick={reviewTemplateQuality}
                   >
-                    {reviewManageQualityMutation.isPending && <UiIcon name="loading" className="ui-icon-loading" />}{reviewManageQualityMutation.isPending ? '分析中…' : '检查世界完整度'}
+                    {reviewManageQualityMutation.isPending && <UiIcon name="loading" className="ui-icon-loading" />}{reviewManageQualityMutation.isPending ? '分析中…' : manageQualityReport || manageQualityError ? '重新检查完整度' : '检查世界完整度'}
                   </button>
                   <button className="btn btn-primary" type="submit" disabled={saveTemplateMutation.isPending}>{saveTemplateMutation.isPending ? '保存中…' : '保存世界设定'}</button>
                 </div>
+                {manageQualityError && <p className="full-row" role="alert">{manageQualityError}</p>}
                 {manageQualityReport && (
                   <div className="full-row" style={{ marginTop: 12 }}>
-                    <QualityReportCard report={manageQualityReport} />
+                    {manageQualityReport.snapshot === templateDraftSnapshot
+                      ? <QualityReportCard report={manageQualityReport.report} />
+                      : <p className="hint" role="status">设定已修改，请重新检查完整度。</p>}
                   </div>
                 )}
               </form>
