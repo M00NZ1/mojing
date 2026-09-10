@@ -53,7 +53,7 @@ fun GenerationTaskListScreen(
     val retryingIds by viewModel.retryingTaskIds.collectAsStateWithLifecycle()
     val message by viewModel.snackbar.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
-    var filter by rememberSaveable { mutableIntStateOf(0) }
+    val filter by viewModel.selectedFilter.collectAsStateWithLifecycle()
     val listState = rememberGenerationListState(filter, historyCursors.size)
     var cancelTargetId by remember { mutableStateOf<Long?>(null) }
     var cancelError by remember(cancelTargetId) { mutableStateOf<String?>(null) }
@@ -69,7 +69,7 @@ fun GenerationTaskListScreen(
         TopAppBar(title = { Text(if (browsingHistory) "全部记录" else "生成记录", maxLines = 1, overflow = TextOverflow.Ellipsis) }, navigationIcon = {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
         }, actions = {
-            TextButton(onClick = { filter = 0; if (browsingHistory) viewModel.showRecent() else viewModel.showHistory() }) {
+            TextButton(onClick = { if (browsingHistory) viewModel.showRecent() else viewModel.showHistory() }) {
                 Text(if (browsingHistory) "近期记录" else "全部记录")
             }
         })
@@ -112,7 +112,7 @@ fun GenerationTaskListScreen(
                 }
             }
             stickyHeader(key = "generation-filter") {
-                GenerationTaskFilterBar(filter) { filter = it; viewModel.selectHistoryFilter(it) }
+                GenerationTaskFilterBar(filter, viewModel::selectHistoryFilter)
             }
             if (visible.isEmpty() && !loading && loadError == null) item {
                 Column(Modifier.fillMaxWidth().padding(vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally,

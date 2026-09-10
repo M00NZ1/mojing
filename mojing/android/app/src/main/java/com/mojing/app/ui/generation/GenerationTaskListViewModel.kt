@@ -1,5 +1,6 @@
 package com.mojing.app.ui.generation
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.local.dao.GenerationTaskDao
@@ -7,7 +8,6 @@ import com.mojing.app.data.local.entity.GenerationTaskEntity
 import com.mojing.app.data.local.entity.GenerationTaskStatus
 import com.mojing.app.domain.generation.GenerationQueueProcessor
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,6 +31,7 @@ class GenerationTaskListViewModel @Inject constructor(
     taskDao: GenerationTaskDao,
     private val processor: GenerationQueueProcessor,
     private val resultResolver: com.mojing.app.domain.generation.GenerationResultResolver,
+    private val savedStateHandle: SavedStateHandle = SavedStateHandle(),
 ) : ViewModel() {
 
     private val _openingResultId = MutableStateFlow<Long?>(null)
@@ -89,31 +90,47 @@ class GenerationTaskListViewModel @Inject constructor(
         retryLoads.trySend(Unit)
     }
 
-    private val _historyCursors = MutableStateFlow<List<Long>>(emptyList())
-    val historyCursors = _historyCursors.asStateFlow()
-    private val historyFilter = MutableStateFlow(0)
+    private val navigation = savedStateHandle.getStateFlow("generation_browse", longArrayOf(0))
+    private fun readNavigation(value: LongArray = navigation.value): Pair<List<Long>, Int> {
+        val filter = value.firstOrNull()?.toInt()?.takeIf { it in 0..2 } ?: 0
+        val cursors = value.drop(1)
+        val valid = cursors.isEmpty() || (cursors.first() == Long.MAX_VALUE && cursors.all { it > 0 }
+            && cursors.zipWithNext().all { (a, b) -> b < a })
+        return (if (valid) cursors else emptyList()) to filter
+    }
+    val historyCursors = navigation.map { readNavigation(it).first }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, readNavigation().first)
+    val selectedFilter = navigation.map { readNavigation(it).second }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, readNavigation().second)
     private val _hasOlder = MutableStateFlow(false)
     val hasOlder = _hasOlder.asStateFlow()
 
-    fun showHistory() { _loading.value = true; historyFilter.value = 0; _historyCursors.value = listOf(Long.MAX_VALUE) }
-    fun showRecent() { _loading.value = true; _historyCursors.value = emptyList() }
-    fun selectHistoryFilter(filter: Int) {
-        if (filter !in 0..2 || historyFilter.value == filter) return
+    private fun updateNavigation(cursors: List<Long>, filter: Int) {
+        val next = longArrayOf(filter.toLong(), *cursors.toLongArray())
+        if (navigation.value.contentEquals(next)) return
         _loading.value = true
-        historyFilter.value = filter
-        if (_historyCursors.value.isNotEmpty()) _historyCursors.value = listOf(Long.MAX_VALUE)
+        _loadError.value = null
+        savedStateHandle["generation_browse"] = next
+    }
+    fun showHistory() = updateNavigation(listOf(Long.MAX_VALUE), 0)
+    fun showRecent() = updateNavigation(emptyList(), 0)
+    fun selectHistoryFilter(filter: Int) {
+        val (cursors, currentFilter) = readNavigation()
+        if (filter !in 0..2 || currentFilter == filter) return
+        updateNavigation(if (cursors.isEmpty()) emptyList() else listOf(Long.MAX_VALUE), filter)
     }
     fun olderPage() {
-        if (_loading.value || !_hasOlder.value || _historyCursors.value.isEmpty()) return
+        val (cursors, filter) = readNavigation()
+        if (_loading.value || _loadError.value != null || !_hasOlder.value || cursors.isEmpty()) return
         val cursor = tasks.value.lastOrNull()?.id ?: return
-        _loading.value = true
-        _historyCursors.value = _historyCursors.value + cursor
+        updateNavigation(cursors + cursor, filter)
     }
     fun newerPage() {
-        if (!_loading.value && _historyCursors.value.size > 1) { _loading.value = true; _historyCursors.value = _historyCursors.value.dropLast(1) }
+        val (cursors, filter) = readNavigation()
+        if (!_loading.value && cursors.size > 1) updateNavigation(cursors.dropLast(1), filter)
     }
 
-    val tasks = combine(_historyCursors, historyFilter) { cursors, filter -> cursors to filter }
+    val tasks = navigation.map { readNavigation(it) }
         .flatMapLatest { (cursors, filter) ->
             val history = cursors.isNotEmpty()
             (if (history) taskDao.observeHistoryPage(cursors.last(), filter) else taskDao.observeQueueVisible())

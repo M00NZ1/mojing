@@ -19,6 +19,29 @@ class GenerationTaskListViewModelTest {
     @Before fun setup() { Dispatchers.setMain(dispatcher) }
     @After fun teardown() { Dispatchers.resetMain() }
 
+    @Test fun historySelectionRestoresFromSavedStateAndUpdatesAtomically() = runTest {
+        val processor = mockk<GenerationQueueProcessor>()
+        every { processor.pausedState } returns MutableStateFlow(false)
+        val dao = mockk<GenerationTaskDao>()
+        every { dao.observeHistoryPage(51L, 2) } returns flowOf(emptyList())
+        every { dao.observeHistoryPage(Long.MAX_VALUE, 1) } returns flowOf(emptyList())
+        every { dao.observeQueueVisible() } returns flowOf(emptyList())
+        val saved = androidx.lifecycle.SavedStateHandle(mapOf("generation_browse" to longArrayOf(2, Long.MAX_VALUE, 51)))
+        val vm = GenerationTaskListViewModel(dao, processor, mockk(), saved)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.tasks.collect {} }
+        runCurrent()
+        assertEquals(2, vm.selectedFilter.value)
+        assertEquals(listOf(Long.MAX_VALUE, 51L), vm.historyCursors.value)
+        verify(exactly = 1) { dao.observeHistoryPage(51L, 2) }
+        vm.selectHistoryFilter(1); runCurrent()
+        assertArrayEquals(longArrayOf(1, Long.MAX_VALUE), saved.get<LongArray>("generation_browse"))
+        verify(exactly = 0) { dao.observeHistoryPage(51L, 1) }
+        vm.showRecent(); runCurrent()
+        assertEquals(0, vm.selectedFilter.value)
+        assertTrue(vm.historyCursors.value.isEmpty())
+        assertArrayEquals(longArrayOf(0), saved.get<LongArray>("generation_browse"))
+    }
+
     @Test fun historyPagingIsBoundedAndCanLeaveFailedPage() = runTest {
         val processor = mockk<GenerationQueueProcessor>()
         every { processor.pausedState } returns MutableStateFlow(false)

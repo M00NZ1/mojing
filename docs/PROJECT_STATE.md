@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Android 生成记录浏览状态 | Debug 构建与 9 项 ViewModel 测试通过；覆盖 SavedStateHandle 恢复分类和第二页游标、筛选与游标原子更新、返回近期模式及既有失败重试 | `GenerationTaskListViewModelTest` |
 | Android 全部生成记录 | 8 项 ViewModel 测试、Debug 构建通过；Android 35、320dp 下 12 项 Room 与界面测试通过，覆盖 205 条记录游标遍历、查询前筛选、每页上限、重复翻页保护、失败后切换与翻页位置复位 | `GenerationTaskListViewModelTest`、`GenerationTaskDaoTest`、`GenerationTaskDetailTest` |
 | Android 生成详情错误布局 | Debug 应用与测试 APK 构建通过；Android 35、320dp 竖屏下 9 项界面测试通过，另通过 1440×840 横向窗口专项测试，覆盖长标题、100 段展开反馈与重试、关闭操作 | `GenerationTaskDetailTest` |
 | Android 生成记录筛选与位置 | Debug 应用与测试 APK 构建通过；Android 35、320dp 下 8 项界面测试通过，150 条测试记录覆盖深处吸顶筛选、保存状态恢复及切换分类回到开头 | `GenerationTaskDetailTest`；`.codex-work/android-ui-20260910/filter-scroll.png` |
