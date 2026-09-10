@@ -1264,6 +1264,11 @@ export const api = {
   listEncyclopediaSedimentEntries(encyclopediaId: number) {
     return request<EncyclopediaEntry[]>(`/encyclopedia/${encyclopediaId}/sediment-entries`);
   },
+  listEncyclopediaSedimentPage(encyclopediaId: number, status: string, beforeId: number | null) {
+    const params = new URLSearchParams({ status });
+    if (beforeId !== null) params.set('before_id', String(beforeId));
+    return request<{items: Pick<EncyclopediaEntry, 'id' | 'title' | 'entry_type' | 'summary' | 'confidence' | 'source_session_id'>[]; next_cursor: number | null}>(`/encyclopedia/${encyclopediaId}/sediment-page?${params}`);
+  },
   confirmEncyclopediaSedimentEntries(encyclopediaId: number, entryIds: number[]) {
     return request<{ confirmed: number }>(`/encyclopedia/${encyclopediaId}/sediment-entries/confirm`, {
       method: 'POST', body: JSON.stringify({ entry_ids: entryIds }),

@@ -13,3 +13,6 @@
 .sediment-entry-title { display: block; border: 0; padding: 4px 0 8px; background: none; color: var(--text); font: inherit; font-weight: 600; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
 .sediment-review-row small { color: var(--text-2); margin-left: 8px; }
 .sediment-review-row p { color: var(--text-2); font-size: .85rem; line-height: 1.6; margin: 8px 0 0; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.sediment-pagination { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 16px; }
+.sediment-pagination .btn { width: auto; }
+.sediment-pagination span { color: var(--text-2); font-size: .85rem; }

@@ -28,7 +28,7 @@ try {
   const errors = [];
   page.on('pageerror', error => { errors.push(error.message); console.error(error.message); });
   let rows = Array.from({ length: 102 }, (_, index) => ({ id: index + 1, title: `资料${index + 1}`, entry_type: 'event', confidence: index === 101 ? 'confirmed' : 'inferred', source_session_id: 8, summary: '雾港的旧事与人物关系。'.repeat(30) }));
-  let calls = 0, finish;
+  let calls = 0, finish, failPage = true;
   await page.route('**/*', async route => {
     const url = new URL(route.request().url());
     if (url.hostname !== '127.0.0.1' || url.port !== String(port)) return route.abort();
@@ -41,7 +41,16 @@ try {
       rows = rows.map(row => ids.includes(row.id) ? { ...row, confidence: 'confirmed' } : row);
       return route.fulfill({ json: { confirmed: ids.length } });
     }
-    if (url.pathname.endsWith('/sediment-entries')) return route.fulfill({ json: rows });
+    if (url.pathname.endsWith('/sediment-page')) {
+      const status = url.searchParams.get('status');
+      const before = Number(url.searchParams.get('before_id') || 999999);
+      if (before !== 999999 && failPage) {
+        failPage = false;
+        return route.fulfill({ status: 500, json: { detail: 'page fixture failure' } });
+      }
+      const filtered = rows.filter(row => row.id < before && (status === 'all' || (status === 'confirmed' ? row.confidence === 'confirmed' : row.confidence !== 'confirmed'))).sort((a, b) => b.id - a.id);
+      return route.fulfill({ json: { items: filtered.slice(0, 100), next_cursor: filtered.length > 100 ? filtered[99].id : null } });
+    }
     if (url.pathname !== '/') return route.continue();
     return route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>
       <div id="fixture"></div>
@@ -63,15 +72,24 @@ try {
       </script></body></html>` });
   });
   await page.goto(`http://127.0.0.1:${port}`);
-  await page.getByText('当前列表 101 条 · 已选 0 条', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '资料1', exact: true }).click();
-  assert.equal(await page.evaluate(() => window.opened), 1);
-  await page.getByRole('button', { name: '选择前100条' }).click();
-  assert.equal(await page.getByRole('checkbox', { name: '选择资料：资料101', exact: true }).isDisabled(), true);
+  await page.getByText('本页 100 条 · 已选 0 条', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '资料101', exact: true }).click();
+  assert.equal(await page.evaluate(() => window.opened), 101);
+  await page.getByRole('button', { name: '选择本页' }).click();
+  await page.getByRole('button', { name: '下一页', exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: '读取失败' }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '上一页', exact: true }).isEnabled(), true);
+  await page.getByRole('button', { name: '重试', exact: true }).click();
+  await page.getByText('本页 1 条 · 已选 0 条', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '资料1', exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '下一页', exact: true }).isDisabled(), true);
+  await page.getByRole('button', { name: '上一页', exact: true }).click();
+  await page.getByText('本页 100 条 · 已选 0 条', { exact: true }).waitFor();
+  assert.ok(await page.locator('.sediment-review-row').count() <= 100);
   await page.getByRole('button', { name: '已确认', exact: true }).click();
-  await page.getByText('当前列表 1 条 · 已选 0 条', { exact: true }).waitFor();
+  await page.getByText('本页 1 条 · 已选 0 条', { exact: true }).waitFor();
   await page.getByRole('button', { name: '待核对', exact: true }).click();
-  await page.getByRole('button', { name: '选择前100条' }).click();
+  await page.getByRole('button', { name: '选择本页' }).click();
   await page.getByRole('button', { name: '确认所选' }).click();
   await page.waitForFunction(() => document.querySelector('.sediment-batch-actions button:last-child').disabled);
   assert.equal(await page.getByRole('button', { name: '关闭', exact: true }).isDisabled(), true);
@@ -80,13 +98,13 @@ try {
   assert.ok(finish, 'confirmation request reached the fixture');
   finish(); finish = undefined;
   await page.getByRole('alert').filter({ hasText: '选择已保留' }).waitFor();
-  await page.getByText('当前列表 101 条 · 已选 100 条', { exact: true }).waitFor();
+  await page.getByText('本页 100 条 · 已选 100 条', { exact: true }).waitFor();
   await page.getByRole('button', { name: '确认所选' }).click();
   for (let attempt = 0; !finish && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve, 20));
   assert.ok(finish, 'retry reached the fixture');
   finish();
   await page.getByText('已确认 100 条资料', { exact: true }).waitFor();
-  await page.getByText('当前列表 1 条 · 已选 0 条', { exact: true }).waitFor();
+  await page.getByText('本页 1 条 · 已选 0 条', { exact: true }).waitFor();
   assert.equal(calls, 2);
   for (const button of await page.locator('.sediment-batch-actions button').all()) {
     const box = await button.boundingBox();
@@ -95,7 +113,7 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   if (process.env.SMOKE_OUTPUT) await page.screenshot({ path: process.env.SMOKE_OUTPUT });
   assert.deepEqual(errors, []);
-  console.log('PASS: review filters, 100-entry limit, source entry navigation, saving locks, failure retry, refresh and 320px layout.');
+  console.log('PASS: review filters, bounded cursor pages, page retry, source entry navigation, saving locks, failure retry, refresh and 320px layout.');
 } finally {
   await browser?.close();
   if (child.exitCode === null) { child.kill(); await once(child, 'exit'); }

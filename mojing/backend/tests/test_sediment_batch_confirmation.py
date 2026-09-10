@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from backend.app.database import Base
 from backend.app.models import WorldEncyclopediaModel, EncyclopediaEntryModel, EntryVersionModel
 from backend.app.routes.encyclopedia import confirm_selected_sediment_entries
+from backend.app.routes.encyclopedia import list_sediment_page
 from backend.app.services import sediment_service
 
 
@@ -36,6 +37,43 @@ def test_confirmation_preserves_sources_and_is_scoped_and_idempotent(db):
     versions = list(db.scalars(select(EntryVersionModel)))
     assert len(versions) == 1
     assert versions[0].content == "原文"
+
+
+def test_cursor_pages_preserve_order_and_filter_across_large_library(db):
+    db.add_all([EncyclopediaEntryModel(id=i, encyclopedia_id=1, title=f"资料{i}",
+        confidence="confirmed" if i % 3 == 0 else "inferred", source_session_id=8,
+        summary="摘要" * 500, content="正文" * 1000) for i in range(10, 1210)])
+    db.commit()
+    for status in ("all", "pending", "confirmed"):
+        cursor = None
+        ids = []
+        while True:
+            result = list_sediment_page(1, status, cursor, db)
+            assert len(result["items"]) <= 100
+            for row in result["items"]:
+                assert "content" not in row
+                assert len(row["summary"]) <= 480
+                assert status == "all" or (row["confidence"] == "confirmed") == (status == "confirmed")
+            ids.extend(row["id"] for row in result["items"])
+            cursor = result["next_cursor"]
+            if cursor is None:
+                break
+        expected = [i for i in range(1209, 9, -1) if status == "all" or (i % 3 == 0) == (status == "confirmed")]
+        if status != "confirmed":
+            expected.append(1)
+        assert ids == expected
+
+
+def test_cursor_survives_deleted_boundary_and_new_entries(db):
+    db.add_all([EncyclopediaEntryModel(id=i, encyclopedia_id=1, title=str(i), confidence="inferred") for i in range(10, 112)])
+    db.commit()
+    first = list_sediment_page(1, "pending", None, db)
+    boundary = first["next_cursor"]
+    db.delete(db.get(EncyclopediaEntryModel, boundary))
+    db.add(EncyclopediaEntryModel(id=200, encyclopedia_id=1, title="新资料", confidence="inferred"))
+    db.commit()
+    second = list_sediment_page(1, "pending", boundary, db)
+    assert [row["id"] for row in second["items"]] == [11, 10, 1]
 
 
 def test_version_failure_rolls_back_the_entire_batch(db, monkeypatch):

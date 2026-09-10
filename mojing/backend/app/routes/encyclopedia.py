@@ -752,6 +752,34 @@ def confirm_selected_sediment_entries(encyclopedia_id: int, payload: dict, db: S
     return {"confirmed": confirm_sediment_entries(db, encyclopedia_id, list(dict.fromkeys(ids)))}
 
 
+@router.get("/{encyclopedia_id}/sediment-page")
+def list_sediment_page(
+    encyclopedia_id: int,
+    status: str = "pending",
+    before_id: int | None = None,
+    db: Session = Depends(get_db),
+):
+    """按创建顺序分批读取核对卡片；正文留在详情接口。"""
+    if status not in ("all", "pending", "confirmed") or (before_id is not None and before_id <= 0):
+        raise HTTPException(status_code=400, detail="资料筛选或翻页参数无效")
+    if not db.get(WorldEncyclopediaModel, encyclopedia_id):
+        raise HTTPException(status_code=404, detail="百科库不存在")
+    entry = EncyclopediaEntryModel
+    stmt = select(entry.id, entry.entry_type, entry.title, func.substr(entry.summary, 1, 480).label("summary"),
+                  entry.confidence, entry.source_session_id).where(
+        entry.encyclopedia_id == encyclopedia_id,
+        or_(entry.confidence == "inferred", entry.source_session_id.isnot(None)),
+    )
+    if status == "pending":
+        stmt = stmt.where(entry.confidence != "confirmed")
+    elif status == "confirmed":
+        stmt = stmt.where(entry.confidence == "confirmed")
+    if before_id is not None:
+        stmt = stmt.where(entry.id < before_id)
+    rows = list(db.execute(stmt.order_by(entry.id.desc()).limit(101)).mappings())
+    return {"items": [dict(row) for row in rows[:100]], "next_cursor": rows[99]["id"] if len(rows) > 100 else None}
+
+
 # ──────────────────────────────────────────────
 #  AI 生成
 # ──────────────────────────────────────────────

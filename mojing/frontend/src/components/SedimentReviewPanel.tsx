@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import './SedimentReviewPanel.css';
@@ -9,15 +9,19 @@ export default function SedimentReviewPanel({ encyclopediaId, onOpenEntry, onClo
   onClose: () => void;
 }) {
   const cache = useQueryClient();
-  const query = useQuery({ queryKey: ['encyclopedia-sediment', encyclopediaId], queryFn: () => api.listEncyclopediaSedimentEntries(encyclopediaId) });
   const [filter, setFilter] = useState('pending');
+  const [cursors, setCursors] = useState<(number | null)[]>([null]);
+  const cursor = cursors[cursors.length - 1];
+  const query = useQuery({ queryKey: ['encyclopedia-sediment', encyclopediaId, filter, cursor],
+    queryFn: () => api.listEncyclopediaSedimentPage(encyclopediaId, filter, cursor), gcTime: 0 });
+  const panel = useRef<HTMLElement>(null);
+  useEffect(() => { panel.current?.scrollIntoView({ block: 'start' }); }, [filter, cursor]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [notice, setNotice] = useState('');
   const submitting = useRef(false);
-  const rows = query.data ?? [];
-  const visible = useMemo(() => rows.filter((row) => filter === 'all' || (filter === 'confirmed' ? row.confidence === 'confirmed' : row.confidence !== 'confirmed')), [query.data, filter]);
+  const visible = query.data?.items ?? [];
   useEffect(() => {
-    if (query.data) setSelected((ids) => new Set([...ids].filter((id) => query.data.some((row) => row.id === id && row.confidence !== 'confirmed'))));
+    if (query.data) setSelected((ids) => new Set([...ids].filter((id) => query.data.items.some((row) => row.id === id && row.confidence !== 'confirmed'))));
   }, [query.data]);
   const confirm = useMutation({
     mutationFn: (ids: number[]) => api.confirmEncyclopediaSedimentEntries(encyclopediaId, ids),
@@ -29,18 +33,18 @@ export default function SedimentReviewPanel({ encyclopediaId, onOpenEntry, onClo
     },
     onSettled: () => { submitting.current = false; },
   });
-  return <section className="sediment-review" aria-label="沉淀资料核对">
+  return <section ref={panel} className="sediment-review" aria-label="沉淀资料核对">
     <div className="button-row"><h2>沉淀资料</h2><button className="btn btn-ghost btn-sm" type="button" disabled={confirm.isPending} onClick={onClose}>关闭</button></div>
     <p className="hint">核对对话整理出的资料，确认后保留正文与来源。点击标题可查看和编辑详情。</p>
     <div className="button-row" aria-label="确认状态筛选">
       {([['all', '全部'], ['pending', '待核对'], ['confirmed', '已确认']] as const).map(([key, label]) =>
         <button key={key} type="button" className="btn btn-sm" aria-pressed={filter === key} disabled={confirm.isPending}
-          onClick={() => { setFilter(key); setSelected(new Set()); }}>{label}</button>)}
+          onClick={() => { setFilter(key); setCursors([null]); setSelected(new Set()); setNotice(''); confirm.reset(); }}>{label}</button>)}
     </div>
     <div className="sediment-batch-actions">
-      <span>当前列表 {visible.length} 条 · 已选 {selected.size} 条</span>
+      <span>本页 {visible.length} 条 · 已选 {selected.size} 条</span>
       <button type="button" className="btn btn-sm" disabled={confirm.isPending || !visible.some((row) => row.confidence !== 'confirmed')}
-        onClick={() => setSelected(new Set(visible.filter((row) => row.confidence !== 'confirmed').slice(0, 100).map((row) => row.id)))}>选择前100条</button>
+        onClick={() => setSelected(new Set(visible.filter((row) => row.confidence !== 'confirmed').slice(0, 100).map((row) => row.id)))}>选择本页</button>
       <button type="button" className="btn btn-ghost btn-sm" disabled={confirm.isPending || selected.size === 0} onClick={() => setSelected(new Set())}>清空</button>
       <button type="button" className="btn btn-primary btn-sm" disabled={confirm.isPending || selected.size === 0} onClick={() => {
         if (submitting.current) return;
@@ -66,5 +70,12 @@ export default function SedimentReviewPanel({ encyclopediaId, onOpenEntry, onClo
       </article>)}
       {query.isSuccess && visible.length === 0 && <p className="hint">当前筛选下没有资料。</p>}
     </div>
+    <nav className="sediment-pagination" aria-label="资料翻页">
+      <button type="button" className="btn btn-sm" disabled={confirm.isPending || query.isFetching || cursors.length === 1}
+        onClick={() => { setSelected(new Set()); setNotice(''); confirm.reset(); setCursors((items) => items.slice(0, -1)); }}>上一页</button>
+      <span>第 {cursors.length} 页</span>
+      <button type="button" className="btn btn-sm" disabled={confirm.isPending || query.isFetching || query.isError || query.data?.next_cursor == null}
+        onClick={() => { const next = query.data?.next_cursor; if (next != null) { setSelected(new Set()); setNotice(''); confirm.reset(); setCursors((items) => [...items, next]); } }}>下一页</button>
+    </nav>
   </section>;
 }
