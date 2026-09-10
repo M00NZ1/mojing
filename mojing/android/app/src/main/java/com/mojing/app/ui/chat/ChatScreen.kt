@@ -1330,48 +1330,19 @@ fun ChatScreen(
 
     val messageBeingEdited = editingMessage
     if (messageBeingEdited != null) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { editingMessage = null },
-            modifier = Modifier.imePadding(),
-            title = { Text("编辑消息") },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 460.dp)
-                        .verticalScroll(rememberScrollState()),
-                ) {
-                    Text(
-                        if (messageBeingEdited.speakerType == "user") {
-                            "将从这条消息创建新的故事分支，并按新内容重新生成回复；原故事线保持不变。"
-                        } else {
-                            "将从这条消息创建新的故事分支；原故事线保持不变。"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    androidx.compose.material3.OutlinedTextField(
-                        value = editContent,
-                        onValueChange = { editContent = it },
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                        minLines = 3,
-                        maxLines = 10,
-                    )
+        MessageEditDialog(
+            content = editContent,
+            onContentChange = { editContent = it },
+            isUser = messageBeingEdited.speakerType == "user",
+            hasChanges = editContent != ChatMessageTextFormat.visibleBody(messageBeingEdited.content, messageBeingEdited.speakerType),
+            canSave = !state.isGenerating && ChatMessageTextFormat.hasEditChanges(
+                messageBeingEdited.content, messageBeingEdited.speakerType, editContent),
+            onSave = {
+                viewModel.editMessage(messageBeingEdited.id, editContent) {
+                    editingMessage = null
                 }
             },
-            confirmButton = {
-                androidx.compose.material3.TextButton(
-                    enabled = !state.isGenerating && ChatMessageTextFormat.hasEditChanges(
-                        messageBeingEdited.content, messageBeingEdited.speakerType, editContent),
-                    onClick = {
-                        viewModel.editMessage(messageBeingEdited.id, editContent) {
-                            editingMessage = null
-                        }
-                    },
-                ) { Text("创建编辑分支") }
-            },
-            dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { editingMessage = null }) { Text("取消") }
-            }
+            onDismiss = { editingMessage = null },
         )
     }
 
