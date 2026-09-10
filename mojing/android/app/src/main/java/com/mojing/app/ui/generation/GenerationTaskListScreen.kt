@@ -50,8 +50,8 @@ fun GenerationTaskListScreen(
     var filter by rememberSaveable { mutableIntStateOf(0) }
     var cancelTargetId by remember { mutableStateOf<Long?>(null) }
     var cancelError by remember(cancelTargetId) { mutableStateOf<String?>(null) }
-    var detail by remember { mutableStateOf<GenerationTaskEntity?>(null) }
-    var resultError by remember(detail?.id) { mutableStateOf<String?>(null) }
+    var detailId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var resultError by remember(detailId) { mutableStateOf<String?>(null) }
     DisposableEffect(viewModel) { onDispose { viewModel.cancelResultLookup() } }
     val dateFormat = remember { SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()) }
     val active = tasks.count { it.isActive() }
@@ -154,7 +154,7 @@ fun GenerationTaskListScreen(
                                     Text(if (retrying) "重新排队中" else "继续尝试")
                                 }
                             }
-                            TextButton(onClick = { detail = t }) { Text("详情") }
+                            TextButton(onClick = { detailId = t.id }) { Text("详情") }
                         }
                         if (t.progressDone > 0 || t.status == GenerationTaskStatus.COMPLETED) {
                             OutlinedButton(enabled = openingResultId == null,
@@ -181,16 +181,26 @@ fun GenerationTaskListScreen(
                 }
             }
         })
-    detail?.let { original ->
-        val t = tasks.firstOrNull { it.id == original.id } ?: original
-        GenerationTaskDetailSheet(t, onDismiss = { viewModel.cancelResultLookup(); detail = null },
-            canOpen = openingResultId == null, opening = openingResultId == t.id, openError = resultError, onOpen = {
-                resultError = null
-                viewModel.openResult(t, onOpen = { target ->
-                    detail = null
-                    onOpenResult(target)
-                }, onError = { resultError = it })
-            })
+    GenerationTaskDetailHost(tasks, detailId, openingResultId, resultError,
+        onDismiss = { viewModel.cancelResultLookup(); detailId = null }, onOpen = { t ->
+            resultError = null
+            viewModel.openResult(t, onOpen = { target -> detailId = null; onOpenResult(target) },
+                onError = { resultError = it })
+        })
+}
+
+@Composable
+internal fun GenerationTaskDetailHost(
+    tasks: List<GenerationTaskEntity>, selectedId: Long?, openingId: Long?, error: String?,
+    onDismiss: () -> Unit, onOpen: (GenerationTaskEntity) -> Unit,
+) {
+    val latest = tasks.firstOrNull { it.id == selectedId }
+    var lastVisible by remember(selectedId) { mutableStateOf<GenerationTaskEntity?>(null) }
+    SideEffect { if (latest != null) lastVisible = latest }
+    (latest ?: lastVisible)?.let { t ->
+        GenerationTaskDetailSheet(t, onDismiss = onDismiss,
+            canOpen = openingId == null, opening = openingId == t.id, openError = error,
+            onOpen = { onOpen(t) })
     }
 }
 

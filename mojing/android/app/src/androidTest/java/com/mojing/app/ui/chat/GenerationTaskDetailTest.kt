@@ -2,6 +2,10 @@ package com.mojing.app.ui.chat
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import com.mojing.app.data.local.entity.GenerationTaskEntity
@@ -9,6 +13,7 @@ import com.mojing.app.data.local.entity.GenerationTaskKinds
 import com.mojing.app.data.local.entity.GenerationTaskStatus
 import com.mojing.app.ui.generation.GenerationTaskDetailSheet
 import com.mojing.app.ui.generation.GenerationFeedbackText
+import com.mojing.app.ui.generation.GenerationTaskDetailHost
 import com.mojing.app.ui.generation.GenerationTaskCancelConfirmation
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -16,6 +21,38 @@ import org.junit.Test
 
 class GenerationTaskDetailTest {
     @get:Rule val rule = createComposeRule()
+
+    @Test fun selectedTaskRestoresAndUsesFreshProgress() {
+        val original = GenerationTaskEntity(id = 7, taskKind = GenerationTaskKinds.ENCYCLOPEDIA_ENTRIES,
+            title = "雾港百科", status = GenerationTaskStatus.RUNNING, progressDone = 1, progressTotal = 5, payloadJson = "{}")
+        val tasks = mutableStateOf(listOf(original))
+        val restoration = StateRestorationTester(rule)
+        var opened: GenerationTaskEntity? = null
+        restoration.setContent {
+            var selectedId by rememberSaveable { mutableStateOf<Long?>(null) }
+            MaterialTheme {
+                androidx.compose.material3.TextButton(onClick = { selectedId = 7 }) { androidx.compose.material3.Text("打开详情") }
+                GenerationTaskDetailHost(tasks.value, selectedId, null, null,
+                    onDismiss = { selectedId = null }, onOpen = { opened = it })
+            }
+        }
+        rule.onNodeWithText("打开详情").performClick()
+        rule.onNodeWithText("已完成 1 / 5").assertExists()
+        restoration.emulateSavedInstanceStateRestore()
+        rule.onNodeWithText("已完成 1 / 5").assertExists()
+        rule.runOnIdle { tasks.value = emptyList() }
+        rule.onNodeWithText("已完成 1 / 5").assertExists()
+        restoration.emulateSavedInstanceStateRestore()
+        rule.onNodeWithText("查看已生成内容").assertDoesNotExist()
+        val latest = original.copy(progressDone = 5, status = GenerationTaskStatus.COMPLETED)
+        rule.runOnIdle { tasks.value = listOf(latest) }
+        rule.onNodeWithText("已完成 5 / 5").assertExists()
+        rule.onNodeWithText("查看已生成内容").performClick()
+        rule.runOnIdle { assertEquals(latest, opened) }
+        rule.onNodeWithText("关闭").performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        rule.onNodeWithText("查看已生成内容").assertDoesNotExist()
+    }
 
     @Test fun cancelConfirmationFollowsProgressAndClosesWhenTaskCompletes() {
         val task = mutableStateOf(GenerationTaskEntity(id = 7, taskKind = GenerationTaskKinds.ENCYCLOPEDIA_ENTRIES,
