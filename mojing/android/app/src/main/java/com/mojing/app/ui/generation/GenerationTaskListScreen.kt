@@ -4,6 +4,9 @@ import com.mojing.app.ui.common.MoJingButton as Button
 import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -31,7 +34,7 @@ import java.util.Locale
 private fun GenerationTaskEntity.isActive() = status in setOf(
     GenerationTaskStatus.QUEUED, GenerationTaskStatus.RUNNING, GenerationTaskStatus.PAUSED)
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun GenerationTaskListScreen(
     onBack: () -> Unit,
@@ -48,6 +51,7 @@ fun GenerationTaskListScreen(
     val message by viewModel.snackbar.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var filter by rememberSaveable { mutableIntStateOf(0) }
+    val listState = rememberGenerationListState(filter)
     var cancelTargetId by remember { mutableStateOf<Long?>(null) }
     var cancelError by remember(cancelTargetId) { mutableStateOf<String?>(null) }
     var detailId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -63,7 +67,7 @@ fun GenerationTaskListScreen(
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
         })
     }) { padding ->
-        LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(16.dp),
+        LazyColumn(Modifier.padding(padding).fillMaxSize(), state = listState, contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (loading) item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -100,13 +104,8 @@ fun GenerationTaskListScreen(
                     }
                 }
             }
-            item {
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    listOf("全部", "进行中", "需处理").forEachIndexed { i, label ->
-                        SegmentedButton(selected = filter == i, onClick = { filter = i },
-                            shape = SegmentedButtonDefaults.itemShape(i, 3)) { Text(label) }
-                    }
-                }
+            stickyHeader(key = "generation-filter") {
+                GenerationTaskFilterBar(filter) { filter = it }
             }
             if (visible.isEmpty() && !loading && loadError == null) item {
                 Column(Modifier.fillMaxWidth().padding(vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally,
@@ -187,6 +186,32 @@ fun GenerationTaskListScreen(
             viewModel.openResult(t, onOpen = { target -> detailId = null; onOpenResult(target) },
                 onError = { resultError = it })
         })
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun GenerationTaskFilterBar(filter: Int, onSelect: (Int) -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.background) {
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            listOf("全部", "进行中", "需处理").forEachIndexed { i, label ->
+                SegmentedButton(selected = filter == i, onClick = { onSelect(i) },
+                    shape = SegmentedButtonDefaults.itemShape(i, 3)) { Text(label) }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun rememberGenerationListState(filter: Int): LazyListState {
+    val state = rememberLazyListState()
+    var previousFilter by rememberSaveable { mutableIntStateOf(filter) }
+    LaunchedEffect(filter) {
+        if (previousFilter != filter) {
+            previousFilter = filter
+            state.scrollToItem(0)
+        }
+    }
+    return state
 }
 
 @Composable

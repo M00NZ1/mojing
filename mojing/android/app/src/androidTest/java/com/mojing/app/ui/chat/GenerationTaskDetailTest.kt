@@ -7,6 +7,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.*
+import androidx.compose.ui.platform.testTag
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.test.junit4.createComposeRule
 import com.mojing.app.data.local.entity.GenerationTaskEntity
 import com.mojing.app.data.local.entity.GenerationTaskKinds
@@ -14,6 +17,8 @@ import com.mojing.app.data.local.entity.GenerationTaskStatus
 import com.mojing.app.ui.generation.GenerationTaskDetailSheet
 import com.mojing.app.ui.generation.GenerationFeedbackText
 import com.mojing.app.ui.generation.GenerationTaskDetailHost
+import com.mojing.app.ui.generation.rememberGenerationListState
+import com.mojing.app.ui.generation.GenerationTaskFilterBar
 import com.mojing.app.ui.generation.GenerationTaskCancelConfirmation
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -21,6 +26,32 @@ import org.junit.Test
 
 class GenerationTaskDetailTest {
     @get:Rule val rule = createComposeRule()
+
+    @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+    @Test fun listPositionRestoresButResetsWhenFilterChanges() {
+        val filter = mutableStateOf(0)
+        val restoration = StateRestorationTester(rule)
+        lateinit var state: androidx.compose.foundation.lazy.LazyListState
+        restoration.setContent {
+            state = rememberGenerationListState(filter.value)
+            androidx.compose.foundation.lazy.LazyColumn(state = state,
+                modifier = androidx.compose.ui.Modifier.fillMaxSize().systemBarsPadding().testTag("generation-list")) {
+                stickyHeader { GenerationTaskFilterBar(filter.value) { filter.value = it } }
+                items(150) { index -> androidx.compose.material3.Text("记录 $index") }
+            }
+        }
+        rule.onNodeWithTag("generation-list").performScrollToIndex(80)
+        rule.runOnIdle { org.junit.Assert.assertTrue(state.firstVisibleItemIndex > 0) }
+        restoration.emulateSavedInstanceStateRestore()
+        rule.runOnIdle { org.junit.Assert.assertTrue(state.firstVisibleItemIndex > 0) }
+        val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        java.io.File(instrumentation.targetContext.getExternalFilesDir(null), "filter-scroll.png").outputStream().use {
+            instrumentation.uiAutomation.takeScreenshot().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+        }
+        rule.onNodeWithText("需处理").assertIsDisplayed().performClick()
+        rule.waitForIdle()
+        rule.runOnIdle { assertEquals(0, state.firstVisibleItemIndex); assertEquals(0, state.firstVisibleItemScrollOffset) }
+    }
 
     @Test fun selectedTaskRestoresAndUsesFreshProgress() {
         val original = GenerationTaskEntity(id = 7, taskKind = GenerationTaskKinds.ENCYCLOPEDIA_ENTRIES,

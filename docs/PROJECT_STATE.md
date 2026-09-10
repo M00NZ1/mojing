@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Android 生成记录筛选与位置 | Debug 应用与测试 APK 构建通过；Android 35、320dp 下 8 项界面测试通过，150 条测试记录覆盖深处吸顶筛选、保存状态恢复及切换分类回到开头 | `GenerationTaskDetailTest`；`.codex-work/android-ui-20260910/filter-scroll.png` |
 | Android 生成详情状态恢复 | Debug 应用与测试 APK 构建通过；Android 35、320dp 下 7 项界面测试通过，包含 Compose 保存状态恢复、列表重载、最新进度与结果操作、关闭后不重开 | `GenerationTaskDetailTest` |
 | Android 生成反馈阅读 | Debug 应用与测试 APK 构建通过；Android 35、320dp 下 6 项界面测试通过，覆盖长反馈展开收起、内容更新复位、结果入口、关闭与取消重试 | `GenerationTaskDetailTest` |
 | Web 生成结果读取取消 | 生产构建与桌面、390px Chrome 模拟 API 回归通过；浏览器请求事件确认详情读取中返回、保存成功后取消过期读取均触发 `ABORTED`；重进、保存及重试流程通过 | `test-world-history.mjs` |
