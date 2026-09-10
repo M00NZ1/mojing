@@ -17,6 +17,7 @@ import { useToast } from '../hooks/useToast';
 import { COMPACT_LAYOUT_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
 import type { Character } from '../types';
 import { readMoJingStorage, writeMoJingStorage } from '../utils/mojingStorage';
+import { mergeCharacterAiPersona } from '../utils/characterAiCompletion';
 
 const emptyCharacter: Partial<Character> = {
   name: '',
@@ -67,6 +68,8 @@ export default function CharactersPage() {
   const { triggerDelete, UndoToast } = useUndoDelete();
   const isCompactLayout = useMediaQuery(COMPACT_LAYOUT_QUERY);
   const [editing, setEditing] = useState<Partial<Character> | null>(null);
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
   const [editingBaseline, setEditingBaseline] = useState('');
   const [activeTab, setActiveTab] = useState<DetailTab>('basic');
   const [searchText, setSearchText] = useState('');
@@ -698,10 +701,16 @@ export default function CharactersPage() {
                         onCopied={() => showToast('已复制到剪贴板，可粘贴到人设任意位置', 'success')}
                       />
                       <AiCompleteButton
+                        key={editing.id ?? 'new'}
                         targetType="character"
                         targetData={{ name: editing.name, persona_prompt: editing.persona_prompt }}
                         fieldsToComplete={['persona_prompt']}
-                        onCompleted={(result) => setEditing({ ...editing, persona_prompt: (result.persona_prompt as string) || editing.persona_prompt })}
+                        onCompleted={(result) => {
+                          const current = editingRef.current;
+                          if (mergeCharacterAiPersona(current, editing, result) === current) return false;
+                          setEditing(latest => mergeCharacterAiPersona(latest, editing, result));
+                          return true;
+                        }}
                       />
                     </div>
                     <ExpandableTextArea aria-label="角色人设" value={editing.persona_prompt ?? ''} onChange={(e) => setEditing({ ...editing, persona_prompt: e.target.value })} placeholder={

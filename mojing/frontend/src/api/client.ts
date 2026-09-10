@@ -1273,8 +1273,8 @@ export const api = {
   get(path: string) {
     return request<any>(path);
   },
-  post(path: string, body?: any) {
-    return request<any>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined });
+  post(path: string, body?: any, signal?: AbortSignal) {
+    return request<any>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined, signal });
   },
   delete(path: string) {
     return request<any>(path, { method: 'DELETE' });
