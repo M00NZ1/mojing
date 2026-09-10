@@ -81,7 +81,7 @@ fun TemplateEditScreen(
     var isCoverImporting by remember { mutableStateOf(false) }
     var moreToolsOpen by rememberSaveable { mutableStateOf(false) }
     var showDiscardDialog by rememberSaveable { mutableStateOf(false) }
-    val canSave = state.loadError == null && (!state.isPersisted || state.isDirty)
+    val canSave = state.loadError == null && state.completionRefreshError == null && !state.isRefreshingCompletion && (!state.isPersisted || state.isDirty)
     val saveBusy = state.isSaving || isCoverImporting
 
     fun requestBack() {
@@ -119,7 +119,7 @@ fun TemplateEditScreen(
                         enabled = state.isLoaded && canSave && !saveBusy && !state.isAiCompleting,
                     ) {
                         if (state.isSaving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Default.Save, if (canSave) "保存修改" else "已保存")
+                        else Icon(Icons.Default.Save, if (state.completionRefreshError != null || state.isRefreshingCompletion) "等待读取补全结果" else if (canSave) "保存修改" else "已保存")
                     }
                 }
             )
@@ -166,6 +166,28 @@ fun TemplateEditScreen(
                         message = "补全世界设定前，请先在设置填写 API Key",
                         onOpenSettings = onOpenSettings,
                     )
+                }
+
+                if (state.completionRefreshError != null || state.isRefreshingCompletion) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shape = MaterialTheme.shapes.medium,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("更新世界设定", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                state.completionRefreshError ?: "正在读取补全结果…",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            OutlinedButton(
+                                onClick = viewModel::retryCompletionRefresh,
+                                enabled = !state.isRefreshingCompletion && !state.isAiCompleting,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(if (state.isRefreshingCompletion) "读取中…" else "重新读取") }
+                        }
+                    }
                 }
 
                 Text("基本信息", style = MaterialTheme.typography.titleMedium)
@@ -250,7 +272,7 @@ fun TemplateEditScreen(
 
                 FilledTonalButton(
                     onClick = { viewModel.aiCompleteWorldPrompt() },
-                    enabled = state.isPersisted && !state.isDirty && !state.isAiCompleting,
+                    enabled = state.isPersisted && !state.isDirty && !state.isAiCompleting && !saveBusy && !state.isRefreshingCompletion && state.completionRefreshError == null,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                 ) {
                     if (state.isAiCompleting) {

@@ -237,4 +237,90 @@ class TemplateEditViewModelTest {
         assertFalse(vm.state.value.isDirty)
     }
 
+    @Test
+    fun completionReadFailureKeepsDraftAndRetriesWithoutSavingOrRegenerating() = runTest(dispatcher) {
+        val original = WorldTemplateEntity(id = 7, templateId = "rain-city", label = "雨城", worldPrompt = "旧设定")
+        val task = GenerationTaskEntity(taskKind = "world_template_prompt_ai", title = "补全", status = "RUNNING", payloadJson = "{}", targetWorldTemplateId = 7)
+        val tasks = MutableStateFlow(listOf(task))
+        val dao = mockk<WorldTemplateDao> { coEvery { getById(7) } returns original }
+        val vm = createViewModel(dao, tasks)
+        vm.load(7)
+        assertTrue(vm.state.value.isAiCompleting)
+        vm.updateSummary("手动摘要")
+        coEvery { dao.getById(7) } throws IllegalStateException("read failed")
+        tasks.value = emptyList()
+        advanceUntilIdle()
+        assertFalse(vm.state.value.isAiCompleting)
+        assertFalse(vm.state.value.isRefreshingCompletion)
+        assertNotNull(vm.state.value.completionRefreshError)
+        assertEquals("手动摘要", vm.state.value.summary)
+        vm.save()
+        io.mockk.coVerify(exactly = 0) { dao.upsert(any()) }
+        vm.retryCompletionRefresh()
+        assertNotNull(vm.state.value.completionRefreshError)
+        val gate = CompletableDeferred<WorldTemplateEntity>()
+        coEvery { dao.getById(7) } coAnswers { gate.await() }
+        vm.retryCompletionRefresh()
+        vm.retryCompletionRefresh()
+        assertTrue(vm.state.value.isRefreshingCompletion)
+        vm.updateSummary("读取期间修改")
+        gate.complete(original.copy(summary = "生成摘要", worldPrompt = "生成正文"))
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.completionRefreshError)
+        assertEquals("读取期间修改", vm.state.value.summary)
+        assertEquals("生成正文", vm.state.value.worldPrompt)
+        assertTrue(vm.state.value.isDirty)
+        io.mockk.coVerify(exactly = 4) { dao.getById(7) }
+        // A failed result read must not terminate observation of later tasks.
+        tasks.value = listOf(task)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.isAiCompleting)
+        tasks.value = emptyList()
+        advanceUntilIdle()
+        assertFalse(vm.state.value.isAiCompleting)
+    }
+
+    @Test
+    fun reenteringLoadedEditorKeepsActiveTaskTransition() = runTest(dispatcher) {
+        val original = WorldTemplateEntity(id = 7, templateId = "rain-city", label = "雨城")
+        val task = GenerationTaskEntity(taskKind = "world_template_prompt_ai", title = "补全", status = "RUNNING", payloadJson = "{}", targetWorldTemplateId = 7)
+        val tasks = MutableStateFlow(listOf(task))
+        val dao = mockk<WorldTemplateDao> { coEvery { getById(7) } returns original }
+        val vm = createViewModel(dao, tasks)
+        vm.load(7)
+        vm.load(7)
+        assertTrue(vm.state.value.isAiCompleting)
+        coEvery { dao.getById(7) } returns original.copy(worldPrompt = "完成设定")
+        tasks.value = emptyList()
+        advanceUntilIdle()
+        assertEquals("完成设定", vm.state.value.worldPrompt)
+        assertFalse(vm.state.value.isAiCompleting)
+    }
+
+    @Test
+    fun olderRetryCannotOverwriteANewerCompletion() = runTest(dispatcher) {
+        val original = WorldTemplateEntity(id = 7, templateId = "rain-city", label = "雨城")
+        val task = GenerationTaskEntity(taskKind = "world_template_prompt_ai", title = "补全", status = "RUNNING", payloadJson = "{}", targetWorldTemplateId = 7)
+        val tasks = MutableStateFlow(listOf(task))
+        val dao = mockk<WorldTemplateDao> { coEvery { getById(7) } returns original }
+        val vm = createViewModel(dao, tasks)
+        vm.load(7)
+        coEvery { dao.getById(7) } throws IllegalStateException("read failed")
+        tasks.value = emptyList()
+        advanceUntilIdle()
+        val oldRead = CompletableDeferred<WorldTemplateEntity>()
+        coEvery { dao.getById(7) } coAnswers { oldRead.await() }
+        vm.retryCompletionRefresh()
+        tasks.value = listOf(task)
+        advanceUntilIdle()
+        coEvery { dao.getById(7) } returns original.copy(worldPrompt = "最新正文")
+        tasks.value = emptyList()
+        advanceUntilIdle()
+        oldRead.complete(original.copy(worldPrompt = "过时正文"))
+        advanceUntilIdle()
+        assertEquals("最新正文", vm.state.value.worldPrompt)
+        assertFalse(vm.state.value.isRefreshingCompletion)
+        assertEquals(null, vm.state.value.completionRefreshError)
+    }
+
 }

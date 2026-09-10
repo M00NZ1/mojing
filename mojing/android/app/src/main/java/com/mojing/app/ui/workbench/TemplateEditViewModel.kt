@@ -41,6 +41,8 @@ data class TemplateEditState(
     val coverImagePath: String = "",
     val isAiCompleting: Boolean = false,
     val isSaving: Boolean = false,
+    val isRefreshingCompletion: Boolean = false,
+    val completionRefreshError: String? = null,
     val isLoaded: Boolean = false,
     val loadError: String? = null,
     val isPersisted: Boolean = false,
@@ -109,6 +111,7 @@ class TemplateEditViewModel @Inject constructor(
     private var currentEntity: WorldTemplateEntity? = null
     private var loadedForRowId: Long? = null
     private var genObserveJob: Job? = null
+    private var completionReadRevision = 0L
     private var prevTemplateGenBusy = false
     private var savedDraft = _state.value.toDraftSnapshot()
 
@@ -125,30 +128,58 @@ class TemplateEditViewModel @Inject constructor(
         genObserveJob = viewModelScope.launch {
             generationQueueProcessor.observeActiveForTemplate(rowId).collectLatest { list ->
                 val busy = list.isNotEmpty()
-                if (prevTemplateGenBusy && !busy && loadedForRowId == rowId) {
-                    val t = templateDao.getById(rowId)
-                    if (t != null) {
-                        val current = _state.value
-                        val previousSavedDraft = savedDraft
-                        val persisted = current.withPersistedDraft(t).copy(isDirty = false)
-                        savedDraft = persisted.toDraftSnapshot()
-                        val updated = if (current.toDraftSnapshot() != previousSavedDraft) {
-                            current.copy(
-                                summary = if (current.summary == previousSavedDraft.summary) t.summary else current.summary,
-                                worldPrompt = if (current.worldPrompt == previousSavedDraft.worldPrompt) t.worldPrompt else current.worldPrompt,
-                                isPersisted = true,
-                            )
-                        } else {
-                            persisted
-                        }
-                        currentEntity = t
-                        _state.value = updated.copy(
-                            isDirty = updated.toDraftSnapshot() != savedDraft,
-                        )
-                    }
-                }
+                if (loadedForRowId != rowId) return@collectLatest
+                val shouldRefresh = prevTemplateGenBusy && !busy
                 prevTemplateGenBusy = busy
-                _state.value = _state.value.copy(isAiCompleting = busy)
+                if (busy) completionReadRevision++
+                _state.value = _state.value.copy(isAiCompleting = busy, isRefreshingCompletion = false)
+                if (shouldRefresh) {
+                    _state.value = _state.value.copy(isRefreshingCompletion = true)
+                    refreshCompletion(rowId)
+                }
+            }
+        }
+    }
+
+    fun retryCompletionRefresh() {
+        val rowId = loadedForRowId ?: return
+        val s = _state.value
+        if (s.completionRefreshError == null || s.isRefreshingCompletion || s.isAiCompleting || s.isSaving) return
+        _state.value = s.copy(isRefreshingCompletion = true)
+        viewModelScope.launch { refreshCompletion(rowId) }
+    }
+
+    private suspend fun refreshCompletion(rowId: Long) {
+        val revision = ++completionReadRevision
+        try {
+            val entity = templateDao.getById(rowId)
+                ?: throw IllegalStateException("Template missing")
+            if (loadedForRowId != rowId || revision != completionReadRevision || _state.value.isAiCompleting) return
+            val current = _state.value
+            val previousSavedDraft = savedDraft
+            val persisted = current.withPersistedDraft(entity).copy(isDirty = false)
+            val updated = if (current.toDraftSnapshot() != previousSavedDraft) {
+                current.copy(
+                    summary = if (current.summary == previousSavedDraft.summary) entity.summary else current.summary,
+                    worldPrompt = if (current.worldPrompt == previousSavedDraft.worldPrompt) entity.worldPrompt else current.worldPrompt,
+                    isPersisted = true,
+                )
+            } else persisted
+            currentEntity = entity
+            savedDraft = persisted.toDraftSnapshot()
+            _state.value = updated.copy(
+                isDirty = updated.toDraftSnapshot() != savedDraft,
+                completionRefreshError = null,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            if (loadedForRowId == rowId && revision == completionReadRevision) {
+                _state.value = _state.value.copy(completionRefreshError = "暂时无法读取补全结果，编辑内容已保留。请重新读取后继续保存。")
+            }
+        } finally {
+            if (loadedForRowId == rowId && revision == completionReadRevision) {
+                _state.value = _state.value.copy(isRefreshingCompletion = false)
             }
         }
     }
@@ -172,12 +203,12 @@ class TemplateEditViewModel @Inject constructor(
             else -> 0L
         }
         if (effectiveId > 0L && loadedForRowId == effectiveId && _state.value.isLoaded && currentEntity != null) {
-            startTemplateQueueObservation(effectiveId)
+            if (genObserveJob?.isActive != true) startTemplateQueueObservation(effectiveId)
             syncPublicLlmKeyFromStorage()
             return
         }
         loadedForRowId = effectiveId
-        startTemplateQueueObservation(effectiveId)
+        genObserveJob?.cancel()
         _state.value = _state.value.copy(isLoaded = false, loadError = null)
         viewModelScope.launch {
             try {
@@ -211,6 +242,7 @@ class TemplateEditViewModel @Inject constructor(
                 }
                 savedDraft = loaded.toDraftSnapshot()
                 _state.value = loaded
+                startTemplateQueueObservation(effectiveId)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -381,6 +413,7 @@ class TemplateEditViewModel @Inject constructor(
 
     fun aiCompleteWorldPrompt() {
         val s = _state.value
+        if (s.isSaving || s.isAiCompleting || s.isRefreshingCompletion || s.completionRefreshError != null) return
         val rowId = loadedForRowId ?: run {
             showSnackbar("无法识别模板，请重新进入编辑页")
             return
@@ -428,7 +461,7 @@ class TemplateEditViewModel @Inject constructor(
 
     fun save() {
         val s = _state.value
-        if (s.isSaving || s.isAiCompleting || !s.isLoaded || s.loadError != null) return
+        if (s.isSaving || s.isAiCompleting || s.isRefreshingCompletion || s.completionRefreshError != null || !s.isLoaded || s.loadError != null) return
         if (s.label.isBlank()) {
             showSnackbar(UserFacingStrings.templateLabelRequired())
             return
