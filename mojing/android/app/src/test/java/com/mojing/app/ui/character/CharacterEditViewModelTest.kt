@@ -136,6 +136,67 @@ class CharacterEditViewModelTest {
     }
 
     @Test
+    fun samplingDraftKeepsIntermediateTextAndSavesParsedNumbers() = runTest(dispatcher) {
+        var stored = CharacterEntity(id = 7L, name = "林云")
+        val dao = mockk<CharacterDao> { coEvery { getById(7L) } answers { stored } }
+        val save = mockk<SaveCharacterBindingUseCase> {
+            coEvery { this@mockk.invoke(any()) } answers { stored = firstArg(); 7L }
+        }
+        val vm = createSubject(dao, saveCharacterBinding = save).viewModel
+        vm.load(7L)
+        vm.updateTemperature("")
+        assertEquals("", vm.state.value.temperature)
+        assertTrue(vm.state.value.isDirty)
+        vm.save(7L)
+        coVerify(exactly = 0) { save(any()) }
+        vm.updateTemperature("0.")
+        assertEquals("0.", vm.state.value.temperature)
+        vm.updateTemperature("0.75")
+        vm.updatePresencePenalty("-")
+        assertEquals("-", vm.state.value.presencePenalty)
+        vm.updatePresencePenalty("-0.25")
+        vm.updateFrequencyPenalty("0.125")
+        vm.updateTopP("0.95")
+        vm.updateMaxTokens("2048")
+        vm.save(7L)
+
+        assertEquals(0.75f, stored.temperature)
+        assertEquals(-0.25f, stored.presencePenalty)
+        assertEquals(0.125f, stored.frequencyPenalty)
+        assertEquals(0.95f, stored.topP)
+        assertEquals(2048, stored.maxTokens)
+        assertFalse(vm.state.value.isDirty)
+    }
+
+    @Test
+    fun invalidSamplingValuesBlockSaveAndExportWithoutDiscardingDraft() = runTest(dispatcher) {
+        val dao = mockk<CharacterDao> {
+            coEvery { getById(7L) } returns CharacterEntity(id = 7L, name = "林云")
+        }
+        val subject = createSubject(dao)
+        val vm = subject.viewModel
+        vm.load(7L)
+        for (input in listOf("NaN", "Infinity", "1e999", "-", "")) {
+            vm.updateTemperature(input)
+            vm.save(7L)
+            assertEquals(input, vm.state.value.temperature)
+            assertNotNull(vm.state.value.samplingError())
+        }
+        var exportFinished = false
+        vm.buildTavernPngExport(7L) { result -> assertEquals(null, result); exportFinished = true }
+        assertTrue(exportFinished)
+        assertTrue(vm.state.value.exportMessage.orEmpty().contains("温度"))
+        vm.updateTemperature("0.9")
+        for (input in listOf("0", "-1", "1.5", "99999999999999")) {
+            vm.updateMaxTokens(input)
+            vm.save(7L)
+            assertNotNull(vm.state.value.samplingError())
+        }
+        coVerify(exactly = 0) { subject.saveCharacterBinding(any()) }
+        assertTrue(vm.state.value.isDirty)
+    }
+
+    @Test
     fun newCharacterBecomesPersistedAfterFirstSave() = runTest(dispatcher) {
         val persisted = CharacterEntity(id = 11L, name = "初雪")
         val dao = mockk<CharacterDao> {

@@ -651,21 +651,20 @@ fun CharacterEditScreen(
             HorizontalDivider()
             Text("采样参数", style = MaterialTheme.typography.titleMedium)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(value = state.temperature.toString(), onValueChange = { v -> v.toFloatOrNull()?.let { viewModel.updateTemperature(it) } }, label = { Text("温度") }, placeholder = { Text("0.9") }, modifier = Modifier.weight(1f), singleLine = true)
-                OutlinedTextField(value = state.maxTokens.toString(), onValueChange = { v -> v.toIntOrNull()?.let { viewModel.updateMaxTokens(it) } }, label = { Text("最大Token") }, placeholder = { Text("1200") }, modifier = Modifier.weight(1f), singleLine = true)
+                SamplingParameterField(state.temperature, viewModel::updateTemperature, "温度", Modifier.weight(1f))
+                SamplingParameterField(state.maxTokens, viewModel::updateMaxTokens, "最大 Token", Modifier.weight(1f), integer = true)
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(value = state.topP.toString(), onValueChange = { v -> v.toFloatOrNull()?.let { viewModel.updateTopP(it) } }, label = { Text("Top P") }, placeholder = { Text("1.0") }, modifier = Modifier.weight(1f), singleLine = true)
-                OutlinedTextField(value = state.presencePenalty.toString(), onValueChange = { v -> v.toFloatOrNull()?.let { viewModel.updatePresencePenalty(it) } }, label = { Text("存在惩罚") }, placeholder = { Text("0.0") }, modifier = Modifier.weight(1f), singleLine = true)
+                SamplingParameterField(state.topP, viewModel::updateTopP, "Top P", Modifier.weight(1f))
+                SamplingParameterField(state.presencePenalty, viewModel::updatePresencePenalty, "存在惩罚", Modifier.weight(1f), signed = true)
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = state.frequencyPenalty.toString(),
-                    onValueChange = { v -> v.toFloatOrNull()?.let { viewModel.updateFrequencyPenalty(it) } },
-                    label = { Text("频率惩罚") },
-                    placeholder = { Text("0.0") },
+                SamplingParameterField(
+                    value = state.frequencyPenalty,
+                    onValueChange = viewModel::updateFrequencyPenalty,
+                    label = "频率惩罚",
                     modifier = Modifier.weight(1f),
-                    singleLine = true,
+                    signed = true,
                 )
                 Spacer(modifier = Modifier.weight(1f))
             }

@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Android 角色采样参数输入 | 8 项角色 ViewModel 测试通过，覆盖中间输入、数值保存、无效数值与导出拦截；主源码及界面测试源码编译通过 | `CharacterEditViewModelTest` |
 | Android 长文本输入 | Debug 应用与测试 APK 构建通过；Android 35 默认尺寸、320dp 宽度各通过 1 项界面测试，覆盖 200 段文本、展开收起与编辑保留 | `MoJingLongTextFieldTest`；`.codex-work/android-ui-20260910/long-field-tests.txt`、`long-field-small-tests.txt` |
 | Android 百科浏览与刷新 | 14 项详情 ViewModel 测试通过，覆盖返回标签、确认后刷新、分类往返、旧查询晚到、删除预览与百科隔离 | `EncyclopediaDetailViewModelTest` |
 | Android 沉淀列表筛选与样式 | Kotlin 主源码编译通过；本批界面未单独运行 | `gradlew.bat compileDebugKotlin` |

@@ -53,11 +53,11 @@ data class CharacterEditState(
     val apiKey: String = "",
     val apiBaseUrl: String = "",
     val modelName: String = "",
-    val temperature: Float = 0.9f,
-    val maxTokens: Int = 1200,
-    val topP: Float = 1.0f,
-    val frequencyPenalty: Float = 0.0f,
-    val presencePenalty: Float = 0.0f,
+    val temperature: String = "0.9",
+    val maxTokens: String = "1200",
+    val topP: String = "1.0",
+    val frequencyPenalty: String = "0.0",
+    val presencePenalty: String = "0.0",
     val avatarColor: String = "#F97316",
     val avatarImagePath: String = "",
     val cardImagePath: String = "",
@@ -98,17 +98,25 @@ data class CharacterEditState(
     val encyclopediaOptions: List<EncyclopediaEntity> = emptyList(),
 )
 
+internal fun CharacterEditState.samplingError(): String? = listOf(
+    "温度" to samplingParameterError(temperature),
+    "最大 Token" to samplingParameterError(maxTokens, integer = true),
+    "Top P" to samplingParameterError(topP),
+    "频率惩罚" to samplingParameterError(frequencyPenalty),
+    "存在惩罚" to samplingParameterError(presencePenalty),
+).firstOrNull { it.second != null }?.let { "${it.first}：${it.second}" }
+
 private data class CharacterDraftSnapshot(
     val name: String,
     val personaPrompt: String,
     val apiKey: String,
     val apiBaseUrl: String,
     val modelName: String,
-    val temperature: Float,
-    val maxTokens: Int,
-    val topP: Float,
-    val frequencyPenalty: Float,
-    val presencePenalty: Float,
+    val temperature: String,
+    val maxTokens: String,
+    val topP: String,
+    val frequencyPenalty: String,
+    val presencePenalty: String,
     val avatarColor: String,
     val avatarImagePath: String,
     val cardImagePath: String,
@@ -163,11 +171,11 @@ private fun CharacterEditState.withPersistedDraft(
     apiKey = entity.apiKey,
     apiBaseUrl = entity.apiBaseUrl,
     modelName = entity.modelName,
-    temperature = entity.temperature,
-    maxTokens = entity.maxTokens,
-    topP = entity.topP,
-    frequencyPenalty = entity.frequencyPenalty,
-    presencePenalty = entity.presencePenalty,
+    temperature = entity.temperature.toString(),
+    maxTokens = entity.maxTokens.toString(),
+    topP = entity.topP.toString(),
+    frequencyPenalty = entity.frequencyPenalty.toString(),
+    presencePenalty = entity.presencePenalty.toString(),
     avatarColor = entity.avatarColor,
     avatarImagePath = entity.avatarImagePath,
     cardImagePath = entity.cardImagePath,
@@ -360,11 +368,11 @@ class CharacterEditViewModel @Inject constructor(
     fun updateVoiceApiBaseUrl(v: String) = updateDraft { it.copy(voiceApiBaseUrl = v) }
     fun updateVoiceApiKey(v: String) = updateDraft { it.copy(voiceApiKey = v) }
     fun updateVoiceModel(v: String) = updateDraft { it.copy(voiceModel = v) }
-    fun updateTemperature(v: Float) = updateDraft { it.copy(temperature = v) }
-    fun updateMaxTokens(v: Int) = updateDraft { it.copy(maxTokens = v) }
-    fun updateTopP(v: Float) = updateDraft { it.copy(topP = v) }
-    fun updateFrequencyPenalty(v: Float) = updateDraft { it.copy(frequencyPenalty = v) }
-    fun updatePresencePenalty(v: Float) = updateDraft { it.copy(presencePenalty = v) }
+    fun updateTemperature(v: String) = updateDraft { it.copy(temperature = v) }
+    fun updateMaxTokens(v: String) = updateDraft { it.copy(maxTokens = v) }
+    fun updateTopP(v: String) = updateDraft { it.copy(topP = v) }
+    fun updateFrequencyPenalty(v: String) = updateDraft { it.copy(frequencyPenalty = v) }
+    fun updatePresencePenalty(v: String) = updateDraft { it.copy(presencePenalty = v) }
     fun updateAvatarColor(v: String) = updateDraft { it.copy(avatarColor = v) }
     /**
      * 若竖屏封面与头像曾指向同一文件，改头像前先复制一份给封面，避免「换头像封面跟着变」。
@@ -568,6 +576,10 @@ class CharacterEditViewModel @Inject constructor(
         viewModelScope.launch {
             val submittedState = _state.value
             val submittedDraft = submittedState.toDraftSnapshot()
+            submittedState.samplingError()?.let {
+                showSnackbar(it)
+                return@launch
+            }
             if (submittedState.name.isBlank()) {
                 showSnackbar(UserFacingStrings.characterNameRequired())
                 return@launch
@@ -595,11 +607,11 @@ class CharacterEditViewModel @Inject constructor(
                     apiKey = submittedState.apiKey,
                     apiBaseUrl = submittedState.apiBaseUrl,
                     modelName = submittedState.modelName,
-                    temperature = submittedState.temperature,
-                    maxTokens = submittedState.maxTokens,
-                    topP = submittedState.topP,
-                    frequencyPenalty = submittedState.frequencyPenalty,
-                    presencePenalty = submittedState.presencePenalty,
+                    temperature = submittedState.temperature.trim().toFloat(),
+                    maxTokens = submittedState.maxTokens.trim().toInt(),
+                    topP = submittedState.topP.trim().toFloat(),
+                    frequencyPenalty = submittedState.frequencyPenalty.trim().toFloat(),
+                    presencePenalty = submittedState.presencePenalty.trim().toFloat(),
                     avatarColor = submittedState.avatarColor,
                     avatarImagePath = submittedState.avatarImagePath,
                     cardImagePath = submittedState.cardImagePath,
@@ -671,6 +683,7 @@ class CharacterEditViewModel @Inject constructor(
 
     private suspend fun mergedEntityForExport(routeCharacterId: Long): CharacterEntity? {
         val s = _state.value
+        s.samplingError()?.let { throw IllegalArgumentException(it) }
         val base = currentEntity
             ?: (if (routeCharacterId != 0L) characterDao.getById(routeCharacterId) else null)
             ?: return null
@@ -679,11 +692,11 @@ class CharacterEditViewModel @Inject constructor(
             personaPrompt = s.personaPrompt,
             apiBaseUrl = s.apiBaseUrl,
             modelName = s.modelName,
-            temperature = s.temperature,
-            maxTokens = s.maxTokens,
-            topP = s.topP,
-            frequencyPenalty = s.frequencyPenalty,
-            presencePenalty = s.presencePenalty,
+            temperature = s.temperature.trim().toFloat(),
+            maxTokens = s.maxTokens.trim().toInt(),
+            topP = s.topP.trim().toFloat(),
+            frequencyPenalty = s.frequencyPenalty.trim().toFloat(),
+            presencePenalty = s.presencePenalty.trim().toFloat(),
             avatarColor = s.avatarColor,
             avatarImagePath = s.avatarImagePath,
             cardImagePath = s.cardImagePath,
