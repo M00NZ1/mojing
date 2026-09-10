@@ -7,6 +7,7 @@ import { confirmModal } from '../components/ConfirmModal';
 import WorldJobHistory from '../components/WorldJobHistory';
 import CreationHomeLink from '../components/CreationHomeLink';
 import InlineQueryError from '../components/InlineQueryError';
+import ExpandableTextArea from '../components/ExpandableTextArea';
 import UiIcon from '../components/UiIcon';
 import { useUndoDelete } from '../components/UndoToast';
 import { useWorldDraft } from '../hooks/useWorldDraft';
@@ -21,6 +22,20 @@ import type {
   WorldTemplateBundlePreview,
   WorldTemplatePackage,
 } from '../types';
+
+function worldTemplateSnapshot(template: WorldTemplate): string {
+  return JSON.stringify({
+    templateId: template.template_id,
+    templateLabel: template.label,
+    templateCategory: template.category,
+    templateSummary: template.summary,
+    templateGameplayMode: template.gameplay_mode,
+    templatePrompt: template.world_prompt,
+    templateCoverImagePath: template.cover_image_path ?? '',
+    templateChoices: (template.suggested_choices ?? []).join('\n'),
+    templateAntiCheat: template.anti_cheat_prompt,
+  });
+}
 
 const WORLD_TYPE_OPTIONS = ['修仙', '玄幻', '剑与魔法', 'DND', '战锤', '都市', '校园', '科幻', '赛博朋克', '克苏鲁', '其他'];
 
@@ -165,6 +180,8 @@ export default function WorkbenchPage() {
   const [exportingBundle, setExportingBundle] = useState(false);
   const [lastTemplateResult, setLastTemplateResult] = useState<{ search: string; items: WorldTemplate[] } | null>(null);
   const [templateBaseline, setTemplateBaseline] = useState('');
+  const templateFormRevision = useRef(0);
+  const templateSaveSubmitting = useRef(false);
 
   const charactersQuery = useQuery({ queryKey: ['characters'], queryFn: api.listCharacters });
   const worldTemplatesQuery = useQuery({
@@ -192,6 +209,8 @@ export default function WorkbenchPage() {
     templateChoices,
     templateAntiCheat,
   }), [templateAntiCheat, templateCategory, templateChoices, templateCoverImagePath, templateGameplayMode, templateId, templateLabel, templatePrompt, templateSummary]);
+  const currentTemplateSnapshot = useRef(templateDraftSnapshot);
+  currentTemplateSnapshot.current = templateDraftSnapshot;
   const isTemplateDirty = Boolean(templateId) && Boolean(templateBaseline) && templateDraftSnapshot !== templateBaseline;
 
   const templateNavigationBlocker = useBlocker(({ currentLocation, nextLocation }) =>
@@ -381,29 +400,46 @@ export default function WorkbenchPage() {
   });
 
   const saveTemplateMutation = useMutation({
-    mutationFn: async () => {
-      if (!templateLabel.trim()) {
-        throw new Error('请填写「模板名称」（必填）');
-      }
-      if (!templateEditing && !templateId.trim()) {
-        throw new Error('新建时请填写「模板 ID」（英文唯一标识，必填）');
-      }
-      const payload = { label: templateLabel, category: templateCategory, summary: templateSummary, gameplay_mode: templateGameplayMode, world_prompt: templatePrompt, cover_image_path: templateCoverImagePath, suggested_choices: templateChoices.split('\n').map((item) => item.trim()).filter(Boolean), anti_cheat_prompt: templateAntiCheat };
-      return templateEditing ? api.updateWorldTemplate(templateEditing.template_id, payload) : api.createWorldTemplate({ template_id: templateId.trim(), ...payload });
+    mutationFn: async (request: { payload: Parameters<typeof api.createWorldTemplate>[0]; editingId: string | null; snapshot: string; revision: number }) => {
+      if (!request.payload.label.trim()) throw new Error('请填写世界名称');
+      if (!request.payload.template_id.trim()) throw new Error('缺少世界标识，请重新打开新建表单');
+      const { template_id: _id, ...updates } = request.payload;
+      return request.editingId ? api.updateWorldTemplate(request.editingId, updates) : api.createWorldTemplate(request.payload);
     },
-    onSuccess: async (payload) => {
-      fillTemplateForm(payload);
+    onSuccess: async (saved, request) => {
+      if (templateFormRevision.current === request.revision) {
+        if (currentTemplateSnapshot.current === request.snapshot) fillTemplateForm(saved);
+        else {
+          setTemplateEditing(saved);
+          setTemplateId(saved.template_id);
+          setTemplateBaseline(worldTemplateSnapshot(saved));
+        }
+      }
       await queryClient.invalidateQueries({ queryKey: ['world-templates'] });
-      showToast('世界模板已保存', 'success');
+      showToast('世界设定已保存', 'success');
     },
     onError: (e) => showToast(String(e), 'error'),
+    onSettled: () => { templateSaveSubmitting.current = false; },
   });
 
+  function saveTemplateForm() {
+    if (templateSaveSubmitting.current) return;
+    templateSaveSubmitting.current = true;
+    saveTemplateMutation.mutate({
+      editingId: templateEditing?.template_id ?? null,
+      snapshot: templateDraftSnapshot,
+      revision: templateFormRevision.current,
+      payload: { template_id: templateId.trim(), label: templateLabel, category: templateCategory,
+        summary: templateSummary, gameplay_mode: templateGameplayMode, world_prompt: templatePrompt,
+        cover_image_path: templateCoverImagePath, suggested_choices: templateChoices.split('\n').map(item => item.trim()).filter(Boolean),
+        anti_cheat_prompt: templateAntiCheat },
+    });
+  }
+
   const deleteTemplateMutation = useMutation({
-    mutationFn: (id: string) => api.deleteWorldTemplate(id),
-    onSuccess: async () => {
-      clearTemplateForm();
-      setManageQualityReport(null);
+    mutationFn: (request: { id: string; revision: number }) => api.deleteWorldTemplate(request.id),
+    onSuccess: async (_result, request) => {
+      if (templateFormRevision.current === request.revision && templateEditing?.template_id === request.id) clearTemplateForm();
       await queryClient.invalidateQueries({ queryKey: ['world-templates'] });
       showToast('已删除该世界模板', 'success');
     },
@@ -486,25 +522,17 @@ export default function WorkbenchPage() {
   }
 
   function fillTemplateForm(template: WorldTemplate) {
+    templateFormRevision.current++;
     setManageQualityReport(null);
     setTemplateEditing(template); setTemplateId(template.template_id); setTemplateLabel(template.label);
     setTemplateCategory(template.category); setTemplateSummary(template.summary); setTemplateGameplayMode(template.gameplay_mode);
     setTemplatePrompt(template.world_prompt); setTemplateCoverImagePath(template.cover_image_path ?? '');
     setTemplateChoices((template.suggested_choices ?? []).join('\n')); setTemplateAntiCheat(template.anti_cheat_prompt);
-    setTemplateBaseline(JSON.stringify({
-      templateId: template.template_id,
-      templateLabel: template.label,
-      templateCategory: template.category,
-      templateSummary: template.summary,
-      templateGameplayMode: template.gameplay_mode,
-      templatePrompt: template.world_prompt,
-      templateCoverImagePath: template.cover_image_path ?? '',
-      templateChoices: (template.suggested_choices ?? []).join('\n'),
-      templateAntiCheat: template.anti_cheat_prompt,
-    }));
+    setTemplateBaseline(worldTemplateSnapshot(template));
   }
 
   function clearTemplateForm() {
+    templateFormRevision.current++;
     setTemplateEditing(null); setTemplateId(''); setTemplateLabel(''); setTemplateCategory('通用');
     setTemplateSummary(''); setTemplateGameplayMode('自由剧情'); setTemplatePrompt(''); setTemplateCoverImagePath('');
     setTemplateChoices(''); setTemplateAntiCheat('');
@@ -797,7 +825,7 @@ export default function WorkbenchPage() {
                     <button type="button" className="btn btn-primary btn-sm" onClick={() => { void openTemplateForm(template); }}><UiIcon name="edit" />编辑</button>
                     <button type="button" className="btn btn-ghost btn-sm" onClick={() => void handleExportTemplate(template.template_id)} disabled={exportingTemplateId === template.template_id}><UiIcon name="archive" />导出</button>
                     {!template.is_builtin && (
-                      <button type="button" className="btn btn-ghost btn-sm btn-danger" onClick={() => { triggerDelete(template.label, () => deleteTemplateMutation.mutate(template.template_id), () => {}); }}><UiIcon name="delete" />删除</button>
+                      <button type="button" className="btn btn-ghost btn-sm btn-danger" onClick={() => { const revision = templateFormRevision.current; triggerDelete(template.label, () => deleteTemplateMutation.mutate({ id: template.template_id, revision }), () => {}); }}><UiIcon name="delete" />删除</button>
                     )}
                   </div>
                 </div>
@@ -809,22 +837,22 @@ export default function WorkbenchPage() {
           {(templateId || templateEditing) && (
             <div className="page-card" style={{ borderColor: 'var(--accent)' }}>
               <div className="card-header">
-                <div><p className="eyebrow">{templateEditing ? '编辑世界' : '新世界'}</p><h2>{templateEditing ? templateEditing.label : '建立一个空白世界'}</h2></div>
+                <div><p className="eyebrow">{templateEditing ? '编辑世界' : '新世界'}</p><h2>{templateEditing ? templateEditing.label : '建立一个空白世界'}</h2><span className="pill" role="status">{isTemplateDirty ? '未保存' : templateEditing ? '已保存' : '待填写'}</span></div>
                 <button type="button" className="btn btn-ghost btn-sm" onClick={() => { void closeTemplateForm(); }}><UiIcon name="close" />关闭</button>
               </div>
-              <form className="form-grid" onSubmit={(event) => { event.preventDefault(); saveTemplateMutation.mutate(); }}>
+              <form className="form-grid" onSubmit={(event) => { event.preventDefault(); saveTemplateForm(); }}>
                 <div className="form-group"><label className="required" htmlFor="world-template-label">世界名称</label><input id="world-template-label" value={templateLabel} onChange={(event) => setTemplateLabel(event.target.value)} required placeholder="例如：雾海诸国" /></div>
                 <div className="form-group"><label htmlFor="world-template-category">分类</label><input id="world-template-category" value={templateCategory} onChange={(event) => setTemplateCategory(event.target.value)} /></div>
                 <div className="form-group"><label htmlFor="world-template-mode">玩法模式</label><input id="world-template-mode" value={templateGameplayMode} onChange={(event) => setTemplateGameplayMode(event.target.value)} /></div>
                 <div className="full-row form-group"><label htmlFor="world-template-summary">摘要</label><textarea id="world-template-summary" rows={3} value={templateSummary} onChange={(event) => setTemplateSummary(event.target.value)} /></div>
                 <div className="full-row form-group">
                   <label htmlFor="world-template-prompt">世界背景设定</label>
-                  <textarea id="world-template-prompt" rows={8} value={templatePrompt} onChange={(event) => setTemplatePrompt(event.target.value)} placeholder="描述世界背景、地理、势力、文化与历史…" />
+                  <ExpandableTextArea id="world-template-prompt" value={templatePrompt} onChange={(event) => setTemplatePrompt(event.target.value)} placeholder="描述世界背景、地理、势力、文化与历史…" />
                 </div>
                 <details className="debug-card full-row">
                   <summary>更多设置</summary>
                   <div className="form-group" style={{ marginTop: 8 }}><label htmlFor="world-template-choices">建议开场选择（每行一条）</label><textarea id="world-template-choices" rows={3} value={templateChoices} onChange={(event) => setTemplateChoices(event.target.value)} /></div>
-                  <div className="form-group"><label htmlFor="world-template-rules">固定规则</label><textarea id="world-template-rules" rows={3} value={templateAntiCheat} onChange={(event) => setTemplateAntiCheat(event.target.value)} placeholder="约束角色能力、世界边界或不可违背的设定" /></div>
+                  <div className="form-group"><label htmlFor="world-template-rules">固定规则</label><ExpandableTextArea id="world-template-rules" value={templateAntiCheat} onChange={(event) => setTemplateAntiCheat(event.target.value)} placeholder="约束角色能力、世界边界或不可违背的设定" /></div>
                   {templateCoverImagePath && <div className="guide-inline"><span>已选择封面</span><button type="button" className="btn btn-ghost btn-sm" onClick={() => setTemplateCoverImagePath('')}>移除封面</button></div>}
                   <div className="form-group"><label htmlFor="world-template-cover-search">搜索内置封面</label><input id="world-template-cover-search" value={coverAssetSearch} onChange={(event) => setCoverAssetSearch(event.target.value)} placeholder="按标签搜索" /></div>
                   <div className="stack-list">{coverAssetsQuery.data?.map((asset) => (<article className="mini-card" key={asset.id}><header><strong>{asset.label}</strong><small>{asset.license_name}</small></header><button className="ghost-button" type="button" onClick={() => setTemplateCoverImagePath(asset.storage_path)}>设为封面</button></article>))}</div>
