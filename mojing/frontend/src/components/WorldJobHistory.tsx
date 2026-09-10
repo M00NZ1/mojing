@@ -17,9 +17,9 @@ export default function WorldJobHistory({ onManage, onResume, generationActive =
   const [lorePage, setLorePage] = useState(0);
   const client = useQueryClient();
   const cursor = cursors[cursors.length - 1];
-  const history = useQuery({ queryKey: ['jobs', 'world', 'history', cursor], queryFn: () => api.worldJobHistory(cursor),
+  const history = useQuery({ queryKey: ['jobs', 'world', 'history', cursor], queryFn: ({ signal }) => api.worldJobHistory(cursor, signal), enabled: selected === null, gcTime: 0,
     refetchInterval: (query) => query.state.data?.items.some((job) => ['pending', 'running', 'pause_requested'].includes(job.status)) ? 5000 : false });
-  const detail = useQuery({ queryKey: ['world-result', selected], queryFn: () => api.worldJobResult(selected!), enabled: selected !== null, gcTime: 0, retry: false });
+  const detail = useQuery({ queryKey: ['world-result', selected], queryFn: ({ signal }) => api.worldJobResult(selected!, signal), enabled: selected !== null, gcTime: 0, retry: false });
   const savingRecords = useMutationState({ filters: { mutationKey: ['save-world-result'], exact: true },
     select: (mutation) => ({ id: mutation.state.variables as number, status: mutation.state.status, error: mutation.state.error }) });
   const selectedSaves = savingRecords.filter((record) => record.id === selected);

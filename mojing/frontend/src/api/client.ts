@@ -1154,10 +1154,10 @@ export const api = {
   runWorldJob(id: number, signal?: AbortSignal) { return request<{ status: 'succeeded' | 'paused'; result: WorldGenerationResult | null }>(`/jobs/${id}/run-world`, { method: 'POST', signal }); },
   pauseWorldJob(id: number) { return request(`/jobs/${id}/pause-world`, { method: 'POST' }); },
   worldJobProgress(id: number) { return request<{ status: string; completed_steps: number | null; stage_label: string | null; can_resume: boolean }>(`/jobs/${id}/world-progress`); },
-  worldJobHistory(beforeId?: number) {
-    return request<{ items: WorldJobSummary[]; next_cursor: number | null }>(`/jobs/world-history${beforeId ? `?before_id=${beforeId}` : ''}`);
+  worldJobHistory(beforeId?: number, signal?: AbortSignal) {
+    return request<{ items: WorldJobSummary[]; next_cursor: number | null }>(`/jobs/world-history${beforeId ? `?before_id=${beforeId}` : ''}`, { signal });
   },
-  worldJobResult(jobId: number) { return request<WorldGenerationResult>(`/jobs/${jobId}/world-result`); },
+  worldJobResult(jobId: number, signal?: AbortSignal) { return request<WorldGenerationResult>(`/jobs/${jobId}/world-result`, { signal }); },
   saveWorldJobResult(jobId: number) { return request<WorldGenerationResult>(`/jobs/${jobId}/save-world`, { method: 'POST' }); },
   async createUserMessageWithFiles(sessionId: number, payload: { content: string; files: File[]; branch_id?: string }, signal?: AbortSignal) {
     const formData = new FormData();
