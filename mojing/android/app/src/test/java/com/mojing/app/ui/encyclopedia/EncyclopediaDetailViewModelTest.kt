@@ -34,13 +34,64 @@ import org.junit.Test
 class EncyclopediaDetailViewModelTest {
     private val dispatcher = UnconfinedTestDispatcher()
 
+    @Test fun sedimentPagingIsBoundedAndFilterChangesSupersedePendingPages() = runTest(dispatcher) {
+        val dao = mockk<EncyclopediaDao>(relaxed = true)
+        val entries = mockk<EncyclopediaEntryDao>(relaxed = true)
+        coEvery { dao.getById(1) } returns EncyclopediaEntity(id = 1, name = "世界")
+        val rows = (205L downTo 1L).map { EncyclopediaEntryEntity(id = it, encyclopediaId = 1, confidence = "inferred") }
+        coEvery { entries.getSedimentPage(1, any(), any()) } answers { rows.filter { it.id < secondArg<Long>() }.take(101) }
+        coEvery { entries.countSediment(1, false) } returns 205
+        val savedState = androidx.lifecycle.SavedStateHandle()
+        val vm = createViewModel(dao, entries, savedStateHandle = savedState)
+        vm.load(1)
+        assertEquals(100, vm.state.value.sedimentEntries.size)
+        assertEquals(205, vm.state.value.sedimentTotal)
+        assertTrue(vm.state.value.sedimentHasNext)
+        val pending = kotlinx.coroutines.CompletableDeferred<List<EncyclopediaEntryEntity>>()
+        coEvery { entries.getSedimentPage(1, 106, "all") } coAnswers { pending.await() }
+        vm.nextSedimentPage()
+        vm.nextSedimentPage()
+        assertTrue(vm.state.value.sedimentLoading)
+        assertEquals(listOf(Long.MAX_VALUE, 106L), vm.state.value.sedimentCursors)
+        io.mockk.coVerify(exactly = 1) { entries.getSedimentPage(1, 106, "all") }
+        coEvery { entries.getSedimentPage(1, Long.MAX_VALUE, "pending") } throws IllegalStateException("read failed")
+        vm.setSedimentFilter("pending")
+        assertFalse(vm.state.value.sedimentLoading)
+        assertNotNull(vm.state.value.sedimentError)
+        assertEquals(listOf(Long.MAX_VALUE), vm.state.value.sedimentCursors)
+        pending.complete(rows.takeLast(10))
+        coEvery { entries.getSedimentPage(1, Long.MAX_VALUE, "pending") } returns rows.takeLast(3)
+        vm.reloadSediment()
+        assertEquals(listOf(3L, 2L, 1L), vm.state.value.sedimentEntries.map { it.id })
+        assertFalse(vm.state.value.sedimentHasNext)
+        assertEquals(null, vm.state.value.sedimentError)
+        coEvery { entries.getSedimentPage(1, Long.MAX_VALUE, "pending") } returns rows.take(101)
+        vm.reloadSediment()
+        vm.nextSedimentPage()
+        assertEquals(105L, vm.state.value.sedimentEntries.first().id)
+        vm.load(1)
+        assertEquals("pending", vm.state.value.sedimentFilter)
+        assertEquals(listOf(Long.MAX_VALUE, 106L), vm.state.value.sedimentCursors)
+        assertEquals(105L, vm.state.value.sedimentEntries.first().id)
+        val restored = createViewModel(dao, entries, savedStateHandle = androidx.lifecycle.SavedStateHandle(mapOf(
+            "sediment_filter_1" to savedState.get<String>("sediment_filter_1"),
+            "sediment_cursors_1" to savedState.get<LongArray>("sediment_cursors_1"),
+        )))
+        restored.load(1)
+        assertEquals("pending", restored.state.value.sedimentFilter)
+        assertEquals(listOf(Long.MAX_VALUE, 106L), restored.state.value.sedimentCursors)
+        assertEquals(105L, restored.state.value.sedimentEntries.first().id)
+        vm.previousSedimentPage()
+        assertEquals(205L, vm.state.value.sedimentEntries.first().id)
+    }
+
     @Test fun batchConfirmationPreservesFailureAndRefreshesOnlyEligibleEntries() = runTest(dispatcher) {
         val dao = mockk<EncyclopediaDao>(relaxed = true)
         val entries = mockk<EncyclopediaEntryDao>(relaxed = true)
         coEvery { dao.getById(1) } returns EncyclopediaEntity(id = 1, name = "世界")
         var rows = listOf(EncyclopediaEntryEntity(id = 7, encyclopediaId = 1, confidence = "inferred", sourceSessionId = 9),
             EncyclopediaEntryEntity(id = 8, encyclopediaId = 1, confidence = "confirmed", sourceSessionId = 9))
-        coEvery { entries.getSedimentEntries(1) } answers { rows }
+        coEvery { entries.getSedimentPage(1, any(), any()) } answers { rows }
         coEvery { entries.getByEncyclopedia(1) } answers { rows }
         coEvery { entries.confirmSedimentEntries(1, listOf(7), any()) } throws IllegalStateException("write failed")
         val vm = createViewModel(dao, entries)
@@ -63,7 +114,7 @@ class EncyclopediaDetailViewModelTest {
         val dao = mockk<EncyclopediaDao>(relaxed = true)
         val entries = mockk<EncyclopediaEntryDao>(relaxed = true)
         coEvery { dao.getById(any()) } answers { EncyclopediaEntity(id = firstArg(), name = "世界${firstArg<Long>()}") }
-        coEvery { entries.getSedimentEntries(1) } returns listOf(EncyclopediaEntryEntity(id = 7, encyclopediaId = 1, confidence = "inferred"))
+        coEvery { entries.getSedimentPage(1, any(), any()) } returns listOf(EncyclopediaEntryEntity(id = 7, encyclopediaId = 1, confidence = "inferred"))
         val gate = kotlinx.coroutines.CompletableDeferred<Int>()
         coEvery { entries.confirmSedimentEntries(1, listOf(7), any()) } coAnswers { gate.await() }
         val vm = createViewModel(dao, entries)
@@ -95,6 +146,7 @@ class EncyclopediaDetailViewModelTest {
         entryDao: EncyclopediaEntryDao = mockk(relaxed = true),
         relationDao: EntryRelationDao = mockk(relaxed = true),
         timelineDao: TimelineEventDao = mockk(relaxed = true),
+        savedStateHandle: androidx.lifecycle.SavedStateHandle = androidx.lifecycle.SavedStateHandle(),
     ): EncyclopediaDetailViewModel {
         val secureStorage = mockk<SecureStorage>(relaxed = true)
         every { secureStorage.publicApiKey } returns ""
@@ -111,6 +163,7 @@ class EncyclopediaDetailViewModelTest {
             generationQueueProcessor = queue,
             llmApiService = mockk<LlmApiService>(relaxed = true),
             worldInfoAiConverter = mockk<WorldInfoAiConverter>(relaxed = true),
+            savedStateHandle = savedStateHandle,
         )
     }
 
@@ -138,7 +191,7 @@ class EncyclopediaDetailViewModelTest {
         )
         val entries = mockk<EncyclopediaEntryDao>(relaxed = true) {
             coEvery { getByEncyclopedia(3L) } answers { listOf(note) }
-            coEvery { getSedimentEntries(3L) } answers { listOf(note) }
+            coEvery { getSedimentPage(3L, any(), any()) } answers { listOf(note) }
         }
         val vm = createViewModel(dao, entries)
         vm.load(3L)
@@ -206,7 +259,7 @@ class EncyclopediaDetailViewModelTest {
         }
         val entryDao = mockk<EncyclopediaEntryDao>(relaxed = true) {
             coEvery { getByEncyclopedia(3L) } returns listOf(entry)
-            coEvery { getSedimentEntries(3L) } returns emptyList()
+            coEvery { getSedimentPage(3L, any(), any()) } returns emptyList()
         }
         val relationDao = mockk<EntryRelationDao>(relaxed = true) {
             coEvery { getByEncyclopedia(3L) } returns emptyList()
@@ -387,10 +440,10 @@ class EncyclopediaDetailViewModelTest {
         val vm = createViewModel(dao, entries)
         vm.load(3L)
         val gate = kotlinx.coroutines.CompletableDeferred<List<EncyclopediaEntryEntity>>()
-        coEvery { entries.getSedimentEntries(3L) } coAnswers { gate.await() }
+        coEvery { entries.getSedimentPage(3L, any(), any()) } coAnswers { gate.await() }
         vm.setMainTab(EncyclopediaMainTab.SEDIMENT)
         val confirmed = EncyclopediaEntryEntity(id = 9L, encyclopediaId = 3L, title = "潮汐钟", confidence = "confirmed")
-        coEvery { entries.getSedimentEntries(3L) } returns listOf(confirmed)
+        coEvery { entries.getSedimentPage(3L, any(), any()) } returns listOf(confirmed)
         vm.setMainTab(EncyclopediaMainTab.GRAPH)
         vm.setMainTab(EncyclopediaMainTab.SEDIMENT)
 

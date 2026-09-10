@@ -10,6 +10,36 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class SedimentConfirmationDaoTest {
+    @Test fun sedimentPagesFilterBeforeLimitingAndKeepStableBoundaries() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), AppDatabase::class.java).build()
+        try {
+            db.encyclopediaDao().upsert(EncyclopediaEntity(id = 1, name = "世界"))
+            val dao = db.encyclopediaEntryDao()
+            for (id in 1L..205L) dao.upsert(EncyclopediaEntryEntity(id = id, encyclopediaId = 1,
+                title = "资料$id", content = "原文$id", confidence = if (id % 2L == 0L) "confirmed" else "inferred", sourceSessionId = 8))
+            assertEquals(205, dao.countSediment(1, false))
+            assertEquals(102, dao.countSediment(1, true))
+            for (filter in listOf("all", "pending", "confirmed")) {
+                val seen = mutableListOf<Long>()
+                var cursor = Long.MAX_VALUE
+                do {
+                    val rows = dao.getSedimentPage(1, cursor, filter)
+                    val page = rows.take(100)
+                    seen.addAll(page.map { it.id })
+                    if (rows.size <= 100) break
+                    cursor = page.last().id
+                } while (true)
+                val expected = (205L downTo 1L).filter { filter == "all" || (filter == "confirmed") == (it % 2L == 0L) }
+                assertEquals(expected, seen)
+            }
+            val first = dao.getSedimentPage(1, Long.MAX_VALUE, "all").take(100)
+            dao.confirmSedimentEntries(1, listOf(first.first().id), 9999)
+            val next = dao.getSedimentPage(1, first.last().id, "all")
+            assertEquals(105L, next.first().id)
+            assertEquals("原文105", next.first().content)
+        } finally { db.close() }
+    }
+
     @Test fun confirmationIsScopedIdempotentAndPreservesSourceAndText() = runBlocking {
         val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), AppDatabase::class.java).build()
         try {

@@ -133,22 +133,13 @@ fun EncyclopediaDetailScreen(
     val entryTypeTabs = remember(state.encyclopedia) { filteredEntryTypeTabs(state.encyclopedia) }
     var sedimentBatchMode by remember(encyclopediaId) { mutableStateOf(false) }
     var sedimentSelected by remember(encyclopediaId) { mutableStateOf(emptySet<Long>()) }
-    var sedimentFilter by rememberSaveable(encyclopediaId) { mutableStateOf("all") }
+    val sedimentFilter = state.sedimentFilter
     LaunchedEffect(sedimentFilter) { sedimentSelected = emptySet() }
     LaunchedEffect(state.sedimentEntries) {
         val eligible = state.sedimentEntries.filter { it.confidence != "confirmed" }.map { it.id }.toSet()
         sedimentSelected = sedimentSelected.intersect(eligible)
     }
-    val confirmedSedimentCount = remember(state.sedimentEntries) {
-        state.sedimentEntries.count { it.confidence == "confirmed" }
-    }
-    val filteredSediment = remember(state.sedimentEntries, sedimentFilter) {
-        when (sedimentFilter) {
-            "pending" -> state.sedimentEntries.filter { it.confidence != "confirmed" }
-            "confirmed" -> state.sedimentEntries.filter { it.confidence == "confirmed" }
-            else -> state.sedimentEntries
-        }
-    }
+    val filteredSediment = state.sedimentEntries
 
     LaunchedEffect(encyclopediaId) { viewModel.load(encyclopediaId) }
 
@@ -722,27 +713,30 @@ fun EncyclopediaDetailScreen(
                             item {
                                 FilterChip(
                                     selected = sedimentFilter == "all",
-                                    onClick = { sedimentFilter = "all" },
-                                    label = { Text("全部 ${state.sedimentEntries.size}") },
+                                    onClick = { viewModel.setSedimentFilter("all") },
+                                    label = { Text("全部 ${state.sedimentTotal}") },
                                 )
                             }
                             item {
                                 FilterChip(
                                     selected = sedimentFilter == "pending",
-                                    onClick = { sedimentFilter = "pending" },
-                                    label = { Text("待核对 ${state.sedimentEntries.size - confirmedSedimentCount}") },
+                                    onClick = { viewModel.setSedimentFilter("pending") },
+                                    label = { Text("待核对 ${state.sedimentTotal - state.sedimentConfirmed}") },
                                 )
                             }
                             item {
                                 FilterChip(
                                     selected = sedimentFilter == "confirmed",
-                                    onClick = { sedimentFilter = "confirmed" },
-                                    label = { Text("已确认 $confirmedSedimentCount") },
+                                    onClick = { viewModel.setSedimentFilter("confirmed") },
+                                    label = { Text("已确认 ${state.sedimentConfirmed}") },
                                 )
                             }
                         }
+                        SedimentPageControls(state.sedimentCursors.size, state.sedimentHasNext,
+                            state.sedimentLoading, state.sedimentConfirming, state.sedimentError,
+                            viewModel::previousSedimentPage, viewModel::nextSedimentPage, viewModel::reloadSediment)
                         SedimentBatchControls(
-                            selecting = sedimentBatchMode, selectedCount = sedimentSelected.size, busy = state.sedimentConfirming,
+                            selecting = sedimentBatchMode, selectedCount = sedimentSelected.size, busy = state.sedimentConfirming || state.sedimentLoading,
                             onToggle = { sedimentBatchMode = !sedimentBatchMode; sedimentSelected = emptySet() },
                             onSelect = { sedimentSelected = filteredSediment.filter { it.confidence != "confirmed" }.take(100).map { it.id }.toSet() },
                             onClear = { sedimentSelected = emptySet() },
@@ -757,7 +751,10 @@ fun EncyclopediaDetailScreen(
                             ) {
                                 Text(
                                     when {
-                                        state.sedimentEntries.isEmpty() -> "对话整理出的资料会显示在这里"
+                                        state.sedimentLoading -> "正在读取资料…"
+                                        state.sedimentError != null -> ""
+                                        state.sedimentCursors.size > 1 -> "本页暂无资料，可返回上一页"
+                                        state.sedimentTotal == 0 -> "对话整理出的资料会显示在这里"
                                         sedimentFilter == "pending" -> "所有资料均已确认"
                                         else -> "暂无已确认资料"
                                     },
@@ -766,7 +763,7 @@ fun EncyclopediaDetailScreen(
                                 )
                             }
                         } else {
-                            key(sedimentFilter) {
+                            key(sedimentFilter, state.sedimentCursors) {
                                 LazyColumn(
                                     modifier = Modifier
                                         .weight(1f)

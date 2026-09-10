@@ -35,16 +35,17 @@ interface EncyclopediaEntryDao {
     )
     suspend fun listTitlesByTypeRecent(encId: Long, entryType: String, limit: Int): List<String>
 
-    /** 会话沉淀等推断条目，或已绑定来源会话的条目（对齐 Web「沉淀」叙事 Tab） */
-    @Query(
-        """
-        SELECT * FROM encyclopedia_entries
-        WHERE encyclopediaId = :encId
-          AND (confidence = 'inferred' OR sourceSessionId IS NOT NULL)
-        ORDER BY updatedAt DESC
-        """
-    )
-    suspend fun getSedimentEntries(encId: Long): List<EncyclopediaEntryEntity>
+    /** 沉淀资料按稳定 ID 分页；确认状态在查询阶段筛选。 */
+    @Query("""SELECT * FROM encyclopedia_entries WHERE encyclopediaId = :encId
+        AND (confidence = 'inferred' OR sourceSessionId IS NOT NULL) AND id < :beforeId
+        AND (:filter = 'all' OR (:filter = 'pending' AND confidence != 'confirmed') OR (:filter = 'confirmed' AND confidence = 'confirmed'))
+        ORDER BY id DESC LIMIT 101""")
+    suspend fun getSedimentPage(encId: Long, beforeId: Long, filter: String): List<EncyclopediaEntryEntity>
+
+    @Query("""SELECT COUNT(*) FROM encyclopedia_entries WHERE encyclopediaId = :encId
+        AND (confidence = 'inferred' OR sourceSessionId IS NOT NULL)
+        AND (:confirmedOnly = 0 OR confidence = 'confirmed')""")
+    suspend fun countSediment(encId: Long, confirmedOnly: Boolean): Int
 
     @Query("UPDATE encyclopedia_entries SET confidence = 'confirmed', updatedAt = :updatedAt WHERE encyclopediaId = :encId AND id IN (:ids) AND confidence != 'confirmed' AND (confidence = 'inferred' OR sourceSessionId IS NOT NULL)")
     suspend fun confirmSedimentEntries(encId: Long, ids: List<Long>, updatedAt: Long): Int

@@ -1,5 +1,6 @@
 package com.mojing.app.ui.encyclopedia
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.local.dao.EncyclopediaDao
@@ -58,6 +59,13 @@ data class EncyclopediaDetailState(
     val pickerEntries: List<EncyclopediaEntryEntity> = emptyList(),
     val sedimentEntries: List<EncyclopediaEntryEntity> = emptyList(),
     val sedimentConfirming: Boolean = false,
+    val sedimentFilter: String = "all",
+    val sedimentCursors: List<Long> = listOf(Long.MAX_VALUE),
+    val sedimentHasNext: Boolean = false,
+    val sedimentLoading: Boolean = false,
+    val sedimentError: String? = null,
+    val sedimentTotal: Int = 0,
+    val sedimentConfirmed: Int = 0,
     val snackbar: String? = null,
     /** 设置中是否已填公共对话 API Key（用于批量 AI 等入口提示） */
     val hasPublicLlmKey: Boolean = false,
@@ -87,10 +95,13 @@ class EncyclopediaDetailViewModel @Inject constructor(
     private val generationQueueProcessor: GenerationQueueProcessor,
     private val llmApiService: LlmApiService,
     private val worldInfoAiConverter: WorldInfoAiConverter,
+    private val savedStateHandle: SavedStateHandle = SavedStateHandle(),
 ) : ViewModel() {
     private val _state = MutableStateFlow(EncyclopediaDetailState())
     val state: StateFlow<EncyclopediaDetailState> = _state.asStateFlow()
 
+    private var sedimentJob: Job? = null
+    private var sedimentRevision = 0L
     private var encId: Long = 0
     private var loadJob: Job? = null
     // 同一百科的多次读取也必须按最后一次请求发布。
@@ -124,11 +135,15 @@ class EncyclopediaDetailViewModel @Inject constructor(
         relationsRevision++
         val initialNameRevision = nameRevision
         loadJob?.cancel()
+        sedimentJob?.cancel()
+        sedimentRevision++
         encId = id
         genObserveJob?.cancel()
         genObserveJob = null
         _state.value = EncyclopediaDetailState(
             sedimentConfirming = _state.value.sedimentConfirming,
+            sedimentFilter = renameState?.sedimentFilter ?: savedStateHandle.get<String>("sediment_filter_$id")?.takeIf { it in listOf("all", "pending", "confirmed") } ?: "all",
+            sedimentCursors = renameState?.sedimentCursors ?: savedStateHandle.get<LongArray>("sediment_cursors_$id")?.toList()?.takeIf { it.firstOrNull() == Long.MAX_VALUE && it.all { cursor -> cursor > 0 } && it.zipWithNext().all { pair -> pair.first > pair.second } } ?: listOf(Long.MAX_VALUE),
             encyclopedia = renameState?.encyclopedia,
             mainTab = renameState?.mainTab ?: EncyclopediaMainTab.ENTRIES,
             selectedType = renameState?.selectedType.orEmpty(),
@@ -153,7 +168,6 @@ class EncyclopediaDetailViewModel @Inject constructor(
                 val entries = entryDao.getByEncyclopedia(id)
                 val events = timelineEventDao.getByEncyclopedia(id)
                 val relations = entryRelationDao.getByEncyclopedia(id)
-                val sediment = entryDao.getSedimentEntries(id)
                 if (requestRevision != loadRevision) return@launch
                 val current = _state.value.encyclopedia
                 val selectedType = _state.value.selectedType
@@ -171,10 +185,10 @@ class EncyclopediaDetailViewModel @Inject constructor(
                     relations = relations,
                     entryTitles = entries.associate { it.id to it.title },
                     pickerEntries = entries,
-                    sedimentEntries = sediment,
                     isLoaded = true,
                     loadError = null,
                 )
+                reloadSediment()
                 startGenerationObservation(id)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -455,6 +469,53 @@ class EncyclopediaDetailViewModel @Inject constructor(
         }
     }
 
+    fun setSedimentFilter(filter: String) {
+        if (filter !in listOf("all", "pending", "confirmed") || filter == _state.value.sedimentFilter || _state.value.sedimentConfirming) return
+        _state.value = _state.value.copy(sedimentFilter = filter, sedimentCursors = listOf(Long.MAX_VALUE))
+        reloadSediment()
+    }
+
+    fun nextSedimentPage() {
+        val state = _state.value
+        if (state.sedimentLoading || state.sedimentConfirming || state.sedimentError != null || !state.sedimentHasNext) return
+        val cursor = state.sedimentEntries.lastOrNull()?.id ?: return
+        _state.value = state.copy(sedimentCursors = state.sedimentCursors + cursor)
+        reloadSediment()
+    }
+
+    fun previousSedimentPage() {
+        val state = _state.value
+        if (state.sedimentLoading || state.sedimentConfirming || state.sedimentCursors.size < 2) return
+        _state.value = state.copy(sedimentCursors = state.sedimentCursors.dropLast(1))
+        reloadSediment()
+    }
+
+    fun reloadSediment() {
+        if (!_state.value.isLoaded || _state.value.encyclopedia == null) return
+        sedimentJob?.cancel()
+        val revision = ++sedimentRevision
+        val id = encId
+        val filter = _state.value.sedimentFilter
+        val cursor = _state.value.sedimentCursors.last()
+        savedStateHandle["sediment_filter_$id"] = filter
+        savedStateHandle["sediment_cursors_$id"] = _state.value.sedimentCursors.toLongArray()
+        _state.value = _state.value.copy(sedimentLoading = true, sedimentError = null, sedimentEntries = emptyList())
+        sedimentJob = viewModelScope.launch {
+            try {
+                val rows = entryDao.getSedimentPage(id, cursor, filter)
+                val total = entryDao.countSediment(id, false)
+                val confirmed = entryDao.countSediment(id, true)
+                if (id != encId || revision != sedimentRevision) return@launch
+                _state.value = _state.value.copy(sedimentEntries = rows.take(100), sedimentHasNext = rows.size > 100,
+                    sedimentTotal = total, sedimentConfirmed = confirmed, sedimentLoading = false)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (id == encId && revision == sedimentRevision) _state.value = _state.value.copy(
+                    sedimentLoading = false, sedimentError = "资料读取失败，请重试")
+            }
+        }
+    }
+
     fun confirmSedimentEntries(ids: Set<Long>, onConfirmed: () -> Unit = {}) {
         if (_state.value.sedimentConfirming || !_state.value.isLoaded) return
         val targetId = encId
@@ -517,15 +578,14 @@ class EncyclopediaDetailViewModel @Inject constructor(
         val rels = entryRelationDao.getByEncyclopedia(id)
         val allEntries = entryDao.getByEncyclopedia(id)
         val titles = allEntries.associate { it.id to it.title }
-        val sediment = entryDao.getSedimentEntries(id)
         if (revision != relationsRevision || id != encId) return
         _state.value = _state.value.copy(
             timelineEvents = events,
             relations = rels,
             entryTitles = titles,
             pickerEntries = allEntries,
-            sedimentEntries = sediment
         )
+        reloadSediment()
     }
 
     fun addTimelineEvent(title: String, timeLabel: String, sortOrder: Int) {
