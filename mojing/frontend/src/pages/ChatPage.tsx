@@ -109,6 +109,7 @@ export default function ChatPage() {
   const draftInputBySessionRef = useRef<Record<number, string>>({});
   const prevSessionIdForDraftRef = useRef(sessionId);
   const inputDraftMirrorRef = useRef('');
+  const inputDraftRevisionRef = useRef(0);
   const [input, setInput] = useState(() => (Number.isFinite(sessionId) ? loadChatDraft(sessionId) ?? '' : ''));
   const [inputFocusRequestKey, setInputFocusRequestKey] = useState(0);
   const [selectedCharacters, setSelectedCharacters] = useState<number[]>([]);
@@ -242,6 +243,8 @@ export default function ChatPage() {
   inputDraftMirrorRef.current = input;
 
   const updateInput = useCallback((value: string) => {
+    inputDraftRevisionRef.current += 1;
+    inputDraftMirrorRef.current = value;
     setInput(value);
     if (Number.isFinite(sessionId)) {
       draftInputBySessionRef.current[sessionId] = value;
@@ -251,6 +254,7 @@ export default function ChatPage() {
 
   // 会话切换：保存上一会话草稿、恢复当前会话草稿；附件不跨会话携带
   useEffect(() => {
+    inputDraftRevisionRef.current += 1;
     const prev = prevSessionIdForDraftRef.current;
     if (Number.isFinite(prev) && Number.isFinite(sessionId) && prev !== sessionId) {
       draftInputBySessionRef.current[prev] = inputDraftMirrorRef.current;
@@ -941,6 +945,7 @@ export default function ChatPage() {
       ? (quoteMessage ? buildQuotePrefix(quoteMessage) + userMessage.trim() : userMessage.trim())
       : undefined;
     const submittedQuoteRevision = quoteRevisionRef.current;
+    const submittedInputRevision = inputDraftRevisionRef.current;
     let outboundPersisted = false;
     let generationRequestStarted = false;
     const markOutboundPersisted = () => {
@@ -951,8 +956,10 @@ export default function ChatPage() {
       if (
         userMessage !== undefined
         && sessionIdRef.current === sessionId
+        && inputDraftRevisionRef.current === submittedInputRevision
         && inputDraftMirrorRef.current === userMessage
       ) {
+        inputDraftRevisionRef.current += 1;
         setInput('');
         inputDraftMirrorRef.current = '';
         draftInputBySessionRef.current[sessionId] = '';
@@ -1078,11 +1085,6 @@ export default function ChatPage() {
       }),
     onSuccess: async (_result, variables) => {
       setRetryReplyBranchId(null);
-      if (sessionIdRef.current === variables.sessionId && inputDraftMirrorRef.current === variables.userMessage) {
-        setInput('');
-        draftInputBySessionRef.current[variables.sessionId] = '';
-        clearChatDraft(variables.sessionId);
-      }
       setFiles((current) => removeSelectedFiles(current, variables.filesToSend));
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['sessions'] }),

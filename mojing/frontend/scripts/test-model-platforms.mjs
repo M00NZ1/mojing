@@ -33,6 +33,8 @@ try {
   browser = await chromium.launch({ headless: true, channel: process.env.SMOKE_BROWSER || undefined });
   const context = await browser.newContext({ viewport: { width: 1365, height: 900 } });
   let quoteSendFailure = false;
+  let holdSend = false, releaseSend;
+  let expectedOutbound = "> 旁白：码头见\n\n测试下一次发送";
   await context.route('**/*', (route) => {
     const url = new URL(route.request().url());
     return url.hostname === '127.0.0.1' && url.port === String(port) ? route.continue() : route.abort();
@@ -92,8 +94,9 @@ try {
     else if (endpoint === '/sessions/1/participants') data = [{ id: 1, character: { id: 1, name: '沈照', avatar_path: '', persona_prompt: '守灯人', talkativeness: 0.5 }, character_id: 1, sort_order: 0 }];
     else if (endpoint === '/sessions/1/speaker-plan') data = { character_ids: [1], reason: '' };
     else if (endpoint === '/sessions/1/generate/stream') {
-      assert.equal(JSON.parse(route.request().postData()).user_message, '> 旁白：码头见\n\n测试下一次发送');
+      assert.equal(JSON.parse(route.request().postData()).user_message, expectedOutbound);
       if (quoteSendFailure) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ detail: '发送暂不可用' }) });
+      if (holdSend) await new Promise((resolve) => { releaseSend = resolve; });
       return route.fulfill({ contentType: 'text/event-stream', body: 'data: {"type":"session","session_id":1}\n\ndata: {"type":"done"}\n\n' });
     }
     await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
@@ -229,11 +232,22 @@ try {
   assert.ok((await page.locator('.quote-reply-text').textContent()).includes('码头见'));
   assert.equal(await page.getByLabel('消息内容', { exact: true }).inputValue(), '测试下一次发送');
   quoteSendFailure = false;
-
-  await Promise.all([page.waitForResponse((r) => r.url().includes('/generate/stream')), page.getByRole('button', { name: '发送', exact: true }).click()]);
+  holdSend = true;
+  await Promise.all([page.waitForRequest((r) => r.url().includes('/generate/stream')), page.getByRole('button', { name: '发送', exact: true }).click()]);
+  await page.getByLabel('消息内容', { exact: true }).fill('改写中的下一条');
+  await page.getByLabel('消息内容', { exact: true }).fill('测试下一次发送');
+  await Promise.all([page.waitForResponse((r) => r.url().includes('/generate/stream')), Promise.resolve().then(() => releaseSend())]);
   assert.ok(requests.some((r) => r.endpoint === '/sessions/1/generate/stream'));
   await page.locator('.quote-reply-text').waitFor({ state: 'hidden' });
   assert.equal(await page.evaluate(() => localStorage.getItem('mojing:chat-quote:v1:1')), null);
+  assert.equal(await page.getByLabel('消息内容', { exact: true }).inputValue(), '测试下一次发送', 'a newly edited draft must survive even when its text matches the sent message');
+  assert.equal(await page.evaluate(() => localStorage.getItem('mojing:chat-draft:v1:1')), '测试下一次发送');
+  holdSend = false;
+  expectedOutbound = '测试下一次发送';
+  await Promise.all([page.waitForResponse((r) => r.url().includes('/generate/stream')), page.getByRole('button', { name: '发送', exact: true }).click()]);
+  await page.waitForFunction(() => document.querySelector('.chat-inputbar-input')?.value === '');
+  assert.equal(await page.evaluate(() => localStorage.getItem('mojing:chat-draft:v1:1')), null);
+
 
   await page.locator('.chat-model-trigger').click();
   const dialogBounds = await page.getByRole('dialog').boundingBox();
