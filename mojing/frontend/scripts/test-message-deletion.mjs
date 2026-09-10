@@ -181,6 +181,19 @@ try {
   await quoteRow.getByRole('menuitem', { name: '引用回复', exact: true }).click();
   await page.getByRole('textbox', { name: '消息内容', exact: true }).fill('引用草稿正文');
   const savedQuoteText = await page.locator('.quote-reply-text').textContent();
+  await page.setViewportSize({ width: 320, height: 480 });
+  assert.equal(await page.locator('.quote-reply-author').textContent(), '引用 · 你');
+  const quoteCancelBounds = await page.getByRole('button', { name: '取消引用', exact: true }).boundingBox();
+  assert.ok(quoteCancelBounds.width >= 44 && quoteCancelBounds.height >= 44);
+  assert.ok(quoteCancelBounds.x >= 0 && quoteCancelBounds.x + quoteCancelBounds.width <= 320);
+  const quoteBounds = await page.locator('.quote-reply-text').boundingBox();
+  assert.ok(quoteBounds.height < 50, 'long quote stays within two lines');
+  if (output) {
+    await mkdir(output, { recursive: true });
+    await page.screenshot({ path: path.join(output, 'quote-draft-320.png') });
+  }
+  await page.setViewportSize({ width: 1365, height: 900 });
+
   await page.reload();
   await page.locator('.quote-reply-text').waitFor();
   assert.equal(await page.locator('.quote-reply-text').textContent(), savedQuoteText);

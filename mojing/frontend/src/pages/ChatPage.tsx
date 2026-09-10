@@ -1817,9 +1817,12 @@ export default function ChatPage() {
           quickActionPendingLabel={activeQuickAction ? `${QUICK_ACTION_LABELS[activeQuickAction] ?? '整理操作'}处理中…` : null}
           canCreateEntryFromMessage={canCreateEntryFromMessage(flatMessages, isGenerating)}
           settingConflictHint={isWorldDirty ? '保存世界设置后检查冲突' : encyclopediaId ? undefined : '绑定百科后检查冲突'}
+          quotingAuthor={quotingMessage?.speaker_type === 'user' ? '你'
+            : quotingMessage?.speaker_type === 'narrator' ? narratorName || '旁白'
+              : quotingMessage?.character_name || '角色'}
           quotingPreview={
             quotingMessage
-              ? stripChoicesFromMessageContent(quotingMessage.content).trim().split('\n')[0]?.slice(0, 48) ?? ''
+              ? stripChoicesFromMessageContent(quotingMessage.content).trim().split('\n')[0]?.slice(0, 120) ?? ''
               : null
           }
           onClearQuote={() => setQuotingMessage(null)}

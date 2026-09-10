@@ -27,6 +27,7 @@ interface ChatInputBarProps {
   canCreateEntryFromMessage: boolean;
   settingConflictHint?: string;
   quotingPreview?: string | null;
+  quotingAuthor?: string;
   onClearQuote?: () => void;
   onRequestNarrator?: () => void;
   narratorEnabled?: boolean;
@@ -42,7 +43,7 @@ export default function ChatInputBar({
   retryReplyAvailable, onRetryReply,
   onSend, onStop, onQuickAction, quickActionPendingLabel, canCreateEntryFromMessage,
   settingConflictHint,
-  quotingPreview, onClearQuote, onRequestNarrator, narratorEnabled, inputPlaceholder, narratorActionLabel,
+  quotingPreview, quotingAuthor, onClearQuote, onRequestNarrator, narratorEnabled, inputPlaceholder, narratorActionLabel,
   maxUploadMb,
   focusRequestKey = 0,
 }: ChatInputBarProps) {
@@ -187,10 +188,13 @@ export default function ChatInputBar({
     <div className="chat-inputbar">
       {quotingPreview ? (
         <div className="quote-reply-bar">
-          <span className="quote-reply-text">引用：{quotingPreview}</span>
+          <div className="quote-reply-copy">
+            <span className="quote-reply-author">{quotingAuthor ? `引用 · ${quotingAuthor}` : '引用回复'}</span>
+            <span className="quote-reply-text" title={quotingPreview}>{quotingPreview}</span>
+          </div>
           {onClearQuote ? (
-            <button type="button" className="quote-reply-clear" onClick={onClearQuote}>
-              取消
+            <button type="button" className="quote-reply-clear" onClick={onClearQuote} aria-label="取消引用" title="取消引用">
+              <UiIcon name="close" />
             </button>
           ) : null}
         </div>

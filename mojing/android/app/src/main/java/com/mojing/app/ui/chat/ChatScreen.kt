@@ -834,6 +834,11 @@ fun ChatScreen(
                         state.quotingMessage?.let { q ->
                             QuoteDraftPreview(
                                 text = ChatMessageTextFormat.quoteSnippet(q.content, 120, q.speakerType),
+                                speakerLabel = when (q.speakerType) {
+                                    "user" -> state.userDisplayName.ifBlank { "我" }
+                                    "narrator" -> state.world?.narratorName?.ifBlank { "旁白" } ?: "旁白"
+                                    else -> state.characterNames[q.characterId].orEmpty().ifBlank { "角色" }
+                                },
                                 onCancel = { viewModel.setQuotingMessage(null) },
                             )
                         }

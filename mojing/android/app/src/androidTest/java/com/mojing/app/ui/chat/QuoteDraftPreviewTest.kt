@@ -19,12 +19,12 @@ class QuoteDraftPreviewTest {
         rule.setContent {
             MaterialTheme {
                 Box(Modifier.width(240.dp)) {
-                    if (shown.value) QuoteDraftPreview("雾港的长篇回复。".repeat(100)) { shown.value = false }
+                    if (shown.value) QuoteDraftPreview("雾港的长篇回复。".repeat(100), speakerLabel = "守灯人".repeat(20)) { shown.value = false }
                 }
             }
         }
-        rule.onNodeWithText("引用回复").assertIsDisplayed()
+        rule.onNodeWithText("引用 · " + "守灯人".repeat(20)).assertIsDisplayed()
         rule.onNodeWithContentDescription("取消引用").assertIsDisplayed().performClick()
-        rule.onNodeWithText("引用回复").assertDoesNotExist()
+        rule.onNodeWithText("引用 · " + "守灯人".repeat(20)).assertDoesNotExist()
     }
 }

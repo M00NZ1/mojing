@@ -12,7 +12,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 @Composable
-internal fun QuoteDraftPreview(text: String, onCancel: () -> Unit) {
+internal fun QuoteDraftPreview(text: String, speakerLabel: String = "", onCancel: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -20,7 +20,9 @@ internal fun QuoteDraftPreview(text: String, onCancel: () -> Unit) {
     ) {
         Row(Modifier.padding(start = 12.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("引用回复", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text(if (speakerLabel.isBlank()) "引用回复" else "引用 · $speakerLabel",
+                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(text.ifBlank { "（无文字内容）" }, style = MaterialTheme.typography.bodySmall,
                     maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
