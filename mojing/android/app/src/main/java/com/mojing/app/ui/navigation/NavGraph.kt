@@ -135,6 +135,7 @@ internal fun NavGraph(
             }
             ChatScreen(
                 sessionId = sessionId,
+                backLabel = if ((entry.arguments?.getLong("sourceMessageId") ?: 0L) > 0L) "返回百科" else "返回会话主页",
                 onBack = {
                     if ((entry.arguments?.getLong("sourceMessageId") ?: 0L) > 0L) navController.popBackStack()
                     else navController.returnToSessionHome()

@@ -123,6 +123,7 @@ import kotlinx.coroutines.withContext
 fun ChatScreen(
     sessionId: Long,
     onBack: () -> Unit,
+    backLabel: String = "返回会话主页",
     viewModel: ChatViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -463,7 +464,8 @@ fun ChatScreen(
         if (total > 0) listState.animateScrollToItem(total - 1)
     }
 
-    LaunchedEffect(state.focusedMessageId, visibleDisplayLines) {
+    LaunchedEffect(state.isReady, state.focusedMessageId, visibleDisplayLines) {
+        if (!state.isReady) return@LaunchedEffect
         val messageId = state.focusedMessageId ?: return@LaunchedEffect
         val index = visibleDisplayLines.indexOfFirst { line ->
             line.variants.any { it.id == messageId }
@@ -646,7 +648,7 @@ fun ChatScreen(
                                 dismissKeyboard()
                                 requestLeave()
                             }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回会话主页")
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, backLabel)
                             }
                         },
                         actions = {
@@ -916,7 +918,7 @@ fun ChatScreen(
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Button(onClick = viewModel::retryInitialization) { Text("重试") }
-                        TextButton(onClick = ::requestLeave) { Text("返回会话主页") }
+                        TextButton(onClick = ::requestLeave) { Text(backLabel) }
                     }
                 }
             } else if (!state.isReady) {

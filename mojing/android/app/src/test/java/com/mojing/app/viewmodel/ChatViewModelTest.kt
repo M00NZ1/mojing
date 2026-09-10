@@ -1956,6 +1956,37 @@ class ChatViewModelTest {
         assertEquals("来源故事线已不存在，请返回百科查看保留的资料。", vm.state.value.initialLoadError)
     }
 
+    @Test fun sourceLookupFailureKeepsPageUnreadyUntilRetryLocatesMessage() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        val gate = CompletableDeferred<MessageEntity?>()
+        coEvery { dao.getMainMessageById(42, 500) } coAnswers { gate.await() }
+        val vm = createViewModel(messageDao = dao, sourceMessageId = 500, sourceBranchId = "main")
+        runCurrent()
+        assertFalse(vm.state.value.isReady)
+        vm.retryInitialization()
+        coVerify(exactly = 1) { dao.getMainMessageById(42, 500) }
+        gate.completeExceptionally(IllegalStateException("read failed"))
+        advanceUntilIdle()
+        assertFalse(vm.state.value.isReady)
+        assertEquals("来源对话加载失败，请重试", vm.state.value.initialLoadError)
+        coEvery { dao.getMainMessageById(42, 500) } returns MessageEntity(id = 500, sessionId = 42, content = "找到的原文")
+        vm.retryInitialization()
+        advanceUntilIdle()
+        assertTrue(vm.state.value.isReady)
+        assertEquals(null, vm.state.value.initialLoadError)
+        assertEquals(500L, vm.state.value.focusedMessageId)
+    }
+
+    @Test fun missingSourceMessageDoesNotDisplayAnUnrelatedHistoryWindow() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        coEvery { dao.getMainMessageById(42, 500) } returns null
+        val vm = createViewModel(messageDao = dao, sourceMessageId = 500, sourceBranchId = "main")
+        advanceUntilIdle()
+        assertFalse(vm.state.value.isReady)
+        assertEquals("来源消息已删除或不在来源故事线，请返回百科。", vm.state.value.initialLoadError)
+        assertEquals(null, vm.state.value.focusedMessageId)
+    }
+
     @Test
     fun recallKeepsTheWindowNearAnOldMessage() = runTest(testDispatcher) {
         val messageDao = mockk<MessageDao>(relaxed = true)

@@ -19,7 +19,7 @@
 
 产品功能与实现统一维护在[产品与架构](../mojing/PROJECT.md)。此处记录近期完成的流程和继续工作的入口。
 
-Android 百科编辑提供“查看对话原文”，支持滚动、复制和失败重试；可进入来源故事线定位消息，返回后保留编辑草稿。来源或故事线已删除时显示提示并保留条目。
+Android 百科编辑提供“查看对话原文”，支持滚动、复制和失败重试；可进入来源故事线定位消息，返回后保留编辑草稿。来源页等待原文定位完成后显示，加载失败、消息缺失或故事线删除时保留重试和返回百科入口。
 
 - **角色与世界**：初始目录“雾港来信”包含一个百科、一个世界、沈照与林汐两个角色。角色可以不绑定百科直接开聊；百科支持重命名。开局区分工坊玩法和百科知识，组合设定可预览。
 - **Android 视觉与导航**：八套主题使用统一控件、文字和表面层级；首页、悬浮导航、页面过渡、应用图标和启动页已更新。启动标语保持“以墨为界，入境如梦。”。系统栏明暗随当前页面变化，小屏大字号保留主要操作入口。
@@ -32,7 +32,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
-| Android 百科来源故事线 | 本批 97 项聊天与百科 ViewModel 测试、2 项 Android 35 路由与预览测试通过；Debug 应用与测试 APK 构建通过 | `ChatViewModelTest`、`EntryEditViewModelTest`；`.codex-work/android-ui-20260910/source-route-tests.txt` |
+| Android 百科来源故事线 | 本批 87 项聊天 ViewModel 测试通过，覆盖定位等待、失败重试、消息缺失和历史操作；主源码与界面测试源码编译通过。`108e7784` 批次 97 项聊天与百科测试、2 项 Android 35 路由与预览测试及 Debug 构建通过 | `ChatViewModelTest`、`EntryEditViewModelTest`；`.codex-work/android-ui-20260910/source-route-tests.txt` |
 | Android JVM 全量 | `b1c67e6a`：94 个测试类，534 项通过，失败、错误、跳过均为 0；耗时 28 秒 | `gradlew.bat testDebugUnitTest`；`mojing/android/app/build/test-results/testDebugUnitTest/` |
 | Web 浏览器回归 | `b1c67e6a`：七套主题主按钮默认与悬停对比度达到 4.5:1；确认替换、中止、长说明、小屏和输入法通过；对话编辑、删除、上下文参与及历史定位回归通过 | `test-control-states.mjs`、`test-confirm-dialog.mjs`、`test-message-deletion.mjs` |
 | Web 生产构建 | `b1c67e6a` 对应源码构建通过 | `npm run build` |

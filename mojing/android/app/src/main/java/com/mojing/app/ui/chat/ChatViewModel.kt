@@ -798,7 +798,7 @@ class ChatViewModel @Inject constructor(
                 _state.update {
                     it.copy(
                         isReady = false,
-                        initialLoadError = "对话加载失败，请重试",
+                        initialLoadError = if (sourceMessageId > 0L) "来源对话加载失败，请重试" else "对话加载失败，请重试",
                     )
                 }
                 runCatching { UsbSessionLog.e("ChatInit", "failed to load session sid=$sessionId", e) }
@@ -949,10 +949,14 @@ class ChatViewModel @Inject constructor(
                     add("上次打开的故事线已不存在，已返回主线")
                 }
             }.joinToString("；").ifBlank { null },
-            isReady = true,
+            isReady = sourceMessageId <= 0L,
             initialLoadError = null,
         )
-        if (sourceMessageId > 0L) openMessageInHistory(sourceMessageId)
+        if (sourceMessageId > 0L) {
+            val located = loadMessageWindow(initialBranchId, sourceMessageId)
+            _state.update { it.copy(isReady = located,
+                initialLoadError = if (located) null else "来源消息已删除或不在来源故事线，请返回百科。") }
+        }
     }
 
     private suspend fun buildCharacterPresentationMaps(
@@ -1472,22 +1476,25 @@ class ChatViewModel @Inject constructor(
 
     fun openMessageInHistory(messageId: Long): Boolean =
         launchHistoryLoad { branchId ->
-            val target = getVisibleMessage(branchId, messageId)
-            if (target == null) {
+            if (!loadMessageWindow(branchId, messageId)) {
                 _state.update { it.copy(error = "该消息已删除或不在当前故事线") }
-                return@launchHistoryLoad
             }
-            val radius = INITIAL_MESSAGE_WINDOW_SIZE / 2
-            val beforeRows = getMessagesBefore(branchId, target.id, radius + 1)
-            val afterRows = getMessagesAfter(branchId, target.id, radius + 1)
-            applyHistoryWindow(
-                branchId = branchId,
-                messages = beforeRows.take(radius).asReversed() + target + afterRows.take(radius),
-                hasOlderMessages = beforeRows.size > radius,
-                hasNewerMessages = afterRows.size > radius,
-                focusedMessageId = target.id,
-            )
         }
+
+    private suspend fun loadMessageWindow(branchId: String, messageId: Long): Boolean {
+        val target = getVisibleMessage(branchId, messageId) ?: return false
+        val radius = INITIAL_MESSAGE_WINDOW_SIZE / 2
+        val beforeRows = getMessagesBefore(branchId, target.id, radius + 1)
+        val afterRows = getMessagesAfter(branchId, target.id, radius + 1)
+        applyHistoryWindow(
+            branchId = branchId,
+            messages = beforeRows.take(radius).asReversed() + target + afterRows.take(radius),
+            hasOlderMessages = beforeRows.size > radius,
+            hasNewerMessages = afterRows.size > radius,
+            focusedMessageId = target.id,
+        )
+        return true
+    }
 
     fun clearFocusedMessage() {
         _state.update { it.copy(focusedMessageId = null) }
