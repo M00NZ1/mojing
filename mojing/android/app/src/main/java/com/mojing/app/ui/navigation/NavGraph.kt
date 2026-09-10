@@ -1,5 +1,7 @@
 package com.mojing.app.ui.navigation
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
@@ -90,7 +92,7 @@ internal fun NavGraph(
                 onSessionClick = { sessionId -> navController.navigateSingleTop(Routes.chat(sessionId)) },
                 onCharactersClick = { navController.navigateToMainTab(Routes.CHARACTER_LIST) },
                 onEncyclopediaClick = { navController.navigateToMainTab(Routes.ENCYCLOPEDIA_LIST) },
-                onSettingsClick = { navController.navigateToMainTab(Routes.SETTINGS) },
+                onSettingsClick = { navController.navigateToModelSettings() },
                 onGenerationTasksClick = { navController.navigateSingleTop(Routes.GENERATION_TASKS) },
             )
         }
@@ -148,7 +150,7 @@ internal fun NavGraph(
                 navController = navController,
                 onEdit = { navController.navigateSingleTop(Routes.characterEdit(it)) },
                 onChat = { navController.navigateSingleTop(Routes.chat(it)) },
-                onSettingsClick = { navController.navigateToMainTab(Routes.SETTINGS) }
+                onSettingsClick = { navController.navigateToModelSettings() }
             )
         }
 
@@ -167,7 +169,7 @@ internal fun NavGraph(
             CharacterEditScreen(
                 characterId = charId,
                 onBack = { navController.popBackStack() },
-                onOpenSettings = { navController.navigateToMainTab(Routes.SETTINGS) },
+                onOpenSettings = { navController.navigateToModelSettings() },
             )
         }
 
@@ -175,7 +177,7 @@ internal fun NavGraph(
             EncyclopediaScreen(
                 navController = navController,
                 onDetail = { navController.navigateSingleTop(Routes.encyclopediaDetail(it)) },
-                onSettingsClick = { navController.navigateToMainTab(Routes.SETTINGS) },
+                onSettingsClick = { navController.navigateToModelSettings() },
                 onGenerationTasksClick = { navController.navigateSingleTop(Routes.GENERATION_TASKS) },
             )
         }
@@ -196,7 +198,7 @@ internal fun NavGraph(
                 onEditEntry = { entryId -> navController.navigateSingleTop(Routes.entryEdit(encId, entryId)) },
                 onBack = { navController.popBackStack() },
                 onOpenGenerationTasks = { navController.navigateSingleTop(Routes.GENERATION_TASKS) },
-                onOpenSettings = { navController.navigateToMainTab(Routes.SETTINGS) },
+                onOpenSettings = { navController.navigateToModelSettings() },
             )
         }
 
@@ -223,7 +225,7 @@ internal fun NavGraph(
                 entryId = entryId,
                 onOpenSource = { source -> navController.navigateSingleTop(Routes.chatSource(source.sessionId, source.messageId, source.branchId)) },
                 onBack = { navController.popBackStack() },
-                onOpenSettings = { navController.navigateToMainTab(Routes.SETTINGS) },
+                onOpenSettings = { navController.navigateToModelSettings() },
             )
         }
 
@@ -235,7 +237,7 @@ internal fun NavGraph(
                     requestedWorldTemplateId = templateId
                     navController.navigateToMainTab(Routes.SESSION_LIST)
                 },
-                onSettingsClick = { navController.navigateToMainTab(Routes.SETTINGS) }
+                onSettingsClick = { navController.navigateToModelSettings() }
             )
         }
 
@@ -254,12 +256,16 @@ internal fun NavGraph(
             TemplateEditScreen(
                 templateId = templateId,
                 onBack = { navController.popBackStack() },
-                onOpenSettings = { navController.navigateToMainTab(Routes.SETTINGS) },
+                onOpenSettings = { navController.navigateToModelSettings() },
             )
         }
 
-        composable(Routes.SETTINGS) {
+        composable(Routes.SETTINGS) { entry ->
+            val modelRequested by entry.savedStateHandle
+                .getStateFlow(SETTINGS_MODEL_REQUEST, false).collectAsStateWithLifecycle()
             SettingsScreen(
+                requestModelSection = modelRequested,
+                onModelRequestConsumed = { entry.savedStateHandle[SETTINGS_MODEL_REQUEST] = false },
                 navController = navController,
                 onThemeChanged = onThemeChanged,
                 onFontScaleChanged = onFontScaleChanged,

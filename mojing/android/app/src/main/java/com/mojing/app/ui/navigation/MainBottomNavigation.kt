@@ -144,3 +144,10 @@ internal fun RowScope.MoJingNavItem(selected: Boolean, onClick: () -> Unit, icon
             maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
+
+internal const val SETTINGS_MODEL_REQUEST = "settings_model_request"
+
+internal fun NavHostController.navigateToModelSettings() {
+    navigateToMainTab(Routes.SETTINGS)
+    currentBackStackEntry?.savedStateHandle?.set(SETTINGS_MODEL_REQUEST, true)
+}

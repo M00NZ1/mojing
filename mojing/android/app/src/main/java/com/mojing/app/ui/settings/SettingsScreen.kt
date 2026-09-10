@@ -50,11 +50,11 @@ fun SettingsScreen(
     navController: NavHostController,
     onThemeChanged: (String) -> Unit,
     onFontScaleChanged: (Float) -> Unit,
+    requestModelSection: Boolean = false,
+    onModelRequestConsumed: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) }
     var personalizationSection by rememberSaveable { mutableIntStateOf(0) }
-    val tabs = listOf("模型", "创作", "个性化", "用量")
     val snackbarHostState = remember { SnackbarHostState() }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -116,43 +116,38 @@ fun SettingsScreen(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).imePadding()) {
-            PrimaryScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 0.dp) {
-                tabs.forEachIndexed { index, title ->
-                    Tab(
-                        selected = selectedTab == index,
-                        onClick = {
-                            if (selectedTab != index) requestNavigation { selectedTab = index }
+            SettingsSections(
+                requestModelSection = requestModelSection,
+                onModelRequestConsumed = onModelRequestConsumed,
+                requestNavigation = ::requestNavigation,
+            ) { selectedTab ->
+                when (selectedTab) {
+                    0 -> ConnectionSettingsTab(viewModel = viewModel, snackbarHostState = snackbarHostState)
+                    1 -> DefaultsTab(viewModel)
+                    2 -> PersonalizationTab(
+                        viewModel = viewModel,
+                        snackbarHostState = snackbarHostState,
+                        onThemeChanged = onThemeChanged,
+                        onFontScaleChanged = onFontScaleChanged,
+                        selectedSection = personalizationSection,
+                        onSelectSection = { section ->
+                            if (personalizationSection != section) requestNavigation { personalizationSection = section }
                         },
-                        text = { Text(title) },
+                        profileName = profileName,
+                        onProfileNameChange = { profileName = it },
+                        profileDescription = profileDescription,
+                        onProfileDescriptionChange = { profileDescription = it },
+                        profileColor = profileColor,
+                        onProfileColorChange = { profileColor = it },
+                        profileDirty = profileDirty,
+                        onProfileSaved = { name, description, color ->
+                            profileName = name
+                            profileDescription = description
+                            profileColor = color
+                        },
                     )
+                    3 -> CostTab(viewModel)
                 }
-            }
-            when (selectedTab) {
-                0 -> ConnectionSettingsTab(viewModel = viewModel, snackbarHostState = snackbarHostState)
-                1 -> DefaultsTab(viewModel)
-                2 -> PersonalizationTab(
-                    viewModel = viewModel,
-                    snackbarHostState = snackbarHostState,
-                    onThemeChanged = onThemeChanged,
-                    onFontScaleChanged = onFontScaleChanged,
-                    selectedSection = personalizationSection,
-                    onSelectSection = { section ->
-                        if (personalizationSection != section) requestNavigation { personalizationSection = section }
-                    },
-                    profileName = profileName,
-                    onProfileNameChange = { profileName = it },
-                    profileDescription = profileDescription,
-                    onProfileDescriptionChange = { profileDescription = it },
-                    profileColor = profileColor,
-                    onProfileColorChange = { profileColor = it },
-                    profileDirty = profileDirty,
-                    onProfileSaved = { name, description, color ->
-                        profileName = name
-                        profileDescription = description
-                        profileColor = color
-                    },
-                )
-                3 -> CostTab(viewModel)
             }
         }
     }
