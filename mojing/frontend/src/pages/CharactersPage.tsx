@@ -719,7 +719,7 @@ export default function CharactersPage() {
                   </div>
                   <div className="form-group full-row">
                     <label>角色人设</label>
-                    <div style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <div style={{ marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
                       <MacroSelector
                         onInsert={(macro) => setEditing({ ...editing, persona_prompt: (editing.persona_prompt ?? '') + macro })}
                         onCopied={() => showToast('已复制到剪贴板，可粘贴到人设任意位置', 'success')}

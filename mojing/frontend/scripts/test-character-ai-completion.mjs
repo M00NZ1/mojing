@@ -21,6 +21,10 @@ try {
   }
   browser = await chromium.launch({ headless: true, channel: process.env.SMOKE_BROWSER || undefined });
   const context = await browser.newContext({ viewport: { width: 1365, height: 900 } });
+  await context.addInitScript(() => {
+    window.copiedReference = '';
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.copiedReference = text; } } });
+  });
   await context.route('**/*', route => route.request().url().startsWith(`http://127.0.0.1:${port}`) ? route.continue() : route.abort());
   const rows = [1, 2].map(id => ({ id, name: `角色${id}`, persona_prompt: `原人设${id}`, api_key: '', api_base_url: '', model_name: '', temperature: .9, max_tokens: 1200, avatar_color: '#537e86' }));
   const pending = [];
@@ -68,9 +72,23 @@ try {
   await start.click();
   await waitForRequest(2);
   await persona.fill('手动更新的人设');
-  complete(1, '不应覆盖的 AI 结果');
+  const referenceText = '不应覆盖的 AI 结果。\n'.repeat(200);
+  complete(1, referenceText);
   await page.getByText('当前人设已修改，补全结果未覆盖草稿').waitFor();
   assert.equal(await persona.inputValue(), '手动更新的人设');
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.getByText('查看本次补全参考', { exact: true }).click();
+  const reference = page.getByRole('region', { name: '补全参考人设', exact: true });
+  assert.ok((await reference.locator('.world-result-text').boundingBox()).height < 200);
+  await reference.getByRole('button', { name: '展开阅读', exact: true }).click();
+  assert.ok((await reference.locator('.world-result-text').boundingBox()).height <= 480);
+  await reference.getByRole('button', { name: '复制全文', exact: true }).click();
+  await page.waitForFunction(() => window.copiedReference.length > 0);
+  assert.equal(await page.evaluate(() => window.copiedReference), referenceText);
+  assert.equal(await persona.inputValue(), '手动更新的人设');
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await page.setViewportSize({ width: 1365, height: 900 });
+
 
   await start.click();
   await waitForRequest(3);
@@ -126,6 +144,16 @@ try {
   await page.getByRole('button', { name: '保存修改', exact: true }).first().waitFor();
   assert.equal(await name.inputValue(), '提交后继续修改的名字');
   assert.equal(await persona.inputValue(), '重新进入后的草稿');
+  await start.click();
+  await waitForRequest(6);
+  pending[5]({ error: '模型暂时不可用' });
+  await page.locator('.ai-complete-feedback').getByRole('alert').waitFor();
+  assert.equal(await persona.inputValue(), '重新进入后的草稿');
+  await page.getByRole('button', { name: '重试补全', exact: true }).click();
+  await waitForRequest(7);
+  complete(6, '重试成功的人设');
+  await page.waitForFunction(() => document.querySelector('textarea[aria-label="角色人设"]').value === '重试成功的人设');
+  assert.equal(await page.locator('.ai-complete-feedback').count(), 0);
   assert.deepEqual(errors, []);
   console.log('PASS: character AI and save preserve concurrent drafts, reject stale page responses, support retries and retain dirty state until latest edits are saved.');
 } finally {

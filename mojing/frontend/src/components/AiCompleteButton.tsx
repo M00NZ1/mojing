@@ -4,6 +4,8 @@ import { api } from '../api/client';
 import { useToast } from '../hooks/useToast';
 import { friendlyFetchError } from '../utils/userFacingError';
 import UiIcon from './UiIcon';
+import WorldResultText from './WorldResultText';
+import './AiCompleteButton.css';
 
 interface AiCompleteButtonProps {
   targetType: 'encyclopedia_entry' | 'character' | 'world_template';
@@ -21,6 +23,8 @@ const AiCompleteButton: React.FC<AiCompleteButtonProps> = ({
   label = 'AI 补全',
 }) => {
   const [loading, setLoading] = useState(false);
+  const [feedback, setFeedback] = useState<{ text: string; error: boolean } | null>(null);
+  const [reference, setReference] = useState<string | null>(null);
   const requestRef = useRef<AbortController | null>(null);
   useEffect(() => () => {
     requestRef.current?.abort();
@@ -33,6 +37,7 @@ const AiCompleteButton: React.FC<AiCompleteButtonProps> = ({
     const request = new AbortController();
     requestRef.current = request;
     setLoading(true);
+    setFeedback(null);
     try {
       const data = await api.post('/ai/complete', {
         target_type: targetType,
@@ -44,7 +49,7 @@ const AiCompleteButton: React.FC<AiCompleteButtonProps> = ({
 
       const serverError = data.error;
       if (typeof serverError === 'string' && serverError.trim()) {
-        showToast(`${serverError.trim()}\uFF08Web\uFF09`, 'error');
+        setFeedback({ text: serverError.trim(), error: true });
         return;
       }
 
@@ -57,16 +62,18 @@ const AiCompleteButton: React.FC<AiCompleteButtonProps> = ({
       }
       const n = Object.keys(result).length;
       if (n === 0) {
-        showToast('未收到可写入的字段，请检查是否已填写部分信息或稍后重试（Web）', 'warn');
+        setFeedback({ text: '未收到可写入的内容，请补充信息后重试。', error: true });
         return;
       }
       if (onCompleted(result) === false) {
-        showToast('当前人设已修改，补全结果未覆盖草稿', 'warn');
+        setReference(typeof result.persona_prompt === 'string' ? result.persona_prompt : JSON.stringify(result, null, 2));
+        setFeedback({ text: '当前人设已修改，补全结果未覆盖草稿', error: false });
       } else {
-        showToast(`AI 补全完成，已填入 ${n} 个字段（Web）`, 'success');
+        setReference(null);
+        showToast(`补全完成，已填入 ${n} 个字段`, 'success');
       }
     } catch (err) {
-      if (!request.signal.aborted && requestRef.current === request) showToast(friendlyFetchError(err), 'error');
+      if (!request.signal.aborted && requestRef.current === request) setFeedback({ text: friendlyFetchError(err), error: true });
     } finally {
       if (requestRef.current === request) {
         requestRef.current = null;
@@ -76,6 +83,7 @@ const AiCompleteButton: React.FC<AiCompleteButtonProps> = ({
   };
 
   return (
+    <>
     <button
       type="button"
       className="btn btn-sm ai-complete-btn"
@@ -83,6 +91,7 @@ const AiCompleteButton: React.FC<AiCompleteButtonProps> = ({
         requestRef.current?.abort();
         requestRef.current = null;
         setLoading(false);
+        setFeedback({ text: '已停止补全，编辑内容已保留。', error: false });
       } : handleClick}
     >
       {loading ? (
@@ -91,6 +100,15 @@ const AiCompleteButton: React.FC<AiCompleteButtonProps> = ({
         <><UiIcon name="sparkles" /><span>{label}</span></>
       )}
     </button>
+    {(feedback || reference) && <div className="ai-complete-feedback">
+      {feedback && <p role={feedback.error ? 'alert' : 'status'} className={feedback.error ? 'ai-complete-error' : undefined}>{feedback.text}</p>}
+      {reference && <details className="ai-complete-reference">
+        <summary>查看本次补全参考</summary>
+        <WorldResultText key={reference} label="补全参考人设" text={reference} />
+      </details>}
+      {feedback?.error && <button type="button" className="btn btn-ghost btn-sm" disabled={loading} onClick={handleClick}>重试补全</button>}
+    </div>}
+    </>
   );
 };
 

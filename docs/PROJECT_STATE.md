@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Web 人设补全参考 | Web 构建与 Chrome 回归通过，覆盖手动草稿保护、320px 参考结果展开复制、失败重试、取消与角色切换；世界记录共用阅读器回归通过 | `test-character-ai-completion.mjs`、`test-world-history.mjs`，本地 API 模拟 |
 | Android 人设补全恢复 | 12 项角色编辑状态测试与 Debug 构建通过，覆盖生成期间手动编辑、生成基线、重进页面、读取失败重试、保存保护和旧读取结果隔离 | `CharacterEditViewModelTest` |
 | Android 角色保存恢复 | 10 项角色编辑状态测试与 Debug 构建通过，覆盖重复提交、首次保存回读失败、记录 ID 复用、后续编辑与重试 | `CharacterEditViewModelTest` |
 | Android 1.0.22 本地安装包 | Release 构建通过，APK 应用标识为 `com.mojing.app`，版本为 1.0.22 / 10022，沿用上一版签名 | `assembleRelease`、`aapt`、`apksigner` |

@@ -1,5 +1,6 @@
 import { useId, useRef, useState } from 'react';
 import { copyText } from '../utils/clipboard';
+import './WorldResultText.css';
 
 /** A bounded reader for generated source text; copying always uses the full value. */
 export default function WorldResultText({ text, label }: { text: string; label: string }) {
