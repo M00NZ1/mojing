@@ -3014,14 +3014,21 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun editMessage(messageId: Long, newContent: String, onSuccess: () -> Unit = {}) {
+    fun editMessage(
+        messageId: Long,
+        newContent: String,
+        onFailure: (message: String, committed: Boolean) -> Unit = { _, _ -> },
+        onSuccess: () -> Unit = {},
+    ) {
         val content = newContent.trim()
         if (content.isEmpty()) {
             _state.value = _state.value.copy(error = "消息内容不能为空")
+            onFailure("消息内容不能为空", false)
             return
         }
         if (_state.value.isGenerating) {
             _state.update { it.copy(error = "当前正在生成，请先停止或等待完成后再编辑消息") }
+            onFailure("当前正在生成，请先停止或等待完成后再编辑消息", false)
             return
         }
         var editedMessage: MessageEntity? = null
@@ -3029,7 +3036,10 @@ class ChatViewModel @Inject constructor(
         var editReadyForContinuation = false
         val launched = launchBranchTransition(
             onSuccess = editSuccess@{
-                if (!editReadyForContinuation) return@editSuccess
+                if (!editReadyForContinuation) {
+                    onFailure(_state.value.error ?: "消息编辑失败，请重试", editCommitted)
+                    return@editSuccess
+                }
                 onSuccess()
                 if (editedMessage?.speakerType != "user") return@editSuccess
                 launchSingleGeneration editGeneration@{ generation ->
@@ -3124,6 +3134,7 @@ class ChatViewModel @Inject constructor(
         }
         if (!launched) {
             _state.update { it.copy(error = "当前正在切换故事线，请稍后再编辑") }
+            onFailure("当前正在切换故事线，请稍后再编辑", false)
         }
     }
 

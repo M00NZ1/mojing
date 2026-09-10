@@ -18,6 +18,31 @@ import org.junit.runner.RunWith
 class MessageEditDialogTest {
     @get:Rule val rule = createComposeRule()
 
+    @Test fun savingBlocksDismissalAndFailurePreservesDraftForRetry() {
+        var saving by mutableStateOf(false)
+        var committed by mutableStateOf(false)
+        var failure by mutableStateOf<String?>(null)
+        var saves = 0
+        var dismissed = 0
+        rule.setContent { MaterialTheme {
+            MessageEditDialog("修改后的正文", {}, true, true, true,
+                { saves++; saving = true }, { dismissed++ }, saving, failure, committed)
+        } }
+        rule.onNodeWithText("创建编辑分支").performClick()
+        rule.onNodeWithText("正在保存…").assertIsNotEnabled()
+        rule.onNodeWithContentDescription("关闭消息编辑").assertIsNotEnabled()
+        rule.onNodeWithText("消息正文").assertIsNotEnabled()
+        rule.runOnIdle { saving = false; failure = "消息编辑失败，请重试" }
+        rule.onNodeWithText("消息编辑失败，请重试").assertIsDisplayed()
+        rule.onNodeWithText("修改后的正文").assertExists()
+        rule.onNodeWithText("创建编辑分支").performClick()
+        rule.runOnIdle { assertEquals(2, saves); saving = false; committed = true; failure = "消息已编辑，请重新进入对话" }
+        rule.onNodeWithText("已保存").assertIsNotEnabled()
+        rule.onNodeWithContentDescription("关闭消息编辑").performClick()
+        rule.runOnIdle { assertEquals(1, dismissed) }
+        rule.onNodeWithText("放弃这次编辑？").assertDoesNotExist()
+    }
+
     @Test fun longDraftKeepsActionsVisibleAndRequiresDiscardConfirmation() {
         val original = "雾港的灯塔依然亮着。\n".repeat(200)
         var draft by mutableStateOf(original)

@@ -167,6 +167,9 @@ fun ChatScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     var editingMessage by remember { mutableStateOf<com.mojing.app.data.local.entity.MessageEntity?>(null) }
     var editContent by remember { mutableStateOf("") }
+    var editSaving by remember { mutableStateOf(false) }
+    var editFailure by remember { mutableStateOf<String?>(null) }
+    var editCommitted by remember { mutableStateOf(false) }
     var recallMessage by remember(sessionId, state.currentBranchId) { mutableStateOf<com.mojing.app.data.local.entity.MessageEntity?>(null) }
     var showImageGenDialog by remember { mutableStateOf(false) }
     var imageGenPrompt by remember { mutableStateOf("") }
@@ -1036,6 +1039,9 @@ fun ChatScreen(
                                     when (action) {
                                     is MessageAction.Recall -> { recallMessage = action.message }
                                     is MessageAction.Edit -> {
+                                        editSaving = false
+                                        editFailure = null
+                                        editCommitted = false
                                         editingMessage = action.message
                                         editContent = ChatMessageTextFormat.visibleBody(action.message.content, action.message.speakerType)
                                     }
@@ -1337,9 +1343,25 @@ fun ChatScreen(
             hasChanges = editContent != ChatMessageTextFormat.visibleBody(messageBeingEdited.content, messageBeingEdited.speakerType),
             canSave = !state.isGenerating && ChatMessageTextFormat.hasEditChanges(
                 messageBeingEdited.content, messageBeingEdited.speakerType, editContent),
+            saving = editSaving,
+            failure = editFailure,
+            committed = editCommitted,
             onSave = {
-                viewModel.editMessage(messageBeingEdited.id, editContent) {
-                    editingMessage = null
+                if (!editSaving && !editCommitted) {
+                    editSaving = true
+                    editFailure = null
+                    viewModel.editMessage(messageBeingEdited.id, editContent, onFailure = { message, committed ->
+                        if (editingMessage?.id == messageBeingEdited.id) {
+                            editSaving = false
+                            editFailure = message
+                            editCommitted = committed
+                        }
+                    }) {
+                        if (editingMessage?.id == messageBeingEdited.id) {
+                            editSaving = false
+                            editingMessage = null
+                        }
+                    }
                 }
             },
             onDismiss = { editingMessage = null },

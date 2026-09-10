@@ -22,14 +22,19 @@ internal fun MessageEditDialog(
     canSave: Boolean,
     onSave: () -> Unit,
     onDismiss: () -> Unit,
+    saving: Boolean = false,
+    failure: String? = null,
+    committed: Boolean = false,
 ) {
     var confirmDiscard by rememberSaveable { mutableStateOf(false) }
-    val requestDismiss = { if (hasChanges) confirmDiscard = true else onDismiss() }
-    val dirty by rememberUpdatedState(hasChanges)
+    val requestDismiss = { if (!saving) { if (hasChanges && !committed) confirmDiscard = true else onDismiss() } }
+    val dirty by rememberUpdatedState(hasChanges && !committed)
+    val busy by rememberUpdatedState(saving)
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true,
         confirmValueChange = {
-            if (it == SheetValue.Hidden && dirty) {
+            if (it == SheetValue.Hidden && busy) false
+            else if (it == SheetValue.Hidden && dirty) {
                 confirmDiscard = true
                 false
             } else true
@@ -45,7 +50,7 @@ internal fun MessageEditDialog(
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.95f).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("编辑消息", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                IconButton(onClick = requestDismiss) { Icon(Icons.Default.Close, "关闭消息编辑") }
+                IconButton(onClick = requestDismiss, enabled = !saving) { Icon(Icons.Default.Close, "关闭消息编辑") }
             }
             if (!WindowInsets.isImeVisible) Text(
                 if (isUser) "保存到新故事线，并重新生成回复。" else "保存到新故事线，保留原故事线。",
@@ -55,12 +60,14 @@ internal fun MessageEditDialog(
             MoJingTextField(
                 value = content,
                 onValueChange = onContentChange,
+                enabled = !saving && !committed,
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 label = { Text("消息正文") },
                 textStyle = MaterialTheme.typography.bodyLarge,
             )
-            MoJingButton(onClick = onSave, enabled = canSave, modifier = Modifier.fillMaxWidth()) {
-                Text("创建编辑分支")
+            if (failure != null) Text(failure, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            MoJingButton(onClick = onSave, enabled = canSave && !saving && !committed, modifier = Modifier.fillMaxWidth()) {
+                Text(if (saving) "正在保存…" else if (committed) "已保存" else "创建编辑分支")
             }
         }
     }

@@ -2414,6 +2414,7 @@ class ChatViewModelTest {
                 messageDao.getVisibleMessagesTail(42L, match { it.startsWith("edit_7_") }, 81)
             } throws IllegalStateException("database unavailable")
             var successCalled = false
+            var reportedFailure: Pair<String, Boolean>? = null
             val preferences = uiPreferences()
             val vm = createViewModel(
                 messageDao = messageDao,
@@ -2422,13 +2423,14 @@ class ChatViewModelTest {
             )
             advanceUntilIdle()
 
-            vm.editMessage(7L, "改写后的回复") { successCalled = true }
+            vm.editMessage(7L, "改写后的回复", onFailure = { message, committed -> reportedFailure = message to committed }) { successCalled = true }
             advanceUntilIdle()
 
             assertFalse(successCalled)
             assertFalse(vm.state.value.isGenerating)
             assertEquals("main", vm.state.value.currentBranchId)
             assertEquals("消息已编辑，但后续状态更新失败，请重新进入对话", vm.state.value.error)
+            assertEquals(vm.state.value.error to true, reportedFailure)
             coVerify(exactly = 1) { branchDao.insertEditedBranch(any(), any(), any()) }
             coVerify(exactly = 0) { preferences.setLastChatBranch(any(), any()) }
         }
@@ -2447,16 +2449,18 @@ class ChatViewModelTest {
         coEvery { branchDao.insertEditedBranch(any(), any(), any()) } throws
             IllegalStateException("database unavailable")
         var successCalled = false
+        var reportedFailure: Pair<String, Boolean>? = null
         val vm = createViewModel(messageDao = messageDao, sessionBranchDao = branchDao)
         advanceUntilIdle()
 
-        vm.editMessage(7L, "改写后的回复") { successCalled = true }
+        vm.editMessage(7L, "改写后的回复", onFailure = { message, committed -> reportedFailure = message to committed }) { successCalled = true }
         advanceUntilIdle()
 
         assertFalse(successCalled)
         assertFalse(vm.state.value.isGenerating)
         assertEquals("main", vm.state.value.currentBranchId)
         assertEquals("消息编辑失败，请重试", vm.state.value.error)
+        assertEquals(vm.state.value.error to false, reportedFailure)
     }
 
     @Test
