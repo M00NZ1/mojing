@@ -46,6 +46,9 @@ interface EncyclopediaEntryDao {
     )
     suspend fun getSedimentEntries(encId: Long): List<EncyclopediaEntryEntity>
 
+    @Query("UPDATE encyclopedia_entries SET confidence = 'confirmed', updatedAt = :updatedAt WHERE encyclopediaId = :encId AND id IN (:ids) AND confidence != 'confirmed' AND (confidence = 'inferred' OR sourceSessionId IS NOT NULL)")
+    suspend fun confirmSedimentEntries(encId: Long, ids: List<Long>, updatedAt: Long): Int
+
     @Query("SELECT * FROM encyclopedia_entries WHERE encyclopediaId = :encId AND entryType = :type ORDER BY id ASC")
     suspend fun getByType(encId: Long, type: String): List<EncyclopediaEntryEntity>
 

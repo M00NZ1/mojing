@@ -34,6 +34,52 @@ import org.junit.Test
 class EncyclopediaDetailViewModelTest {
     private val dispatcher = UnconfinedTestDispatcher()
 
+    @Test fun batchConfirmationPreservesFailureAndRefreshesOnlyEligibleEntries() = runTest(dispatcher) {
+        val dao = mockk<EncyclopediaDao>(relaxed = true)
+        val entries = mockk<EncyclopediaEntryDao>(relaxed = true)
+        coEvery { dao.getById(1) } returns EncyclopediaEntity(id = 1, name = "世界")
+        var rows = listOf(EncyclopediaEntryEntity(id = 7, encyclopediaId = 1, confidence = "inferred", sourceSessionId = 9),
+            EncyclopediaEntryEntity(id = 8, encyclopediaId = 1, confidence = "confirmed", sourceSessionId = 9))
+        coEvery { entries.getSedimentEntries(1) } answers { rows }
+        coEvery { entries.getByEncyclopedia(1) } answers { rows }
+        coEvery { entries.confirmSedimentEntries(1, listOf(7), any()) } throws IllegalStateException("write failed")
+        val vm = createViewModel(dao, entries)
+        vm.load(1)
+        var confirmed = false
+        vm.confirmSedimentEntries(setOf(7, 8, 999)) { confirmed = true }
+        assertFalse(confirmed)
+        assertFalse(vm.state.value.sedimentConfirming)
+        assertEquals("确认失败，选择已保留，请重试", vm.state.value.snackbar)
+        coEvery { entries.confirmSedimentEntries(1, listOf(7), any()) } answers {
+            rows = rows.map { it.copy(confidence = "confirmed") }; 1
+        }
+        vm.confirmSedimentEntries(setOf(7, 8, 999)) { confirmed = true }
+        assertTrue(confirmed)
+        assertTrue(vm.state.value.sedimentEntries.all { it.confidence == "confirmed" })
+        assertEquals("已确认 1 条资料", vm.state.value.snackbar)
+    }
+
+    @Test fun lateBatchConfirmationDoesNotRefreshAnotherEncyclopedia() = runTest(dispatcher) {
+        val dao = mockk<EncyclopediaDao>(relaxed = true)
+        val entries = mockk<EncyclopediaEntryDao>(relaxed = true)
+        coEvery { dao.getById(any()) } answers { EncyclopediaEntity(id = firstArg(), name = "世界${firstArg<Long>()}") }
+        coEvery { entries.getSedimentEntries(1) } returns listOf(EncyclopediaEntryEntity(id = 7, encyclopediaId = 1, confidence = "inferred"))
+        val gate = kotlinx.coroutines.CompletableDeferred<Int>()
+        coEvery { entries.confirmSedimentEntries(1, listOf(7), any()) } coAnswers { gate.await() }
+        val vm = createViewModel(dao, entries)
+        vm.load(1)
+        var confirmed = false
+        vm.confirmSedimentEntries(setOf(7)) { confirmed = true }
+        assertTrue(vm.state.value.sedimentConfirming)
+        vm.load(2)
+        assertTrue(vm.state.value.sedimentConfirming)
+        gate.complete(1)
+        assertFalse(confirmed)
+        assertFalse(vm.state.value.sedimentConfirming)
+        assertEquals(2L, vm.state.value.encyclopedia?.id)
+        assertEquals(null, vm.state.value.snackbar)
+    }
+
     @Before
     fun setUp() {
         Dispatchers.setMain(dispatcher)

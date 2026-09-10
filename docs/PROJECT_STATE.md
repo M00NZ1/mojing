@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Android 沉淀资料批量确认 | 16 项百科详情 ViewModel 测试通过；Android 35、320dp 下通过 Room 内存数据库测试与批量操作组件测试，覆盖百科隔离、重复确认、正文与来源保留、失败重试、跨页旧返回、选择计数和保存禁用；Debug 应用与测试 APK 构建通过 | `EncyclopediaDetailViewModelTest`、`SedimentConfirmationDaoTest`、`SedimentBatchControlsTest`；`.codex-work/android-ui-20260910/sediment-confirm-tests.txt` |
 | Web 默认模型选择组件 | 生产构建与 Chrome 模拟 API 回归通过；5000 模型下验证每页十项、翻页、搜索末项、空结果恢复、键盘展开/关闭和焦点返回；移动端组件截图检查通过 | `test-model-platforms.mjs`；`.codex-work/web-default-model-20260910/default-model-picker.png` |
 | Web 模型列表键盘导航 | 生产构建与 Chrome 模拟 API 回归通过；5000 模型下验证跨窗口连续导航、首尾定位、跳过缺少 Key 项、Enter 选择、输入法保护及有界 DOM | `test-model-platforms.mjs` |
 | Web 模型面板布局与反馈 | 生产构建及 Chrome 模拟 API 回归通过，覆盖 5000 模型虚拟列表、320×480 固定入口、选中状态、恢复默认、保存中关闭保护、失败重试与输入法保护；390px 截图检查通过 | `test-model-platforms.mjs`；`.codex-work/web-model-panel-20260910/model-picker-mobile.png` |
@@ -70,7 +71,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 - 用户报告切换模型后仍使用原模型。角色与旁白的定向回归已覆盖同平台和跨平台线路参数；继续对照实际使用入口与供应商请求。
 - 用户报告单章生成出现英文异常，现有章节对象样本已修复；继续跟进实际生成反馈。
 - Android 消息上下文参与状态仍与回复版本选择相关，需要提供独立的排除、恢复入口。
-- 继续完善百科推断条目的批量确认、来源范围与编辑，以及大型历史的增量摘要整理。
+- Android 已支持沉淀条目批量确认；继续完善跨端核对、来源范围与编辑，以及大型历史的增量摘要整理。
 - 大型历史目标是累计几十万至上百万 Token 后的打开、阅读、搜索、编辑与继续对话；单轮模型上下文单独预算。
 
 完整排序见[优化目标](PRODUCT_GAP_MAP.md)。

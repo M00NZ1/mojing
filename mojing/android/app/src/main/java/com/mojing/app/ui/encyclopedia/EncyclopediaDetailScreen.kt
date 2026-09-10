@@ -1,5 +1,9 @@
 package com.mojing.app.ui.encyclopedia
 
+import androidx.compose.material3.Checkbox
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingButton as Button
 import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
@@ -127,7 +131,14 @@ fun EncyclopediaDetailScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val entryTypeTabs = remember(state.encyclopedia) { filteredEntryTypeTabs(state.encyclopedia) }
+    var sedimentBatchMode by remember(encyclopediaId) { mutableStateOf(false) }
+    var sedimentSelected by remember(encyclopediaId) { mutableStateOf(emptySet<Long>()) }
     var sedimentFilter by rememberSaveable(encyclopediaId) { mutableStateOf("all") }
+    LaunchedEffect(sedimentFilter) { sedimentSelected = emptySet() }
+    LaunchedEffect(state.sedimentEntries) {
+        val eligible = state.sedimentEntries.filter { it.confidence != "confirmed" }.map { it.id }.toSet()
+        sedimentSelected = sedimentSelected.intersect(eligible)
+    }
     val confirmedSedimentCount = remember(state.sedimentEntries) {
         state.sedimentEntries.count { it.confidence == "confirmed" }
     }
@@ -730,6 +741,13 @@ fun EncyclopediaDetailScreen(
                                 )
                             }
                         }
+                        SedimentBatchControls(
+                            selecting = sedimentBatchMode, selectedCount = sedimentSelected.size, busy = state.sedimentConfirming,
+                            onToggle = { sedimentBatchMode = !sedimentBatchMode; sedimentSelected = emptySet() },
+                            onSelect = { sedimentSelected = filteredSediment.filter { it.confidence != "confirmed" }.take(100).map { it.id }.toSet() },
+                            onClear = { sedimentSelected = emptySet() },
+                            onConfirm = { viewModel.confirmSedimentEntries(sedimentSelected) { sedimentSelected = emptySet() } },
+                        )
                         if (filteredSediment.isEmpty()) {
                             Box(
                                 modifier = Modifier
@@ -771,6 +789,15 @@ fun EncyclopediaDetailScreen(
                                                     Modifier.fillMaxWidth().padding(16.dp),
                                                     verticalArrangement = Arrangement.spacedBy(6.dp),
                                                 ) {
+                                                    if (sedimentBatchMode && entry.confidence != "confirmed") {
+                                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                                            Checkbox(checked = entry.id in sedimentSelected,
+                                                                modifier = Modifier.semantics { contentDescription = "选择资料：${entry.title}" },
+                                                                enabled = !state.sedimentConfirming && (entry.id in sedimentSelected || sedimentSelected.size < 100),
+                                                                onCheckedChange = { checked -> sedimentSelected = if (checked) sedimentSelected + entry.id else sedimentSelected - entry.id })
+                                                            Text("选择资料", style = MaterialTheme.typography.labelMedium)
+                                                        }
+                                                    }
                                                     Text(
                                                         entry.title,
                                                         style = MaterialTheme.typography.titleMedium,

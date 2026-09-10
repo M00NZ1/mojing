@@ -57,6 +57,7 @@ data class EncyclopediaDetailState(
     val entryTitles: Map<Long, String> = emptyMap(),
     val pickerEntries: List<EncyclopediaEntryEntity> = emptyList(),
     val sedimentEntries: List<EncyclopediaEntryEntity> = emptyList(),
+    val sedimentConfirming: Boolean = false,
     val snackbar: String? = null,
     /** 设置中是否已填公共对话 API Key（用于批量 AI 等入口提示） */
     val hasPublicLlmKey: Boolean = false,
@@ -127,6 +128,7 @@ class EncyclopediaDetailViewModel @Inject constructor(
         genObserveJob?.cancel()
         genObserveJob = null
         _state.value = EncyclopediaDetailState(
+            sedimentConfirming = _state.value.sedimentConfirming,
             encyclopedia = renameState?.encyclopedia,
             mainTab = renameState?.mainTab ?: EncyclopediaMainTab.ENTRIES,
             selectedType = renameState?.selectedType.orEmpty(),
@@ -450,6 +452,34 @@ class EncyclopediaDetailViewModel @Inject constructor(
             deleteEncyclopediaEntry(id)
             refreshEntries()
             refreshTimelineAndRelations()
+        }
+    }
+
+    fun confirmSedimentEntries(ids: Set<Long>, onConfirmed: () -> Unit = {}) {
+        if (_state.value.sedimentConfirming || !_state.value.isLoaded) return
+        val targetId = encId
+        val revision = loadRevision
+        val selected = _state.value.sedimentEntries.filter { it.id in ids && it.confidence != "confirmed" }.map { it.id }.distinct()
+        if (selected.isEmpty()) return
+        if (selected.size > 100) { showSnackbar("每次最多确认 100 条资料"); return }
+        _state.value = _state.value.copy(sedimentConfirming = true)
+        viewModelScope.launch {
+            var committed = false
+            try {
+                val count = entryDao.confirmSedimentEntries(targetId, selected, System.currentTimeMillis())
+                committed = true
+                if (encId != targetId || loadRevision != revision) return@launch
+                onConfirmed()
+                refreshEntries()
+                if (encId != targetId || loadRevision != revision) return@launch
+                refreshTimelineAndRelations()
+                if (encId == targetId && loadRevision == revision) showSnackbar("已确认 $count 条资料")
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) {
+                if (encId == targetId && loadRevision == revision) showSnackbar(
+                    if (committed) "确认已保存，刷新失败，请重新打开百科" else "确认失败，选择已保留，请重试",
+                )
+            } finally { _state.value = _state.value.copy(sedimentConfirming = false) }
         }
     }
 
