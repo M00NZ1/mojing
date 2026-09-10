@@ -124,6 +124,9 @@ class EncyclopediaDetailViewModel @Inject constructor(
         genObserveJob = null
         _state.value = EncyclopediaDetailState(
             encyclopedia = renameState?.encyclopedia,
+            mainTab = renameState?.mainTab ?: EncyclopediaMainTab.ENTRIES,
+            selectedType = renameState?.selectedType.orEmpty(),
+            previewEntryId = renameState?.previewEntryId,
             isLoaded = false,
             hasPublicLlmKey = secureStorage.publicApiKey.isNotBlank(),
             renameDraft = renameState?.renameDraft,
@@ -147,11 +150,17 @@ class EncyclopediaDetailViewModel @Inject constructor(
                 val sediment = entryDao.getSedimentEntries(id)
                 if (requestRevision != loadRevision) return@launch
                 val current = _state.value.encyclopedia
+                val selectedType = _state.value.selectedType
+                val visibleEntries = if (selectedType.isEmpty() || selectedType == "全部") entries
+                    else entries.filter { it.entryType == selectedType }
                 _state.value = _state.value.copy(
                     encyclopedia = if (nameRevision != initialNameRevision && current?.id == id) {
                         encyclopedia.copy(name = current.name, updatedAt = current.updatedAt)
                     } else encyclopedia,
-                    entries = entries,
+                    entries = visibleEntries,
+                    previewEntryId = _state.value.previewEntryId?.takeIf { previewId ->
+                        visibleEntries.any { it.id == previewId }
+                    },
                     timelineEvents = events,
                     relations = relations,
                     entryTitles = entries.associate { it.id to it.title },

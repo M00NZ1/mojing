@@ -83,6 +83,61 @@ class EncyclopediaDetailViewModelTest {
     }
 
     @Test
+    fun returningToSameEncyclopediaKeepsTabAndReadsConfirmedNote() = runTest(dispatcher) {
+        val dao = mockk<EncyclopediaDao> {
+            coEvery { getById(any()) } answers { EncyclopediaEntity(id = firstArg(), name = "雾海") }
+        }
+        var note = EncyclopediaEntryEntity(
+            id = 9L, encyclopediaId = 3L, title = "潮汐钟", confidence = "inferred",
+        )
+        val entries = mockk<EncyclopediaEntryDao>(relaxed = true) {
+            coEvery { getByEncyclopedia(3L) } answers { listOf(note) }
+            coEvery { getSedimentEntries(3L) } answers { listOf(note) }
+        }
+        val vm = createViewModel(dao, entries)
+        vm.load(3L)
+        vm.setMainTab(EncyclopediaMainTab.SEDIMENT)
+        note = note.copy(confidence = "confirmed", title = "已核对的潮汐钟")
+
+        vm.load(3L)
+
+        assertEquals(EncyclopediaMainTab.SEDIMENT, vm.state.value.mainTab)
+        assertEquals(listOf(note), vm.state.value.sedimentEntries)
+        vm.load(4L)
+        assertEquals(EncyclopediaMainTab.ENTRIES, vm.state.value.mainTab)
+        assertTrue(vm.state.value.sedimentEntries.isEmpty())
+    }
+
+    @Test
+    fun reloadKeepsEntryTypeButDropsDeletedPreview() = runTest(dispatcher) {
+        val dao = mockk<EncyclopediaDao> {
+            coEvery { getById(3L) } returns EncyclopediaEntity(id = 3L, name = "雾海")
+        }
+        val place = EncyclopediaEntryEntity(id = 9L, encyclopediaId = 3L, title = "雾港", entryType = "location")
+        val person = EncyclopediaEntryEntity(id = 10L, encyclopediaId = 3L, title = "沈照", entryType = "character")
+        var records = listOf(place, person)
+        val entries = mockk<EncyclopediaEntryDao>(relaxed = true) {
+            coEvery { getByEncyclopedia(3L) } answers { records }
+            coEvery { getByType(3L, "location") } answers { records.filter { it.entryType == "location" } }
+        }
+        val vm = createViewModel(dao, entries)
+        vm.load(3L)
+        vm.selectType("location")
+        vm.setPreviewEntry(9L)
+        vm.load(3L)
+        assertEquals("location", vm.state.value.selectedType)
+        assertEquals(listOf(place), vm.state.value.entries)
+        assertEquals(9L, vm.state.value.previewEntryId)
+        assertEquals(2, vm.state.value.pickerEntries.size)
+
+        records = listOf(person)
+        vm.load(3L)
+        assertTrue(vm.state.value.entries.isEmpty())
+        assertEquals(null, vm.state.value.previewEntryId)
+        assertEquals(listOf(person), vm.state.value.pickerEntries)
+    }
+
+    @Test
     fun readFailureDoesNotAppearAsAnEmptyEncyclopedia() = runTest(dispatcher) {
         val encyclopediaDao = mockk<EncyclopediaDao> {
             coEvery { getById(3L) } throws IllegalStateException("database unavailable")
