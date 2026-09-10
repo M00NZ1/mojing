@@ -15,7 +15,7 @@ class MessageActionSheetTest {
     @get:Rule val rule = createComposeRule()
 
     @Test fun previewAndCloseStayVisibleWhileActionsScroll() {
-        val message = MessageEntity(id = 7L, sessionId = 2L, content = "灯塔下的约定，仍然留在雾港。".repeat(18))
+        val message = MessageEntity(id = 7L, sessionId = 2L, content = "<THOUGHT>这是原样输入</THOUGHT>" + "灯塔下的约定，仍然留在雾港。".repeat(18))
         var action: MessageAction? = null
         rule.setContent { MaterialTheme {
             MessageBubble(message, senderLabel = "旅行者", onAction = { action = it })
@@ -25,6 +25,7 @@ class MessageActionSheetTest {
         close.assertIsDisplayed()
         rule.onNodeWithText("旅行者").assertIsDisplayed()
         val preview = rule.onNodeWithContentDescription("所选消息")
+        preview.assertTextEquals(message.content.take(240))
         val layouts = mutableListOf<TextLayoutResult>()
         preview.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
         assertTrue(layouts.single().lineCount <= 2)

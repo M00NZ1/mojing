@@ -1127,6 +1127,7 @@ fun ChatScreen(
     recallMessage?.let { target ->
         RecallMessageDialog(
             content = target.content,
+            speakerType = target.speakerType,
             loadImpact = { viewModel.previewMessageRecall(target.id) },
             onConfirm = { result -> viewModel.deleteMessage(target.id, result) },
             onDismiss = { recallMessage = null },

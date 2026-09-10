@@ -21,7 +21,9 @@ internal fun RecallMessageDialog(
     loadImpact: suspend () -> MessageRecallImpact,
     onConfirm: ((Boolean) -> Unit) -> Unit,
     onDismiss: () -> Unit,
+    speakerType: String? = null,
 ) {
+    val preview = remember(content, speakerType) { ChatMessageTextFormat.preview(content, speakerType, 240) }
     var impact by remember { mutableStateOf<MessageRecallImpact?>(null) }
     var loading by remember { mutableStateOf(true) }
     var failure by remember { mutableStateOf<String?>(null) }
@@ -45,7 +47,7 @@ internal fun RecallMessageDialog(
         title = { Text("撤回这条消息？") },
         text = {
             Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(ChatMessageTextFormat.preview(content, null, 240), style = MaterialTheme.typography.bodyMedium)
+                Text(preview, style = MaterialTheme.typography.bodyMedium)
                 if (loading) Text("正在检查故事线引用…")
                 impact?.let { current ->
                     if (!current.canRecall) {

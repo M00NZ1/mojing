@@ -17,6 +17,17 @@ import org.junit.runner.RunWith
 class RecallMessageDialogTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun userLiteralTagsRemainVisibleInRecallPreview() {
+        val literal = "<THOUGHT>原样输入的文字</THOUGHT><CHOICES><OPTION>请保留标签</OPTION></CHOICES>"
+        compose.setContent {
+            MaterialTheme {
+                RecallMessageDialog(literal, { MessageRecallImpact(true) }, {}, {}, speakerType = "user")
+            }
+        }
+        compose.onNodeWithText(literal).assertExists()
+        compose.onNodeWithText("确认撤回").assertIsEnabled()
+    }
+
     @Test fun recallExplainsSummaryRebuildWithoutChangingDataBeforeConfirmation() {
         var deletes = 0
         compose.setContent {

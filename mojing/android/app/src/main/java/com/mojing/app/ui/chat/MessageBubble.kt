@@ -226,9 +226,8 @@ fun MessageBubble(
                     Text("消息操作", style = MaterialTheme.typography.titleLarge)
                     IconButton(onClick = dismissMenu) { Icon(Icons.Default.Close, "关闭消息操作") }
                 }
-                val preview = remember(message.content) {
-                    ChatMessageTextFormat.forBubbleDisplay(StructuredParser.stripTags(message.content.take(2048)))
-                        .trim().take(240).ifBlank { "此消息包含非文本内容" }
+                val preview = remember(message.content, message.speakerType) {
+                    ChatMessageTextFormat.preview(message.content, message.speakerType, 240, "此消息包含非文本内容")
                 }
                 Surface(
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
