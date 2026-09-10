@@ -741,6 +741,17 @@ def list_sediment_entries(
     return list(db.scalars(stmt))
 
 
+@router.post("/{encyclopedia_id}/sediment-entries/confirm")
+def confirm_selected_sediment_entries(encyclopedia_id: int, payload: dict, db: Session = Depends(get_db)):
+    ids = payload.get("entry_ids")
+    if not isinstance(ids, list) or not 1 <= len(ids) <= 100 or any(type(value) is not int or value <= 0 for value in ids):
+        raise HTTPException(status_code=400, detail="请选择 1 至 100 条资料")
+    if not db.get(WorldEncyclopediaModel, encyclopedia_id):
+        raise HTTPException(status_code=404, detail="百科库不存在")
+    from ..services.sediment_service import confirm_sediment_entries
+    return {"confirmed": confirm_sediment_entries(db, encyclopedia_id, list(dict.fromkeys(ids)))}
+
+
 # ──────────────────────────────────────────────
 #  AI 生成
 # ──────────────────────────────────────────────

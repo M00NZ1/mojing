@@ -6,7 +6,7 @@
 import json
 import logging
 from datetime import datetime, timezone
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -159,6 +159,28 @@ def auto_sediment_facts(db: Session, session_id: int, encyclopedia_id: int) -> d
 
     db.commit()
     return {"created": created, "updated": updated, "skipped": skipped, "entries": entry_results}
+
+
+def confirm_sediment_entries(db: Session, encyclopedia_id: int, entry_ids: list[int]) -> int:
+    """确认所选沉淀资料，并在同一事务中保留版本记录。"""
+    try:
+        entries = list(db.scalars(select(EncyclopediaEntryModel).where(
+            EncyclopediaEntryModel.encyclopedia_id == encyclopedia_id,
+            EncyclopediaEntryModel.id.in_(entry_ids),
+            EncyclopediaEntryModel.confidence != "confirmed",
+            or_(EncyclopediaEntryModel.confidence == "inferred", EncyclopediaEntryModel.source_session_id.isnot(None)),
+        )))
+        timestamp = now_utc()
+        for entry in entries:
+            previous = entry.confidence
+            entry.confidence = "confirmed"
+            entry.updated_at = timestamp
+            _create_entry_version(db, entry, f"置信度变更: {previous} → confirmed")
+        db.commit()
+        return len(entries)
+    except Exception:
+        db.rollback()
+        raise
 
 
 def promote_entry_confidence(db: Session, entry_id: int, new_confidence: str) -> None:

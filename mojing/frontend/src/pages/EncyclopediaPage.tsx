@@ -8,6 +8,7 @@ import { confirmModal } from '../components/ConfirmModal';
 import CreationHomeLink from '../components/CreationHomeLink';
 import InlineQueryError from '../components/InlineQueryError';
 import ExpandableTextArea from '../components/ExpandableTextArea';
+import SedimentReviewPanel from '../components/SedimentReviewPanel';
 import UiIcon, { type UiIconName } from '../components/UiIcon';
 import { useToast } from '../hooks/useToast';
 import { useDragColumnWidth } from '../hooks/useDragColumnWidth';
@@ -1108,11 +1109,7 @@ export default function EncyclopediaPage() {
     queryFn: () => api.getEncyclopediaRelationGraph(selectedEncId!),
     enabled: Boolean(selectedEncId && encLibraryTool === 'graph'),
   });
-  const encSedimentQuery = useQuery({
-    queryKey: ['encyclopedia-sediment', selectedEncId],
-    queryFn: () => api.listEncyclopediaSedimentEntries(selectedEncId!),
-    enabled: Boolean(selectedEncId && encLibraryTool === 'sediment'),
-  });
+
 
   const addTimelineMutation = useMutation({
     mutationFn: (encyclopedia_id: number) =>
@@ -2324,58 +2321,7 @@ export default function EncyclopediaPage() {
             })()}
           </div>
         ) : selectedEncId && encLibraryTool === 'sediment' ? (
-          <div style={{ padding: 16, maxWidth: 720 }}>
-            <div className="button-row" style={{ marginBottom: 12 }}>
-              <h2 style={{ margin: 0, flex: 1 }}>本库沉淀条目</h2>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEncLibraryTool(null)}>关闭</button>
-            </div>
-            <p className="hint" style={{ marginBottom: 12 }}>
-              列出推断写入（<code>inferred</code>）或带<strong>来源会话</strong>的条目。点某条可打开详情。
-            </p>
-            <p className="hint" style={{ marginBottom: 12 }}>
-              与<strong>聊天里的「记忆条 / 压缩记忆」</strong>不是同一套数据：这里是「从对话沉淀成百科条目」的列表，便于你批量核对、编辑或删除推断结果。
-            </p>
-            {encSedimentQuery.isLoading && <div>加载中…</div>}
-            {encSedimentQuery.isError && (
-              <div className="secondary-empty">
-                <p>沉淀条目加载失败</p>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => encSedimentQuery.refetch()}>重试</button>
-              </div>
-            )}
-            <div className="stack-list">
-              {!encSedimentQuery.isError && (encSedimentQuery.data ?? []).map((row: any) => {
-                const schema = ENTRY_SCHEMAS[row.entry_type as string];
-                return (
-                  <div
-                    key={row.id}
-                    className="mini-card"
-                    style={{ cursor: 'pointer' }}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.currentTarget.click(); } }}
-                    onClick={() => {
-                      openEntry(row.id, row.entry_type);
-                    }}
-                  >
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                      <strong>{row.title}</strong>
-                      <span className="pill pill-sm">{schema?.label || row.entry_type}</span>
-                      <span className="pill pill-sm">分值 {row.confidence}</span>
-                      {row.source_session_id != null && (
-                        <span style={{ fontSize: '0.78rem', color: 'var(--text-2)' }}>会话 #{row.source_session_id}</span>
-                      )}
-                    </div>
-                    {row.summary && (
-                      <div style={{ fontSize: '0.82rem', color: 'var(--text-2)', marginTop: 6 }}>{row.summary}</div>
-                    )}
-                  </div>
-                );
-              })}
-              {encSedimentQuery.isSuccess && encSedimentQuery.data.length === 0 && (
-                <div style={{ color: 'var(--text-2)' }}>暂无沉淀条目。可开聊天里的自动沉淀，或把条目的分值改成「推断」那档。</div>
-              )}
-            </div>
-          </div>
+          <SedimentReviewPanel key={selectedEncId} encyclopediaId={selectedEncId} onOpenEntry={openEntry} onClose={() => setEncLibraryTool(null)} />
         ) : selectedEntryId && entryDetailQuery.isPending ? (
           <div className="secondary-empty">条目详情加载中…</div>
         ) : selectedEntryId && entryDetailQuery.isError ? (

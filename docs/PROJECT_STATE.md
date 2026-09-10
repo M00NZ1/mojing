@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Web 沉淀资料批量核对 | 7 项后端测试与生产构建通过；Chrome 模拟 API 回归覆盖筛选、100 条上限、失败保留选择、重试、保存锁定及刷新；320px 截图检查通过 | `test_sediment_batch_confirmation.py`、`test-sediment-review.mjs`；`.codex-work/sediment-review.png` |
 | Android 沉淀资料批量确认 | 16 项百科详情 ViewModel 测试通过；Android 35、320dp 下通过 Room 内存数据库测试与批量操作组件测试，覆盖百科隔离、重复确认、正文与来源保留、失败重试、跨页旧返回、选择计数和保存禁用；Debug 应用与测试 APK 构建通过 | `EncyclopediaDetailViewModelTest`、`SedimentConfirmationDaoTest`、`SedimentBatchControlsTest`；`.codex-work/android-ui-20260910/sediment-confirm-tests.txt` |
 | Web 默认模型选择组件 | 生产构建与 Chrome 模拟 API 回归通过；5000 模型下验证每页十项、翻页、搜索末项、空结果恢复、键盘展开/关闭和焦点返回；移动端组件截图检查通过 | `test-model-platforms.mjs`；`.codex-work/web-default-model-20260910/default-model-picker.png` |
 | Web 模型列表键盘导航 | 生产构建与 Chrome 模拟 API 回归通过；5000 模型下验证跨窗口连续导航、首尾定位、跳过缺少 Key 项、Enter 选择、输入法保护及有界 DOM | `test-model-platforms.mjs` |

@@ -1,0 +1,15 @@
+.sediment-review { padding: 16px; width: 100%; max-width: 760px; box-sizing: border-box; }
+.sediment-review > .button-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.sediment-review h2 { flex: 1; margin: 0; }
+.sediment-review > .button-row:first-child .btn { width: auto; flex: 0 0 auto; }
+.sediment-review > [aria-label="确认状态筛选"] { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 14px; background: var(--surface-2); }
+.sediment-review > [aria-label="确认状态筛选"] .btn { width: 100%; min-width: 0; padding-inline: 8px; }
+.sediment-review .btn[aria-pressed="true"] { background: var(--surface-2); box-shadow: inset 0 -2px var(--accent); }
+.sediment-batch-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 0; }
+.sediment-batch-actions > span { width: 100%; color: var(--text-2); font-size: .85rem; }
+.sediment-review-row { display: flex; align-items: start; gap: 12px; }
+.sediment-review-row > input { width: 20px; height: 20px; flex-shrink: 0; margin-top: 6px; accent-color: var(--accent); }
+.sediment-review-row > div { min-width: 0; flex: 1; }
+.sediment-entry-title { display: block; border: 0; padding: 4px 0 8px; background: none; color: var(--text); font: inherit; font-weight: 600; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.sediment-review-row small { color: var(--text-2); margin-left: 8px; }
+.sediment-review-row p { color: var(--text-2); font-size: .85rem; line-height: 1.6; margin: 8px 0 0; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
