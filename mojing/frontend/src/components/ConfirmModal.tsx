@@ -119,6 +119,7 @@ export function ConfirmModalProvider({ children }: { children: React.ReactNode }
     }, 0);
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
@@ -173,7 +174,7 @@ export function ConfirmModalProvider({ children }: { children: React.ReactNode }
       >
         <div
           ref={dialogRef}
-          className="confirm-dialog"
+          className="confirm-dialog confirm-prompt-dialog"
           role="dialog"
           aria-modal="true"
           aria-labelledby={titleId}
@@ -184,7 +185,7 @@ export function ConfirmModalProvider({ children }: { children: React.ReactNode }
             {state.variant !== 'default' && <UiIcon name="warning" />}
             <span>{state.title}</span>
           </h3>
-          <p id={descriptionId}>{state.message}</p>
+          <p id={descriptionId} tabIndex={0} aria-label="确认说明">{state.message}</p>
           {state.variant === 'danger' && (
             <input
               ref={inputRef}
