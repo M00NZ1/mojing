@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.rememberScrollState
@@ -52,6 +54,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.mojing.app.data.local.entity.MessageAttachmentEntity
 import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.domain.engine.StructuredParser
@@ -211,19 +216,54 @@ fun MessageBubble(
                 attachment.mimeType.startsWith("image/", ignoreCase = true))
     }
     if (showMenu) {
-        ModalBottomSheet(onDismissRequest = dismissMenu) {
-            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 16.dp)) {
-                Text("消息操作", style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
+        ModalBottomSheet(onDismissRequest = dismissMenu, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+            Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(bottom = 16.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("消息操作", style = MaterialTheme.typography.titleLarge)
+                    IconButton(onClick = dismissMenu) { Icon(Icons.Default.Close, "关闭消息操作") }
+                }
+                val preview = remember(message.content) {
+                    ChatMessageTextFormat.forBubbleDisplay(StructuredParser.stripTags(message.content.take(2048)))
+                        .trim().take(240).ifBlank { "此消息包含非文本内容" }
+                }
+                Surface(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            senderLabel.ifBlank {
+                                when (message.speakerType) {
+                                    "user" -> userDisplayName.ifBlank { "你" }
+                                    "narrator", "system" -> "旁白"
+                                    else -> "角色"
+                                }
+                            },
+                            style = MaterialTheme.typography.labelLarge,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(preview, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.semantics { contentDescription = "所选消息" })
+                    }
+                }
                 if (isGenerating) {
                     Text("生成中，可复制、收藏、朗读或保存图片", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
                 }
-                MessageActionPanelContent(
-                    message, isBookmarked, canContinueReply, canRegenerate, isGenerating,
-                    imageAttachmentCount, isSavingImages, dismissMenu, onAction,
-                )
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                    MessageActionPanelContent(
+                        message, isBookmarked, canContinueReply, canRegenerate, isGenerating,
+                        imageAttachmentCount, isSavingImages, dismissMenu, onAction,
+                    )
+                }
             }
         }
     }

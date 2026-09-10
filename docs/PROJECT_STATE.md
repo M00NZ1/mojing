@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Android 消息操作面板 | Debug 应用与测试 APK 构建通过；Android 35、320dp 宽度下 3 项界面测试通过，覆盖固定预览与关闭入口、列表滚动、原消息操作、生成中禁用和图片保存状态 | `MessageActionSheetTest`、`MessageActionPanelTest`；`.codex-work/android-ui-20260910/message-sheet-tests.txt` |
 | Web 消息操作面板 | 生产构建与 Chrome 模拟 API 回归通过；覆盖桌面键盘菜单、移动端所选消息预览、320×480 独立滚动与固定关闭入口、输入法保护及消息操作 | `test-message-deletion.mjs`；`.codex-work/web-message-sheet-20260910/message-actions-390.png` |
 | Web 角色图片更新 | 生产构建通过；Chrome 模拟图片 API 测试覆盖上传状态、失败重试、并发文字编辑及头像和立绘的跨角色隔离 | `test-character-images.mjs` |
 | Web 角色补全与保存 | 生产构建通过；实际角色页的 Chrome 模拟 API 测试覆盖并发编辑、人设冲突、停止重试、保存期间输入、再次保存及旧页面响应隔离 | `test-character-ai-completion.mjs` |
