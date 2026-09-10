@@ -5,7 +5,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
-import com.mojing.app.ui.encyclopedia.SedimentPageControls
+import com.mojing.app.ui.encyclopedia.EncyclopediaPageControls
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -18,7 +18,7 @@ class SedimentPageControlsTest {
         var retries = 0
         var previous = 0
         rule.setContent { MaterialTheme { Column {
-            SedimentPageControls(2, true, loading, false, error, { previous++ }, {}, { retries++ })
+            EncyclopediaPageControls(2, true, loading, false, error, { previous++ }, {}, { retries++ })
         } } }
         rule.onNodeWithText("上一页").assertIsNotEnabled()
         rule.onNodeWithText("下一页").assertIsNotEnabled()

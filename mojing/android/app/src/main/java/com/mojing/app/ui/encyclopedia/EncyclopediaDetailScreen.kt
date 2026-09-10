@@ -163,8 +163,8 @@ fun EncyclopediaDetailScreen(
         }
     }
     var showRelDialog by remember { mutableStateOf(false) }
-    var relFrom by remember { mutableStateOf<Long?>(null) }
-    var relTo by remember { mutableStateOf<Long?>(null) }
+    var relFrom by remember { mutableStateOf<com.mojing.app.data.local.dao.EncyclopediaEntryOption?>(null) }
+    var relTo by remember { mutableStateOf<com.mojing.app.data.local.dao.EncyclopediaEntryOption?>(null) }
     var relType by remember { mutableStateOf("关联") }
     var relLabel by remember { mutableStateOf("") }
     var relMenuFrom by remember { mutableStateOf(false) }
@@ -436,11 +436,18 @@ fun EncyclopediaDetailScreen(
 
             when (state.mainTab) {
                 EncyclopediaMainTab.ENTRIES -> {
-                    if (state.entries.isEmpty()) {
+                    EncyclopediaPageControls(state.entryCursors.size, state.entriesHasNext,
+                        state.entriesLoading, false, state.entriesError,
+                        viewModel::previousEntryPage, viewModel::nextEntryPage, viewModel::reloadEntryPage)
+                    if (state.entriesLoading || state.entriesError != null) {
+                        Spacer(Modifier.weight(1f))
+                    } else if (state.entries.isEmpty()) {
                         EmptyState(
                             icon = Icons.AutoMirrored.Filled.Article,
-                            title = if (state.selectedType.isBlank()) "还没有百科条目" else "当前分类没有条目",
-                            message = if (state.selectedType.isBlank()) {
+                            title = if (state.entryCursors.size > 1) "本页暂无条目" else if (state.selectedType.isBlank()) "还没有百科条目" else "当前分类没有条目",
+                            message = if (state.entryCursors.size > 1) {
+                                "可返回上一页继续浏览。"
+                            } else if (state.selectedType.isBlank()) {
                                 "先创建角色、地点或世界规则，让故事有可以持续引用的设定。"
                             } else {
                                 "可以切换分类查看，或直接创建一个新条目。"
@@ -450,84 +457,86 @@ fun EncyclopediaDetailScreen(
                             modifier = Modifier.fillMaxSize(),
                         )
                     } else {
-                        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                            val wide = maxWidth >= 720.dp
-                            if (wide) {
-                                Row(Modifier.fillMaxSize()) {
-                                    LazyColumn(
-                                        modifier = Modifier
-                                            .weight(0.42f)
-                                            .fillMaxHeight()
-                                    ) {
+                        key(state.selectedType, state.entryCursors) {
+                            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                                val wide = maxWidth >= 720.dp
+                                if (wide) {
+                                    Row(Modifier.fillMaxSize()) {
+                                        LazyColumn(
+                                            modifier = Modifier
+                                                .weight(0.42f)
+                                                .fillMaxHeight()
+                                        ) {
+                                            items(state.entries, key = { it.id }) { entry ->
+                                                EncyclopediaSwipeableEntryRow(
+                                                    entry = entry,
+                                                    isWideLayout = true,
+                                                    selected = state.previewEntryId == entry.id,
+                                                    onRowClick = { viewModel.setPreviewEntry(entry.id) },
+                                                    onToggleFeatured = { viewModel.toggleEntryFeatured(entry.id) },
+                                                    onDelete = { deleteEntryTarget = entry },
+                                                )
+                                            }
+                                        }
+                                        VerticalDivider(Modifier.width(1.dp).fillMaxHeight())
+                                        val preview = state.entries.find { it.id == state.previewEntryId }
+                                        Column(
+                                            modifier = Modifier
+                                                .weight(0.58f)
+                                                .fillMaxHeight()
+                                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                                                .verticalScroll(rememberScrollState())
+                                        ) {
+                                            Text("预览", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                            if (preview == null) {
+                                                Text(
+                                                    "选择条目预览",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                                )
+                                            } else {
+                                                if (preview.coverImagePath.isNotBlank()) {
+                                                    AsyncImage(
+                                                        model = avatarImageModel(LocalContext.current, preview.coverImagePath),
+                                                        contentDescription = null,
+                                                        modifier = Modifier
+                                                            .padding(bottom = 8.dp)
+                                                            .fillMaxWidth(0.45f)
+                                                            .aspectRatio(2f / 3f),
+                                                        contentScale = ContentScale.Crop,
+                                                    )
+                                                }
+                                                Text(preview.title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                                Text("类型：${ENTRY_TYPE_LABELS[preview.entryType] ?: "其他"}", style = MaterialTheme.typography.labelSmall)
+                                                if (preview.summary.isNotBlank()) {
+                                                    Text(preview.summary, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp))
+                                                }
+                                                if (preview.content.isNotBlank()) {
+                                                    Text(
+                                                        preview.content.take(4000) + if (preview.content.length > 4000) "…" else "",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        modifier = Modifier.padding(top = 8.dp),
+                                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
+                                                    )
+                                                }
+                                                TextButton(onClick = { onEditEntry(preview.id) }, modifier = Modifier.padding(top = 12.dp)) {
+                                                    Text("编辑此条目")
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    LazyColumn(modifier = Modifier.fillMaxSize()) {
                                         items(state.entries, key = { it.id }) { entry ->
                                             EncyclopediaSwipeableEntryRow(
                                                 entry = entry,
-                                                isWideLayout = true,
-                                                selected = state.previewEntryId == entry.id,
-                                                onRowClick = { viewModel.setPreviewEntry(entry.id) },
+                                                isWideLayout = false,
+                                                selected = false,
+                                                onRowClick = { onEditEntry(entry.id) },
                                                 onToggleFeatured = { viewModel.toggleEntryFeatured(entry.id) },
                                                 onDelete = { deleteEntryTarget = entry },
                                             )
                                         }
-                                    }
-                                    VerticalDivider(Modifier.width(1.dp).fillMaxHeight())
-                                    val preview = state.entries.find { it.id == state.previewEntryId }
-                                    Column(
-                                        modifier = Modifier
-                                            .weight(0.58f)
-                                            .fillMaxHeight()
-                                            .padding(horizontal = 12.dp, vertical = 8.dp)
-                                            .verticalScroll(rememberScrollState())
-                                    ) {
-                                        Text("预览", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                                        if (preview == null) {
-                                            Text(
-                                                "选择条目预览",
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                            )
-                                        } else {
-                                            if (preview.coverImagePath.isNotBlank()) {
-                                                AsyncImage(
-                                                    model = avatarImageModel(LocalContext.current, preview.coverImagePath),
-                                                    contentDescription = null,
-                                                    modifier = Modifier
-                                                        .padding(bottom = 8.dp)
-                                                        .fillMaxWidth(0.45f)
-                                                        .aspectRatio(2f / 3f),
-                                                    contentScale = ContentScale.Crop,
-                                                )
-                                            }
-                                            Text(preview.title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                            Text("类型：${ENTRY_TYPE_LABELS[preview.entryType] ?: "其他"}", style = MaterialTheme.typography.labelSmall)
-                                            if (preview.summary.isNotBlank()) {
-                                                Text(preview.summary, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp))
-                                            }
-                                            if (preview.content.isNotBlank()) {
-                                                Text(
-                                                    preview.content.take(4000) + if (preview.content.length > 4000) "…" else "",
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    modifier = Modifier.padding(top = 8.dp),
-                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
-                                                )
-                                            }
-                                            TextButton(onClick = { onEditEntry(preview.id) }, modifier = Modifier.padding(top = 12.dp)) {
-                                                Text("编辑此条目")
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                                    items(state.entries, key = { it.id }) { entry ->
-                                        EncyclopediaSwipeableEntryRow(
-                                            entry = entry,
-                                            isWideLayout = false,
-                                            selected = false,
-                                            onRowClick = { onEditEntry(entry.id) },
-                                            onToggleFeatured = { viewModel.toggleEntryFeatured(entry.id) },
-                                            onDelete = { deleteEntryTarget = entry },
-                                        )
                                     }
                                 }
                             }
@@ -732,7 +741,7 @@ fun EncyclopediaDetailScreen(
                                 )
                             }
                         }
-                        SedimentPageControls(state.sedimentCursors.size, state.sedimentHasNext,
+                        EncyclopediaPageControls(state.sedimentCursors.size, state.sedimentHasNext,
                             state.sedimentLoading, state.sedimentConfirming, state.sedimentError,
                             viewModel::previousSedimentPage, viewModel::nextSedimentPage, viewModel::reloadSediment)
                         SedimentBatchControls(
@@ -958,18 +967,18 @@ fun EncyclopediaDetailScreen(
                 ) {
                     com.mojing.app.ui.common.MoJingOutlinedButton(
                         onClick = { relMenuFrom = true }, modifier = Modifier.fillMaxWidth(),
-                    ) { Text("从条目：" + (relFrom?.let { state.entryTitles[it] } ?: "请选择"), maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                    ) { Text("从条目：" + (relFrom?.title ?: "请选择"), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                     com.mojing.app.ui.common.MoJingOutlinedButton(
                         onClick = { relMenuTo = true }, modifier = Modifier.fillMaxWidth(),
-                    ) { Text("到条目：" + (relTo?.let { state.entryTitles[it] } ?: "请选择"), maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                    ) { Text("到条目：" + (relTo?.title ?: "请选择"), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                     OutlinedTextField(value = relType, onValueChange = { relType = it }, label = { Text("关系类型") }, singleLine = true)
                     OutlinedTextField(value = relLabel, onValueChange = { relLabel = it }, label = { Text("备注（可选）") }, singleLine = true)
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val f = relFrom
-                    val t = relTo
+                    val f = relFrom?.id
+                    val t = relTo?.id
                     if (f != null && t != null && f != t) {
                         viewModel.addRelation(f, t, relType, relLabel)
                         showRelDialog = false
@@ -984,11 +993,11 @@ fun EncyclopediaDetailScreen(
     if (showRelDialog && (relMenuFrom || relMenuTo)) {
         EncyclopediaEntryPicker(
             encyclopediaId = encyclopediaId,
-            selectedId = if (relMenuFrom) relFrom else relTo,
+            selectedId = if (relMenuFrom) relFrom?.id else relTo?.id,
             loadPage = viewModel::relationOptions,
             onDismiss = { relMenuFrom = false; relMenuTo = false },
             onSelect = { entry ->
-                if (relMenuFrom) relFrom = entry.id else relTo = entry.id
+                if (relMenuFrom) relFrom = entry else relTo = entry
                 relMenuFrom = false; relMenuTo = false
             },
         )
@@ -1002,7 +1011,7 @@ fun EncyclopediaDetailScreen(
             title = { Text("批量补全扩展字段（文本）") },
             text = {
                 Text(
-                    "将对当前列表中 ${state.entries.size} 条条目依次补全缺失的扩展字段（不覆盖已有内容），任务在后台队列执行，完成后自动保存。条目较多时请耐心等待并保持网络畅通。",
+                    "将对当前分类的 ${state.filteredEntryCount} 条条目依次补全缺失的扩展字段（不覆盖已有内容），任务在后台队列执行，完成后自动保存。条目较多时请耐心等待并保持网络畅通。",
                     style = MaterialTheme.typography.bodyMedium,
                 )
             },

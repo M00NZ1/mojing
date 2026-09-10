@@ -50,6 +50,12 @@ data class EncyclopediaDetailState(
     val selectedType: String = "",
     /** 宽屏「条目」Tab 右侧预览所选条目 id */
     val previewEntryId: Long? = null,
+    val entryCursors: List<Long> = listOf(0L),
+    val entriesHasNext: Boolean = false,
+    val entriesLoading: Boolean = false,
+    val entriesError: String? = null,
+    val filteredEntryCount: Int = 0,
+    val metaFillSubmitting: Boolean = false,
     /** 当前百科下进行中的生成任务（用于进度条） */
     val activeGenTasks: List<GenerationTaskEntity> = emptyList(),
     val mainTab: EncyclopediaMainTab = EncyclopediaMainTab.ENTRIES,
@@ -80,7 +86,7 @@ data class EncyclopediaDetailState(
 ) {
     /** 是否有百科「扩展 meta」批量补全任务在排队或执行（用于禁用重复提交） */
     val isEncyclopediaMetaFillQueued: Boolean
-        get() = activeGenTasks.any { it.taskKind == GenerationTaskKinds.ENCYCLOPEDIA_META_FILL }
+        get() = metaFillSubmitting || activeGenTasks.any { it.taskKind == GenerationTaskKinds.ENCYCLOPEDIA_META_FILL }
 }
 
 @HiltViewModel
@@ -146,7 +152,10 @@ class EncyclopediaDetailViewModel @Inject constructor(
             sedimentCursors = renameState?.sedimentCursors ?: savedStateHandle.get<LongArray>("sediment_cursors_$id")?.toList()?.takeIf { it.firstOrNull() == Long.MAX_VALUE && it.all { cursor -> cursor > 0 } && it.zipWithNext().all { pair -> pair.first > pair.second } } ?: listOf(Long.MAX_VALUE),
             encyclopedia = renameState?.encyclopedia,
             mainTab = renameState?.mainTab ?: EncyclopediaMainTab.ENTRIES,
-            selectedType = renameState?.selectedType.orEmpty(),
+            selectedType = renameState?.selectedType ?: savedStateHandle.get<String>("entry_type_$id").orEmpty(),
+            entryCursors = renameState?.entryCursors ?: savedStateHandle.get<LongArray>("entry_cursors_$id")?.toList()
+                ?.takeIf { it.firstOrNull() == 0L && it.all { c -> c >= 0 } && it.zipWithNext().all { pair -> pair.first < pair.second } } ?: listOf(0L),
+            metaFillSubmitting = _state.value.metaFillSubmitting,
             previewEntryId = renameState?.previewEntryId,
             isLoaded = false,
             hasPublicLlmKey = secureStorage.publicApiKey.isNotBlank(),
@@ -165,26 +174,32 @@ class EncyclopediaDetailViewModel @Inject constructor(
                     )
                     return@launch
                 }
-                val entries = entryDao.getByEncyclopedia(id)
+                val type = _state.value.selectedType
+                val cursor = _state.value.entryCursors.last()
+                val rows = entryDao.getEntryPage(id, cursor, type)
+                val entries = rows.take(100)
+                val total = entryDao.countEntries(id, "")
+                val filteredCount = entryDao.countEntries(id, type)
                 val events = timelineEventDao.getByEncyclopedia(id)
                 val relations = entryRelationDao.getByEncyclopedia(id)
+                val titles = loadRelationTitles(id, relations)
                 if (requestRevision != loadRevision) return@launch
                 val current = _state.value.encyclopedia
-                val selectedType = _state.value.selectedType
-                val visibleEntries = if (selectedType.isEmpty() || selectedType == "全部") entries
-                    else entries.filter { it.entryType == selectedType }
+                val visibleEntries = entries
                 _state.value = _state.value.copy(
                     encyclopedia = if (nameRevision != initialNameRevision && current?.id == id) {
                         encyclopedia.copy(name = current.name, updatedAt = current.updatedAt)
                     } else encyclopedia,
                     entries = visibleEntries,
+                    entriesHasNext = rows.size > 100,
+                    filteredEntryCount = filteredCount,
                     previewEntryId = _state.value.previewEntryId?.takeIf { previewId ->
                         visibleEntries.any { it.id == previewId }
                     },
                     timelineEvents = events,
                     relations = relations,
-                    entryTitles = entries.associate { it.id to it.title },
-                    entryCount = entries.size,
+                    entryTitles = titles,
+                    entryCount = total,
                     isLoaded = true,
                     loadError = null,
                 )
@@ -230,8 +245,10 @@ class EncyclopediaDetailViewModel @Inject constructor(
     }
 
     fun selectType(type: String) {
-        _state.value = _state.value.copy(selectedType = type, previewEntryId = null)
-        viewModelScope.launch { refreshEntries() }
+        if (!_state.value.isLoaded || _state.value.loadError != null) return
+        if (type == _state.value.selectedType) return
+        _state.value = _state.value.copy(selectedType = type, entryCursors = listOf(0L), previewEntryId = null)
+        reloadEntryPage()
     }
 
     fun setPreviewEntry(id: Long?) {
@@ -558,20 +575,49 @@ class EncyclopediaDetailViewModel @Inject constructor(
         }
     }
 
+    fun reloadEntryPage() {
+        _state.value = _state.value.copy(entriesLoading = true)
+        viewModelScope.launch { refreshEntries() }
+    }
+
+    fun nextEntryPage() {
+        val state = _state.value
+        if (state.entriesLoading || state.entriesError != null || !state.entriesHasNext) return
+        val cursor = state.entries.lastOrNull()?.id ?: return
+        _state.value = state.copy(entryCursors = state.entryCursors + cursor, previewEntryId = null)
+        reloadEntryPage()
+    }
+
+    fun previousEntryPage() {
+        val state = _state.value
+        if (state.entriesLoading || state.entryCursors.size < 2) return
+        _state.value = state.copy(entryCursors = state.entryCursors.dropLast(1), previewEntryId = null)
+        reloadEntryPage()
+    }
+
     private suspend fun refreshEntries() {
         val id = encId
         val revision = ++entriesRevision
         val type = _state.value.selectedType
-        val entries = if (type.isEmpty() || type == "全部") {
-            entryDao.getByEncyclopedia(id)
-        } else {
-            entryDao.getByType(id, type)
-        }
-        if (revision != entriesRevision || id != encId || type != _state.value.selectedType) return
-        val prevPreview = _state.value.previewEntryId
-        val nextPreview =
-            if (prevPreview != null && entries.none { it.id == prevPreview }) null else prevPreview
-        _state.value = _state.value.copy(entries = entries, previewEntryId = nextPreview)
+        val cursor = _state.value.entryCursors.last()
+        savedStateHandle["entry_type_$id"] = type
+        savedStateHandle["entry_cursors_$id"] = _state.value.entryCursors.toLongArray()
+        fun current() = revision == entriesRevision && id == encId && type == _state.value.selectedType && cursor == _state.value.entryCursors.last()
+        _state.value = _state.value.copy(entriesLoading = true, entriesError = null, entries = emptyList())
+        try {
+            val rows = entryDao.getEntryPage(id, cursor, type)
+            val count = entryDao.countEntries(id, type)
+            if (!current()) return
+            val entries = rows.take(100)
+            _state.value = _state.value.copy(entries = entries, entriesLoading = false, entriesHasNext = rows.size > 100,
+                filteredEntryCount = count, previewEntryId = _state.value.previewEntryId?.takeIf { preview -> entries.any { it.id == preview } })
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { if (current()) _state.value = _state.value.copy(entriesLoading = false, entriesError = "条目读取失败，请重试") }
+    }
+
+    private suspend fun loadRelationTitles(id: Long, relations: List<com.mojing.app.data.local.entity.EntryRelationEntity>): Map<Long, String> {
+        val ids = relations.flatMap { listOf(it.fromEntryId, it.toEntryId) }.distinct()
+        return ids.chunked(900).flatMap { entryDao.getEntryOptionsByIds(id, it) }.associate { it.id to it.title }
     }
 
     private suspend fun refreshTimelineAndRelations() {
@@ -579,14 +625,14 @@ class EncyclopediaDetailViewModel @Inject constructor(
         val revision = ++relationsRevision
         val events = timelineEventDao.getByEncyclopedia(id)
         val rels = entryRelationDao.getByEncyclopedia(id)
-        val allEntries = entryDao.getByEncyclopedia(id)
-        val titles = allEntries.associate { it.id to it.title }
+        val titles = loadRelationTitles(id, rels)
+        val total = entryDao.countEntries(id, "")
         if (revision != relationsRevision || id != encId) return
         _state.value = _state.value.copy(
             timelineEvents = events,
             relations = rels,
             entryTitles = titles,
-            entryCount = allEntries.size,
+            entryCount = total,
         )
         reloadSediment()
     }
@@ -693,15 +739,14 @@ class EncyclopediaDetailViewModel @Inject constructor(
         ).joinToString("\n\n")
 
     /**
-     * 对当前「条目」列表中的每一条，用设置里的文本模型补全 **扩展 meta** 中空缺键（不覆盖已有非空内容）。
+     * 对当前分类中的每一条，用设置里的文本模型补全 **扩展 meta** 中空缺键（不覆盖已有非空内容）。
      */
     fun batchAiFillMetaForCurrentEntries() {
         if (secureStorage.publicApiKey.isBlank()) {
             showSnackbar(UserFacingStrings.llmKeyMissingForAiComplete())
             return
         }
-        val entries = _state.value.entries
-        if (entries.isEmpty()) {
+        if (_state.value.filteredEntryCount == 0) {
             showSnackbar("当前列表没有条目")
             return
         }
@@ -710,14 +755,22 @@ class EncyclopediaDetailViewModel @Inject constructor(
             return
         }
         val enc = _state.value.encyclopedia ?: return
+        val type = _state.value.selectedType
+        _state.value = _state.value.copy(metaFillSubmitting = true)
         viewModelScope.launch {
-            generationQueueProcessor.enqueueEncyclopediaMetaFill(
-                encyclopediaId = enc.id,
-                encyclopediaName = enc.name.ifBlank { "百科" },
-                entryIds = entries.map { it.id },
-            )
-            val n = generationQueueProcessor.countActiveTasks()
-            showSnackbar("已加入队列（当前共 $n 个在跑）。补全完会写入各条目并刷新本页；全部结束时会有提示。点顶部云图标可看进度。")
+            try {
+                val ids = entryDao.getEntryIdsForType(enc.id, type)
+                if (ids.isEmpty()) { if (encId == enc.id) showSnackbar("当前分类没有条目"); return@launch }
+                generationQueueProcessor.enqueueEncyclopediaMetaFill(
+                    encyclopediaId = enc.id,
+                    encyclopediaName = enc.name.ifBlank { "百科" },
+                    entryIds = ids,
+                )
+                val n = generationQueueProcessor.countActiveTasks()
+                if (encId == enc.id) showSnackbar("已加入队列（当前共 $n 个在跑）。补全完会写入各条目并刷新本页；全部结束时会有提示。点顶部云图标可看进度。")
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { if (encId == enc.id) showSnackbar("补全任务创建失败，请重试") }
+            finally { _state.value = _state.value.copy(metaFillSubmitting = false) }
         }
     }
 }

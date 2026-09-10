@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Android 百科主列表分页 | 19 项百科 ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 3 项 Room 与分页控件测试通过，覆盖 205 条分类遍历、分页恢复、失败重试、重复翻页与批量补全全分类 ID | `EncyclopediaDetailViewModelTest`、`SedimentConfirmationDaoTest`、`SedimentPageControlsTest` |
 | Android 关系条目选择 | 17 项百科 ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 4 项 Room 与选择面板测试通过，覆盖精简字段分页、中文查询、标点按原文匹配、第二页、搜索失败重试、选择及关闭取消读取 | `EncyclopediaDetailViewModelTest`、`SedimentConfirmationDaoTest`、`EncyclopediaEntryPickerTest` |
 | Android 沉淀资料分页 | 17 项百科 ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 3 项 Room 与分页控件测试通过，覆盖 205 条分类遍历、每页上限、重复翻页保护、失败重试、筛选切换及同百科重载保留页码 | `EncyclopediaDetailViewModelTest`、`SedimentConfirmationDaoTest`、`SedimentPageControlsTest` |
 | Android 个人资料保存 | 12 项设置与存储测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 3 项保存反馈与设置分类界面测试通过，覆盖失败重试、重复提交保护、单次写入、成功回调及旧错误提示隐藏 | `SettingsViewModelTest`、`ProfileStorageTest`、`ProfileSaveActionsTest`、`SettingsSectionsTest` |

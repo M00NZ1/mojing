@@ -92,7 +92,7 @@ class EncyclopediaDetailViewModelTest {
         var rows = listOf(EncyclopediaEntryEntity(id = 7, encyclopediaId = 1, confidence = "inferred", sourceSessionId = 9),
             EncyclopediaEntryEntity(id = 8, encyclopediaId = 1, confidence = "confirmed", sourceSessionId = 9))
         coEvery { entries.getSedimentPage(1, any(), any()) } answers { rows }
-        coEvery { entries.getByEncyclopedia(1) } answers { rows }
+        coEvery { entries.getEntryPage(1, any(), "") } answers { rows }
         coEvery { entries.confirmSedimentEntries(1, listOf(7), any()) } throws IllegalStateException("write failed")
         val vm = createViewModel(dao, entries)
         vm.load(1)
@@ -141,16 +141,87 @@ class EncyclopediaDetailViewModelTest {
         Dispatchers.resetMain()
     }
 
+    @Test
+    fun entryPagesStayBoundedAndRestoreCategoryAndCursor() = runTest(dispatcher) {
+        val dao = mockk<EncyclopediaDao> {
+            coEvery { getById(3L) } returns EncyclopediaEntity(id = 3L, name = "雾海")
+        }
+        val records = (1L..205L).map { EncyclopediaEntryEntity(id = it, encyclopediaId = 3,
+            title = "条目$it", entryType = "location") }
+        val entries = mockk<EncyclopediaEntryDao>(relaxed = true) {
+            coEvery { getEntryPage(3L, any(), any()) } answers {
+                records.filter { it.id > secondArg<Long>() }.take(101)
+            }
+            coEvery { countEntries(3L, any()) } returns records.size
+        }
+        val saved = androidx.lifecycle.SavedStateHandle()
+        val vm = createViewModel(dao, entries, savedStateHandle = saved)
+        vm.load(3L)
+        assertEquals(100, vm.state.value.entries.size)
+        assertEquals(205, vm.state.value.filteredEntryCount)
+        vm.nextEntryPage()
+        assertEquals(101L, vm.state.value.entries.first().id)
+        vm.nextEntryPage()
+        assertEquals(5, vm.state.value.entries.size)
+        assertFalse(vm.state.value.entriesHasNext)
+        vm.selectType("location")
+        assertEquals(listOf(0L), vm.state.value.entryCursors)
+        val gate = kotlinx.coroutines.CompletableDeferred<List<EncyclopediaEntryEntity>>()
+        coEvery { entries.getEntryPage(3L, 100, "location") } coAnswers { gate.await() }
+        vm.nextEntryPage()
+        vm.nextEntryPage()
+        assertEquals(listOf(0L, 100L), vm.state.value.entryCursors)
+        gate.completeExceptionally(IllegalStateException("read failure"))
+        assertNotNull(vm.state.value.entriesError)
+        coEvery { entries.getEntryPage(3L, 100, "location") } returns records.drop(100).take(101)
+        vm.reloadEntryPage()
+        assertEquals(101L, vm.state.value.entries.first().id)
+        vm.setPreviewEntry(101)
+        vm.load(3L)
+        assertEquals(101L, vm.state.value.previewEntryId)
+        val restored = createViewModel(dao, entries, savedStateHandle = saved)
+        restored.load(3L)
+        assertEquals("location", restored.state.value.selectedType)
+        assertEquals(listOf(0L, 100L), restored.state.value.entryCursors)
+        assertEquals(101L, restored.state.value.entries.first().id)
+        restored.previousEntryPage()
+        assertEquals(1L, restored.state.value.entries.first().id)
+    }
+
+    @Test
+    fun metaFillSnapshotsAllCategoryIdsAndBlocksDuplicateSubmission() = runTest(dispatcher) {
+        val dao = mockk<EncyclopediaDao> {
+            coEvery { getById(3L) } returns EncyclopediaEntity(id = 3L, name = "雾海")
+        }
+        val ids = (1L..205L).toList()
+        val gate = kotlinx.coroutines.CompletableDeferred<List<Long>>()
+        val entries = mockk<EncyclopediaEntryDao>(relaxed = true) {
+            coEvery { countEntries(3L, any()) } returns 205
+            coEvery { getEntryIdsForType(3L, "location") } coAnswers { gate.await() }
+        }
+        val queue = mockk<GenerationQueueProcessor>(relaxed = true)
+        val vm = createViewModel(dao, entries, apiKey = "test-key", queue = queue)
+        vm.load(3L)
+        vm.selectType("location")
+        vm.batchAiFillMetaForCurrentEntries()
+        vm.batchAiFillMetaForCurrentEntries()
+        assertTrue(vm.state.value.metaFillSubmitting)
+        gate.complete(ids)
+        io.mockk.coVerify(exactly = 1) { queue.enqueueEncyclopediaMetaFill(3L, "雾海", ids) }
+        assertFalse(vm.state.value.metaFillSubmitting)
+    }
+
     private fun createViewModel(
         encyclopediaDao: EncyclopediaDao,
         entryDao: EncyclopediaEntryDao = mockk(relaxed = true),
         relationDao: EntryRelationDao = mockk(relaxed = true),
         timelineDao: TimelineEventDao = mockk(relaxed = true),
         savedStateHandle: androidx.lifecycle.SavedStateHandle = androidx.lifecycle.SavedStateHandle(),
+        apiKey: String = "",
+        queue: GenerationQueueProcessor = mockk(relaxed = true),
     ): EncyclopediaDetailViewModel {
         val secureStorage = mockk<SecureStorage>(relaxed = true)
-        every { secureStorage.publicApiKey } returns ""
-        val queue = mockk<GenerationQueueProcessor>(relaxed = true)
+        every { secureStorage.publicApiKey } returns apiKey
         every { queue.observeActiveForEncyclopedia(any()) } returns flowOf(emptyList())
         return EncyclopediaDetailViewModel(
             encyclopediaDao = encyclopediaDao,
@@ -190,7 +261,7 @@ class EncyclopediaDetailViewModelTest {
             id = 9L, encyclopediaId = 3L, title = "潮汐钟", confidence = "inferred",
         )
         val entries = mockk<EncyclopediaEntryDao>(relaxed = true) {
-            coEvery { getByEncyclopedia(3L) } answers { listOf(note) }
+            coEvery { getEntryPage(3L, any(), "") } answers { listOf(note) }
             coEvery { getSedimentPage(3L, any(), any()) } answers { listOf(note) }
         }
         val vm = createViewModel(dao, entries)
@@ -216,8 +287,9 @@ class EncyclopediaDetailViewModelTest {
         val person = EncyclopediaEntryEntity(id = 10L, encyclopediaId = 3L, title = "沈照", entryType = "character")
         var records = listOf(place, person)
         val entries = mockk<EncyclopediaEntryDao>(relaxed = true) {
-            coEvery { getByEncyclopedia(3L) } answers { records }
-            coEvery { getByType(3L, "location") } answers { records.filter { it.entryType == "location" } }
+            coEvery { getEntryPage(3L, any(), "") } answers { records }
+            coEvery { countEntries(3L, "") } answers { records.size }
+            coEvery { getEntryPage(3L, any(), "location") } answers { records.filter { it.entryType == "location" } }
         }
         val vm = createViewModel(dao, entries)
         vm.load(3L)
@@ -258,7 +330,8 @@ class EncyclopediaDetailViewModelTest {
             coEvery { getById(3L) } returns encyclopedia
         }
         val entryDao = mockk<EncyclopediaEntryDao>(relaxed = true) {
-            coEvery { getByEncyclopedia(3L) } returns listOf(entry)
+            coEvery { getEntryPage(3L, any(), "") } returns listOf(entry)
+            coEvery { countEntries(3L, "") } returns 1
             coEvery { getSedimentPage(3L, any(), any()) } returns emptyList()
         }
         val relationDao = mockk<EntryRelationDao>(relaxed = true) {
@@ -376,7 +449,7 @@ class EncyclopediaDetailViewModelTest {
         vm.beginRename()
         vm.editRename("新名称")
         val gate = kotlinx.coroutines.CompletableDeferred<List<EncyclopediaEntryEntity>>()
-        coEvery { entries.getByEncyclopedia(3L) } coAnswers { gate.await() }
+        coEvery { entries.getEntryPage(3L, any(), "") } coAnswers { gate.await() }
         vm.load(3L)
         vm.updateEncyclopediaName()
         gate.complete(emptyList())
@@ -396,10 +469,10 @@ class EncyclopediaDetailViewModelTest {
         val old = EncyclopediaEntryEntity(id = 9L, encyclopediaId = 3L, title = "旧雾港", entryType = "location")
         val latest = old.copy(title = "新雾港")
         val gate = kotlinx.coroutines.CompletableDeferred<List<EncyclopediaEntryEntity>>()
-        coEvery { entries.getByType(3L, "location") } coAnswers { gate.await() }
+        coEvery { entries.getEntryPage(3L, any(), "location") } coAnswers { gate.await() }
         vm.selectType("location")
         vm.selectType("character")
-        coEvery { entries.getByType(3L, "location") } returns listOf(latest)
+        coEvery { entries.getEntryPage(3L, any(), "location") } returns listOf(latest)
         vm.selectType("location")
         vm.setPreviewEntry(9L)
 
@@ -419,11 +492,11 @@ class EncyclopediaDetailViewModelTest {
         val vm = createViewModel(dao, entries)
         vm.load(3L)
         val gate = kotlinx.coroutines.CompletableDeferred<List<EncyclopediaEntryEntity>>()
-        coEvery { entries.getByType(3L, "location") } coAnswers { gate.await() }
+        coEvery { entries.getEntryPage(3L, any(), "location") } coAnswers { gate.await() }
         vm.selectType("location")
         val latest = EncyclopediaEntryEntity(id = 10L, encyclopediaId = 3L, title = "新码头", entryType = "location")
-        coEvery { entries.getByEncyclopedia(3L) } returns listOf(latest)
-        coEvery { entries.getByType(3L, "location") } returns listOf(latest)
+        coEvery { entries.getEntryPage(3L, any(), "") } returns listOf(latest)
+        coEvery { entries.getEntryPage(3L, any(), "location") } returns listOf(latest)
         vm.load(3L)
 
         gate.complete(emptyList())

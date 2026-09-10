@@ -9,6 +9,19 @@ data class EncyclopediaEntryOption(val id: Long, val title: String, val entryTyp
 
 @Dao
 interface EncyclopediaEntryDao {
+    @Query("""SELECT * FROM encyclopedia_entries WHERE encyclopediaId = :encId AND id > :afterId
+        AND (:type = '' OR :type = '全部' OR entryType = :type) ORDER BY id ASC LIMIT 101""")
+    suspend fun getEntryPage(encId: Long, afterId: Long, type: String): List<EncyclopediaEntryEntity>
+
+    @Query("SELECT COUNT(*) FROM encyclopedia_entries WHERE encyclopediaId = :encId AND (:type = '' OR :type = '全部' OR entryType = :type)")
+    suspend fun countEntries(encId: Long, type: String = ""): Int
+
+    @Query("SELECT id, title, entryType FROM encyclopedia_entries WHERE encyclopediaId = :encId AND id IN (:ids)")
+    suspend fun getEntryOptionsByIds(encId: Long, ids: List<Long>): List<EncyclopediaEntryOption>
+
+    @Query("SELECT id FROM encyclopedia_entries WHERE encyclopediaId = :encId AND (:type = '' OR :type = '全部' OR entryType = :type) ORDER BY id ASC")
+    suspend fun getEntryIdsForType(encId: Long, type: String): List<Long>
+
     @Query("""SELECT id, title, entryType FROM encyclopedia_entries
         WHERE encyclopediaId = :encId AND id > :afterId
         AND (:query = '' OR instr(lower(title), lower(:query)) > 0)

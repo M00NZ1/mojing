@@ -7,7 +7,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 
 @Composable
-internal fun SedimentPageControls(page: Int, hasNext: Boolean, loading: Boolean, confirming: Boolean, error: String?,
+internal fun EncyclopediaPageControls(page: Int, hasNext: Boolean, loading: Boolean, confirming: Boolean, error: String?,
     previous: () -> Unit, next: () -> Unit, retry: () -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         TextButton(previous, enabled = !loading && !confirming && page > 1) { Text("上一页") }
