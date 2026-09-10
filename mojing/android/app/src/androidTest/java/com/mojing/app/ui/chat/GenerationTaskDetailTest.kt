@@ -32,6 +32,30 @@ class GenerationTaskDetailTest {
         rule.runOnIdle { assertEquals(true, dismissed) }
     }
 
+    @Test fun cancellationKeepsDialogThroughPendingFailureAndRetry() {
+        val task = GenerationTaskEntity(id = 7, taskKind = GenerationTaskKinds.ENCYCLOPEDIA_ENTRIES,
+            title = "雾港百科", status = GenerationTaskStatus.RUNNING, payloadJson = "{}", progressDone = 1)
+        val busy = mutableStateOf(false)
+        val error = mutableStateOf<String?>(null)
+        var attempts = 0
+        var dismissed = 0
+        rule.setContent { MaterialTheme {
+            GenerationTaskCancelConfirmation(listOf(task), 7L, busy.value,
+                onDismiss = { dismissed++ }, error = error.value,
+                onCancel = { attempts++; busy.value = true; error.value = null })
+        } }
+        rule.onNodeWithText("取消生成").performClick()
+        rule.onNodeWithText("正在取消…").assertIsNotEnabled()
+        rule.onNodeWithText("保留任务").assertIsNotEnabled()
+        rule.runOnIdle { assertEquals(0, dismissed); assertEquals(1, attempts)
+            busy.value = false; error.value = "取消未完成，请重试。" }
+        rule.onNodeWithText("取消未完成，请重试。").assertIsDisplayed()
+        rule.onNodeWithText("取消生成").performClick()
+        rule.runOnIdle { assertEquals(2, attempts); assertEquals(0, dismissed); busy.value = false }
+        rule.onNodeWithText("保留任务").performClick()
+        rule.runOnIdle { assertEquals(1, dismissed) }
+    }
+
     @Test fun longFeedbackKeepsResultAndCloseReachable() {
         var opened = 0
         var closed = 0

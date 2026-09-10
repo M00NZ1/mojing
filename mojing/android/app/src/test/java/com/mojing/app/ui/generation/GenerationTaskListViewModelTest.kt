@@ -112,6 +112,36 @@ class GenerationTaskListViewModelTest {
         assertTrue(vm.retryingTaskIds.value.isEmpty())
     }
 
+    @Test fun cancellationReportsOutcomeAfterCompletionAndCanRetry() = runTest {
+        val processor = mockk<GenerationQueueProcessor>()
+        every { processor.pausedState } returns MutableStateFlow(false)
+        val gate = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        coEvery { processor.cancelTask(7L) } coAnswers { gate.await() }
+        val dao = mockk<GenerationTaskDao>()
+        every { dao.observeQueueVisible() } returns flowOf(emptyList())
+        val vm = GenerationTaskListViewModel(dao, processor, mockk(relaxed = true))
+        val outcomes = mutableListOf<Boolean>()
+        val result: (Boolean) -> Unit = { assertFalse(vm.busy.value); outcomes.add(it) }
+        vm.cancelTask(7L, result)
+        vm.cancelTask(7L, result)
+        runCurrent()
+        assertTrue(vm.busy.value)
+        assertTrue(outcomes.isEmpty())
+        coVerify(exactly = 1) { processor.cancelTask(7L) }
+        gate.completeExceptionally(IllegalStateException("write failed"))
+        advanceUntilIdle()
+        assertEquals(listOf(false), outcomes)
+        coEvery { processor.cancelTask(7L) } returns false
+        vm.cancelTask(7L, result)
+        advanceUntilIdle()
+        assertEquals(listOf(false, false), outcomes)
+        coEvery { processor.cancelTask(7L) } returns true
+        vm.cancelTask(7L, result)
+        advanceUntilIdle()
+        assertEquals(listOf(false, false, true), outcomes)
+        assertEquals("任务已取消，已保存内容保留", vm.snackbar.value)
+    }
+
     @Test fun pauseFailureDoesNotPretendQueuePausedAndCanRetry() = runTest {
         val paused = MutableStateFlow(false)
         val processor = mockk<GenerationQueueProcessor>()

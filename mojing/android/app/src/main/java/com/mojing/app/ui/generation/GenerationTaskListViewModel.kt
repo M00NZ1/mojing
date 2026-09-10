@@ -86,18 +86,20 @@ class GenerationTaskListViewModel @Inject constructor(
         _snackbar.compareAndSet(expectedMessage, null)
     }
 
-    private fun runAction(success: String, action: suspend () -> Unit) {
+    private fun runAction(success: String, onResult: (Boolean) -> Unit = {}, action: suspend () -> Unit) {
         if (_busy.value) return
         _busy.value = true
         viewModelScope.launch {
-            try { action(); _snackbar.value = success }
+            val completed = try { action(); _snackbar.value = success; true }
             catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (_: Exception) { _snackbar.value = "操作未完成，请重试" }
+            catch (_: Exception) { _snackbar.value = "操作未完成，请重试"; false }
             finally { _busy.value = false }
+            onResult(completed)
         }
     }
 
-    fun cancelTask(id: Long) = runAction("任务已取消，已保存内容保留") { check(processor.cancelTask(id)) }
+    fun cancelTask(id: Long, onResult: (Boolean) -> Unit = {}) =
+        runAction("任务已取消，已保存内容保留", onResult) { check(processor.cancelTask(id)) }
     fun pauseQueue() = runAction("将在当前步骤保存后暂停") { processor.pauseAll() }
     fun resumeQueue() = runAction("已继续生成") { processor.resumeAll() }
 

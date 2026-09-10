@@ -49,6 +49,7 @@ fun GenerationTaskListScreen(
     val snackbar = remember { SnackbarHostState() }
     var filter by rememberSaveable { mutableIntStateOf(0) }
     var cancelTargetId by remember { mutableStateOf<Long?>(null) }
+    var cancelError by remember(cancelTargetId) { mutableStateOf<String?>(null) }
     var detail by remember { mutableStateOf<GenerationTaskEntity?>(null) }
     val dateFormat = remember { SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()) }
     val active = tasks.count { it.isActive() }
@@ -169,7 +170,15 @@ fun GenerationTaskListScreen(
         }
     }
     GenerationTaskCancelConfirmation(tasks, cancelTargetId, busy,
-        onDismiss = { cancelTargetId = null }, onCancel = viewModel::cancelTask)
+        onDismiss = { cancelTargetId = null }, error = cancelError, onCancel = { id ->
+            cancelError = null
+            viewModel.cancelTask(id) { success ->
+                if (cancelTargetId == id) {
+                    if (success) cancelTargetId = null
+                    else cancelError = "取消未完成，请重试。已保存内容仍保留。"
+                }
+            }
+        })
     detail?.let { original ->
         val t = tasks.firstOrNull { it.id == original.id } ?: original
         GenerationTaskDetailSheet(t, onDismiss = { detail = null },
@@ -187,16 +196,23 @@ internal fun GenerationTaskCancelConfirmation(
     busy: Boolean,
     onDismiss: () -> Unit,
     onCancel: (Long) -> Unit,
+    error: String? = null,
 ) {
     val task = tasks.firstOrNull { it.id == targetId && it.isActive() }
     LaunchedEffect(targetId, task?.id) {
         if (targetId != null && task == null) onDismiss()
     }
     if (task != null) {
-        AlertDialog(onDismissRequest = onDismiss, title = { Text("取消这次生成？") },
-            text = { Text("${task.title}\n\n已保存 ${task.progressDone} 项内容会保留，剩余部分不再继续。") },
-            confirmButton = { TextButton(enabled = !busy, onClick = { onCancel(task.id); onDismiss() }) { Text("取消生成") } },
-            dismissButton = { TextButton(onClick = onDismiss) { Text("保留任务") } })
+        AlertDialog(onDismissRequest = { if (!busy) onDismiss() }, title = { Text("取消这次生成？") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("${task.title}\n\n已保存 ${task.progressDone} 项内容会保留，剩余部分不再继续。")
+                    if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
+                }
+            },
+            confirmButton = { TextButton(enabled = !busy, onClick = { onCancel(task.id) }) { Text(if (busy) "正在取消…" else "取消生成") } },
+            dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("保留任务") } })
     }
 }
 
