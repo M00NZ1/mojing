@@ -51,6 +51,8 @@ fun GenerationTaskListScreen(
     var cancelTargetId by remember { mutableStateOf<Long?>(null) }
     var cancelError by remember(cancelTargetId) { mutableStateOf<String?>(null) }
     var detail by remember { mutableStateOf<GenerationTaskEntity?>(null) }
+    var resultError by remember(detail?.id) { mutableStateOf<String?>(null) }
+    DisposableEffect(viewModel) { onDispose { viewModel.cancelResultLookup() } }
     val dateFormat = remember { SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()) }
     val active = tasks.count { it.isActive() }
     val failed = tasks.count { it.status == GenerationTaskStatus.FAILED }
@@ -181,10 +183,13 @@ fun GenerationTaskListScreen(
         })
     detail?.let { original ->
         val t = tasks.firstOrNull { it.id == original.id } ?: original
-        GenerationTaskDetailSheet(t, onDismiss = { detail = null },
-            canOpen = openingResultId == null, onOpen = {
-                detail = null
-                viewModel.openResult(t, onOpenResult)
+        GenerationTaskDetailSheet(t, onDismiss = { viewModel.cancelResultLookup(); detail = null },
+            canOpen = openingResultId == null, opening = openingResultId == t.id, openError = resultError, onOpen = {
+                resultError = null
+                viewModel.openResult(t, onOpen = { target ->
+                    detail = null
+                    onOpenResult(target)
+                }, onError = { resultError = it })
             })
     }
 }
@@ -223,6 +228,8 @@ internal fun GenerationTaskDetailSheet(
     onDismiss: () -> Unit,
     canOpen: Boolean,
     onOpen: () -> Unit,
+    opening: Boolean = false,
+    openError: String? = null,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
@@ -249,9 +256,10 @@ internal fun GenerationTaskDetailSheet(
                 Spacer(Modifier.height(8.dp))
             }
             Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                openError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
                 if (task.progressDone > 0 || task.status == GenerationTaskStatus.COMPLETED) {
-                    Button(onClick = onOpen, enabled = canOpen, modifier = Modifier.fillMaxWidth()) {
-                        Text("查看已生成内容")
+                    Button(onClick = onOpen, enabled = canOpen && !opening, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (opening) "正在打开…" else if (openError != null) "重试打开" else "查看已生成内容")
                     }
                 }
                 TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("关闭") }

@@ -17,6 +17,9 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.ensureActive
 import javax.inject.Inject
 
 @HiltViewModel
@@ -28,19 +31,45 @@ class GenerationTaskListViewModel @Inject constructor(
 
     private val _openingResultId = MutableStateFlow<Long?>(null)
     val openingResultId: StateFlow<Long?> = _openingResultId.asStateFlow()
+    private var resultLookupJob: Job? = null
+    private var resultLookupRevision = 0L
 
-    fun openResult(task: GenerationTaskEntity, onOpen: (com.mojing.app.domain.generation.GenerationResultTarget) -> Unit) {
+    fun cancelResultLookup() {
+        resultLookupRevision++
+        resultLookupJob?.cancel()
+        resultLookupJob = null
+        _openingResultId.value = null
+    }
+
+    fun openResult(
+        task: GenerationTaskEntity,
+        onOpen: (com.mojing.app.domain.generation.GenerationResultTarget) -> Unit,
+        onError: ((String) -> Unit)? = null,
+    ) {
         if (_openingResultId.value != null) return
+        val revision = ++resultLookupRevision
         _openingResultId.value = task.id
-        viewModelScope.launch {
+        fun reportError(message: String) {
+            if (revision != resultLookupRevision) return
+            if (onError != null) onError(message) else _snackbar.value = message
+        }
+        resultLookupJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
                 val target = resultResolver.resolve(task)
-                if (target == null) _snackbar.value = "生成内容已不存在或未关联，记录仍保留"
+                coroutineContext.ensureActive()
+                if (revision != resultLookupRevision) return@launch
+                if (target == null) reportError("生成内容已不存在或未关联，记录仍保留")
                 else onOpen(target)
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-            catch (_: Exception) { _snackbar.value = "生成内容暂时无法打开，请重试" }
-            finally { _openingResultId.value = null }
+            catch (_: Exception) { reportError("生成内容暂时无法打开，请重试") }
+            finally {
+                if (revision == resultLookupRevision) {
+                    _openingResultId.value = null
+                    resultLookupJob = null
+                }
+            }
         }
+        resultLookupJob?.start()
     }
 
     private val retryLoads = Channel<Unit>(Channel.CONFLATED)

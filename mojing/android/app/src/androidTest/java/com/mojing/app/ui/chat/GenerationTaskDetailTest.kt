@@ -77,6 +77,28 @@ class GenerationTaskDetailTest {
         }
     }
 
+    @Test fun resultLookupShowsPendingAndInlineRetryWithCloseAvailable() {
+        val opening = mutableStateOf(true)
+        val failure = mutableStateOf<String?>(null)
+        var retries = 0
+        var closes = 0
+        rule.setContent { MaterialTheme {
+            GenerationTaskDetailSheet(
+                GenerationTaskEntity(taskKind = GenerationTaskKinds.ENCYCLOPEDIA_ENTRIES,
+                    title = "雾港百科", status = GenerationTaskStatus.COMPLETED, progressDone = 2, payloadJson = "{}",
+                    errorMessage = "长反馈\n".repeat(100)),
+                onDismiss = { closes++ }, canOpen = !opening.value, opening = opening.value,
+                openError = failure.value, onOpen = { retries++ })
+        } }
+        rule.onNodeWithText("正在打开…").assertIsDisplayed().assertIsNotEnabled()
+        rule.onNodeWithText("关闭").assertIsEnabled()
+        rule.runOnIdle { opening.value = false; failure.value = "生成内容暂时无法打开，请重试" }
+        rule.onNodeWithText("生成内容暂时无法打开，请重试").assertIsDisplayed()
+        rule.onNodeWithText("重试打开").assertIsDisplayed().performClick()
+        rule.onNodeWithText("关闭").performClick()
+        rule.runOnIdle { assertEquals(1, retries); assertEquals(1, closes) }
+    }
+
     @Test fun taskWithoutSavedContentHasNoResultAction() {
         rule.setContent {
             MaterialTheme {

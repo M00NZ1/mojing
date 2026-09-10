@@ -46,6 +46,69 @@ class GenerationTaskListViewModelTest {
         assertEquals(listOf(com.mojing.app.domain.generation.GenerationResultTarget.Character(7L)), opened)
     }
 
+    @Test fun closedResultLookupCannotNavigateOrClearNextRequest() = runTest {
+        val processor = mockk<GenerationQueueProcessor>()
+        every { processor.pausedState } returns MutableStateFlow(false)
+        val dao = mockk<GenerationTaskDao>()
+        every { dao.observeQueueVisible() } returns flowOf(emptyList())
+        val resolver = mockk<com.mojing.app.domain.generation.GenerationResultResolver>()
+        val oldRead = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val nextRead = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val target = com.mojing.app.domain.generation.GenerationResultTarget.Character(7L)
+        var reads = 0
+        coEvery { resolver.resolve(any()) } coAnswers {
+            if (++reads == 1) kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { oldRead.await() }
+            else nextRead.await()
+            target
+        }
+        val vm = GenerationTaskListViewModel(dao, processor, resolver)
+        val task = com.mojing.app.data.local.entity.GenerationTaskEntity(id = 9L,
+            title = "角色生成", taskKind = "character_persona_ai", payloadJson = "{}", status = "COMPLETED")
+        val opened = mutableListOf<com.mojing.app.domain.generation.GenerationResultTarget>()
+        vm.openResult(task, opened::add)
+        runCurrent()
+        vm.cancelResultLookup()
+        assertNull(vm.openingResultId.value)
+        vm.openResult(task, opened::add)
+        runCurrent()
+        oldRead.complete(Unit)
+        runCurrent()
+        assertTrue(opened.isEmpty())
+        assertEquals(9L, vm.openingResultId.value)
+        nextRead.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf(target), opened)
+        assertNull(vm.openingResultId.value)
+        assertNull(vm.snackbar.value)
+    }
+
+    @Test fun resultErrorsStayWithDetailAndAllowRetry() = runTest {
+        val processor = mockk<GenerationQueueProcessor>()
+        every { processor.pausedState } returns MutableStateFlow(false)
+        val dao = mockk<GenerationTaskDao>()
+        every { dao.observeQueueVisible() } returns flowOf(emptyList())
+        val resolver = mockk<com.mojing.app.domain.generation.GenerationResultResolver>()
+        coEvery { resolver.resolve(any()) } throws IllegalStateException("read failed")
+        val vm = GenerationTaskListViewModel(dao, processor, resolver)
+        val task = com.mojing.app.data.local.entity.GenerationTaskEntity(id = 9L,
+            title = "角色生成", taskKind = "character_persona_ai", payloadJson = "{}", status = "COMPLETED")
+        val errors = mutableListOf<String>()
+        var opened = 0
+        vm.openResult(task, { opened++ }, errors::add)
+        advanceUntilIdle()
+        assertEquals(listOf("生成内容暂时无法打开，请重试"), errors)
+        assertNull(vm.snackbar.value)
+        assertNull(vm.openingResultId.value)
+        coEvery { resolver.resolve(any()) } returns null
+        vm.openResult(task, { opened++ }, errors::add)
+        advanceUntilIdle()
+        assertEquals("生成内容已不存在或未关联，记录仍保留", errors.last())
+        coEvery { resolver.resolve(any()) } returns com.mojing.app.domain.generation.GenerationResultTarget.Character(7L)
+        vm.openResult(task, { opened++ }, errors::add)
+        advanceUntilIdle()
+        assertEquals(1, opened)
+    }
+
     @Test fun readFailureRetainsRowsAndRetryRestartsOnlyTheSubscription() = runTest {
         val processor = mockk<GenerationQueueProcessor>()
         every { processor.pausedState } returns MutableStateFlow(false)
