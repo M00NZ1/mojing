@@ -1,6 +1,5 @@
 package com.mojing.app.ui.splash
 
-import android.app.Activity
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -42,14 +41,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalInspectionMode
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.view.WindowCompat
 import com.mojing.app.R
 import com.mojing.app.ui.theme.MoJingTheme
 import kotlinx.coroutines.delay
@@ -166,7 +163,6 @@ private fun InkBrandSplashTextBlock(
  */
 @Composable
 fun InkBrandSplashOverlay(onDismiss: () -> Unit) {
-    val view = LocalView.current
     val inspection = LocalInspectionMode.current
     val titleAlpha = remember { Animatable(if (inspection) 1f else 0f) }
     val lineFrac = remember { Animatable(if (inspection) 1f else 0f) }
@@ -183,13 +179,6 @@ fun InkBrandSplashOverlay(onDismiss: () -> Unit) {
             screenAlpha.animateTo(0f, tween(260, easing = FastOutSlowInEasing))
             onDismiss()
             return@LaunchedEffect
-        }
-        val window = (view.context as? Activity)?.window
-        if (window != null) {
-            WindowCompat.getInsetsController(window, view).apply {
-                isAppearanceLightStatusBars = false
-                isAppearanceLightNavigationBars = false
-            }
         }
         titleAlpha.animateTo(1f, tween(360, easing = FastOutSlowInEasing))
         lineFrac.animateTo(1f, tween(240, easing = FastOutSlowInEasing))
