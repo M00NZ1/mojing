@@ -421,15 +421,32 @@ export default function CharactersPage() {
     onError: (e) => showToast(String(e), 'error'),
   });
 
-  const generateCardImageMutation = useMutation({
-    mutationFn: async () => {
-      if (!editing?.id) throw new Error('请先保存角色');
-      return api.generateCharacterCardImage(editing.id, { prompt_hint: cardGenHint, size: '1024x1792' });
+  function applySavedImage(c: Character, field: 'avatar_image_path' | 'card_image_path', request: { id: number; revision: number; original: string }) {
+    if (c.id !== request.id || loadedCharacterRouteRef.current !== String(request.id)
+      || editorRouteRevisionRef.current.revision !== request.revision) return;
+    const savedFields = { [field]: c[field] };
+    setEditing(current => current?.id === request.id && (current[field] ?? '') === request.original
+      ? { ...current, ...savedFields } : current);
+    setEditingBaseline(baseline => mergeCharacterDraftSnapshot(baseline, savedFields));
+  }
+
+  const uploadAvatarMutation = useMutation({
+    mutationFn: (request: { id: number; revision: number; original: string; file: File }) =>
+      api.uploadCharacterAvatar(request.id, request.file),
+    onSuccess: async (c, request) => {
+      applySavedImage(c, 'avatar_image_path', request);
+      await queryClient.invalidateQueries({ queryKey: ['characters'] });
+      showToast('头像已上传', 'success');
     },
-    onSuccess: async (c) => {
-      const savedFields = { card_image_path: c.card_image_path };
-      setEditing((prev) => (prev ? { ...prev, ...savedFields } : c));
-      setEditingBaseline((baseline) => mergeCharacterDraftSnapshot(baseline, savedFields));
+    onError: (error) => showToast(error instanceof Error ? error.message : '头像上传失败', 'error'),
+  });
+
+  const generateCardImageMutation = useMutation({
+    mutationFn: (request: { id: number; revision: number; original: string; hint: string }) => {
+      return api.generateCharacterCardImage(request.id, { prompt_hint: request.hint, size: '1024x1792' });
+    },
+    onSuccess: async (c, request) => {
+      applySavedImage(c, 'card_image_path', request);
       await queryClient.invalidateQueries({ queryKey: ['characters'] });
       showToast('形象图已生成并保存', 'success');
     },
@@ -742,22 +759,18 @@ export default function CharactersPage() {
                         {!editing.avatar_image_path && <span>{editing.name?.slice(0, 1) || '?'}</span>}
                       </div>
                       <div>
-                        <input type="file" accept="image/*" onChange={(e) => {
+                        <input type="file" accept="image/*" aria-label="上传角色头像" disabled={!editing.id || uploadAvatarMutation.isPending} onChange={(e) => {
                           const f = e.target.files?.[0];
-                          if (f && editing.id) {
-                            void api.uploadCharacterAvatar(editing.id, f)
-                              .then((c) => {
-                                const savedFields = { avatar_image_path: c.avatar_image_path };
-                                setEditing((prev) => (prev ? { ...prev, ...savedFields } : c));
-                                setEditingBaseline((baseline) => mergeCharacterDraftSnapshot(baseline, savedFields));
-                                queryClient.invalidateQueries({ queryKey: ['characters'] });
-                                showToast('\u5934\u50cf\u5df2\u4e0a\u4f20', 'success');
-                              })
-                              .catch((error) => showToast(error instanceof Error ? error.message : '\u5934\u50cf\u4e0a\u4f20\u5931\u8d25', 'error'));
+                          if (f && editing.id && !uploadAvatarMutation.isPending) {
+                            uploadAvatarMutation.mutate({ id: editing.id, revision: editorRouteRevisionRef.current.revision, original: editing.avatar_image_path ?? '', file: f });
                           }
                           e.target.value = '';
                         }} />
-                        <div className="hint">保存角色后可以上传头像</div>
+                        <div className="hint" role="status">{uploadAvatarMutation.isPending ? '正在上传头像…' : editing.id ? '选择图片上传为角色头像' : '保存角色后可以上传头像'}</div>
+                        {uploadAvatarMutation.isError && uploadAvatarMutation.variables?.id === editing.id
+                          && uploadAvatarMutation.variables.revision === editorRouteRevisionRef.current.revision && (
+                          <div className="field-error" role="alert">头像上传失败，请重新选择图片重试。</div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1198,7 +1211,9 @@ export default function CharactersPage() {
                             type="button"
                             className="btn btn-primary btn-sm"
                             disabled={generateCardImageMutation.isPending}
-                            onClick={() => generateCardImageMutation.mutate()}
+                            onClick={() => {
+                              if (editing.id) generateCardImageMutation.mutate({ id: editing.id, revision: editorRouteRevisionRef.current.revision, original: editing.card_image_path ?? '', hint: cardGenHint });
+                            }}
                           >
                             {generateCardImageMutation.isPending ? '生成中…' : '生成列表封面图'}
                           </button>
