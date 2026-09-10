@@ -31,7 +31,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private fun GenerationTaskEntity.isActive() = status in setOf(
+internal fun GenerationTaskEntity.isActive() = status in setOf(
     GenerationTaskStatus.QUEUED, GenerationTaskStatus.RUNNING, GenerationTaskStatus.PAUSED)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
@@ -104,7 +104,7 @@ fun GenerationTaskListScreen(
                             else "$active 项待完成 · $failed 项需要处理。离开此页后，生成会继续。",
                             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         if (paused || active > 0) {
-                            Button(enabled = !busy, onClick = { if (paused) viewModel.resumeQueue() else viewModel.pauseQueue() }) {
+                            Button(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = { if (paused) viewModel.resumeQueue() else viewModel.pauseQueue() }) {
                                 Text(if (busy) "正在处理…" else if (paused) "继续生成" else "暂停生成")
                             }
                         }
@@ -123,53 +123,19 @@ fun GenerationTaskListScreen(
                 }
             }
             items(if (loading) emptyList() else visible, key = { it.id }) { t ->
-                val retrying = t.id in retryingIds
-                val color = when (t.status) {
-                    GenerationTaskStatus.FAILED -> MaterialTheme.colorScheme.error
-                    GenerationTaskStatus.RUNNING -> MaterialTheme.colorScheme.primary
-                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                }
-                OutlinedCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(kindLabel(t.taskKind), style = MaterialTheme.typography.labelMedium)
-                            Text(if (paused && t.status == GenerationTaskStatus.RUNNING) "正在收尾" else statusLabel(t.status),
-                                style = MaterialTheme.typography.labelMedium, color = color)
-                        }
-                        Text(t.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        if (t.progressTotal > 0) {
-                            val progress = (t.progressDone.toFloat() / t.progressTotal).coerceIn(0f, 1f)
-                            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
-                            Text("已完成 ${t.progressDone} / ${t.progressTotal}", style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        if (t.errorMessage.isNotBlank()) {
-                            Text(t.errorMessage, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.bodySmall, color = color)
-                        }
-                        Text(dateFormat.format(Date(t.createdAt)),
-                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            if (t.isActive()) TextButton(enabled = !busy, onClick = { cancelTargetId = t.id }) { Text("取消") }
-                            if (t.status == GenerationTaskStatus.FAILED && isRetryableKind(t.taskKind)) {
-                                TextButton(enabled = !busy && !retrying, onClick = { viewModel.retryFailedTask(t) }) {
-                                    if (retrying) {
-                                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                                        Spacer(Modifier.width(6.dp))
-                                    }
-                                    Text(if (retrying) "重新排队中" else "继续尝试")
-                                }
-                            }
-                            TextButton(onClick = { detailId = t.id }) { Text("详情") }
-                        }
-                        if (t.progressDone > 0 || t.status == GenerationTaskStatus.COMPLETED) {
-                            OutlinedButton(enabled = openingResultId == null,
-                                onClick = { viewModel.openResult(t, onOpenResult) }, modifier = Modifier.fillMaxWidth()) {
-                                Text(if (openingResultId == t.id) "正在打开…" else "查看已生成内容")
-                            }
-                        }
-                    }
-                }
+                GenerationTaskCard(
+                    task = t,
+                    createdLabel = dateFormat.format(Date(t.createdAt)),
+                    queuePaused = paused,
+                    busy = busy,
+                    retrying = t.id in retryingIds,
+                    canOpen = openingResultId == null,
+                    opening = openingResultId == t.id,
+                    onDetail = { detailId = t.id },
+                    onCancel = { cancelTargetId = t.id },
+                    onRetry = { viewModel.retryFailedTask(t) },
+                    onOpen = { viewModel.openResult(t, onOpenResult) },
+                )
             }
             if (browsingHistory) item {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
@@ -352,13 +318,13 @@ internal fun GenerationFeedbackText(text: String) {
     }
 }
 
-private fun isRetryableKind(kind: String): Boolean =
+internal fun isRetryableKind(kind: String): Boolean =
     kind == GenerationTaskKinds.ENCYCLOPEDIA_ENTRIES ||
         kind == GenerationTaskKinds.ENCYCLOPEDIA_META_FILL ||
         kind == GenerationTaskKinds.CHARACTER_PERSONA_AI ||
         kind == GenerationTaskKinds.WORLD_TEMPLATE_PROMPT_AI
 
-private fun kindLabel(kind: String): String = when (kind) {
+internal fun kindLabel(kind: String): String = when (kind) {
     GenerationTaskKinds.ENCYCLOPEDIA_ENTRIES -> "百科条目"
     GenerationTaskKinds.ENCYCLOPEDIA_META_FILL -> "百科扩展字段"
     GenerationTaskKinds.CHARACTER_PERSONA_AI -> "角色人设"
@@ -366,7 +332,7 @@ private fun kindLabel(kind: String): String = when (kind) {
     else -> kind
 }
 
-private fun statusLabel(s: String): String = when (s) {
+internal fun statusLabel(s: String): String = when (s) {
     GenerationTaskStatus.QUEUED -> "排队中"
     GenerationTaskStatus.RUNNING -> "生成中"
     GenerationTaskStatus.PAUSED -> "已暂停"
