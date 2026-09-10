@@ -75,6 +75,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.key
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -125,6 +127,17 @@ fun EncyclopediaDetailScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val entryTypeTabs = remember(state.encyclopedia) { filteredEntryTypeTabs(state.encyclopedia) }
+    var sedimentFilter by rememberSaveable(encyclopediaId) { mutableStateOf("all") }
+    val confirmedSedimentCount = remember(state.sedimentEntries) {
+        state.sedimentEntries.count { it.confidence == "confirmed" }
+    }
+    val filteredSediment = remember(state.sedimentEntries, sedimentFilter) {
+        when (sedimentFilter) {
+            "pending" -> state.sedimentEntries.filter { it.confidence != "confirmed" }
+            "confirmed" -> state.sedimentEntries.filter { it.confidence == "confirmed" }
+            else -> state.sedimentEntries
+        }
+    }
 
     LaunchedEffect(encyclopediaId) { viewModel.load(encyclopediaId) }
 
@@ -683,7 +696,41 @@ fun EncyclopediaDetailScreen(
                             .fillMaxSize()
                             .padding(horizontal = 16.dp, vertical = 8.dp)
                     ) {
-                        if (state.sedimentEntries.isEmpty()) {
+                        Text(
+                            "从对话整理的世界资料",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            "打开条目查看原文、编辑内容或更新确认状态",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            item {
+                                FilterChip(
+                                    selected = sedimentFilter == "all",
+                                    onClick = { sedimentFilter = "all" },
+                                    label = { Text("全部 ${state.sedimentEntries.size}") },
+                                )
+                            }
+                            item {
+                                FilterChip(
+                                    selected = sedimentFilter == "pending",
+                                    onClick = { sedimentFilter = "pending" },
+                                    label = { Text("待核对 ${state.sedimentEntries.size - confirmedSedimentCount}") },
+                                )
+                            }
+                            item {
+                                FilterChip(
+                                    selected = sedimentFilter == "confirmed",
+                                    onClick = { sedimentFilter = "confirmed" },
+                                    label = { Text("已确认 $confirmedSedimentCount") },
+                                )
+                            }
+                        }
+                        if (filteredSediment.isEmpty()) {
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
@@ -691,61 +738,71 @@ fun EncyclopediaDetailScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    "暂无沉积条目",
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                    when {
+                                        state.sedimentEntries.isEmpty() -> "对话整理出的资料会显示在这里"
+                                        sedimentFilter == "pending" -> "所有资料均已确认"
+                                        else -> "暂无已确认资料"
+                                    },
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                             }
                         } else {
-                            LazyColumn(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                items(state.sedimentEntries, key = { it.id }) { entry ->
-                                    SwipeRevealListRow(
-                                        swipeEnabled = true,
-                                        isPinned = entry.isFeatured,
-                                        onPinToggle = { viewModel.toggleEntryFeatured(entry.id) },
-                                        onDelete = { deleteEntryTarget = entry },
-                                        onClick = { onEditEntry(entry.id) },
-                                        modifier = Modifier.fillMaxWidth(),
-                                    ) {
-                                        Card(
-                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                            key(sedimentFilter) {
+                                LazyColumn(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(filteredSediment, key = { it.id }) { entry ->
+                                        SwipeRevealListRow(
+                                            swipeEnabled = true,
+                                            isPinned = entry.isFeatured,
+                                            onPinToggle = { viewModel.toggleEntryFeatured(entry.id) },
+                                            onDelete = { deleteEntryTarget = entry },
+                                            onClick = { onEditEntry(entry.id) },
+                                            modifier = Modifier.fillMaxWidth(),
                                         ) {
-                                            Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                                                Text(
-                                                    entry.title,
-                                                    style = MaterialTheme.typography.titleMedium,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                )
-                                                Text(
-                                                    "${ENTRY_TYPE_LABELS[entry.entryType] ?: "其他"} · ${entryConfidenceLabel(entry.confidence)}",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
-                                                )
-                                                if (entry.summary.isNotBlank()) {
+                                            Card(
+                                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                                            ) {
+                                                Column(
+                                                    Modifier.fillMaxWidth().padding(16.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                                ) {
                                                     Text(
-                                                        entry.summary,
-                                                        style = MaterialTheme.typography.bodyMedium,
-                                                        maxLines = 3,
+                                                        entry.title,
+                                                        style = MaterialTheme.typography.titleMedium,
+                                                        maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis,
-                                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                                                    )
+                                                    Text(
+                                                        "${ENTRY_TYPE_LABELS[entry.entryType] ?: "其他"} · ${entryConfidenceLabel(entry.confidence)}",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = if (entry.confidence == "confirmed") MaterialTheme.colorScheme.primary
+                                                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    )
+                                                    if (entry.summary.isNotBlank()) {
+                                                        Text(
+                                                            entry.summary,
+                                                            style = MaterialTheme.typography.bodyMedium,
+                                                            maxLines = 3,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        )
+                                                    }
+                                                    Text(
+                                                        DateUtils.getRelativeTimeSpanString(
+                                                            entry.updatedAt,
+                                                            System.currentTimeMillis(),
+                                                            DateUtils.MINUTE_IN_MILLIS,
+                                                        ).toString(),
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        modifier = Modifier.padding(top = 4.dp),
                                                     )
                                                 }
-                                                Text(
-                                                    DateUtils.getRelativeTimeSpanString(
-                                                        entry.updatedAt,
-                                                        System.currentTimeMillis(),
-                                                        DateUtils.MINUTE_IN_MILLIS,
-                                                    ).toString(),
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
-                                                    modifier = Modifier.padding(top = 4.dp),
-                                                )
                                             }
                                         }
                                     }

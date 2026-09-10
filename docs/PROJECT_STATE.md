@@ -21,7 +21,7 @@
 
 Android 百科编辑提供“查看对话原文”，支持滚动、复制和失败重试；自动沉淀条目可逐条浏览来源并查看计数。可进入来源故事线定位当前消息，返回后保留编辑草稿。来源页等待原文定位完成后显示，加载失败、消息缺失或故事线删除时保留重试和返回百科入口。
 
-百科确认状态位于正文前，列表与编辑页统一将自动沉淀显示为“对话推断”；选择“已确认”后通过现有保存入口提交，保留来源与失败重试草稿。
+百科确认状态位于正文前，列表与编辑页统一将自动沉淀显示为“对话推断”；选择“已确认”后通过现有保存入口提交，保留来源与失败重试草稿。沉淀资料提供全部、待核对、已确认筛选及数量，切换筛选从列表顶部开始浏览；卡片使用主题语义色与统一留白。
 
 - **角色与世界**：初始目录“雾港来信”包含一个百科、一个世界、沈照与林汐两个角色。角色可以不绑定百科直接开聊；百科支持重命名。开局区分工坊玩法和百科知识，组合设定可预览。
 - **Android 视觉与导航**：八套主题使用统一控件、文字和表面层级；首页、悬浮导航、页面过渡、应用图标和启动页已更新。启动标语保持“以墨为界，入境如梦。”。系统栏明暗随当前页面变化，小屏大字号保留主要操作入口。
@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Android 沉淀列表筛选与样式 | Kotlin 主源码编译通过；本批界面未单独运行 | `gradlew.bat compileDebugKotlin` |
 | Android 百科确认状态 | 14 项百科 ViewModel 测试、1 项 Android 35 选择器界面测试通过；Debug 应用与测试 APK 构建通过 | `EntryEditViewModelTest`；`.codex-work/android-ui-20260910/entry-confidence-tests.txt` |
 | Android 百科多条来源 | 15 项 JVM 测试、Android 35 模拟器 320dp 宽度下 2 项预览界面测试通过；Debug 应用与测试 APK 构建通过 | `EntryEditViewModelTest`、`EncyclopediaSourceReferencesTest`；`.codex-work/android-ui-20260910/source-pages-tests.txt` |
 | Android 百科来源故事线 | 本批 87 项聊天 ViewModel 测试通过，覆盖定位等待、失败重试、消息缺失和历史操作；主源码与界面测试源码编译通过。`108e7784` 批次 97 项聊天与百科测试、2 项 Android 35 路由与预览测试及 Debug 构建通过 | `ChatViewModelTest`、`EntryEditViewModelTest`；`.codex-work/android-ui-20260910/source-route-tests.txt` |
