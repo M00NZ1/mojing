@@ -34,6 +34,8 @@ npx tsc --noEmit
 
 ### 浏览器回归
 
+`node scripts/test-control-states.mjs` 在隔离 Chrome 页面中加载正式样式，检查七套主题的主按钮对比度、禁用悬停和键盘焦点；设置 `SMOKE_OUTPUT` 可保存控件截图。
+
 [frontend/scripts/](../frontend/scripts/)中的 `test-*.mjs` 使用 Playwright 启动独立 Vite 端口，并在浏览器中拦截模拟 API。
 
 准备可用的 Playwright 包和 Chromium 后，从 Web 目录运行对应脚本：
