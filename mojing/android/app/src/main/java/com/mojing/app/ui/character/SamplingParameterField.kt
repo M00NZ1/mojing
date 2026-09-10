@@ -1,9 +1,13 @@
 package com.mojing.app.ui.character
 
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import com.mojing.app.ui.common.MoJingTextField
 
@@ -24,6 +28,8 @@ internal fun SamplingParameterField(
     signed: Boolean = false,
 ) {
     val error = samplingParameterError(value, integer)
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
     MoJingTextField(
         value = value,
         onValueChange = onValueChange,
@@ -35,6 +41,10 @@ internal fun SamplingParameterField(
             signed -> KeyboardType.Text
             integer -> KeyboardType.Number
             else -> KeyboardType.Decimal
+        }, imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = {
+            focusManager.clearFocus()
+            keyboard?.hide()
         }),
         isError = error != null,
         supportingText = error?.let { { Text(it) } },

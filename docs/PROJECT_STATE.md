@@ -34,14 +34,14 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
-| Android 角色采样参数输入 | 8 项角色 ViewModel 测试通过，覆盖中间输入、数值保存、无效数值与导出拦截；主源码及界面测试源码编译通过 | `CharacterEditViewModelTest` |
+| Android 角色采样参数输入 | 8 项角色 ViewModel 测试通过；Android 35、320dp 宽度下 2 项界面测试通过，覆盖清空、连续负小数输入、错误恢复和键盘完成；Debug 应用与测试 APK 构建通过 | `CharacterEditViewModelTest`、`SamplingParameterFieldTest`；`.codex-work/android-ui-20260910/sampling-input-tests.txt` |
 | Android 长文本输入 | Debug 应用与测试 APK 构建通过；Android 35 默认尺寸、320dp 宽度各通过 1 项界面测试，覆盖 200 段文本、展开收起与编辑保留 | `MoJingLongTextFieldTest`；`.codex-work/android-ui-20260910/long-field-tests.txt`、`long-field-small-tests.txt` |
 | Android 百科浏览与刷新 | 14 项详情 ViewModel 测试通过，覆盖返回标签、确认后刷新、分类往返、旧查询晚到、删除预览与百科隔离 | `EncyclopediaDetailViewModelTest` |
 | Android 沉淀列表筛选与样式 | Kotlin 主源码编译通过；本批界面未单独运行 | `gradlew.bat compileDebugKotlin` |
 | Android 百科确认状态 | 14 项百科 ViewModel 测试、1 项 Android 35 选择器界面测试通过；Debug 应用与测试 APK 构建通过 | `EntryEditViewModelTest`；`.codex-work/android-ui-20260910/entry-confidence-tests.txt` |
 | Android 百科多条来源 | 15 项 JVM 测试、Android 35 模拟器 320dp 宽度下 2 项预览界面测试通过；Debug 应用与测试 APK 构建通过 | `EntryEditViewModelTest`、`EncyclopediaSourceReferencesTest`；`.codex-work/android-ui-20260910/source-pages-tests.txt` |
 | Android 百科来源故事线 | 本批 87 项聊天 ViewModel 测试通过，覆盖定位等待、失败重试、消息缺失和历史操作；主源码与界面测试源码编译通过。`108e7784` 批次 97 项聊天与百科测试、2 项 Android 35 路由与预览测试及 Debug 构建通过 | `ChatViewModelTest`、`EntryEditViewModelTest`；`.codex-work/android-ui-20260910/source-route-tests.txt` |
-| Android JVM 全量 | `b1c67e6a`：94 个测试类，534 项通过，失败、错误、跳过均为 0；耗时 28 秒 | `gradlew.bat testDebugUnitTest`；`mojing/android/app/build/test-results/testDebugUnitTest/` |
+| Android JVM 全量 | 2026-09-10 采样参数输入批次：95 个测试类，551 项通过，失败、错误、跳过均为 0；耗时 32 秒 | `gradlew.bat testDebugUnitTest`；`mojing/android/app/build/test-results/testDebugUnitTest/` |
 | Web 浏览器回归 | `b1c67e6a`：七套主题主按钮默认与悬停对比度达到 4.5:1；确认替换、中止、长说明、小屏和输入法通过；对话编辑、删除、上下文参与及历史定位回归通过 | `test-control-states.mjs`、`test-confirm-dialog.mjs`、`test-message-deletion.mjs` |
 | Web 生产构建 | `b1c67e6a` 对应源码构建通过 | `npm run build` |
 | Android Debug 构建 | `4c6ea007` 对应源码的应用与测试 APK 构建通过 | `gradlew.bat assembleDebug assembleDebugAndroidTest` |
