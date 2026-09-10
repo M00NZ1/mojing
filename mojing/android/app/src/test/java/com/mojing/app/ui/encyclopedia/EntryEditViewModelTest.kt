@@ -31,6 +31,27 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class EntryEditViewModelTest {
+    @Test fun confirmingConversationNoteKeepsSourcesAndRetriesFailedSave() = runTest(dispatcher) {
+        val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, title = "雾港线索", confidence = "inferred",
+            sourceSessionId = 42, sourceMessageId = 9, metaJson = """{"source_message_ids":[6,9]}""")
+        val dao = mockk<EncyclopediaEntryDao> { coEvery { getById(8) } returns entry }
+        val saver = mockk<SaveCharacterEntryUseCase>()
+        coEvery { saver.saveEdited(any()) } throws IllegalStateException("write")
+        val vm = createViewModel(encyclopediaDao(), dao, saveEntry = saver)
+        vm.load(3, 8)
+        vm.updateConfidence("confirmed")
+        vm.save()
+        assertTrue(vm.state.value.isDirty)
+        assertEquals("confirmed", vm.state.value.confidence)
+        coEvery { saver.saveEdited(any()) } answers { firstArg<EncyclopediaEntryEntity>() }
+        vm.save()
+        assertFalse(vm.state.value.isDirty)
+        assertTrue(vm.state.value.isConversationNote)
+        coVerify(exactly = 2) { saver.saveEdited(match {
+            it.confidence == "confirmed" && it.sourceSessionId == 42L && it.sourceMessageId == 9L && it.metaJson == entry.metaJson
+        }) }
+    }
+
     @Test fun sourcePagesReadIndividuallyAndSkipMissingSource() = runTest(dispatcher) {
         val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, sourceSessionId = 42, sourceMessageId = 9,
             metaJson = """{"source_message_ids":[6,7,9],"source_branch_id":"story"}""")

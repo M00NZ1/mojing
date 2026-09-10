@@ -113,15 +113,6 @@ private val WorldInfoImportMimeTypes = arrayOf(
     "*/*",
 )
 
-private fun detailConfidenceLabel(value: String): String = when (value) {
-    "confirmed" -> "已确认"
-    "draft" -> "草稿"
-    "pending" -> "待核对"
-    "heuristic" -> "推测"
-    "low" -> "低可信"
-    else -> "未标注"
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EncyclopediaDetailScreen(
@@ -732,7 +723,7 @@ fun EncyclopediaDetailScreen(
                                                     overflow = TextOverflow.Ellipsis,
                                                 )
                                                 Text(
-                                                    "${ENTRY_TYPE_LABELS[entry.entryType] ?: "其他"} · ${detailConfidenceLabel(entry.confidence)}",
+                                                    "${ENTRY_TYPE_LABELS[entry.entryType] ?: "其他"} · ${entryConfidenceLabel(entry.confidence)}",
                                                     style = MaterialTheme.typography.labelSmall,
                                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                                                 )

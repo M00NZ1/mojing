@@ -53,17 +53,6 @@ val ENTRY_TYPE_LABELS = mapOf(
     "timeline" to "时间线",
 )
 
-private val ENTRY_CONFIDENCE_OPTIONS = listOf(
-    "已确认" to "confirmed",
-    "草稿" to "draft",
-    "待核对" to "pending",
-    "推测" to "heuristic",
-    "低可信" to "low",
-)
-
-private fun confidenceLabel(value: String): String =
-    ENTRY_CONFIDENCE_OPTIONS.find { it.second == value }?.first ?: value
-
 private enum class EntryEditSubTab {
     EDIT,
     VERSIONS
@@ -159,7 +148,7 @@ fun EntryEditScreen(
     val versionScroll = rememberScrollState()
     LaunchedEffect(state.versions.firstOrNull()?.id) { versionScroll.scrollTo(0) }
     var typeExpanded by remember { mutableStateOf(false) }
-    var confidenceExpanded by remember { mutableStateOf(false) }
+
     val typeOptions = remember(state.encyclopediaHint) { filteredEntryTypeOptions(state.encyclopediaHint) }
     val versionTimeFmt = remember {
         DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault())
@@ -239,6 +228,7 @@ fun EntryEditScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text("条目内容", style = MaterialTheme.typography.titleMedium)
+                    EntryConfidenceSelector(state.confidence, viewModel::updateConfidence, enabled = !pageBusy)
                     if (state.hasSourceMessage) {
                         OutlinedButton(onClick = viewModel::openSourcePreview) { Text("查看对话原文") }
                     }
@@ -391,25 +381,6 @@ fun EntryEditScreen(
                         onMetaJsonChange = { viewModel.updateMetaJson(it) },
                         modifier = Modifier.fillMaxWidth()
                     )
-
-                    ExposedDropdownMenuBox(expanded = confidenceExpanded, onExpandedChange = { if (it) focusManager.clearFocus(); confidenceExpanded = it }) {
-                        OutlinedTextField(
-                            value = confidenceLabel(state.confidence),
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("可信度（条目级）") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = confidenceExpanded) },
-                            modifier = Modifier.fillMaxWidth().menuAnchor(),
-                        )
-                        ExposedDropdownMenu(expanded = confidenceExpanded, onDismissRequest = { confidenceExpanded = false }) {
-                            ENTRY_CONFIDENCE_OPTIONS.forEach { (label, value) ->
-                                DropdownMenuItem(
-                                    text = { Text(label) },
-                                    onClick = { viewModel.updateConfidence(value); confidenceExpanded = false },
-                                )
-                            }
-                        }
-                    }
 
                     OutlinedTextField(
                         value = state.metaJson, onValueChange = { viewModel.updateMetaJson(it) },
