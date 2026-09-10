@@ -32,7 +32,8 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class EntryEditViewModelTest {
     @Test fun sourcePreviewKeepsDraftAndAllowsRetry() = runTest(dispatcher) {
-        val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, sourceSessionId = 42, sourceMessageId = 6)
+        val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, sourceSessionId = 42, sourceMessageId = 6,
+            metaJson = """{"source_branch_id":"story-2"}""")
         val dao = mockk<EncyclopediaEntryDao> { coEvery { getById(8) } returns entry }
         val messages = mockk<com.mojing.app.data.local.dao.MessageDao>()
         coEvery { messages.getByIdInSession(6, 42) } throws IllegalStateException("read")
@@ -45,6 +46,7 @@ class EntryEditViewModelTest {
         coEvery { messages.getByIdInSession(6, 42) } returns com.mojing.app.data.local.entity.MessageEntity(id = 6, sessionId = 42, content = "原始剧情")
         vm.openSourcePreview()
         assertEquals("原始剧情", vm.state.value.sourceContent)
+        assertEquals(EntrySourceTarget(42, 6, "story-2"), vm.state.value.sourceTarget)
         vm.closeSourcePreview()
         assertFalse(vm.state.value.sourcePreviewOpen)
         assertEquals("未保存修改", vm.state.value.title)

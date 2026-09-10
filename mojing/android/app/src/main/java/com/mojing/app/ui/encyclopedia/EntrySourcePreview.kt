@@ -12,7 +12,8 @@ import com.mojing.app.ui.common.MoJingOutlinedButton
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun EntrySourcePreview(loading: Boolean, content: String?, error: String?, onClose: () -> Unit, onRetry: () -> Unit) {
+internal fun EntrySourcePreview(loading: Boolean, content: String?, error: String?, onClose: () -> Unit, onRetry: () -> Unit,
+    onOpenConversation: (() -> Unit)? = null) {
     ModalBottomSheet(onDismissRequest = onClose,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(horizontal = 24.dp),
@@ -27,6 +28,7 @@ internal fun EntrySourcePreview(loading: Boolean, content: String?, error: Strin
                 }
             }
             Column(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                if (onOpenConversation != null) MoJingOutlinedButton(onClick = onOpenConversation, modifier = Modifier.fillMaxWidth()) { Text("进入来源故事线") }
                 if (error != null) MoJingOutlinedButton(onClick = onRetry, modifier = Modifier.fillMaxWidth()) { Text("重新读取") }
                 TextButton(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text("返回编辑") }
             }

@@ -124,7 +124,7 @@ internal fun NavGraph(
 
         composable(
             Routes.CHAT,
-            arguments = listOf(navArgument("sessionId") { type = NavType.LongType })
+            arguments = chatRouteArguments()
         ) { entry ->
             val sessionId = validatedRouteId(
                 entry.arguments?.takeIf { it.containsKey("sessionId") }?.getLong("sessionId"),
@@ -135,7 +135,10 @@ internal fun NavGraph(
             }
             ChatScreen(
                 sessionId = sessionId,
-                onBack = { navController.returnToSessionHome() },
+                onBack = {
+                    if ((entry.arguments?.getLong("sourceMessageId") ?: 0L) > 0L) navController.popBackStack()
+                    else navController.returnToSessionHome()
+                },
             )
         }
 
@@ -217,6 +220,7 @@ internal fun NavGraph(
             EntryEditScreen(
                 encyclopediaId = encId,
                 entryId = entryId,
+                onOpenSource = { source -> navController.navigateSingleTop(Routes.chatSource(source.sessionId, source.messageId, source.branchId)) },
                 onBack = { navController.popBackStack() },
                 onOpenSettings = { navController.navigateToMainTab(Routes.SETTINGS) },
             )

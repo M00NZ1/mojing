@@ -24,7 +24,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
+data class EntrySourceTarget(val sessionId: Long, val messageId: Long, val branchId: String)
+
 data class EntryEditState(
+    val sourceTarget: EntrySourceTarget? = null,
     val hasSourceMessage: Boolean = false,
     val sourcePreviewOpen: Boolean = false,
     val sourceLoading: Boolean = false,
@@ -126,7 +129,7 @@ class EntryEditViewModel @Inject constructor(
         sourceRevision++
         sourceJob?.cancel()
         sourceJob = null
-        _state.value = _state.value.copy(sourcePreviewOpen = false, sourceLoading = false, sourceContent = null, sourceError = null)
+        _state.value = _state.value.copy(sourcePreviewOpen = false, sourceLoading = false, sourceContent = null, sourceError = null, sourceTarget = null)
     }
 
     fun openSourcePreview() {
@@ -135,12 +138,16 @@ class EntryEditViewModel @Inject constructor(
         val messageId = entry.sourceMessageId?.takeIf { it > 0 } ?: return
         if (_state.value.sourceLoading) return
         val revision = ++sourceRevision
-        _state.value = _state.value.copy(sourcePreviewOpen = true, sourceLoading = true, sourceContent = null, sourceError = null)
+        _state.value = _state.value.copy(sourcePreviewOpen = true, sourceLoading = true, sourceContent = null, sourceError = null, sourceTarget = null)
         sourceJob = viewModelScope.launch {
             try {
                 val message = messageDao.getByIdInSession(messageId, sessionId)
                 if (sourceRevision != revision || currentEntry?.id != entry.id) return@launch
+                val branchId = runCatching { JsonParser.parseString(entry.metaJson).asJsonObject
+                    .get("source_branch_id")?.asString?.takeIf { it.isNotBlank() } }.getOrNull()
+                    ?: message?.branchId ?: "main"
                 _state.value = _state.value.copy(sourceLoading = false, sourceContent = message?.content,
+                    sourceTarget = message?.let { EntrySourceTarget(sessionId, messageId, branchId) },
                     sourceError = if (message == null) "原始对话已不存在，百科内容仍保留。" else null)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {

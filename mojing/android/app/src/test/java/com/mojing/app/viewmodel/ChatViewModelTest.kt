@@ -134,8 +134,10 @@ class ChatViewModelTest {
         appContext: Context = mockk(relaxed = true),
         uiPreferencesRepository: UiPreferencesRepository = uiPreferences(),
         chatEngine: ChatEngine = mockk(relaxed = true),
+        sourceMessageId: Long = 0L,
+        sourceBranchId: String = "",
     ) = ChatViewModel(
-        savedStateHandle = SavedStateHandle(mapOf("sessionId" to sessionId)),
+        savedStateHandle = SavedStateHandle(mapOf("sessionId" to sessionId, "sourceMessageId" to sourceMessageId, "sourceBranchId" to sourceBranchId)),
         messageDao = messageDao,
         sessionDao = sessionDao,
         characterDao = characterDao,
@@ -1930,6 +1932,28 @@ class ChatViewModelTest {
         assertTrue(vm.openMessageInHistory(600L))
         advanceUntilIdle()
         assertEquals(600L, vm.state.value.focusedMessageId)
+    }
+
+    @Test fun sourceNavigationLoadsRequestedBranchAndFocusesOriginalMessage() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId = 42, branchId = "source", sourceMessageId = 1))
+        val target = MessageEntity(id = 500, sessionId = 42, content = "继承的主线原文")
+        coEvery { dao.getVisibleMessageById(42, "source", 500) } returns target
+        val vm = createViewModel(messageDao = dao, sessionBranchDao = branches, sourceMessageId = 500, sourceBranchId = "source")
+        advanceUntilIdle()
+        assertTrue(vm.state.value.isReady)
+        assertEquals("source", vm.state.value.currentBranchId)
+        assertEquals(500L, vm.state.value.focusedMessageId)
+        assertTrue(vm.state.value.messages.any { it.id == 500L })
+        coVerify(exactly = 0) { dao.getMainMessageById(42, 500) }
+    }
+
+    @Test fun deletedSourceBranchDoesNotOpenMainLine() = runTest(testDispatcher) {
+        val vm = createViewModel(sourceMessageId = 500, sourceBranchId = "deleted")
+        advanceUntilIdle()
+        assertFalse(vm.state.value.isReady)
+        assertEquals("来源故事线已不存在，请返回百科查看保留的资料。", vm.state.value.initialLoadError)
     }
 
     @Test

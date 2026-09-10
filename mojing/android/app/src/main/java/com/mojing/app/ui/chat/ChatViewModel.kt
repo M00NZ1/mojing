@@ -180,6 +180,8 @@ class ChatViewModel @Inject constructor(
     }
 
     private val sessionId: Long = savedStateHandle["sessionId"] ?: 0L
+    private val sourceMessageId: Long = savedStateHandle["sourceMessageId"] ?: 0L
+    private val sourceBranchId: String = savedStateHandle["sourceBranchId"] ?: ""
     private val _state = MutableStateFlow(ChatContract.State(sessionId = sessionId))
     private val eventRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     private val correctionRefreshRevision = java.util.concurrent.atomic.AtomicLong()
@@ -863,10 +865,15 @@ class ChatViewModel @Inject constructor(
         val rememberedBranchId = runCatching {
             uiPreferencesRepository.getLastChatBranch(sessionId)
         }.getOrDefault("main")
-        val initialBranchId = rememberedBranchId.takeIf { branchId ->
+        if (sourceMessageId > 0L && sourceBranchId.isNotBlank() && sourceBranchId != "main" && branches.none { it.branchId == sourceBranchId }) {
+            _state.update { it.copy(isReady = false, initialLoadError = "来源故事线已不存在，请返回百科查看保留的资料。") }
+            return
+        }
+        val requestedBranchId = if (sourceMessageId > 0L && sourceBranchId.isNotBlank()) sourceBranchId else rememberedBranchId
+        val initialBranchId = requestedBranchId.takeIf { branchId ->
             branchId == "main" || branches.any { it.branchId == branchId }
         } ?: "main"
-        val invalidRememberedBranch = rememberedBranchId != "main" && initialBranchId == "main"
+        val invalidRememberedBranch = sourceMessageId <= 0L && rememberedBranchId != "main" && initialBranchId == "main"
         if (invalidRememberedBranch) {
             runCatching { uiPreferencesRepository.clearLastChatBranch(sessionId) }
         }
@@ -945,6 +952,7 @@ class ChatViewModel @Inject constructor(
             isReady = true,
             initialLoadError = null,
         )
+        if (sourceMessageId > 0L) openMessageInHistory(sourceMessageId)
     }
 
     private suspend fun buildCharacterPresentationMaps(

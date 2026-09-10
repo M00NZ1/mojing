@@ -76,13 +76,15 @@ fun EntryEditScreen(
     entryId: Long,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenSource: (EntrySourceTarget) -> Unit = {},
     viewModel: EntryEditViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     DisposableEffect(viewModel) { onDispose { viewModel.closeSourcePreview() } }
     if (state.sourcePreviewOpen) {
         EntrySourcePreview(state.sourceLoading, state.sourceContent, state.sourceError,
-            onClose = viewModel::closeSourcePreview, onRetry = viewModel::openSourcePreview)
+            onClose = viewModel::closeSourcePreview, onRetry = viewModel::openSourcePreview,
+            onOpenConversation = state.sourceTarget?.let { target -> { onOpenSource(target) } })
     }
     var subTab by remember { mutableStateOf(EntryEditSubTab.EDIT) }
     val context = LocalContext.current
@@ -142,7 +144,7 @@ fun EntryEditScreen(
     }
     LaunchedEffect(encyclopediaId, entryId) {
         subTab = EntryEditSubTab.EDIT
-        viewModel.load(encyclopediaId, entryId)
+        if (!viewModel.state.value.isLoaded) viewModel.load(encyclopediaId, entryId)
     }
 
     LaunchedEffect(state.snackbar) {

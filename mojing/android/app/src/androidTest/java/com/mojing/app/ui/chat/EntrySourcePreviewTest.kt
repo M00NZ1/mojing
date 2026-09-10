@@ -17,16 +17,19 @@ class EntrySourcePreviewTest {
         val error = mutableStateOf<String?>(null)
         var closes = 0
         var retries = 0
+        var opened = 0
         rule.setContent { MaterialTheme {
             EntrySourcePreview(loading.value, "灯塔下的原始剧情。\n".repeat(200), error.value,
-                onClose = { closes++ }, onRetry = { retries++ })
+                onClose = { closes++ }, onRetry = { retries++ },
+                onOpenConversation = if (!loading.value && error.value == null) ({ opened++ }) else null)
         } }
         rule.onNodeWithText("正在读取原文…").assertIsDisplayed()
         rule.onNodeWithText("返回编辑").assertIsDisplayed()
         rule.runOnIdle { loading.value = false }
+        rule.onNodeWithText("进入来源故事线").assertIsDisplayed().performClick()
         rule.onNodeWithText("返回编辑").assertIsDisplayed().performClick()
         rule.runOnIdle { error.value = "原文读取失败，请重试。" }
         rule.onNodeWithText("重新读取").assertIsDisplayed().performClick()
-        rule.runOnIdle { assertEquals(1, closes); assertEquals(1, retries) }
+        rule.runOnIdle { assertEquals(1, closes); assertEquals(1, retries); assertEquals(1, opened) }
     }
 }
