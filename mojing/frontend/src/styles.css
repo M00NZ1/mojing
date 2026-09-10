@@ -6578,3 +6578,8 @@ img {
 
 .chat-msg-tools:has(.chat-msg-more-menu) { opacity: 1; transition: none; }
 .chat-msg-more-menu { background: var(--surface); backdrop-filter: none; }
+
+.message-action-description { min-width: 0; text-align: left; }
+.message-action-description small { display: block; margin-top: 3px; font-size: .75rem; line-height: 1.5; font-weight: 400; color: var(--text-2); white-space: normal; }
+.message-action-busy { margin: 0 0 10px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); color: var(--text-2); font-size: .8rem; line-height: 1.6; }
+.chat-msg-more-item:disabled { opacity: .45; cursor: not-allowed; }

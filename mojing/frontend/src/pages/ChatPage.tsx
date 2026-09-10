@@ -1688,6 +1688,7 @@ export default function ChatPage() {
 
         <MessageList
           messages={flatMessages}
+          isGenerating={isGenerating}
           branches={branchesQuery.data ?? []}
           selectedBranchId={selectedBranchId}
           onSwitchBranch={switchBranch}

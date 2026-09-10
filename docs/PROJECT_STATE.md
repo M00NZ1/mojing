@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Web 消息操作状态 | Web 构建、桌面与 320px 消息操作回归通过；编辑、删除及上下文调整集成回归通过，覆盖生成中禁用、只读入口、结束后恢复和移动端分支操作 | `test-message-generation-actions.mjs`、`test-message-deletion.mjs`，本地 API 模拟 |
 | Android 消息操作布局 | Debug 应用与测试 APK 构建通过；Android 35、320dp 下 3 项消息面板测试通过，覆盖生成中禁用、图片保存状态、短面板滚动及引用、分支、撤回操作分发 | `MessageActionPanelTest` |
 | Web 人设补全参考 | Web 构建与 Chrome 回归通过，覆盖手动草稿保护、320px 参考结果展开复制、失败重试、取消与角色切换；世界记录共用阅读器回归通过 | `test-character-ai-completion.mjs`、`test-world-history.mjs`，本地 API 模拟 |
 | Android 人设补全恢复 | 12 项角色编辑状态测试与 Debug 构建通过，覆盖生成期间手动编辑、生成基线、重进页面、读取失败重试、保存保护和旧读取结果隔离 | `CharacterEditViewModelTest` |
