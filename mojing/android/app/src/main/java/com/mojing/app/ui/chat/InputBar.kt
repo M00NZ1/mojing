@@ -372,46 +372,18 @@ fun InputBar(
         }
     }
     if (showNarratorDialog) {
-        AlertDialog(
-            onDismissRequest = {
+        NarratorRequestDialog(
+            guidance = narratorGuidance,
+            onGuidanceChange = { narratorGuidance = it },
+            onDismiss = {
                 dismissKeyboard()
                 showNarratorDialog = false
             },
-            title = { Text("生成旁白") },
-            text = {
-                OutlinedTextField(
-                    value = narratorGuidance,
-                    onValueChange = { narratorGuidance = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("剧情方向（可选）") },
-                    placeholder = { Text("例如：推进到夜晚，并让众人发现屋外的异响") },
-                    minLines = 3,
-                    maxLines = 6,
-                )
-            },
-            confirmButton = {
-                Row {
-                    TextButton(onClick = {
-                        dismissKeyboard()
-                        showNarratorDialog = false
-                        narratorGuidance = ""
-                        onRequestNarrator("")
-                    }) { Text("自动生成") }
-                    TextButton(onClick = {
-                        val guidance = narratorGuidance.trim()
-                        dismissKeyboard()
-                        showNarratorDialog = false
-                        narratorGuidance = ""
-                        onRequestNarrator(guidance)
-                    }) { Text("按我的方向生成") }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    dismissKeyboard()
-                    showNarratorDialog = false
-                    narratorGuidance = ""
-                }) { Text("取消") }
+            onGenerate = { guidance ->
+                dismissKeyboard()
+                showNarratorDialog = false
+                narratorGuidance = ""
+                onRequestNarrator(guidance)
             },
         )
     }
