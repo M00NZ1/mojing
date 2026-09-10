@@ -59,19 +59,21 @@ fun SettingsScreen(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val isImeOpen = isImeKeyboardOpen()
+    val profileSaving by viewModel.profileSaving.collectAsStateWithLifecycle()
     val storedProfileName by viewModel.userName.collectAsStateWithLifecycle()
     val storedProfileDescription by viewModel.userDescription.collectAsStateWithLifecycle()
     val storedProfileColor by viewModel.userAvatarColor.collectAsStateWithLifecycle()
     var profileName by rememberSaveable { mutableStateOf(storedProfileName) }
     var profileDescription by rememberSaveable { mutableStateOf(storedProfileDescription) }
     var profileColor by rememberSaveable { mutableStateOf(storedProfileColor) }
-    val profileDirty = profileName != storedProfileName ||
+    val profileDirty = profileName.trim() != storedProfileName ||
         profileDescription != storedProfileDescription ||
         profileColor != storedProfileColor
     var pendingNavigation by remember { mutableStateOf<(() -> Unit)?>(null) }
     var showDiscardProfileDialog by remember { mutableStateOf(false) }
 
     fun requestNavigation(action: () -> Unit) {
+        if (profileSaving) return
         focusManager.clearFocus()
         if (profileDirty) {
             pendingNavigation = action
@@ -140,10 +142,8 @@ fun SettingsScreen(
                         profileColor = profileColor,
                         onProfileColorChange = { profileColor = it },
                         profileDirty = profileDirty,
-                        onProfileSaved = { name, description, color ->
-                            profileName = name
-                            profileDescription = description
-                            profileColor = color
+                        onProfileSaved = { name, _, _ ->
+                            if (profileName.trim() == name) profileName = name
                         },
                     )
                     3 -> CostTab(viewModel)
@@ -249,6 +249,8 @@ fun ProfileTab(
     isDirty: Boolean,
     onSaved: (String, String, String) -> Unit,
 ) {
+    val profileSaving by viewModel.profileSaving.collectAsStateWithLifecycle()
+    val profileSaveError by viewModel.profileSaveError.collectAsStateWithLifecycle()
     val userAvatarImagePath by viewModel.userAvatarImagePath.collectAsStateWithLifecycle()
     var isAvatarImporting by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -302,13 +304,12 @@ fun ProfileTab(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        Button(onClick = {
+        ProfileSaveActions(profileSaving, isDirty, !isAvatarImporting && name.isNotBlank(), profileSaveError) {
             val normalizedName = name.trim()
-            viewModel.updateProfile(normalizedName, description, avatarColor)
-            onSaved(normalizedName, description, avatarColor)
-            scope.launch { snackbarHostState.showSnackbar(UserFacingStrings.profileSaved()) }
-        }, enabled = !isAvatarImporting && isDirty && name.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
-            Text(if (isDirty) "保存资料" else "已保存")
+            viewModel.updateProfile(normalizedName, description, avatarColor) {
+                onSaved(normalizedName, description, avatarColor)
+                scope.launch { snackbarHostState.showSnackbar(UserFacingStrings.profileSaved()) }
+            }
         }
     }
 }

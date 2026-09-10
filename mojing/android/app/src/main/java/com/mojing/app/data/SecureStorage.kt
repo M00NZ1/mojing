@@ -85,6 +85,13 @@ class SecureStorage {
         set(value) { prefs?.edit()?.putFloat("ui_font_scale", value.coerceIn(0.8f, 1.45f))?.apply() }
 
     // User Profile
+    fun saveUserProfile(name: String, description: String, color: String) {
+        check(checkNotNull(prefs).edit().putString("user_name", name)
+            .putString("user_description", description).putString("user_avatar_color", color).commit()) {
+            "资料保存失败"
+        }
+    }
+
     var userName: String
         get() = prefs?.getString("user_name", "玩家") ?: "玩家"
         set(value) { prefs?.edit()?.putString("user_name", value)?.apply() }

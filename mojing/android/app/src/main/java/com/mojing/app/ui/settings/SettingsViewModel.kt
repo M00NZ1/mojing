@@ -15,6 +15,9 @@ import com.mojing.app.data.local.entity.WorldTemplateEntity
 import com.mojing.app.data.remote.BackendSystemProbeApi
 import dagger.hilt.android.lifecycle.HiltViewModel
 import com.google.gson.JsonObject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -104,11 +107,34 @@ class SettingsViewModel @Inject constructor(
         secureStorage.userAvatarImagePath = path
     }
 
-    fun updateProfile(name: String, desc: String, color: String) {
-        _userName.value = name; secureStorage.userName = name
-        _userDescription.value = desc; secureStorage.userDescription = desc
-        _userAvatarColor.value = color; secureStorage.userAvatarColor = color
-        secureStorage.userAvatarImagePath = _userAvatarImagePath.value
+    private val _profileSaving = MutableStateFlow(false)
+    val profileSaving = _profileSaving.asStateFlow()
+    private val _profileSaveError = MutableStateFlow<String?>(null)
+    val profileSaveError = _profileSaveError.asStateFlow()
+
+    fun updateProfile(name: String, desc: String, color: String, onSaved: () -> Unit = {}) {
+        if (_profileSaving.value) return
+        if (name.isBlank()) {
+            _profileSaveError.value = "请输入对话中使用的名字"
+            return
+        }
+        _profileSaving.value = true
+        _profileSaveError.value = null
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { secureStorage.saveUserProfile(name.trim(), desc, color) }
+                _userName.value = name.trim()
+                _userDescription.value = desc
+                _userAvatarColor.value = color
+                onSaved()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _profileSaveError.value = "资料未保存，请重试"
+            } finally {
+                _profileSaving.value = false
+            }
+        }
     }
 
     // Defaults

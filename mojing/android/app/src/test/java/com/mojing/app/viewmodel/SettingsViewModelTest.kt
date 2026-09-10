@@ -16,6 +16,7 @@ import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -26,6 +27,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -87,13 +89,35 @@ class SettingsViewModelTest {
     @Test
     fun updateProfilePublishesAndPersistsPersonaFields() = runTest {
         viewModel.updateProfile("沈砚", "来自雾都的调查员", "#334455")
+        viewModel.profileSaving.first { !it }
 
         assertEquals("沈砚", viewModel.userName.value)
         assertEquals("来自雾都的调查员", viewModel.userDescription.value)
         assertEquals("#334455", viewModel.userAvatarColor.value)
-        verify { secureStorage.userName = "沈砚" }
-        verify { secureStorage.userDescription = "来自雾都的调查员" }
-        verify { secureStorage.userAvatarColor = "#334455" }
+        verify(exactly = 1) { secureStorage.saveUserProfile("沈砚", "来自雾都的调查员", "#334455") }
+        verify(exactly = 0) { secureStorage.userAvatarImagePath = any() }
+    }
+
+    @Test
+    fun profileFailureRetainsSavedValuesAndAllowsRetry() = runTest {
+        val before = listOf(viewModel.userName.value, viewModel.userDescription.value, viewModel.userAvatarColor.value)
+        var saved = false
+        every { secureStorage.saveUserProfile(any(), any(), any()) } throws IllegalStateException("disk unavailable")
+        viewModel.updateProfile(" 新名字 ", "新设定", "#112233") { saved = true }
+        assertTrue(viewModel.profileSaving.value)
+        viewModel.updateProfile("重复", "", "#000000")
+        viewModel.profileSaving.first { !it }
+        assertFalse(saved)
+        assertEquals(before, listOf(viewModel.userName.value, viewModel.userDescription.value, viewModel.userAvatarColor.value))
+        assertEquals("资料未保存，请重试", viewModel.profileSaveError.value)
+        verify(exactly = 1) { secureStorage.saveUserProfile(any(), any(), any()) }
+        every { secureStorage.saveUserProfile(any(), any(), any()) } returns Unit
+        viewModel.updateProfile(" 新名字 ", "新设定", "#112233") { saved = true }
+        viewModel.profileSaving.first { !it }
+        assertTrue(saved)
+        assertNull(viewModel.profileSaveError.value)
+        assertEquals("新名字", viewModel.userName.value)
+        assertEquals("新设定", viewModel.userDescription.value)
     }
 
     @Test
