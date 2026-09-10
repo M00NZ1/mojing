@@ -274,6 +274,7 @@ export default function MessageList({
       dialog?.querySelector<HTMLElement>('button:not(:disabled)')?.focus();
     });
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
@@ -820,7 +821,15 @@ export default function MessageList({
             if (event.target === event.currentTarget) closeMobileMenu();
           }}>
             <div ref={mobileMenuRef} className="msg-actions-mobile" role="dialog" aria-label="消息操作" aria-modal="true">
-              <strong className="msg-actions-heading">消息操作</strong>
+              <div className="msg-actions-header">
+                <strong className="msg-actions-heading">消息操作</strong>
+                <ActionButton icon="close" label="关闭" className="chat-tool-btn" iconOnly onClick={closeMobileMenu} />
+              </div>
+              <div className="msg-actions-preview" aria-label="所选消息" data-selected-message-id={msg.id}>
+                <strong>{isUserMessage ? '你' : isNarratorMessage ? '旁白' : msg.character_name || '角色'}</strong>
+                <p>{visibleContent.trim().slice(0, 240) || '此消息包含非文本内容'}</p>
+              </div>
+              <div className="msg-actions-body">
               <div className="msg-actions-mobile-primary">
               <ActionButton icon="copy" label="复制" className="btn btn-sm" onClick={() => { closeMobileMenu(); void handleCopy(visibleContent); }} />
               {onEditMessage && <ActionButton icon="edit" label="编辑" className="btn btn-sm" onClick={() => { closeMobileMenu(); onEditMessage(msg); }} />}
@@ -842,7 +851,7 @@ export default function MessageList({
                 <ActionButton icon="branch" label="创建故事线" className="btn btn-sm" onClick={() => { closeMobileMenu(); onCreateBranch(msg); }} />
               )}
               {onDeleteMessage && <ActionButton icon="delete" label="删除" className="btn btn-sm btn-danger" onClick={() => { closeMobileMenu(); onDeleteMessage(msg); }} />}
-              <ActionButton icon="close" label="关闭" className="btn btn-ghost btn-sm" onClick={closeMobileMenu} />
+              </div>
             </div>
           </div>
         );

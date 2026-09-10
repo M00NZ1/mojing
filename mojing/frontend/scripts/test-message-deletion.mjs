@@ -151,7 +151,21 @@ try {
       await page.screenshot({ path: path.join(output, `message-actions-${page.viewportSize().width}.png`) });
     }
     if (page.viewportSize().width <= 768) {
-      await page.getByRole('dialog', { name: '消息操作', exact: true }).getByRole('button', { name: '删除', exact: true }).click();
+      const actions = page.getByRole('dialog', { name: '消息操作', exact: true });
+      const originalViewport = page.viewportSize();
+      await page.setViewportSize({ width: 320, height: 480 });
+      assert.equal(await actions.getByLabel('所选消息').getAttribute('data-selected-message-id'), String(id));
+      const close = actions.getByRole('button', { name: '关闭', exact: true });
+      const closeBeforeScroll = await close.boundingBox();
+      assert.ok(await actions.locator('.msg-actions-body').evaluate(el => el.scrollHeight > el.clientHeight));
+      await actions.locator('.msg-actions-body').evaluate(el => { el.scrollTop = el.scrollHeight; });
+      const closeAfterScroll = await close.boundingBox();
+      assert.equal(closeBeforeScroll.y, closeAfterScroll.y);
+      assert.ok(closeAfterScroll.y >= 0 && closeAfterScroll.y + closeAfterScroll.height <= page.viewportSize().height);
+      await close.evaluate(el => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true })));
+      assert.equal(await actions.count(), 1);
+      await actions.getByRole('button', { name: '删除', exact: true }).click();
+      await page.setViewportSize(originalViewport);
     } else {
       await row.getByRole('menuitem', { name: '删除消息', exact: true }).click();
     }
