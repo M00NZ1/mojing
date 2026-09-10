@@ -1,6 +1,12 @@
 package com.mojing.app.ui.chat
 
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsEnabled
@@ -69,4 +75,22 @@ class MessageActionPanelTest {
         composeRule.onNodeWithText("保存图片中…").assertIsNotEnabled()
         composeRule.onNodeWithText("取消收藏").assertIsEnabled()
     }
+    @Test
+    fun shortPanelKeepsDescribedActionsAndRecallReachable() {
+        val message = MessageEntity(id = 42, sessionId = 7, speakerType = "character", content = "灯亮了")
+        val actions = mutableListOf<MessageAction>()
+        composeRule.setContent { MaterialTheme {
+            Column(Modifier.width(288.dp).height(240.dp).verticalScroll(rememberScrollState())) {
+                MessageActionPanelContent(message, false, true, true, false, 0, false,
+                    onDismiss = {}, onAction = { actions += it })
+            }
+        } }
+        composeRule.onNodeWithText("带上这条原文继续对话").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("从这里展开另一条故事线").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("撤回").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.runOnIdle {
+            assertEquals(listOf(MessageAction.Quote(message), MessageAction.CreateBranch(message), MessageAction.Recall(message)), actions)
+        }
+    }
+
 }

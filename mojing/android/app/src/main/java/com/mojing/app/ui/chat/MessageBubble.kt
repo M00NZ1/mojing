@@ -34,7 +34,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -50,6 +49,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
@@ -75,6 +76,10 @@ internal fun MessageActionPanelContent(
     onDismiss: () -> Unit,
     onAction: (MessageAction) -> Unit,
 ) {
+    if (isGenerating) {
+        Text("回复生成中，部分操作暂不可用", modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         MessageQuickAction("复制", Icons.Default.ContentCopy, Modifier.weight(1f)) {
             onDismiss(); onAction(MessageAction.Copy(message))
@@ -89,15 +94,16 @@ internal fun MessageActionPanelContent(
         }
     }
     HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
-    DropdownMenuItem(
+    MessageActionRow(
         modifier = Modifier.fillMaxWidth(),
         text = { Text("引用回复") },
+        supportingText = "带上这条原文继续对话",
         enabled = !isGenerating,
         onClick = { onAction(MessageAction.Quote(message)); onDismiss() },
         leadingIcon = { Icon(Icons.AutoMirrored.Filled.Reply, null) },
     )
     if (imageAttachmentCount > 0) {
-        DropdownMenuItem(
+        MessageActionRow(
             modifier = Modifier.fillMaxWidth(),
             text = {
                 Text(
@@ -113,7 +119,7 @@ internal fun MessageActionPanelContent(
             leadingIcon = { Icon(Icons.Default.Download, null) },
         )
     }
-    DropdownMenuItem(
+    MessageActionRow(
         modifier = Modifier.fillMaxWidth(),
         text = { Text(if (isBookmarked) "取消收藏" else "收藏消息") },
         onClick = { onAction(MessageAction.ToggleBookmark(message)); onDismiss() },
@@ -124,7 +130,7 @@ internal fun MessageActionPanelContent(
             )
         },
     )
-    DropdownMenuItem(
+    MessageActionRow(
         modifier = Modifier.fillMaxWidth(),
         text = { Text("朗读本句") },
         onClick = { onAction(MessageAction.Speak(message)); onDismiss() },
@@ -132,29 +138,62 @@ internal fun MessageActionPanelContent(
     )
     HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
     if (canContinueReply) {
-        DropdownMenuItem(
+        MessageActionRow(
             modifier = Modifier.fillMaxWidth(),
             text = { Text("继续生成回复") },
+            supportingText = "接着当前回复继续写",
             enabled = !isGenerating,
             onClick = { onAction(MessageAction.ContinueReply(message)); onDismiss() },
             leadingIcon = { Icon(Icons.Default.PlayArrow, null) },
         )
     }
-    DropdownMenuItem(
+    MessageActionRow(
         modifier = Modifier.fillMaxWidth(),
         text = { Text("从此处分支") },
+        supportingText = "从这里展开另一条故事线",
         enabled = !isGenerating,
         onClick = { onAction(MessageAction.CreateBranch(message)); onDismiss() },
         leadingIcon = { Icon(Icons.AutoMirrored.Filled.CallSplit, null) },
     )
     HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-    DropdownMenuItem(
+    MessageActionRow(
         modifier = Modifier.fillMaxWidth(),
         text = { Text("撤回", color = MaterialTheme.colorScheme.error) },
         enabled = !isGenerating,
         onClick = { onAction(MessageAction.Recall(message)); onDismiss() },
         leadingIcon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
     )
+}
+
+@Composable
+private fun MessageActionRow(
+    modifier: Modifier = Modifier,
+    text: @Composable () -> Unit,
+    leadingIcon: @Composable () -> Unit,
+    enabled: Boolean = true,
+    supportingText: String? = null,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick, enabled = enabled,
+        modifier = modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+        shape = RoundedCornerShape(14.dp), color = Color.Transparent,
+    ) {
+        Row(Modifier.heightIn(min = 60.dp).padding(horizontal = 12.dp, vertical = 10.dp)
+            .alpha(if (enabled) 1f else 0.38f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(10.dp)) {
+                Box(Modifier.size(38.dp), contentAlignment = Alignment.Center) { leadingIcon() }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                androidx.compose.material3.ProvideTextStyle(MaterialTheme.typography.bodyLarge) { text() }
+                supportingText?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
 }
 
 @Composable
