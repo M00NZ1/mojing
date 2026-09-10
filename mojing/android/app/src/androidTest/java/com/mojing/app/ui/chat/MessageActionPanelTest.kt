@@ -40,19 +40,20 @@ class MessageActionPanelTest {
                 }
             }
         }
-        listOf("编辑", "重新生成", "引用回复", "继续生成回复", "从此处分支", "撤回").forEach {
+        listOf("编辑", "重新生成", "继续生成回复", "从此处分支", "撤回").forEach {
             composeRule.onNodeWithText(it).assertIsNotEnabled()
         }
-        listOf("复制", "收藏消息", "朗读本句").forEach {
+        listOf("复制", "引用回复", "收藏消息", "朗读本句").forEach {
             composeRule.onNodeWithText(it).assertIsEnabled()
         }
         composeRule.onNodeWithText("复制").performClick()
+        composeRule.onNodeWithText("为下一条消息引用这段原文").performClick()
         composeRule.runOnIdle { generating.value = false }
         composeRule.onNodeWithText("编辑").assertIsEnabled().performClick()
         composeRule.onNodeWithText("重新生成").assertIsEnabled().performClick()
         composeRule.runOnIdle {
-            assertEquals(listOf(MessageAction.Copy(message), MessageAction.Edit(message), MessageAction.Regenerate(message)), actions)
-            assertEquals(3, dismissCount)
+            assertEquals(listOf(MessageAction.Copy(message), MessageAction.Quote(message), MessageAction.Edit(message), MessageAction.Regenerate(message)), actions)
+            assertEquals(4, dismissCount)
         }
     }
 

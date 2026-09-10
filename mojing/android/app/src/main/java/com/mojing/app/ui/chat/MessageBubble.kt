@@ -97,8 +97,7 @@ internal fun MessageActionPanelContent(
     MessageActionRow(
         modifier = Modifier.fillMaxWidth(),
         text = { Text("引用回复") },
-        supportingText = "带上这条原文继续对话",
-        enabled = !isGenerating,
+        supportingText = if (isGenerating) "为下一条消息引用这段原文" else "带上这条原文继续对话",
         onClick = { onAction(MessageAction.Quote(message)); onDismiss() },
         leadingIcon = { Icon(Icons.AutoMirrored.Filled.Reply, null) },
     )

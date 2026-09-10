@@ -1072,6 +1072,30 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun quoteChosenDuringGenerationRemainsAvailableForNextSend() = runTest(testDispatcher) {
+        val messageDao = mockk<MessageDao>(relaxed = true)
+        coEvery { messageDao.insert(any()) } coAnswers { awaitCancellation() }
+        val vm = createViewModel(messageDao = messageDao, secureStorage = validSecureStorage())
+        advanceUntilIdle()
+        vm.updateInput("第一条")
+        vm.sendMessage()
+        runCurrent()
+        assertTrue(vm.state.value.isGenerating)
+        val quoted = MessageEntity(id = 7L, sessionId = 42L, speakerType = "narrator", content = "码头见")
+        vm.handleMessageAction(com.mojing.app.ui.chat.MessageAction.Quote(quoted))
+        vm.updateInput("下一条")
+        vm.stopGeneration()
+        advanceUntilIdle()
+        assertEquals(quoted, vm.state.value.quotingMessage)
+        assertEquals("下一条", vm.state.value.inputText)
+        vm.sendMessage()
+        runCurrent()
+        coVerify(exactly = 1) { messageDao.insert(match { it.content == "> 旁白：码头见\n\n下一条" }) }
+        vm.stopGeneration()
+        advanceUntilIdle()
+    }
+
+    @Test
     fun doubleSendStartsOnlyOneGeneration() = runTest(testDispatcher) {
         val messageDao = mockk<MessageDao>(relaxed = true)
         coEvery { messageDao.insert(any()) } coAnswers { awaitCancellation() }
