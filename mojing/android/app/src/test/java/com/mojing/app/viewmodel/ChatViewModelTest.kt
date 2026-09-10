@@ -224,6 +224,72 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun delayedFullRefreshKeepsNewlySavedCorrections() = runTest(testDispatcher) {
+        val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        var corrections = emptyList<SessionMemoryCorrectionEntity>()
+        coEvery { dao.getVisible(42L, "main") } answers { corrections }
+        val vm = createViewModel(memoryCorrectionDao = dao, eventNodeDao = events)
+        advanceUntilIdle()
+        val release = CompletableDeferred<List<SessionEventNodeEntity>>()
+        coEvery { events.getForBranch(42L, "main") } coAnswers { release.await() }
+        vm.switchBranch("main")
+        runCurrent()
+        corrections = listOf(SessionMemoryCorrectionEntity(sessionId = 42, content = "已保存的新纠正"))
+        vm.saveMemoryCorrection(null, "已保存的新纠正", "main")
+        advanceUntilIdle()
+        assertEquals(corrections, vm.state.value.memoryCorrections)
+        release.complete(emptyList())
+        advanceUntilIdle()
+        assertEquals(corrections, vm.state.value.memoryCorrections)
+    }
+
+    @Test
+    fun delayedCorrectionRefreshCannotOverwriteAnotherBranch() = runTest(testDispatcher) {
+        val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
+        val branchDao = mockk<SessionBranchDao>(relaxed = true)
+        val other = SessionMemoryCorrectionEntity(sessionId = 42, branchId = "branch-1", content = "另一条故事线")
+        coEvery { branchDao.getBySession(42L) } returns listOf(SessionBranchEntity(sessionId = 42, branchId = "branch-1", sourceMessageId = 1))
+        coEvery { dao.getVisible(42L, "main") } returns emptyList()
+        coEvery { dao.getVisible(42L, "branch-1") } returns listOf(other)
+        val vm = createViewModel(memoryCorrectionDao = dao, sessionBranchDao = branchDao)
+        advanceUntilIdle()
+        val oldRead = CompletableDeferred<List<SessionMemoryCorrectionEntity>>()
+        coEvery { dao.getVisible(42L, "main") } coAnswers { oldRead.await() }
+        vm.saveMemoryCorrection(null, "主线纠正", "main")
+        runCurrent()
+        vm.switchBranch("branch-1")
+        advanceUntilIdle()
+        assertEquals(listOf(other), vm.state.value.memoryCorrections)
+        oldRead.complete(listOf(other.copy(branchId = "main", content = "主线旧查询")))
+        advanceUntilIdle()
+        assertEquals("branch-1", vm.state.value.currentBranchId)
+        assertEquals(listOf(other), vm.state.value.memoryCorrections)
+        coVerify(exactly = 1) { dao.getVisible(42L, "branch-1") }
+    }
+
+    @Test
+    fun latestCorrectionRefreshWinsWhenSavesFinishOutOfOrder() = runTest(testDispatcher) {
+        val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
+        coEvery { dao.getVisible(42L, "main") } returns emptyList()
+        val vm = createViewModel(memoryCorrectionDao = dao)
+        advanceUntilIdle()
+        val oldRead = CompletableDeferred<List<SessionMemoryCorrectionEntity>>()
+        val latest = SessionMemoryCorrectionEntity(sessionId = 42, content = "最新纠正")
+        var reads = 0
+        coEvery { dao.getVisible(42L, "main") } coAnswers { if (++reads == 1) oldRead.await() else listOf(latest) }
+        vm.saveMemoryCorrection(null, "第一次", "main")
+        runCurrent()
+        vm.saveMemoryCorrection(null, "第二次", "main")
+        advanceUntilIdle()
+        assertEquals(listOf(latest), vm.state.value.memoryCorrections)
+        oldRead.complete(emptyList())
+        advanceUntilIdle()
+        assertEquals(listOf(latest), vm.state.value.memoryCorrections)
+        assertEquals(2, reads)
+    }
+
+    @Test
     fun switchingBranchRefreshesCorrectionsWithoutTouchingAutomaticMemory() = runTest(testDispatcher) {
         val correction = SessionMemoryCorrectionEntity(sessionId = 42L, branchId = "branch-1", content = "分支纠正")
         val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)

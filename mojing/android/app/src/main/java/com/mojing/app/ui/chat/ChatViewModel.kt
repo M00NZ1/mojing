@@ -182,6 +182,7 @@ class ChatViewModel @Inject constructor(
     private val sessionId: Long = savedStateHandle["sessionId"] ?: 0L
     private val _state = MutableStateFlow(ChatContract.State(sessionId = sessionId))
     private val eventRefreshRevision = java.util.concurrent.atomic.AtomicLong()
+    private val correctionRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     val state: StateFlow<ChatContract.State> = _state.asStateFlow()
     private var roundPlatform: com.mojing.app.data.ModelPlatform? = null
     private val _modelSelectionLabel = MutableStateFlow(currentModelLabel())
@@ -1265,6 +1266,7 @@ class ChatViewModel @Inject constructor(
 
     private suspend fun refreshMessagesUi(requestedBranchId: String = currentBranchId(), anchorMessageId: Long? = null) {
         val eventRevision = eventRefreshRevision.incrementAndGet()
+        val correctionRevision = correctionRefreshRevision.incrementAndGet()
         val branches = sessionBranchDao.getBySession(sessionId)
         val branchId = if (
             requestedBranchId == "main" || branches.any { it.branchId == requestedBranchId }
@@ -1325,7 +1327,8 @@ class ChatViewModel @Inject constructor(
             contextMemoryText = contextMemoryText,
             encyclopediaFoundation = encyclopediaFoundation,
             memorySegments = memorySegments,
-            memoryCorrections = memoryCorrections,
+            memoryCorrections = if (current.currentBranchId != branchId || correctionRefreshRevision.get() == correctionRevision)
+                memoryCorrections else current.memoryCorrections,
             roundChoiceOptions = roundChoices.options,
             roundChoiceMessageId = roundChoices.sourceMessageId,
             branchAnchorsByMessageId = anchors,
@@ -2901,7 +2904,13 @@ class ChatViewModel @Inject constructor(
     }
 
     private suspend fun refreshMemoryCorrectionsOnly() {
-        _state.update { it.copy(memoryCorrections = memoryCorrectionDao.getVisible(sessionId, currentBranchId())) }
+        val branchId = currentBranchId()
+        val revision = correctionRefreshRevision.incrementAndGet()
+        val corrections = memoryCorrectionDao.getVisible(sessionId, branchId)
+        _state.update { current ->
+            if (current.currentBranchId == branchId && correctionRefreshRevision.get() == revision)
+                current.copy(memoryCorrections = corrections) else current
+        }
     }
 
     private fun recordMemoryCorrectionPromptTrace(
