@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Web 沉淀资料详情返回 | 生产构建与 Chrome 模拟 API 回归通过；覆盖组件卸载重进、第二页筛选与焦点恢复，以及实际百科页面正常详情、失败重试后的返回入口 | `test-sediment-review.mjs` |
 | Web 沉淀资料分页 | 9 项后端测试与生产构建通过；1,200 条测试资料覆盖筛选与完整遍历、边界删除及新增资料；Chrome 模拟 API 回归覆盖前后翻页、每页 100 张卡片、加载失败重试、选择清理及 320px 布局 | `test_sediment_batch_confirmation.py`、`test-sediment-review.mjs`；`.codex-work/sediment-pagination.png` |
 | Web 沉淀资料批量核对 | 7 项后端测试与生产构建通过；Chrome 模拟 API 回归覆盖筛选、100 条上限、失败保留选择、重试、保存锁定及刷新；320px 截图检查通过 | `test_sediment_batch_confirmation.py`、`test-sediment-review.mjs`；`.codex-work/sediment-review.png` |
 | Android 沉淀资料批量确认 | 16 项百科详情 ViewModel 测试通过；Android 35、320dp 下通过 Room 内存数据库测试与批量操作组件测试，覆盖百科隔离、重复确认、正文与来源保留、失败重试、跨页旧返回、选择计数和保存禁用；Debug 应用与测试 APK 构建通过 | `EncyclopediaDetailViewModelTest`、`SedimentConfirmationDaoTest`、`SedimentBatchControlsTest`；`.codex-work/android-ui-20260910/sediment-confirm-tests.txt` |

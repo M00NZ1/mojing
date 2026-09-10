@@ -28,7 +28,7 @@ try {
   const errors = [];
   page.on('pageerror', error => { errors.push(error.message); console.error(error.message); });
   let rows = Array.from({ length: 102 }, (_, index) => ({ id: index + 1, title: `资料${index + 1}`, entry_type: 'event', confidence: index === 101 ? 'confirmed' : 'inferred', source_session_id: 8, summary: '雾港的旧事与人物关系。'.repeat(30) }));
-  let calls = 0, finish, failPage = true;
+  let calls = 0, finish, failPage = true, failDetail = true;
   await page.route('**/*', async route => {
     const url = new URL(route.request().url());
     if (url.hostname !== '127.0.0.1' || url.port !== String(port)) return route.abort();
@@ -51,6 +51,13 @@ try {
       const filtered = rows.filter(row => row.id < before && (status === 'all' || (status === 'confirmed' ? row.confidence === 'confirmed' : row.confidence !== 'confirmed'))).sort((a, b) => b.id - a.id);
       return route.fulfill({ json: { items: filtered.slice(0, 100), next_cursor: filtered.length > 100 ? filtered[99].id : null } });
     }
+    if (url.pathname === '/api/encyclopedia') return route.fulfill({ json: [{ id: 1, name: '测试百科', description: '' }] });
+    if (/^\/api\/encyclopedia\/entries\/\d+$/.test(url.pathname)) {
+      if (failDetail) return route.fulfill({ status: 404, json: { detail: '条目不存在' } });
+      const id = Number(url.pathname.split('/').pop());
+      return route.fulfill({ json: { entry: { ...rows.find(row => row.id === id), encyclopedia_id: 1, content: '完整资料正文', meta_json: {}, tags: '' }, relations: [] } });
+    }
+    if (url.pathname.startsWith('/api/')) return route.fulfill({ json: [] });
     if (url.pathname !== '/') return route.continue();
     return route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>
       <div id="fixture"></div>
@@ -68,20 +75,33 @@ try {
         import Panel from '/src/components/SedimentReviewPanel.tsx';
         import '/src/styles.css';
         const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-        ReactDOM.createRoot(document.getElementById('fixture')).render(React.createElement(QueryClientProvider, {client}, React.createElement(Panel, {encyclopediaId: 1, onClose: () => {}, onOpenEntry: id => {window.opened = id;}})));
+        function Fixture() {
+          const [detail, setDetail] = React.useState(false);
+          const [location, setLocation] = React.useState(undefined);
+          return detail ? React.createElement('button', {onClick: () => setDetail(false)}, '返回沉淀资料') :
+            React.createElement(Panel, {encyclopediaId: 1, initialLocation: location, onClose: () => {}, onOpenEntry: (id, type, next) => {window.opened = id; setLocation(next); setDetail(true);}});
+        }
+        ReactDOM.createRoot(document.getElementById('fixture')).render(React.createElement(QueryClientProvider, {client}, React.createElement(Fixture)));
       </script></body></html>` });
   });
   await page.goto(`http://127.0.0.1:${port}`);
   await page.getByText('本页 100 条 · 已选 0 条', { exact: true }).waitFor();
   await page.getByRole('button', { name: '资料101', exact: true }).click();
   assert.equal(await page.evaluate(() => window.opened), 101);
+  await page.getByRole('button', { name: '返回沉淀资料', exact: true }).click();
+  await page.getByText('本页 100 条 · 已选 0 条', { exact: true }).waitFor();
   await page.getByRole('button', { name: '选择本页' }).click();
   await page.getByRole('button', { name: '下一页', exact: true }).click();
   await page.getByRole('alert').filter({ hasText: '读取失败' }).waitFor();
   assert.equal(await page.getByRole('button', { name: '上一页', exact: true }).isEnabled(), true);
   await page.getByRole('button', { name: '重试', exact: true }).click();
   await page.getByText('本页 1 条 · 已选 0 条', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '资料1', exact: true }).waitFor();
+  await page.getByRole('button', { name: '资料1', exact: true }).click();
+  await page.getByRole('button', { name: '返回沉淀资料', exact: true }).click();
+  await page.getByText('本页 1 条 · 已选 0 条', { exact: true }).waitFor();
+  await page.getByText('第 2 页', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '待核对', exact: true }).getAttribute('aria-pressed'), 'true');
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-sediment-entry') === '1');
   assert.equal(await page.getByRole('button', { name: '下一页', exact: true }).isDisabled(), true);
   await page.getByRole('button', { name: '上一页', exact: true }).click();
   await page.getByText('本页 100 条 · 已选 0 条', { exact: true }).waitFor();
@@ -113,7 +133,24 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   if (process.env.SMOKE_OUTPUT) await page.screenshot({ path: process.env.SMOKE_OUTPUT });
   assert.deepEqual(errors, []);
-  console.log('PASS: review filters, bounded cursor pages, page retry, source entry navigation, saving locks, failure retry, refresh and 320px layout.');
+  rows = rows.map(row => ({ ...row, confidence: 'inferred' }));
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`http://127.0.0.1:${port}/encyclopedia?encId=1`);
+  await page.getByRole('button', { name: '本库沉淀', exact: true }).click();
+  await page.getByRole('button', { name: '下一页', exact: true }).click();
+  await page.getByRole('button', { name: '资料1', exact: true }).click();
+  await page.getByRole('button', { name: '返回沉淀资料', exact: true }).click();
+  await page.getByText('第 2 页', { exact: true }).waitFor();
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-sediment-entry') === '1');
+  failDetail = false;
+  await page.getByRole('button', { name: '资料1', exact: true }).click();
+  await page.getByRole('button', { name: '重试', exact: true }).click();
+  await page.getByRole('button', { name: '编辑', exact: true }).waitFor();
+  await page.getByRole('button', { name: '返回沉淀资料', exact: true }).click();
+  await page.getByText('第 2 页', { exact: true }).waitFor();
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-sediment-entry') === '1');
+  assert.deepEqual(errors, []);
+  console.log('PASS: review filters, bounded cursor pages, page retry, detail return with page/filter/focus restoration, saving locks, failure retry, refresh and 320px layout.');
 } finally {
   await browser?.close();
   if (child.exitCode === null) { child.kill(); await once(child, 'exit'); }

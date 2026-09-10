@@ -8,7 +8,7 @@ import { confirmModal } from '../components/ConfirmModal';
 import CreationHomeLink from '../components/CreationHomeLink';
 import InlineQueryError from '../components/InlineQueryError';
 import ExpandableTextArea from '../components/ExpandableTextArea';
-import SedimentReviewPanel from '../components/SedimentReviewPanel';
+import SedimentReviewPanel, { type SedimentReviewLocation } from '../components/SedimentReviewPanel';
 import UiIcon, { type UiIconName } from '../components/UiIcon';
 import { useToast } from '../hooks/useToast';
 import { useDragColumnWidth } from '../hooks/useDragColumnWidth';
@@ -703,6 +703,8 @@ export default function EncyclopediaPage() {
   const [batchIgnoreWeakAnchor, setBatchIgnoreWeakAnchor] = useState(false);
   const [encSearch, setEncSearch] = useState('');
   const [encLibraryTool, setEncLibraryTool] = useState<null | 'timeline' | 'graph' | 'sediment'>(null);
+  const [sedimentLocation, setSedimentLocation] = useState<{ encyclopediaId: number; location: SedimentReviewLocation } | null>(null);
+  useEffect(() => { setSedimentLocation(null); }, [selectedEncId]);
   /** 本库关系图谱：两点建关系（对齐 Android 手动选端点，避免误连） */
   const [graphRelPickMode, setGraphRelPickMode] = useState(false);
   const [graphRelA, setGraphRelA] = useState<number | null>(null);
@@ -2321,7 +2323,10 @@ export default function EncyclopediaPage() {
             })()}
           </div>
         ) : selectedEncId && encLibraryTool === 'sediment' ? (
-          <SedimentReviewPanel key={selectedEncId} encyclopediaId={selectedEncId} onOpenEntry={openEntry} onClose={() => setEncLibraryTool(null)} />
+          <SedimentReviewPanel key={selectedEncId} encyclopediaId={selectedEncId}
+            initialLocation={sedimentLocation?.encyclopediaId === selectedEncId ? sedimentLocation.location : undefined}
+            onOpenEntry={(id, type, location) => { setSedimentLocation({ encyclopediaId: selectedEncId, location }); void openEntry(id, type); }}
+            onClose={(location) => { setSedimentLocation({ encyclopediaId: selectedEncId, location }); setEncLibraryTool(null); }} />
         ) : selectedEntryId && entryDetailQuery.isPending ? (
           <div className="secondary-empty">条目详情加载中…</div>
         ) : selectedEntryId && entryDetailQuery.isError ? (
@@ -2330,6 +2335,7 @@ export default function EncyclopediaPage() {
             <p style={{ color: 'var(--text-2)', marginTop: 8 }}>可能已被删除，也可能是本地服务暂时不可用。</p>
             <div className="button-row" style={{ marginTop: 12 }}>
               <button type="button" className="btn btn-primary btn-sm" onClick={() => entryDetailQuery.refetch()}>重试</button>
+              {sedimentLocation?.encyclopediaId === selectedEncId && <button type="button" className="btn btn-ghost btn-sm" onClick={() => { void openLibraryTool('sediment'); }}>返回沉淀资料</button>}
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => returnToEncyclopediaRoute(selectedEncId, categoryKey)}>返回条目列表</button>
             </div>
           </div>
@@ -2364,6 +2370,7 @@ export default function EncyclopediaPage() {
                 </div>
               </div>
               <div className="button-row" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                {sedimentLocation?.encyclopediaId === selectedEncId && <button type="button" className="btn btn-ghost btn-sm" onClick={() => { void openLibraryTool('sediment'); }}>返回沉淀资料</button>}
                 <button type="button" className="btn btn-ghost btn-sm" data-encyclopedia-entry-edit-return onClick={() => handleEditEntry(entry)}><UiIcon name="edit" />编辑</button>
                 <input
                   value={entryCoverHint}

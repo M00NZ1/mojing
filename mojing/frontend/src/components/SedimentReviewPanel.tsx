@@ -3,19 +3,30 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import './SedimentReviewPanel.css';
 
-export default function SedimentReviewPanel({ encyclopediaId, onOpenEntry, onClose }: {
+export type SedimentReviewLocation = { filter: string; cursors: (number | null)[]; anchorId?: number };
+
+export default function SedimentReviewPanel({ encyclopediaId, onOpenEntry, onClose, initialLocation }: {
   encyclopediaId: number;
-  onOpenEntry: (id: number, type: string) => void;
-  onClose: () => void;
+  onOpenEntry: (id: number, type: string, location: SedimentReviewLocation) => void;
+  onClose: (location: SedimentReviewLocation) => void;
+  initialLocation?: SedimentReviewLocation;
 }) {
   const cache = useQueryClient();
-  const [filter, setFilter] = useState('pending');
-  const [cursors, setCursors] = useState<(number | null)[]>([null]);
+  const [filter, setFilter] = useState(initialLocation?.filter ?? 'pending');
+  const [cursors, setCursors] = useState<(number | null)[]>(initialLocation?.cursors ?? [null]);
   const cursor = cursors[cursors.length - 1];
   const query = useQuery({ queryKey: ['encyclopedia-sediment', encyclopediaId, filter, cursor],
     queryFn: () => api.listEncyclopediaSedimentPage(encyclopediaId, filter, cursor), gcTime: 0 });
   const panel = useRef<HTMLElement>(null);
   useEffect(() => { panel.current?.scrollIntoView({ block: 'start' }); }, [filter, cursor]);
+  const restoreAnchor = useRef(initialLocation?.anchorId);
+  useEffect(() => {
+    if (!query.isSuccess || restoreAnchor.current == null) return;
+    const target = panel.current?.querySelector<HTMLButtonElement>(`[data-sediment-entry="${restoreAnchor.current}"]`);
+    restoreAnchor.current = undefined;
+    target?.scrollIntoView({ block: 'center' });
+    target?.focus({ preventScroll: true });
+  }, [query.data, query.isSuccess]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [notice, setNotice] = useState('');
   const submitting = useRef(false);
@@ -34,7 +45,7 @@ export default function SedimentReviewPanel({ encyclopediaId, onOpenEntry, onClo
     onSettled: () => { submitting.current = false; },
   });
   return <section ref={panel} className="sediment-review" aria-label="沉淀资料核对">
-    <div className="button-row"><h2>沉淀资料</h2><button className="btn btn-ghost btn-sm" type="button" disabled={confirm.isPending} onClick={onClose}>关闭</button></div>
+    <div className="button-row"><h2>沉淀资料</h2><button className="btn btn-ghost btn-sm" type="button" disabled={confirm.isPending} onClick={() => onClose({ filter, cursors })}>关闭</button></div>
     <p className="hint">核对对话整理出的资料，确认后保留正文与来源。点击标题可查看和编辑详情。</p>
     <div className="button-row" aria-label="确认状态筛选">
       {([['all', '全部'], ['pending', '待核对'], ['confirmed', '已确认']] as const).map(([key, label]) =>
@@ -62,7 +73,7 @@ export default function SedimentReviewPanel({ encyclopediaId, onOpenEntry, onClo
             const checked = event.target.checked;
             setSelected((ids) => { const next = new Set(ids); if (checked) next.add(row.id); else next.delete(row.id); return next; });
           }} />}
-        <div><button type="button" className="sediment-entry-title" disabled={confirm.isPending} onClick={() => onOpenEntry(row.id, row.entry_type)}>{row.title}</button>
+        <div><button type="button" className="sediment-entry-title" data-sediment-entry={row.id} disabled={confirm.isPending} onClick={() => onOpenEntry(row.id, row.entry_type, { filter, cursors, anchorId: row.id })}>{row.title}</button>
           <span className="pill pill-sm">{row.confidence === 'confirmed' ? '已确认' : '待核对'}</span>
           {row.source_session_id != null && <small>来源会话 #{row.source_session_id}</small>}
           {row.summary && <p>{row.summary}</p>}
