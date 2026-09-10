@@ -1,5 +1,9 @@
 package com.mojing.app.ui.chat.drawer
 
+import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
+import com.mojing.app.ui.common.MoJingButton as Button
+import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll

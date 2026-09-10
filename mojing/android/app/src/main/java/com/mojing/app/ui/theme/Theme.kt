@@ -1,6 +1,12 @@
 package com.mojing.app.ui.theme
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.Shapes
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -24,8 +30,8 @@ private val DarkColorScheme = darkColorScheme(
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = DarkPrimary,
-    onPrimary = DarkOnPrimary,
+    primary = Color(0xFF286B58),
+    onPrimary = Color.White,
     secondary = DarkSecondary,
     background = LightBackground,
     surface = LightSurface,
@@ -36,6 +42,39 @@ private val LightColorScheme = lightColorScheme(
     outline = Color(0xFF6B6B80),
     error = DarkError,
 )
+
+/** Complete semantic surfaces for every palette, including custom themes. */
+internal fun ColorScheme.withMoJingSurfaces(isLight: Boolean): ColorScheme {
+    val ink = onSurface
+    val base = background
+    return copy(
+        onPrimary = if (primary.luminance() > 0.179f) Color.Black else Color.White,
+        onSecondary = if (secondary.luminance() > 0.179f) Color.Black else Color.White,
+        surfaceTint = primary,
+        surfaceDim = lerp(base, ink, if (isLight) 0.07f else 0.01f),
+        surfaceBright = lerp(base, ink, if (isLight) 0f else 0.12f),
+        surfaceContainerLowest = if (isLight) Color.White else lerp(base, Color.Black, 0.16f),
+        surfaceContainerLow = lerp(base, ink, 0.025f),
+        surfaceContainer = lerp(base, ink, 0.045f),
+        surfaceContainerHigh = lerp(base, ink, 0.075f),
+        surfaceContainerHighest = lerp(base, ink, 0.10f),
+        primaryContainer = lerp(base, primary, if (isLight) 0.14f else 0.23f),
+        onPrimaryContainer = ink,
+        secondaryContainer = lerp(base, secondary, 0.12f),
+        onSecondaryContainer = ink,
+        tertiary = primary,
+        onTertiary = onPrimary,
+        tertiaryContainer = lerp(base, primary, 0.10f),
+        onTertiaryContainer = ink,
+        outline = lerp(base, ink, if (isLight) 0.43f else 0.38f),
+        outlineVariant = lerp(base, ink, if (isLight) 0.17f else 0.16f),
+        onSurfaceVariant = lerp(base, ink, if (isLight) 0.72f else 0.70f),
+        error = if (isLight) Color(0xFFAF343D) else Color(0xFFFFB3B6),
+        onError = if (isLight) Color.White else Color(0xFF5F101D),
+        errorContainer = if (isLight) Color(0xFFFFE9E9) else Color(0xFF44282C),
+        onErrorContainer = if (isLight) Color(0xFF7D222B) else Color(0xFFFFDADB),
+    )
+}
 
 private val MidnightColorScheme = darkColorScheme(
     primary = MidnightPrimary,
@@ -132,7 +171,7 @@ fun MoJingTheme(
     content: @Composable () -> Unit,
 ) {
     val safeMode = AppThemes.normalize(themeMode)
-    val colorScheme = when (safeMode) {
+    val palette = when (safeMode) {
         "light" -> LightColorScheme
         "midnight" -> MidnightColorScheme
         "rose" -> RoseDarkScheme
@@ -141,6 +180,9 @@ fun MoJingTheme(
         "blush" -> BlushLightScheme
         "sky" -> SkyLightScheme
         else -> DarkColorScheme
+    }
+    val colorScheme = remember(palette, safeMode) {
+        palette.withMoJingSurfaces(safeMode in setOf("light", "blush", "sky"))
     }
     val scale = contentFontScale.coerceIn(0.8f, 1.45f)
     val baseDensity = LocalDensity.current
@@ -154,6 +196,10 @@ fun MoJingTheme(
         MaterialTheme(
             colorScheme = colorScheme,
             typography = AppTypography,
+            shapes = Shapes(
+                extraSmall = RoundedCornerShape(12.dp), small = RoundedCornerShape(14.dp),
+                medium = RoundedCornerShape(18.dp), large = RoundedCornerShape(24.dp),
+                extraLarge = RoundedCornerShape(28.dp)),
             content = content,
         )
     }

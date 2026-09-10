@@ -11,6 +11,11 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.Density
@@ -42,7 +47,12 @@ fun ImeHideAwareNavigationBar(
             shrinkTowards = Alignment.Bottom
         )
     ) {
-        NavigationBar(content = content)
+        NavigationBar(
+            modifier = Modifier.navigationBarsPadding().padding(horizontal = 12.dp, vertical = 6.dp).clip(MaterialTheme.shapes.large),
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            windowInsets = WindowInsets(0, 0, 0, 0),
+            tonalElevation = 0.dp,
+            content = content)
     }
 }
 

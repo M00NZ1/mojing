@@ -1,5 +1,8 @@
 package com.mojing.app.ui.character.components
 
+import com.mojing.app.ui.common.MoJingButton as Button
+import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
+
 import android.graphics.Bitmap
 import android.net.Uri
 import android.widget.Toast

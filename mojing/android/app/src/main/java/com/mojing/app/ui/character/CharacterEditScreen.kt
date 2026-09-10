@@ -1,5 +1,9 @@
 package com.mojing.app.ui.character
 
+import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
+import com.mojing.app.ui.common.MoJingButton as Button
+import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
+
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts

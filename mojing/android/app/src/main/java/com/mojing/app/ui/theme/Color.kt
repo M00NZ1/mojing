@@ -2,14 +2,14 @@ package com.mojing.app.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val DarkPrimary = Color(0xFF6C5CE7)
-val DarkOnPrimary = Color(0xFFFFFFFF)
-val DarkSecondary = Color(0xFF00CEC9)
-val DarkBackground = Color(0xFF0F0F1A)
-val DarkSurface = Color(0xFF1A1A2E)
-val DarkSurfaceVariant = Color(0xFF252540)
-val DarkOnBackground = Color(0xFFE8E8F0)
-val DarkOnSurface = Color(0xFFD0D0E0)
+val DarkPrimary = Color(0xFF91D4BF)
+val DarkOnPrimary = Color(0xFF102B24)
+val DarkSecondary = Color(0xFFB9CBC3)
+val DarkBackground = Color(0xFF101716)
+val DarkSurface = Color(0xFF171F1D)
+val DarkSurfaceVariant = Color(0xFF28332F)
+val DarkOnBackground = Color(0xFFE5ECE8)
+val DarkOnSurface = Color(0xFFE5ECE8)
 val DarkError = Color(0xFFFF6B6B)
 val UserBubble = Color(0xFF6C5CE7)
 val AiBubble = Color(0xFF1E1E3A)

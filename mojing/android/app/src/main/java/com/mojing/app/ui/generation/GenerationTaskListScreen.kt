@@ -1,5 +1,8 @@
 package com.mojing.app.ui.generation
 
+import com.mojing.app.ui.common.MoJingButton as Button
+import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -45,7 +48,7 @@ fun GenerationTaskListScreen(
     val message by viewModel.snackbar.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var filter by rememberSaveable { mutableIntStateOf(0) }
-    var cancelTarget by remember { mutableStateOf<GenerationTaskEntity?>(null) }
+    var cancelTargetId by remember { mutableStateOf<Long?>(null) }
     var detail by remember { mutableStateOf<GenerationTaskEntity?>(null) }
     val dateFormat = remember { SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()) }
     val active = tasks.count { it.isActive() }
@@ -138,7 +141,7 @@ fun GenerationTaskListScreen(
                         Text(dateFormat.format(Date(t.createdAt)),
                             style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            if (t.isActive()) TextButton(enabled = !busy, onClick = { cancelTarget = t }) { Text("取消") }
+                            if (t.isActive()) TextButton(enabled = !busy, onClick = { cancelTargetId = t.id }) { Text("取消") }
                             if (t.status == GenerationTaskStatus.FAILED && isRetryableKind(t.taskKind)) {
                                 TextButton(enabled = !busy && !retrying, onClick = { viewModel.retryFailedTask(t) }) {
                                     if (retrying) {
@@ -165,12 +168,8 @@ fun GenerationTaskListScreen(
             }
         }
     }
-    cancelTarget?.let { t ->
-        AlertDialog(onDismissRequest = { cancelTarget = null }, title = { Text("取消这次生成？") },
-            text = { Text("${t.title}\n\n已保存 ${t.progressDone} 项内容会保留，剩余部分不再继续。") },
-            confirmButton = { TextButton(onClick = { viewModel.cancelTask(t.id); cancelTarget = null }) { Text("取消生成") } },
-            dismissButton = { TextButton(onClick = { cancelTarget = null }) { Text("保留任务") } })
-    }
+    GenerationTaskCancelConfirmation(tasks, cancelTargetId, busy,
+        onDismiss = { cancelTargetId = null }, onCancel = viewModel::cancelTask)
     detail?.let { original ->
         val t = tasks.firstOrNull { it.id == original.id } ?: original
         GenerationTaskDetailSheet(t, onDismiss = { detail = null },
@@ -178,6 +177,26 @@ fun GenerationTaskListScreen(
                 detail = null
                 viewModel.openResult(t, onOpenResult)
             })
+    }
+}
+
+@Composable
+internal fun GenerationTaskCancelConfirmation(
+    tasks: List<GenerationTaskEntity>,
+    targetId: Long?,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onCancel: (Long) -> Unit,
+) {
+    val task = tasks.firstOrNull { it.id == targetId && it.isActive() }
+    LaunchedEffect(targetId, task?.id) {
+        if (targetId != null && task == null) onDismiss()
+    }
+    if (task != null) {
+        AlertDialog(onDismissRequest = onDismiss, title = { Text("取消这次生成？") },
+            text = { Text("${task.title}\n\n已保存 ${task.progressDone} 项内容会保留，剩余部分不再继续。") },
+            confirmButton = { TextButton(enabled = !busy, onClick = { onCancel(task.id); onDismiss() }) { Text("取消生成") } },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("保留任务") } })
     }
 }
 

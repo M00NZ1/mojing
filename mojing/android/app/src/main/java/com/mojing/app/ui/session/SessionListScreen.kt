@@ -1,5 +1,10 @@
 package com.mojing.app.ui.session
 
+import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
+import com.mojing.app.ui.common.MoJingButton as Button
+import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
+import com.mojing.app.ui.common.MoJingTonalButton as FilledTonalButton
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -371,7 +376,7 @@ fun SessionListScreen(
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.primary,
                                 )
-                                Text("三步上手", style = MaterialTheme.typography.titleMedium)
+                                Text("让故事从这里开始", style = MaterialTheme.typography.headlineSmall)
                                 QuickStartGuideSteps(
                                     onCharacters = onCharactersClick,
                                     onCreateSession = { openNewSessionDialog() },
@@ -871,7 +876,7 @@ fun SessionListScreen(
     if (showQuickStartReplay) {
         ModalBottomSheet(onDismissRequest = { showQuickStartReplay = false }) {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).padding(bottom = 28.dp)) {
-                Text("三步上手", style = MaterialTheme.typography.titleLarge)
+                Text("开始创作", style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(8.dp))
                 QuickStartGuideSteps(
                     onCharacters = {
@@ -893,23 +898,18 @@ fun SessionListScreen(
 }
 
 @Composable
-private fun GuideStepBlock(num: String, title: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        Surface(
-            modifier = Modifier.size(28.dp),
-            shape = MaterialTheme.shapes.extraLarge,
-            color = MaterialTheme.colorScheme.primary,
-        ) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(num, color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.labelMedium)
+private fun GuideActionRow(title: String, description: String, onClick: () -> Unit) {
+    Surface(onClick = onClick, shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(description, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-        }
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
+            Icon(Icons.Default.ChevronRight, contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -920,14 +920,15 @@ private fun QuickStartGuideSteps(
     onCreateSession: () -> Unit,
     onEncyclopedia: () -> Unit,
 ) {
-    GuideStepBlock("1", "准备故事世界")
-    FilledTonalButton(onClick = onEncyclopedia, modifier = Modifier.padding(start = 40.dp)) { Text("打开百科") }
-    Spacer(Modifier.height(8.dp))
-    GuideStepBlock("2", "创建并绑定角色")
-    FilledTonalButton(onClick = onCharacters, modifier = Modifier.padding(start = 40.dp)) { Text("去创建角色") }
-    Spacer(Modifier.height(8.dp))
-    GuideStepBlock("3", "开始对话")
-    FilledTonalButton(onClick = onCreateSession, modifier = Modifier.padding(start = 40.dp)) { Text("开始新对话") }
+    Text("遇见角色，写下属于你的下一幕。", style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Button(onClick = onCreateSession, modifier = Modifier.fillMaxWidth()) {
+        Icon(Icons.Default.Add, contentDescription = null)
+        Spacer(Modifier.width(8.dp))
+        Text("开始新对话")
+    }
+    GuideActionRow("角色", "创建或导入角色，自由开启对话", onCharacters)
+    GuideActionRow("世界百科", "为故事补充背景、人物与地点", onEncyclopedia)
 }
 
 @Composable

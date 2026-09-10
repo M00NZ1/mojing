@@ -1,29 +1,6 @@
-<?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <!-- 波纹 + 中心光点：对话 / 深流意象 -->
-    <path
-        android:fillColor="@android:color/transparent"
-        android:pathData="M20,40 Q38,28 54,40 Q70,28 88,40"
-        android:strokeWidth="3.8"
-        android:strokeColor="@color/brand_teal"
-        android:strokeLineCap="round" />
-    <path
-        android:fillColor="@android:color/transparent"
-        android:pathData="M20,54 Q40,42 54,54 Q68,42 88,54"
-        android:strokeWidth="3.8"
-        android:strokeColor="#5EEAD4"
-        android:strokeLineCap="round" />
-    <path
-        android:fillColor="@android:color/transparent"
-        android:pathData="M20,68 Q36,56 54,68 Q72,56 88,68"
-        android:strokeWidth="3.8"
-        android:strokeColor="@color/brand_teal_light"
-        android:strokeLineCap="round" />
-    <path
-        android:fillColor="@color/brand_ice"
-        android:pathData="M54,47.5c3.6,0,6.5,2.9,6.5,6.5s-2.9,6.5-6.5,6.5s-6.5-2.9-6.5-6.5S50.4,47.5,54,47.5z" />
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#A9DDCB" android:pathData="M32,30 Q43,28 54,37 Q65,28 76,30 L76,72 Q65,70 54,79 Q43,70 32,72 Z" />
+    <path android:fillColor="#142B25" android:pathData="M38,37 Q45,37 51,43 L51,69 Q45,65 38,65 Z" />
+    <path android:fillColor="#24493D" android:pathData="M57,43 Q63,37 70,37 L70,65 Q63,65 57,69 Z" />
+    <path android:fillColor="#F2F3DD" android:pathData="M76,22 L78,28 L84,30 L78,32 L76,38 L74,32 L68,30 L74,28 Z" />
 </vector>

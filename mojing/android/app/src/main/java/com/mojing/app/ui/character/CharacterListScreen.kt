@@ -1,5 +1,8 @@
 package com.mojing.app.ui.character
 
+import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
+import com.mojing.app.ui.common.MoJingTonalButton as FilledTonalButton
+
 import android.graphics.Color as AndroidColor
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult

@@ -5,6 +5,13 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -48,9 +55,9 @@ import com.mojing.app.ui.theme.MoJingTheme
 import kotlinx.coroutines.delay
 
 private val InkTop = Color(0xFF050507)
-private val InkMid = Color(0xFF0B0B10)
-private val InkDeep = Color(0xFF101018)
-private val InkFloor = Color(0xFF141210)
+private val InkMid = Color(0xFF101B18)
+private val InkDeep = Color(0xFF122720)
+private val InkFloor = Color(0xFF0F1916)
 private val RicePaper = Color(0xFFEAE6DC)
 private val RicePaperMuted = Color(0xFFB8B2A8)
 private val SealLine = Color(0xFF6B5344)
@@ -74,6 +81,8 @@ private fun InkBrandSplashBackdrop(modifier: Modifier = Modifier) {
                     ),
                 ),
         )
+        Box(Modifier.align(Alignment.Center).size(250.dp).blur(64.dp, BlurredEdgeTreatment.Unbounded)
+            .background(Color(0x2291D4BF), CircleShape))
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -113,22 +122,27 @@ private fun InkBrandSplashTextBlock(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        Image(painterResource(R.drawable.ic_launcher_foreground), contentDescription = null,
+            modifier = Modifier.size(144.dp).alpha(titleAlpha).graphicsLayer {
+                translationY = (1f - titleAlpha) * 20.dp.toPx()
+            })
+        Spacer(Modifier.height(8.dp))
         Text(
             text = stringResource(R.string.app_name),
             modifier = Modifier.alpha(titleAlpha),
             color = RicePaper,
-            fontSize = 40.sp,
-            fontWeight = FontWeight.W300,
-            letterSpacing = 0.35.sp,
+            fontSize = 34.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 5.sp,
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(18.dp))
         HorizontalDivider(
             modifier = Modifier
-                .width((120f * lineFrac).dp)
+                .width((40f * lineFrac).dp)
                 .alpha(0.88f),
             thickness = 0.5.dp,
-            color = SealLine.copy(alpha = 0.88f),
+            color = Color(0xFF91D4BF).copy(alpha = 0.5f),
         )
         Spacer(Modifier.height(24.dp))
         Text(
@@ -137,10 +151,10 @@ private fun InkBrandSplashTextBlock(
                 .alpha(taglineAlpha)
                 .fillMaxWidth(),
             color = RicePaperMuted.copy(alpha = 0.92f),
-            fontSize = 17.sp,
-            fontWeight = FontWeight.W300,
-            lineHeight = 30.sp,
-            letterSpacing = 0.12.sp,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Normal,
+            lineHeight = 28.sp,
+            letterSpacing = 1.2.sp,
             textAlign = TextAlign.Center,
         )
     }
@@ -177,12 +191,10 @@ fun InkBrandSplashOverlay(onDismiss: () -> Unit) {
                 isAppearanceLightNavigationBars = false
             }
         }
-        titleAlpha.animateTo(1f, tween(480, easing = FastOutSlowInEasing))
-        delay(120)
-        lineFrac.animateTo(1f, tween(560, easing = FastOutSlowInEasing))
-        delay(80)
-        taglineAlpha.animateTo(1f, tween(560, easing = FastOutSlowInEasing))
-        delay(900)
+        titleAlpha.animateTo(1f, tween(360, easing = FastOutSlowInEasing))
+        lineFrac.animateTo(1f, tween(240, easing = FastOutSlowInEasing))
+        taglineAlpha.animateTo(1f, tween(320, easing = FastOutSlowInEasing))
+        delay(650)
         screenAlpha.animateTo(0f, tween(360, easing = FastOutSlowInEasing))
         onDismiss()
     }

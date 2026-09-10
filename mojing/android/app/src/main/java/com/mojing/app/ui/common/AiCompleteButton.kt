@@ -1,6 +1,7 @@
 package com.mojing.app.ui.common
 
-import androidx.compose.material3.Button
+import com.mojing.app.ui.common.MoJingButton as Button
+
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable

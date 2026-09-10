@@ -1,5 +1,7 @@
 package com.mojing.app.ui.common
 
+import androidx.compose.material3.TextButton
+
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -15,7 +17,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -140,20 +141,21 @@ fun LlmKeySetupHintCard(
             containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
         ),
     ) {
-        Column(
+        Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 message,
+                modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodySmall,
             )
             if (showActionButton) {
-                Button(
+                TextButton(
                     onClick = onOpenSettings,
-                    modifier = Modifier.align(Alignment.End),
                 ) {
                     Text("去设置")
                 }
