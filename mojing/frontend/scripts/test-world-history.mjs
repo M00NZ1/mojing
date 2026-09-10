@@ -29,6 +29,15 @@ try {
   if (output) await mkdir(output, { recursive: true });
   for (const width of [1365, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 900 } });
+    await context.addInitScript(() => {
+      window.copiedText = '';
+      window.failClipboard = true;
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => {
+        if (window.failClipboard) throw new Error('fixture clipboard failure');
+        window.copiedText = text;
+      } } });
+      document.execCommand = () => false;
+    });
     await context.route('**/*', (route) => {
       const url = new URL(route.request().url());
       return url.hostname === '127.0.0.1' && url.port === String(port) ? route.continue() : route.abort();
@@ -36,7 +45,7 @@ try {
     let empty = true, failDetail = true, failSave = true, failPause = true, pauseStatus = 'running', releasePause;
     const longError = '连接中断，供应商暂时无法完成请求。\n'.repeat(150);
     const errors = [], requests = [];
-    const result = { job_id: 40, template: { template_id: 'fog', label: '雾港回声', category: '悬疑', summary: '灯塔来信之后，寻找失踪的航海家。', world_prompt: '完整世界正文：港口、灯塔与远海。', gameplay_mode: '自由剧情' }, saved_template: null,
+    const result = { job_id: 40, template: { template_id: 'fog', label: '雾港回声', category: '悬疑', summary: '灯塔来信之后，寻找失踪的航海家。', world_prompt: '完整世界正文：港口、灯塔与远海。\n'.repeat(200), gameplay_mode: '自由剧情' }, saved_template: null,
       lore_entries: Array.from({ length: 41 }, (_, index) => ({ title: `地方志 ${index + 1}`, content: `完整条目 ${index + 1}` })),
       names: { person_names: ['林汐'], place_names: ['雾港'], item_names: [] }, quality_report: { score: 90, verdict: '设定完整', risks: [] } };
     await context.route('http://127.0.0.1:18001/api/**', async (route) => {
@@ -103,6 +112,24 @@ try {
     failDetail = false;
     await page.getByRole('button', { name: '重试', exact: true }).click();
     await page.getByText(result.template.world_prompt, { exact: true }).waitFor();
+    const reader = page.getByRole('region', { name: '世界设定正文', exact: true });
+    assert.ok((await reader.locator('.world-result-text').boundingBox()).height < 200);
+    await reader.getByRole('button', { name: '展开阅读', exact: true }).click();
+    const fullText = reader.getByRole('region', { name: '世界设定正文全文', exact: true });
+    assert.ok((await fullText.boundingBox()).height <= 480);
+    assert.ok(await fullText.evaluate(el => el.scrollHeight > el.clientHeight));
+    await fullText.focus();
+    await page.keyboard.press('End');
+    await page.waitForFunction(() => document.querySelector('.world-result-text.is-expanded')?.scrollTop > 0);
+    await reader.getByRole('button', { name: '复制全文', exact: true }).click();
+    await reader.getByRole('alert').waitFor();
+    await page.evaluate(() => { window.failClipboard = false; });
+    await reader.getByRole('button', { name: '复制全文', exact: true }).click();
+    await reader.getByRole('status').waitFor();
+    assert.equal(await page.evaluate(() => window.copiedText), result.template.world_prompt);
+    await reader.getByRole('button', { name: '收起阅读', exact: true }).click();
+    assert.equal(await reader.locator('.world-result-text').evaluate(el => el.scrollTop), 0);
+    assert.ok((await reader.locator('.world-result-text').boundingBox()).height < 200);
     assert.equal(await page.locator('.world-history-lore').count(), 21);
     await page.getByRole('button', { name: '下一页条目' }).click();
     await page.getByText('地方志 21', { exact: true }).click();

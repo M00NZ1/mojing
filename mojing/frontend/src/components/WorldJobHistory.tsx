@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import type { WorldGenerationResult } from '../types';
 import InlineQueryError from './InlineQueryError';
 import UiIcon from './UiIcon';
+import WorldResultText from './WorldResultText';
 import './WorldJobHistory.css';
 
 const statusNames: Record<string, string> = { succeeded: '已完成', failed: '生成失败', running: '生成中', pending: '等待开始', cancelled: '已停止', paused: '已暂停', pause_requested: '正在暂停', interrupted: '执行中断' };
@@ -71,9 +72,9 @@ export default function WorldJobHistory({ onManage, onResume, generationActive =
         <h3>{result.template.label}</h3><p>{result.template.summary}</p>
         <div className="button-row">{result.saved_template ? <button type="button" className="btn btn-primary" onClick={() => onManage(result)}>管理此世界</button> : <button type="button" className="btn btn-primary" disabled={save.isPending} onClick={() => save.mutate(selected)}>{save.isPending ? '正在保存…' : '保存到世界库'}</button>}</div>
         {save.isError && <InlineQueryError message="保存失败，结果仍在记录中" error={save.error} retrying={save.isPending} onRetry={() => save.mutate(selected)} />}
-        <h4>世界设定</h4><div className="world-history-body">{result.template.world_prompt}</div>
+        <h4>世界设定</h4><WorldResultText key={selected} label="世界设定正文" text={result.template.world_prompt} />
         <h4>世界条目 · {result.lore_entries.length}</h4>
-        {result.lore_entries.slice(lorePage * 20, (lorePage + 1) * 20).map((entry, index) => <details className="world-history-lore" key={`${lorePage}-${index}`}><summary>{entry.title}</summary><div className="world-history-body">{entry.content}</div></details>)}
+        {result.lore_entries.slice(lorePage * 20, (lorePage + 1) * 20).map((entry, index) => <details className="world-history-lore" key={`${selected}-${lorePage}-${index}`}><summary>{entry.title}</summary><WorldResultText label={`${entry.title}正文`} text={entry.content} /></details>)}
         {result.lore_entries.length > 20 && <div className="button-row"><button className="btn btn-ghost btn-sm" disabled={lorePage === 0} onClick={() => setLorePage((page) => page - 1)}>上一页条目</button><button className="btn btn-ghost btn-sm" disabled={(lorePage + 1) * 20 >= result.lore_entries.length} onClick={() => setLorePage((page) => page + 1)}>下一页条目</button></div>}
         <details className="world-history-lore"><summary>质量与命名参考</summary><p>{result.quality_report.verdict} · {result.quality_report.score} 分</p><p>{result.quality_report.risks.join('；')}</p><p>人名：{result.names.person_names.join('、') || '无'}</p><p>地名：{result.names.place_names.join('、') || '无'}</p><p>物品：{result.names.item_names.join('、') || '无'}</p></details>
       </div>}
