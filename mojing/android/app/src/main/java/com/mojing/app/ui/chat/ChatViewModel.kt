@@ -254,6 +254,7 @@ class ChatViewModel @Inject constructor(
     private var messageSearchRevision = 0L
     private var activeDraftSubmissionId: String? = null
     private var narratorDraftRevision = 0L
+    private var imageDraftRevision = 0L
 
     private fun persistCurrentDraft() {
         val current = _state.value
@@ -263,6 +264,7 @@ class ChatViewModel @Inject constructor(
                 ChatDraftSnapshot(
                     inputText = current.inputText,
                     narratorGuidance = current.narratorGuidance,
+                    imagePrompt = current.imagePrompt,
                     pendingAttachmentPaths = current.pendingLocalImagePaths,
                     pendingSubmissionId = activeDraftSubmissionId,
                 ),
@@ -283,6 +285,7 @@ class ChatViewModel @Inject constructor(
                 ChatDraftSnapshot(
                     inputText = current.inputText,
                     narratorGuidance = current.narratorGuidance,
+                    imagePrompt = current.imagePrompt,
                     pendingAttachmentPaths = current.pendingLocalImagePaths,
                     pendingSubmissionId = submissionId,
                 ),
@@ -945,6 +948,7 @@ class ChatViewModel @Inject constructor(
             displayContextTokenLimit = displayCap,
             conversationTokenEstimate = convEst,
             inputText = _state.value.inputText.ifEmpty { restoredInputText },
+            imagePrompt = if (imageDraftRevision == 0L) restoredDraft.imagePrompt else _state.value.imagePrompt,
             narratorGuidance = if (narratorDraftRevision == 0L) restoredDraft.narratorGuidance else _state.value.narratorGuidance,
             pendingLocalImagePaths = if (_state.value.pendingLocalImagePaths.isEmpty()) {
                 restoredAttachmentPaths
@@ -1531,9 +1535,16 @@ class ChatViewModel @Inject constructor(
         _state.update { it.copy(focusedMessageId = null) }
     }
 
-    fun generateAndAttachUserMessage(prompt: String) {
-        if (prompt.isBlank()) return
-        launchSingleGeneration imageGeneration@{ generation ->
+    fun updateImagePrompt(text: String) {
+        imageDraftRevision++
+        _state.update { it.copy(imagePrompt = text) }
+        persistCurrentDraft()
+    }
+
+    fun generateAndAttachUserMessage(prompt: String): Boolean {
+        if (prompt.isBlank()) return false
+        val draftRevision = imageDraftRevision
+        return launchSingleGeneration imageGeneration@{ generation ->
             try {
                 val firstParticipant = participantDao.getBySession(sessionId).firstOrNull()
                 val char = firstParticipant?.characterId?.let { characterDao.getById(it) }
@@ -1592,6 +1603,9 @@ class ChatViewModel @Inject constructor(
                                     )
                                 )
                                 committed = true
+                                if (draftRevision == imageDraftRevision && _state.value.imagePrompt.trim() == prompt.trim()) {
+                                    updateImagePrompt("")
+                                }
                             }
                             refreshMessagesUi()
                             _state.value = _state.value.copy(error = null)

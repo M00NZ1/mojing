@@ -20,6 +20,8 @@ class ChatDraftStoreInstrumentedTest {
             assertEquals(ChatDraftSnapshot(inputText = "旧正文"), store.load(8290002))
             store.save(8290003, ChatDraftSnapshot(narratorGuidance = "新的方向"))
             assertEquals("新的方向", ChatDraftStore(context).load(8290003).narratorGuidance)
+            store.save(8290003, ChatDraftSnapshot(imagePrompt = "仅有图片描述"))
+            assertEquals("仅有图片描述", ChatDraftStore(context).load(8290003).imagePrompt)
             assertEquals("旧正文", store.load(8290002).inputText)
             assertEquals("", store.load(8290002).narratorGuidance)
         } finally {
@@ -35,6 +37,7 @@ class ChatDraftStoreInstrumentedTest {
         val snapshot = ChatDraftSnapshot(
             inputText = "进程重建后继续写",
             narratorGuidance = "夜晚传来脚步声",
+            imagePrompt = "雨夜街景",
             pendingAttachmentPaths = listOf("/tmp/a.png", "/tmp/b.png"),
             pendingSubmissionId = "submission-8290001",
         )

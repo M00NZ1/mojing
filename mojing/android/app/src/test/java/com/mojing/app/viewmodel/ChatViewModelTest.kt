@@ -134,6 +134,7 @@ class ChatViewModelTest {
         appContext: Context = mockk(relaxed = true),
         uiPreferencesRepository: UiPreferencesRepository = uiPreferences(),
         chatEngine: ChatEngine = mockk(relaxed = true),
+        imageRepository: com.mojing.app.data.repository.ImageRepository = mockk(relaxed = true),
         sourceMessageId: Long = 0L,
         sourceBranchId: String = "",
     ) = ChatViewModel(
@@ -164,7 +165,7 @@ class ChatViewModelTest {
         messageSubmissionTransaction = messageSubmissionTransaction
             ?: submissionTransaction(messageDao, attachmentDao),
         bookmarkDao = mockk(relaxed = true),
-        imageRepository = mockk(relaxed = true),
+        imageRepository = imageRepository,
         llmApiService = llmApiService,
         imageApiService = mockk(relaxed = true),
         uiPreferencesRepository = uiPreferencesRepository,
@@ -1738,6 +1739,46 @@ class ChatViewModelTest {
         assertEquals("旁白回复已保存，但对话刷新失败，请重新进入对话", vm.state.value.error)
         assertFalse(vm.state.value.isGenerating)
         coVerify(exactly = 1) { messageDao.insert(match { it.speakerType == "narrator" }) }
+    }
+
+    @Test
+    fun imagePromptRestoresAndRemainsInSharedDraftUpdates() = runTest(testDispatcher) {
+        val store = emptyDraftStore()
+        every { store.load(42L) } returns ChatDraftSnapshot(imagePrompt = "雨夜街景")
+        val vm = createViewModel(chatDraftStore = store)
+        advanceUntilIdle()
+        assertEquals("雨夜街景", vm.state.value.imagePrompt)
+        vm.updateInput("独立消息")
+        vm.updateNarratorGuidance("另一段方向")
+        verify { store.save(42L, match { it.imagePrompt == "雨夜街景" && it.narratorGuidance == "另一段方向" && it.inputText == "独立消息" }) }
+        vm.generateAndAttachUserMessage("雨夜街景")
+        advanceUntilIdle()
+        assertEquals("雨夜街景", vm.state.value.imagePrompt)
+    }
+
+    @Test
+    fun imagePromptClearsAfterAttachmentCommitButSurvivesFailureCancellationAndNewEdits() = runTest(testDispatcher) {
+        for (outcome in listOf("success", "edited", "network", "disk", "cancel")) {
+            val gate = CompletableDeferred<Result<String>>()
+            val images = mockk<com.mojing.app.data.repository.ImageRepository>(relaxed = true)
+            coEvery { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers { gate.await() }
+            coEvery { images.saveGeneratedImageForSession(any(), 42L) } returns if (outcome == "disk") null else "/mock/image.png"
+            val vm = createViewModel(imageRepository = images, secureStorage = validSecureStorage())
+            advanceUntilIdle()
+            vm.updateImagePrompt("雨夜街景")
+            assertTrue(vm.generateAndAttachUserMessage("雨夜街景"))
+            runCurrent()
+            assertFalse(vm.generateAndAttachUserMessage("重复请求"))
+            assertEquals("雨夜街景", vm.state.value.imagePrompt)
+            if (outcome == "edited") {
+                vm.updateImagePrompt("新的描述")
+                vm.updateImagePrompt("雨夜街景")
+            }
+            if (outcome == "cancel") vm.stopGeneration()
+            gate.complete(if (outcome == "network") Result.failure(IllegalStateException("offline")) else Result.success("mock-image"))
+            advanceUntilIdle()
+            assertEquals(if (outcome == "success") "" else "雨夜街景", vm.state.value.imagePrompt)
+        }
     }
 
     @Test

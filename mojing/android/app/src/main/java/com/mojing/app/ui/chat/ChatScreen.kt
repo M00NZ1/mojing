@@ -175,7 +175,6 @@ fun ChatScreen(
     var editCommitted by remember { mutableStateOf(false) }
     var recallMessage by remember(sessionId, state.currentBranchId) { mutableStateOf<com.mojing.app.data.local.entity.MessageEntity?>(null) }
     var showImageGenDialog by remember { mutableStateOf(false) }
-    var imageGenPrompt by remember { mutableStateOf("") }
     var showEmojiPicker by remember { mutableStateOf(false) }
     var showSearchDialog by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -1216,39 +1215,16 @@ fun ChatScreen(
     }
 
     if (showImageGenDialog) {
-        AlertDialog(
-            onDismissRequest = { showImageGenDialog = false },
-            title = { Text("生图") },
-            text = {
-                OutlinedTextField(
-                    value = imageGenPrompt,
-                    onValueChange = { imageGenPrompt = it },
-                    label = { Text("画面描述") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 2
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (state.isGenerating) {
-                        showGenerationLockedMessage()
-                        return@TextButton
-                    }
-                    val p = imageGenPrompt.trim()
-                    if (p.isEmpty()) {
-                        scope.launch { snackbarHostState.showSnackbar(UserFacingStrings.imageGenPromptRequired()) }
-                        return@TextButton
-                    }
-                    viewModel.generateAndAttachUserMessage(p)
+        ImagePromptDialog(
+            prompt = state.imagePrompt,
+            onPromptChange = viewModel::updateImagePrompt,
+            busy = state.isGenerating,
+            onDismiss = { showImageGenDialog = false },
+            onGenerate = {
+                if (viewModel.generateAndAttachUserMessage(state.imagePrompt.trim())) {
                     showImageGenDialog = false
-                    imageGenPrompt = ""
-                }) { Text("生成") }
+                }
             },
-            dismissButton = {
-                TextButton(onClick = {
-                    showImageGenDialog = false
-                }) { Text("取消") }
-            }
         )
     }
 

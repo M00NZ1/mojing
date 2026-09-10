@@ -1,0 +1,42 @@
+package com.mojing.app.ui.chat
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import com.mojing.app.ui.common.MoJingButton
+import com.mojing.app.ui.common.MoJingTextField
+
+@Composable
+internal fun ImagePromptDialog(
+    prompt: String,
+    onPromptChange: (String) -> Unit,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onGenerate: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("生成配图") },
+        text = {
+            MoJingTextField(
+                value = prompt,
+                onValueChange = onPromptChange,
+                label = { Text("画面描述") },
+                placeholder = { Text("描述人物、场景、光线与画面风格") },
+                modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp),
+                minLines = 3,
+                maxLines = 6,
+            )
+        },
+        confirmButton = {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                MoJingButton(onClick = onGenerate, enabled = prompt.isNotBlank() && !busy, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (busy) "正在生成，请稍候" else "生成并加入对话")
+                }
+                TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("返回对话") }
+            }
+        },
+    )
+}
