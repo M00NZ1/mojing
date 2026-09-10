@@ -692,7 +692,7 @@ fun CharacterMessageBubble(
                             text = "💭 $body",
                             modifier = Modifier.padding(horizontal = d.bubbleInnerPadding, vertical = 2.dp),
                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = (d.bodyFontSp - 1f).coerceAtLeast(12f).sp),
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     reply.speeches.forEach { speech ->
