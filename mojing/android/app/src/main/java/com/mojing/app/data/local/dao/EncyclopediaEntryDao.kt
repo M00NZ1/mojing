@@ -5,8 +5,16 @@ import androidx.room.Query
 import androidx.room.Upsert
 import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
 
+data class EncyclopediaEntryOption(val id: Long, val title: String, val entryType: String)
+
 @Dao
 interface EncyclopediaEntryDao {
+    @Query("""SELECT id, title, entryType FROM encyclopedia_entries
+        WHERE encyclopediaId = :encId AND id > :afterId
+        AND (:query = '' OR instr(lower(title), lower(:query)) > 0)
+        ORDER BY id ASC LIMIT 51""")
+    suspend fun getRelationOptions(encId: Long, afterId: Long, query: String): List<EncyclopediaEntryOption>
+
     @Query("SELECT id FROM encyclopedia_entries WHERE encyclopediaId = :encId AND sourceSessionId = :sessionId AND confidence = 'inferred' AND title = :title AND content = :content AND metaJson = :meta LIMIT 1")
     suspend fun findSedimentDuplicate(encId: Long, sessionId: Long, title: String, content: String, meta: String): Long?
 

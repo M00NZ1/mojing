@@ -227,13 +227,13 @@ class EncyclopediaDetailViewModelTest {
         assertEquals("location", vm.state.value.selectedType)
         assertEquals(listOf(place), vm.state.value.entries)
         assertEquals(9L, vm.state.value.previewEntryId)
-        assertEquals(2, vm.state.value.pickerEntries.size)
+        assertEquals(2, vm.state.value.entryCount)
 
         records = listOf(person)
         vm.load(3L)
         assertTrue(vm.state.value.entries.isEmpty())
         assertEquals(null, vm.state.value.previewEntryId)
-        assertEquals(listOf(person), vm.state.value.pickerEntries)
+        assertEquals(1, vm.state.value.entryCount)
     }
 
     @Test
@@ -275,7 +275,7 @@ class EncyclopediaDetailViewModelTest {
         assertEquals(null, viewModel.state.value.loadError)
         assertEquals("雾海", viewModel.state.value.encyclopedia?.name)
         assertEquals(listOf(entry), viewModel.state.value.entries)
-        assertFalse(viewModel.state.value.pickerEntries.isEmpty())
+        assertTrue(viewModel.state.value.entryCount > 0)
     }
     @Test
     fun renameFailureKeepsDraftAndRetryClosesOnlyAfterSave() = runTest(dispatcher) {

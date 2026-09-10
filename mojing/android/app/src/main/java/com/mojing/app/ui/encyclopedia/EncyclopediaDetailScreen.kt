@@ -352,7 +352,7 @@ fun EncyclopediaDetailScreen(
         floatingActionButton = {
             if (state.isLoaded && state.loadError == null) when (state.mainTab) {
                 EncyclopediaMainTab.GRAPH -> FloatingActionButton(onClick = {
-                    if (state.pickerEntries.size < 2) {
+                    if (state.entryCount < 2) {
                         scope.launch {
                             snackbarHostState.showSnackbar("请至少添加 2 条条目后再建立关系")
                         }
@@ -644,13 +644,13 @@ fun EncyclopediaDetailScreen(
                             EmptyState(
                                 icon = Icons.Default.Link,
                                 title = "还没有条目关系",
-                                message = if (state.pickerEntries.size < 2) {
+                                message = if (state.entryCount < 2) {
                                     "至少创建两个条目后，才能建立角色、地点或事件之间的关系。"
                                 } else {
                                     "建立条目之间的联系，关系图会在这里呈现。"
                                 },
-                                actionLabel = if (state.pickerEntries.size >= 2) "添加关系" else null,
-                                onAction = if (state.pickerEntries.size >= 2) {
+                                actionLabel = if (state.entryCount >= 2) "添加关系" else null,
+                                onAction = if (state.entryCount >= 2) {
                                     {
                                         relFrom = null
                                         relTo = null
@@ -956,50 +956,12 @@ fun EncyclopediaDetailScreen(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Box(Modifier.fillMaxWidth()) {
-                        OutlinedTextField(
-                            value = relFrom?.let { id -> state.pickerEntries.find { it.id == id }?.title } ?: "请选择",
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("从条目") },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { relMenuFrom = true }
-                        )
-                        DropdownMenu(expanded = relMenuFrom, onDismissRequest = { relMenuFrom = false }) {
-                            state.pickerEntries.forEach { e ->
-                                DropdownMenuItem(
-                                    text = { Text(e.title) },
-                                    onClick = {
-                                        relFrom = e.id
-                                        relMenuFrom = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                    Box(Modifier.fillMaxWidth()) {
-                        OutlinedTextField(
-                            value = relTo?.let { id -> state.pickerEntries.find { it.id == id }?.title } ?: "请选择",
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("到条目") },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { relMenuTo = true }
-                        )
-                        DropdownMenu(expanded = relMenuTo, onDismissRequest = { relMenuTo = false }) {
-                            state.pickerEntries.forEach { e ->
-                                DropdownMenuItem(
-                                    text = { Text(e.title) },
-                                    onClick = {
-                                        relTo = e.id
-                                        relMenuTo = false
-                                    }
-                                )
-                            }
-                        }
-                    }
+                    com.mojing.app.ui.common.MoJingOutlinedButton(
+                        onClick = { relMenuFrom = true }, modifier = Modifier.fillMaxWidth(),
+                    ) { Text("从条目：" + (relFrom?.let { state.entryTitles[it] } ?: "请选择"), maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                    com.mojing.app.ui.common.MoJingOutlinedButton(
+                        onClick = { relMenuTo = true }, modifier = Modifier.fillMaxWidth(),
+                    ) { Text("到条目：" + (relTo?.let { state.entryTitles[it] } ?: "请选择"), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                     OutlinedTextField(value = relType, onValueChange = { relType = it }, label = { Text("关系类型") }, singleLine = true)
                     OutlinedTextField(value = relLabel, onValueChange = { relLabel = it }, label = { Text("备注（可选）") }, singleLine = true)
                 }
@@ -1018,6 +980,21 @@ fun EncyclopediaDetailScreen(
             dismissButton = { TextButton(onClick = { showRelDialog = false }) { Text("取消") } }
         )
     }
+
+    if (showRelDialog && (relMenuFrom || relMenuTo)) {
+        EncyclopediaEntryPicker(
+            encyclopediaId = encyclopediaId,
+            selectedId = if (relMenuFrom) relFrom else relTo,
+            loadPage = viewModel::relationOptions,
+            onDismiss = { relMenuFrom = false; relMenuTo = false },
+            onSelect = { entry ->
+                if (relMenuFrom) relFrom = entry.id else relTo = entry.id
+                relMenuFrom = false; relMenuTo = false
+            },
+        )
+    }
+
+
 
     if (showBatchMetaConfirm) {
         AlertDialog(

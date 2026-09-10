@@ -56,7 +56,7 @@ data class EncyclopediaDetailState(
     val timelineEvents: List<TimelineEventEntity> = emptyList(),
     val relations: List<EntryRelationEntity> = emptyList(),
     val entryTitles: Map<Long, String> = emptyMap(),
-    val pickerEntries: List<EncyclopediaEntryEntity> = emptyList(),
+    val entryCount: Int = 0,
     val sedimentEntries: List<EncyclopediaEntryEntity> = emptyList(),
     val sedimentConfirming: Boolean = false,
     val sedimentFilter: String = "all",
@@ -184,7 +184,7 @@ class EncyclopediaDetailViewModel @Inject constructor(
                     timelineEvents = events,
                     relations = relations,
                     entryTitles = entries.associate { it.id to it.title },
-                    pickerEntries = entries,
+                    entryCount = entries.size,
                     isLoaded = true,
                     loadError = null,
                 )
@@ -469,6 +469,9 @@ class EncyclopediaDetailViewModel @Inject constructor(
         }
     }
 
+    suspend fun relationOptions(query: String, afterId: Long): List<com.mojing.app.data.local.dao.EncyclopediaEntryOption> =
+        entryDao.getRelationOptions(encId, afterId, query.trim())
+
     fun setSedimentFilter(filter: String) {
         if (filter !in listOf("all", "pending", "confirmed") || filter == _state.value.sedimentFilter || _state.value.sedimentConfirming) return
         _state.value = _state.value.copy(sedimentFilter = filter, sedimentCursors = listOf(Long.MAX_VALUE))
@@ -583,7 +586,7 @@ class EncyclopediaDetailViewModel @Inject constructor(
             timelineEvents = events,
             relations = rels,
             entryTitles = titles,
-            pickerEntries = allEntries,
+            entryCount = allEntries.size,
         )
         reloadSediment()
     }

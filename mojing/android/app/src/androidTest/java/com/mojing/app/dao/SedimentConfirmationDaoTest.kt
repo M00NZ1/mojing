@@ -17,6 +17,10 @@ class SedimentConfirmationDaoTest {
             val dao = db.encyclopediaEntryDao()
             for (id in 1L..205L) dao.upsert(EncyclopediaEntryEntity(id = id, encyclopediaId = 1,
                 title = "资料$id", content = "原文$id", confidence = if (id % 2L == 0L) "confirmed" else "inferred", sourceSessionId = 8))
+            assertEquals((1L..51L).toList(), dao.getRelationOptions(1, 0, "").map { it.id })
+            assertEquals(51L, dao.getRelationOptions(1, 50, "").first().id)
+            assertEquals((1L..205L).filter { "资料$it".contains("资料2") }, dao.getRelationOptions(1, 0, "资料2").map { it.id })
+            assertEquals(emptyList<Long>(), dao.getRelationOptions(1, 0, "%_").map { it.id })
             assertEquals(205, dao.countSediment(1, false))
             assertEquals(102, dao.countSediment(1, true))
             for (filter in listOf("all", "pending", "confirmed")) {
