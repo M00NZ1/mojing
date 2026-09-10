@@ -24,11 +24,21 @@ try {
   await context.route('**/*', route => route.request().url().startsWith(`http://127.0.0.1:${port}`) ? route.continue() : route.abort());
   const rows = [1, 2].map(id => ({ id, name: `角色${id}`, persona_prompt: `原人设${id}`, api_key: '', api_base_url: '', model_name: '', temperature: .9, max_tokens: 1200, avatar_color: '#537e86' }));
   const pending = [];
+  const saves = [];
   await context.route('http://127.0.0.1:18001/api/**', async route => {
     const endpoint = new URL(route.request().url()).pathname.replace('/api', '');
     let data = [];
     if (endpoint === '/ai/complete') {
       data = await new Promise(resolve => pending.push(resolve));
+    } else if (endpoint.startsWith('/characters/') && route.request().method() === 'PUT') {
+      const id = Number(endpoint.split('/').pop());
+      const payload = route.request().postDataJSON();
+      await new Promise(resolve => saves.push({ payload, resolve }));
+      data = { ...rows.find(row => row.id === id), ...payload, id };
+      delete data.clear_api_key;
+      delete data.clear_voice_api_key;
+      delete data.clear_image_gen_api_key;
+      rows[rows.findIndex(row => row.id === id)] = data;
     } else if (endpoint === '/characters') data = rows;
     else if (endpoint === '/system/local-config') data = {};
     else if (endpoint.endsWith('/profile')) data = null;
@@ -80,8 +90,44 @@ try {
   await start.waitFor();
   assert.equal(await name.inputValue(), '角色2');
   assert.equal(await persona.inputValue(), '原人设2');
+
+  const waitForSave = async count => {
+    const deadline = Date.now() + 3000;
+    while (saves.length < count && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(saves.length, count);
+  };
+  await name.fill('提交时的名字');
+  await page.getByRole('button', { name: '保存修改', exact: true }).first().click();
+  await waitForSave(1);
+  await name.fill('提交后继续修改的名字');
+  await persona.fill('保存期间的新设定');
+  saves[0].resolve();
+  await page.getByRole('button', { name: '保存修改', exact: true }).first().waitFor();
+  assert.equal(await name.inputValue(), '提交后继续修改的名字');
+  assert.equal(await persona.inputValue(), '保存期间的新设定');
+  assert.equal(await page.locator('.secondary-detail-meta').textContent(), '有未保存修改');
+  await page.getByRole('button', { name: '保存修改', exact: true }).first().click();
+  await waitForSave(2);
+  assert.equal(saves[1].payload.name, '提交后继续修改的名字');
+  assert.equal(saves[1].payload.persona_prompt, '保存期间的新设定');
+  saves[1].resolve();
+  await page.waitForFunction(() => document.querySelector('.secondary-detail-meta').textContent === '人设已填写');
+
+  await name.fill('旧页面提交');
+  await page.getByRole('button', { name: '保存修改', exact: true }).first().click();
+  await waitForSave(3);
+  await page.locator('.secondary-nav-name').filter({ hasText: '角色1' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: '确认', exact: true }).click();
+  await page.waitForURL('**characterId=1');
+  await page.locator('.secondary-nav-name').filter({ hasText: '提交后继续修改的名字' }).click();
+  await page.waitForURL('**characterId=2');
+  await persona.fill('重新进入后的草稿');
+  saves[2].resolve();
+  await page.getByRole('button', { name: '保存修改', exact: true }).first().waitFor();
+  assert.equal(await name.inputValue(), '提交后继续修改的名字');
+  assert.equal(await persona.inputValue(), '重新进入后的草稿');
   assert.deepEqual(errors, []);
-  console.log('PASS: actual character page preserves concurrent edits, rejects persona conflicts, stops/retries completion and isolates character switches.');
+  console.log('PASS: character AI and save preserve concurrent drafts, reject stale page responses, support retries and retain dirty state until latest edits are saved.');
 } finally {
   await browser?.close();
   if (child.exitCode === null) { child.kill(); await once(child, 'exit'); }

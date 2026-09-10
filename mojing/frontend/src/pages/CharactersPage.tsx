@@ -18,6 +18,7 @@ import { COMPACT_LAYOUT_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
 import type { Character } from '../types';
 import { readMoJingStorage, writeMoJingStorage } from '../utils/mojingStorage';
 import { mergeCharacterAiPersona } from '../utils/characterAiCompletion';
+import { mergeSavedCharacterDraft } from '../utils/characterSaveDraft';
 
 const emptyCharacter: Partial<Character> = {
   name: '',
@@ -104,6 +105,10 @@ export default function CharactersPage() {
   const allowCharacterNavigationRef = useRef(false);
 
   const characterRouteKey = searchParams.get('characterId')?.trim() ?? '';
+  const editorRouteRevisionRef = useRef({ key: characterRouteKey, revision: 0 });
+  if (editorRouteRevisionRef.current.key !== characterRouteKey) {
+    editorRouteRevisionRef.current = { key: characterRouteKey, revision: editorRouteRevisionRef.current.revision + 1 };
+  }
   const setCharacterRoute = useCallback((value: number | 'new' | null, replace = false) => {
     const routeValue = value == null ? '' : String(value);
     if ((searchParams.get('characterId')?.trim() ?? '') === routeValue) return;
@@ -294,27 +299,28 @@ export default function CharactersPage() {
   }, [revealId, filteredCharacters, isCompactLayout, editing]);
 
   const saveMutation = useMutation({
-    mutationFn: async () => {
-      if (!editing) throw new Error('请先选择或新建角色');
-      if (!editing.name?.trim()) {
+    mutationFn: async (request: { draft: Partial<Character>; route: string | null; revision: number }) => {
+      const { draft } = request;
+      if (!draft.name?.trim()) {
         throw new Error('请填写角色名字（必填）');
       }
-      if (editing.id) {
-        const saved = charactersQuery.data?.find((character) => character.id === editing.id);
-        return api.updateCharacter(editing.id, {
-          ...editing,
-          clear_api_key: Boolean(saved?.api_key && !editing.api_key),
-          clear_voice_api_key: Boolean(saved?.voice_api_key && !editing.voice_api_key),
-          clear_image_gen_api_key: Boolean(saved?.image_gen_api_key && !editing.image_gen_api_key),
+      if (draft.id) {
+        const previous = charactersQuery.data?.find((character) => character.id === draft.id);
+        const saved = await api.updateCharacter(draft.id, {
+          ...draft,
+          clear_api_key: Boolean(previous?.api_key && !draft.api_key),
+          clear_voice_api_key: Boolean(previous?.voice_api_key && !draft.voice_api_key),
+          clear_image_gen_api_key: Boolean(previous?.image_gen_api_key && !draft.image_gen_api_key),
         });
+        return { saved, request };
       }
-      return api.createCharacter(editing);
+      return { saved: await api.createCharacter(draft), request };
     },
-    onSuccess: async (saved) => {
-      const id = saved?.id ?? editing?.id;
-      if (savingCharacterRouteRef.current === loadedCharacterRouteRef.current) {
-        if (savingCharacterRouteRef.current === 'new' && id) { setSearchText(''); setRevealId(id); }
-        setEditing(saved);
+    onSuccess: async ({ saved, request }) => {
+      const id = saved.id;
+      if (request.route === loadedCharacterRouteRef.current && request.revision === editorRouteRevisionRef.current.revision) {
+        if (request.route === 'new' && id) { setSearchText(''); setRevealId(id); }
+        setEditing(current => current ? mergeSavedCharacterDraft(current, request.draft, saved) : current);
         setEditingBaseline(characterDraftSnapshot(saved));
         if (id) {
           loadedCharacterRouteRef.current = String(id);
@@ -471,12 +477,13 @@ export default function CharactersPage() {
   }
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (savingCharacterRouteRef.current !== null) return;
     if (!editing?.name?.trim()) {
       showToast('请填写角色名字（必填）', 'warn');
       return;
     }
     savingCharacterRouteRef.current = loadedCharacterRouteRef.current;
-    saveMutation.mutate();
+    saveMutation.mutate({ draft: { ...editing }, route: loadedCharacterRouteRef.current, revision: editorRouteRevisionRef.current.revision });
   }
 
   const currentProvider = useMemo(() => {
