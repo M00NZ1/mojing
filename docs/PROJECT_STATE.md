@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Web 消息菜单键盘操作 | Chrome 模拟 API 测试通过，覆盖菜单焦点、方向键、首尾定位、Esc/Tab 与输入法；消息编辑、删除、上下文操作和移动端回归通过 | `test-message-deletion.mjs` |
 | Web 角色图片更新 | 生产构建通过；Chrome 模拟图片 API 测试覆盖上传状态、失败重试、并发文字编辑及头像和立绘的跨角色隔离 | `test-character-images.mjs` |
 | Web 角色补全与保存 | 生产构建通过；实际角色页的 Chrome 模拟 API 测试覆盖并发编辑、人设冲突、停止重试、保存期间输入、再次保存及旧页面响应隔离 | `test-character-ai-completion.mjs` |
 | Web 长文本编辑 | 生产构建通过；Chrome 桌面及 320px 窄屏验证高度限制、键盘展开、ARIA 关联、草稿保留与表单提交边界 | `test-expandable-textarea.mjs` |

@@ -219,10 +219,37 @@ export default function MessageList({
 
   useEffect(() => {
     if (showMsgMenuId === null) return;
-
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      setShowMsgMenuId(null);
+    const trigger = parentRef.current?.querySelector<HTMLElement>(`[data-message-actions-trigger="${showMsgMenuId}"]`);
+    const menu = trigger?.closest('.chat-msg-more-wrap')?.querySelector<HTMLElement>('[role="menu"]');
+    const items = () => Array.from(menu?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)') ?? []);
+    const frame = window.requestAnimationFrame(() => items()[0]?.focus());
+    const handleMenuKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setShowMsgMenuId(null);
+        if (menu?.contains(document.activeElement)) trigger?.focus();
+        return;
+      }
+      if (!menu?.contains(document.activeElement)) return;
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        const outside = Array.from(document.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex="0"]',
+        )).filter(element => element.tabIndex >= 0 && element.getClientRects().length > 0 && !menu.contains(element));
+        const index = trigger ? outside.indexOf(trigger) : -1;
+        (outside[index + (event.shiftKey ? -1 : 1)] ?? trigger)?.focus();
+        setShowMsgMenuId(null);
+        return;
+      }
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const options = items();
+      if (!options.length) return;
+      const current = options.indexOf(document.activeElement as HTMLElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1
+        : (current + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length;
+      options[next].focus();
     };
     const closeOnOutsidePress = (event: PointerEvent) => {
       if (!(event.target instanceof Element)) return;
@@ -231,10 +258,11 @@ export default function MessageList({
       }
     };
 
-    document.addEventListener('keydown', closeOnEscape);
+    document.addEventListener('keydown', handleMenuKeyDown);
     document.addEventListener('pointerdown', closeOnOutsidePress, true);
     return () => {
-      document.removeEventListener('keydown', closeOnEscape);
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener('keydown', handleMenuKeyDown);
       document.removeEventListener('pointerdown', closeOnOutsidePress, true);
     };
   }, [showMsgMenuId]);

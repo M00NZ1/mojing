@@ -111,6 +111,7 @@ try {
     await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
   });
   const dialog = page.getByRole('dialog', { name: '删除这条消息？' });
+  let keyboardMenuChecked = false;
   async function openDelete(id) {
     const row = page.locator(`[data-chat-message-id="${id}"]`);
     await row.scrollIntoViewIfNeeded();
@@ -118,6 +119,32 @@ try {
     await row.getByRole('button', { name: '更多消息操作', exact: true }).click();
     if (page.viewportSize().width > 768) {
       assert.equal(await row.locator('.chat-msg-tools').evaluate((el) => getComputedStyle(el).opacity), '1');
+      if (!keyboardMenuChecked) {
+        const menu = row.getByRole('menu');
+        const options = menu.getByRole('menuitem');
+        await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitem');
+        assert.equal(await options.first().evaluate(el => el === document.activeElement), true);
+        await page.keyboard.press('End');
+        assert.equal(await options.last().evaluate(el => el === document.activeElement), true);
+        await page.keyboard.press('ArrowDown');
+        assert.equal(await options.first().evaluate(el => el === document.activeElement), true);
+        await page.keyboard.press('ArrowUp');
+        assert.equal(await options.last().evaluate(el => el === document.activeElement), true);
+        await page.keyboard.press('Home');
+        await options.first().evaluate(el => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true })));
+        assert.equal(await menu.count(), 1);
+        await page.keyboard.press('Escape');
+        assert.equal(await menu.count(), 0);
+        const trigger = row.getByRole('button', { name: '更多消息操作', exact: true });
+        assert.equal(await trigger.evaluate(el => el === document.activeElement), true);
+        await page.keyboard.press('Enter');
+        await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitem');
+        await page.keyboard.press('Tab');
+        assert.equal(await menu.count(), 0);
+        assert.equal(await page.evaluate(() => document.activeElement === document.body), false);
+        await trigger.click();
+        keyboardMenuChecked = true;
+      }
     }
     if (output) {
       await mkdir(output, { recursive: true });
