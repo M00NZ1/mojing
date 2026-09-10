@@ -9,6 +9,7 @@ import { confirmModal } from '../components/ConfirmModal';
 import CharacterImportDialog from '../components/CharacterImportDialog';
 import CreationHomeLink from '../components/CreationHomeLink';
 import InlineQueryError from '../components/InlineQueryError';
+import ExpandableTextArea from '../components/ExpandableTextArea';
 import MacroSelector from '../components/MacroSelector';
 import UiIcon from '../components/UiIcon';
 import { useUndoDelete } from '../components/UndoToast';
@@ -703,7 +704,7 @@ export default function CharactersPage() {
                         onCompleted={(result) => setEditing({ ...editing, persona_prompt: (result.persona_prompt as string) || editing.persona_prompt })}
                       />
                     </div>
-                    <textarea rows={12} value={editing.persona_prompt ?? ''} onChange={(e) => setEditing({ ...editing, persona_prompt: e.target.value })} placeholder={
+                    <ExpandableTextArea aria-label="角色人设" value={editing.persona_prompt ?? ''} onChange={(e) => setEditing({ ...editing, persona_prompt: e.target.value })} placeholder={
 `描述角色是谁、性格如何、怎样说话，以及重要的背景与关系。`
                     } maxLength={10000} />
                     <div className="hint">

@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Web 长文本编辑 | 生产构建通过；Chrome 桌面及 320px 窄屏验证高度限制、键盘展开、ARIA 关联、草稿保留与表单提交边界 | `test-expandable-textarea.mjs` |
 | Android 角色采样参数输入 | 8 项角色 ViewModel 测试通过；Android 35、320dp 宽度下 2 项界面测试通过，覆盖清空、连续负小数输入、错误恢复和键盘完成；Debug 应用与测试 APK 构建通过 | `CharacterEditViewModelTest`、`SamplingParameterFieldTest`；`.codex-work/android-ui-20260910/sampling-input-tests.txt` |
 | Android 长文本输入 | Debug 应用与测试 APK 构建通过；Android 35 默认尺寸、320dp 宽度各通过 1 项界面测试，覆盖 200 段文本、展开收起与编辑保留 | `MoJingLongTextFieldTest`；`.codex-work/android-ui-20260910/long-field-tests.txt`、`long-field-small-tests.txt` |
 | Android 百科浏览与刷新 | 14 项详情 ViewModel 测试通过，覆盖返回标签、确认后刷新、分类往返、旧查询晚到、删除预览与百科隔离 | `EncyclopediaDetailViewModelTest` |

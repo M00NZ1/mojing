@@ -7,6 +7,7 @@ import BatchGenerateDialog from '../components/BatchGenerateDialog';
 import { confirmModal } from '../components/ConfirmModal';
 import CreationHomeLink from '../components/CreationHomeLink';
 import InlineQueryError from '../components/InlineQueryError';
+import ExpandableTextArea from '../components/ExpandableTextArea';
 import UiIcon, { type UiIconName } from '../components/UiIcon';
 import { useToast } from '../hooks/useToast';
 import { useDragColumnWidth } from '../hooks/useDragColumnWidth';
@@ -2043,7 +2044,7 @@ export default function EncyclopediaPage() {
                 <div className="form-group"><label>标签</label><input value={editingEntry.tags || ''} onChange={(e) => setEditingEntry({ ...editingEntry, tags: e.target.value })} placeholder="多个标签用逗号隔开，比如：江湖,门派,少林" /></div>
               </div>
               <div className="form-group full-row"><label>一句话简介</label><textarea rows={2} value={editingEntry.summary || ''} onChange={(e) => setEditingEntry({ ...editingEntry, summary: e.target.value })} placeholder="用一句话概括这个条目" /></div>
-              <div className="form-group full-row"><label>详细内容</label><textarea rows={8} value={editingEntry.content || ''} onChange={(e) => setEditingEntry({ ...editingEntry, content: e.target.value })} placeholder="填写详细设定，AI 会参考这些内容来回答" maxLength={50000} /></div>
+              <div className="form-group full-row"><label>详细内容</label><ExpandableTextArea aria-label="详细内容" value={editingEntry.content || ''} onChange={(e) => setEditingEntry({ ...editingEntry, content: e.target.value })} placeholder="填写详细设定，AI 会参考这些内容来回答" maxLength={50000} /></div>
 
               {/* AI 智能补全按钮 */}
               <div className="form-group full-row">

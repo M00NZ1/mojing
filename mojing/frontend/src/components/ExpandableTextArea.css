@@ -1,0 +1,19 @@
+.expandable-textarea {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.expandable-textarea textarea {
+  width: 100%;
+  box-sizing: border-box;
+  line-height: 1.65;
+  max-height: min(65dvh, 32rem);
+  overflow-y: auto;
+  resize: none;
+}
+
+.expandable-textarea-toggle {
+  align-self: flex-end;
+}
