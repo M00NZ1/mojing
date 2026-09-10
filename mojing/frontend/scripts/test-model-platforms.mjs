@@ -154,6 +154,7 @@ try {
   // Thousands of configured models must not create thousands of DOM buttons.
   catalog.platforms[0].models = Array.from({ length: 5000 }, (_, i) => `large-model-${i}`);
   catalog.platforms[0].selected_model = 'large-model-0';
+  catalog.platforms.push({ id: 'disabled', name: '未配置', base_url: 'https://unused.test', api_key: '', models: ['disabled-model'], selected_model: 'disabled-model' });
   console.log('PASS: platform editor and responsive layout');
   await page.goto(`http://127.0.0.1:${port}/chat/1`, { waitUntil: 'domcontentloaded' });
   await page.locator('.chat-model-trigger').click();
@@ -167,13 +168,27 @@ try {
   await page.locator('.chat-model-trigger').click();
   await page.locator('.chat-model-virtual-option').first().waitFor();
   assert.ok(await page.locator('.chat-model-virtual-option').count() < 30);
+  await page.locator('.chat-model-virtual-option').first().focus();
+  await page.keyboard.press('End');
+  await page.waitForFunction(() => document.activeElement?.textContent?.includes('image-model'));
+  await page.keyboard.press('Home');
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-model-index') === '0');
+  for (let i = 0; i < 30; i++) await page.keyboard.press('ArrowDown');
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-model-index') === '30');
+  await page.keyboard.press('ArrowUp');
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-model-index') === '29');
+  await page.locator('.chat-model-virtual-option:focus').evaluate((node) => node.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', isComposing: true, bubbles: true })));
+  assert.equal(await page.locator('.chat-model-virtual-option:focus').getAttribute('data-model-index'), '29');
+  assert.ok(await page.locator('.chat-model-virtual-option').count() < 30, 'keyboard traversal preserves bounded DOM');
+
   await page.getByPlaceholder('搜索平台或模型名称').fill('large-model-4999');
   selectionFailure = true;
   await page.getByRole('button', { name: 'DeepSeek large-model-4999', exact: true }).click();
   await page.getByRole('alert').filter({ hasText: '保存失败' }).waitFor();
   assert.equal(choice.selection.model, 'manual-b');
   selectionFailure = false;
-  await page.getByRole('button', { name: 'DeepSeek large-model-4999', exact: true }).click();
+  await page.getByRole('button', { name: 'DeepSeek large-model-4999', exact: true }).focus();
+  await page.keyboard.press('Enter');
   await page.getByRole('dialog').waitFor({ state: 'hidden' });
   assert.equal(choice.selection.model, 'large-model-4999');
   await page.getByLabel('消息内容', { exact: true }).fill('测试下一次发送');

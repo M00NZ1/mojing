@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { confirmModal } from './ConfirmModal';
@@ -118,6 +118,8 @@ export function ChatModelPicker({ sessionId, onBusyChange }: { sessionId: number
   const dialog = useRef<HTMLDialogElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const choosingRef = useRef(false);
+  const [keyboardIndex, setKeyboardIndex] = useState<number | null>(null);
+  const focusRequested = useRef(false);
   const choose = useMutation({
     mutationFn: (selection: ModelSelection | null) => api.setModelChoice(sessionId, selection),
     onSuccess: (saved) => { queryClient.setQueryData(choiceKey, saved); dialog.current?.close(); },
@@ -134,23 +136,44 @@ export function ChatModelPicker({ sessionId, onBusyChange }: { sessionId: number
   const options = (catalog.data?.platforms ?? []).flatMap((platform) => platform.models
     .filter((model) => `${platform.name} ${model}`.toLowerCase().includes(search.trim().toLowerCase()))
     .map((model) => ({ platform, model })));
-  const virtualizer = useVirtualizer({ count: options.length, getScrollElement: () => listRef.current, estimateSize: () => 68, overscan: 6 });
+  const virtualizer = useVirtualizer({ count: options.length, getScrollElement: () => listRef.current, estimateSize: () => 68, overscan: 6,
+    rangeExtractor: (range) => [...new Set([...defaultRangeExtractor(range),
+      ...(keyboardIndex !== null && keyboardIndex < options.length ? [keyboardIndex] : [])])].sort((a, b) => a - b),
+  });
+  useLayoutEffect(() => {
+    if (!focusRequested.current || keyboardIndex === null) return;
+    listRef.current?.querySelector<HTMLButtonElement>(`[data-model-index="${keyboardIndex}"]`)?.focus({ preventScroll: true });
+    focusRequested.current = false;
+  }, [keyboardIndex]);
   const label = selection ? `${selectedPlatform?.name ?? '平台不可用'} · ${selection.model}` : '跟随角色与模型设置';
   return <>
-    <button type="button" className="chat-model-trigger" title={`切换模型：${label}`} onClick={() => { choose.reset(); setSearch(''); dialog.current?.showModal(); virtualizer.measure(); }}>{choice.isPending ? '正在读取模型…' : label} ▾</button>
+    <button type="button" className="chat-model-trigger" title={`切换模型：${label}`} onClick={() => { choose.reset(); setSearch(''); setKeyboardIndex(null); dialog.current?.showModal(); virtualizer.measure(); }}>{choice.isPending ? '正在读取模型…' : label} ▾</button>
     <dialog ref={dialog} className="chat-model-dialog" aria-labelledby="chat-model-title" onKeyDown={(e) => { if (e.key === 'Escape' && (e.nativeEvent.isComposing || e.keyCode === 229)) { e.preventDefault(); e.stopPropagation(); } }} onCancel={(e) => { if (choose.isPending) e.preventDefault(); }}>
       <div className="model-platform-heading"><h3 id="chat-model-title">选择对话模型</h3><button className="btn btn-ghost btn-sm" type="button" disabled={choose.isPending} onClick={() => dialog.current?.close()}>关闭</button></div>
       <p hidden={Boolean(search.trim())}>从下一次发送生效，当前回复保持原模型。手动选择会优先于角色独立配置和思考模式。</p>
-      <input aria-label="搜索平台或模型" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索平台或模型名称" />
+      <input aria-label="搜索平台或模型" value={search} onChange={(e) => { setSearch(e.target.value); setKeyboardIndex(null); focusRequested.current = false; }} placeholder="搜索平台或模型名称" />
       {(catalog.isError || choice.isError) && <p role="alert">模型配置加载失败。<button type="button" className="btn btn-sm" onClick={() => { void catalog.refetch(); void choice.refetch(); }}>重试</button></p>}
       {choose.isPending && <p role="status" className="chat-model-saving">正在保存模型选择…</p>}
       {choose.isError && <p role="alert" className="model-platform-error">{errorText(choose.error)}</p>}
       <button className="chat-model-option" type="button" aria-pressed={!selection} disabled={choose.isPending} onClick={() => selectModel(null)}>跟随角色与模型设置 {!selection && <span aria-hidden="true">✓</span>}</button>
-      <div className="chat-model-options" ref={listRef}>
+      <div className="chat-model-options" ref={listRef} onKeyDown={(event) => {
+        if (event.nativeEvent.isComposing || event.keyCode === 229 || choose.isPending) return;
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+        const current = Number((event.target as HTMLElement).closest<HTMLElement>('[data-model-index]')?.dataset.modelIndex);
+        if (!Number.isInteger(current)) return;
+        event.preventDefault();
+        const direction = event.key === 'ArrowUp' || event.key === 'End' ? -1 : 1;
+        let next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : current + direction;
+        while (next >= 0 && next < options.length && !options[next].platform.api_key) next += direction;
+        if (next < 0 || next >= options.length || next === keyboardIndex) return;
+        focusRequested.current = true;
+        setKeyboardIndex(next);
+        virtualizer.scrollToIndex(next, { align: 'auto' });
+      }} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setKeyboardIndex(null); }}>
         <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
           {virtualizer.getVirtualItems().map((row) => {
             const { platform, model } = options[row.index];
-            return <button className="chat-model-option chat-model-virtual-option" style={{ position: 'absolute', top: 0, transform: `translateY(${row.start}px)`, height: row.size }} type="button" aria-pressed={selection?.platform_id === platform.id && selection.model === model} key={`${platform.id}:${model}`} disabled={choose.isPending || !platform.api_key} onClick={() => selectModel({ platform_id: platform.id, model })} title={`${platform.name} · ${model}`}><small>{platform.name}{!platform.api_key && ' · 请先配置 Key'}</small><span>{model}{selection?.platform_id === platform.id && selection.model === model && <span className="chat-model-check" aria-hidden="true">✓</span>}</span></button>;
+            return <button className="chat-model-option chat-model-virtual-option" style={{ position: 'absolute', top: 0, transform: `translateY(${row.start}px)`, height: row.size }} type="button" data-model-index={row.index} onFocus={() => setKeyboardIndex(row.index)} aria-pressed={selection?.platform_id === platform.id && selection.model === model} key={`${platform.id}:${model}`} disabled={choose.isPending || !platform.api_key} onClick={() => selectModel({ platform_id: platform.id, model })} title={`${platform.name} · ${model}`}><small>{platform.name}{!platform.api_key && ' · 请先配置 Key'}</small><span>{model}{selection?.platform_id === platform.id && selection.model === model && <span className="chat-model-check" aria-hidden="true">✓</span>}</span></button>;
           })}
         </div>
         {catalog.isPending && <p role="status">正在加载平台…</p>}
