@@ -27,6 +27,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mojing.app.domain.workbench.LocalWorldTemplateQuality
+import com.mojing.app.ui.common.MoJingLongTextField
 import com.mojing.app.ui.common.EmptyState
 import com.mojing.app.ui.common.LlmKeySetupHintCard
 import com.mojing.app.ui.common.TemplateWorldPromptSkeletonBlock
@@ -228,24 +229,23 @@ fun TemplateEditScreen(
                 if (state.isAiCompleting) {
                     TemplateWorldPromptSkeletonBlock()
                 } else {
-                    OutlinedTextField(
+                    MoJingLongTextField(
                         value = state.worldPrompt,
-                        onValueChange = { viewModel.updateWorldPrompt(it) },
-                        label = { Text("世界设定正文") },
-                        placeholder = { Text("说明世界背景、势力、地点、规则与当前局势") },
+                        onValueChange = viewModel::updateWorldPrompt,
+                        label = "世界设定正文",
+                        placeholder = "说明世界背景、势力、地点、规则与当前局势",
                         modifier = Modifier.fillMaxWidth(),
-                        minLines = 6,
                     )
-
-                    OutlinedTextField(
+                    MoJingLongTextField(
                         value = state.antiCheatPrompt,
-                        onValueChange = { viewModel.updateAntiCheatPrompt(it) },
-                        label = { Text("固定规则") },
-                        placeholder = { Text("写下不能被剧情临时改写的规则、代价与边界") },
-                        supportingText = { Text("例如：身份、情报和资源不能凭一句话获得") },
+                        onValueChange = viewModel::updateAntiCheatPrompt,
+                        label = "固定规则",
+                        placeholder = "写下不能被剧情临时改写的规则、代价与边界",
                         modifier = Modifier.fillMaxWidth(),
-                        minLines = 3,
                     )
+                    Text("例如：身份、情报和资源不能凭一句话获得", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+
                 }
 
                 FilledTonalButton(

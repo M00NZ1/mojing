@@ -134,9 +134,8 @@ class TemplateEditViewModel @Inject constructor(
                         savedDraft = persisted.toDraftSnapshot()
                         val updated = if (current.toDraftSnapshot() != previousSavedDraft) {
                             current.copy(
-                                // 这两个字段由补全任务持久化；其余正在编辑的字段继续保留为草稿。
-                                summary = t.summary,
-                                worldPrompt = t.worldPrompt,
+                                summary = if (current.summary == previousSavedDraft.summary) t.summary else current.summary,
+                                worldPrompt = if (current.worldPrompt == previousSavedDraft.worldPrompt) t.worldPrompt else current.worldPrompt,
                                 isPersisted = true,
                             )
                         } else {
@@ -428,18 +427,19 @@ class TemplateEditViewModel @Inject constructor(
     }
 
     fun save() {
+        val s = _state.value
+        if (s.isSaving || s.isAiCompleting || !s.isLoaded || s.loadError != null) return
+        if (s.label.isBlank()) {
+            showSnackbar(UserFacingStrings.templateLabelRequired())
+            return
+        }
+        if (currentEntity == null && s.templateId.isBlank()) {
+            showSnackbar(UserFacingStrings.templateIdRequired())
+            return
+        }
+        val submittedDraft = s.toDraftSnapshot()
+        _state.value = s.copy(isSaving = true)
         viewModelScope.launch {
-            val s = _state.value
-            val submittedDraft = s.toDraftSnapshot()
-            if (s.label.isBlank()) {
-                showSnackbar(UserFacingStrings.templateLabelRequired())
-                return@launch
-            }
-            if (currentEntity == null && s.templateId.isBlank()) {
-                showSnackbar(UserFacingStrings.templateIdRequired())
-                return@launch
-            }
-            _state.value = _state.value.copy(isSaving = true)
             try {
                 val toSave = (currentEntity ?: WorldTemplateEntity()).copy(
                     templateId = s.templateId.trim(),
@@ -482,6 +482,9 @@ class TemplateEditViewModel @Inject constructor(
                 } else {
                     persisted.copy(snackbar = UserFacingStrings.saveSuccessGeneric())
                 }
+            } catch (cancelled: CancellationException) {
+                _state.value = _state.value.copy(isSaving = false)
+                throw cancelled
             } catch (_: Exception) {
                 _state.value = _state.value.copy(
                     isSaving = false,

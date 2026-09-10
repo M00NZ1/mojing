@@ -186,4 +186,55 @@ class TemplateEditViewModelTest {
         assertTrue(viewModel.state.value.isPersisted)
         assertTrue(viewModel.state.value.isDirty)
     }
+    @Test
+    fun aiCompletionPreservesEditedSummaryAndPromptFields() = runTest(dispatcher) {
+        for (editPrompt in listOf(false, true)) {
+            val original = WorldTemplateEntity(id = 7, templateId = "rain-city", label = "雨城", summary = "旧摘要", worldPrompt = "旧设定")
+            val completed = original.copy(summary = "补全摘要", worldPrompt = "补全设定")
+            val tasks = MutableStateFlow<List<GenerationTaskEntity>>(emptyList())
+            val dao = mockk<WorldTemplateDao> { coEvery { getById(7) } returnsMany listOf(original, completed) }
+            val vm = createViewModel(dao, tasks)
+            vm.load(7)
+            tasks.value = listOf(GenerationTaskEntity(taskKind = "world_template_prompt_ai", title = "补全", status = "RUNNING", payloadJson = "{}", targetWorldTemplateId = 7))
+            advanceUntilIdle()
+            vm.updateSummary("手动摘要")
+            if (editPrompt) vm.updateWorldPrompt("手动正文")
+            tasks.value = emptyList()
+            advanceUntilIdle()
+            assertEquals("手动摘要", vm.state.value.summary)
+            assertEquals(if (editPrompt) "手动正文" else "补全设定", vm.state.value.worldPrompt)
+            assertTrue(vm.state.value.isDirty)
+            vm.updateSummary("补全摘要")
+            if (editPrompt) vm.updateWorldPrompt("补全设定")
+            assertFalse(vm.state.value.isDirty)
+        }
+    }
+
+    @Test
+    fun duplicateSaveIsRejectedBeforeDispatcherRunsAndFailureAllowsRetry() = runTest(dispatcher) {
+        val paused = kotlinx.coroutines.test.StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(paused)
+        val entity = WorldTemplateEntity(id = 7, templateId = "rain-city", label = "雨城")
+        val dao = mockk<WorldTemplateDao> {
+            coEvery { getById(7) } returns entity
+            coEvery { upsert(any()) } throws IllegalStateException("save failed")
+        }
+        val vm = createViewModel(dao)
+        vm.load(7)
+        advanceUntilIdle()
+        vm.updateSummary("保留草稿")
+        vm.save()
+        vm.save()
+        assertTrue(vm.state.value.isSaving)
+        advanceUntilIdle()
+        io.mockk.coVerify(exactly = 1) { dao.upsert(any()) }
+        assertFalse(vm.state.value.isSaving)
+        assertEquals("保留草稿", vm.state.value.summary)
+        coEvery { dao.upsert(any()) } returns 7
+        coEvery { dao.getById(7) } returns entity.copy(summary = "保留草稿")
+        vm.save()
+        advanceUntilIdle()
+        assertFalse(vm.state.value.isDirty)
+    }
+
 }
