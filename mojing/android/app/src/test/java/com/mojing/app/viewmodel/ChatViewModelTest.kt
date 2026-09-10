@@ -933,15 +933,16 @@ class ChatViewModelTest {
         every { storage.modelPlatforms() } answers { listOf(platform) }
         val vm = createViewModel(secureStorage = storage)
         advanceUntilIdle()
-        assertEquals("old-default · 默认线路", vm.modelSelectionLabel.value)
+        assertEquals("跟随角色与模型设置", vm.modelSelectionLabel.value)
 
         defaultModel = "new-default"
         vm.refreshModelSelection()
-        assertEquals("new-default · 默认线路", vm.modelSelectionLabel.value)
+        assertEquals("跟随角色与模型设置", vm.modelSelectionLabel.value)
 
         selection = "a" to "session-model"
         vm.refreshModelSelection()
         assertEquals("A · session-model", vm.modelSelectionLabel.value)
+        assertEquals("a" to "session-model", vm.currentChatModelSelection())
         platform = platform.copy(name = "Renamed")
         defaultModel = "another-default"
         vm.refreshModelSelection()

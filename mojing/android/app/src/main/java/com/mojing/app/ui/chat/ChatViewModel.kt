@@ -205,8 +205,12 @@ class ChatViewModel @Inject constructor(
 
     private fun currentModelLabel(): String = runCatching {
         selectedPlatform()?.let { "${it.name} · ${it.selectedModel}" }
-            ?: "${secureStorage.publicModel.ifBlank { "选择模型" }} · 默认线路"
+            ?: "跟随角色与模型设置"
     }.getOrDefault("请选择模型")
+
+    fun currentChatModelSelection(): Pair<String, String>? = runCatching {
+        selectedPlatform()?.let { it.id to it.selectedModel }
+    }.getOrNull()
 
     fun refreshModelSelection() {
         _modelSelectionLabel.value = currentModelLabel()

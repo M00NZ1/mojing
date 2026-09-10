@@ -13,6 +13,26 @@ import org.junit.Test
 class ChatModelPickerTest {
     @get:Rule val rule = createComposeRule()
 
+    @Test fun selectionUsesPlatformIdentityEvenWhenNamesMatch() {
+        val selection = mutableStateOf("a" to "shared-model")
+        rule.setContent { MaterialTheme {
+            ChatModelPicker(
+                platforms = listOf(
+                    ModelPlatform("a", "同名平台", "https://a.test", "test-key", listOf("shared-model")),
+                    ModelPlatform("b", "同名平台", "https://b.test", "test-key", listOf("shared-model")),
+                ),
+                onDismiss = {}, selectedModel = selection.value,
+            ) { platform, model -> selection.value = platform to model }
+        } }
+        rule.onNodeWithTag("chat-model:a:shared-model").assertIsSelected()
+        rule.onNodeWithTag("chat-model-list").performScrollToNode(hasTestTag("chat-model:b:shared-model"))
+        rule.onNodeWithTag("chat-model:b:shared-model").assertIsNotSelected().performClick()
+        rule.onNodeWithTag("chat-model:b:shared-model").assertIsSelected()
+        rule.onNodeWithTag("chat-model-list").performScrollToNode(hasTestTag("chat-model:a:shared-model"))
+        rule.onNodeWithTag("chat-model:a:shared-model").assertIsNotSelected()
+        rule.runOnIdle { assertEquals("b" to "shared-model", selection.value) }
+    }
+
     @Test fun longRequestInfoKeepsSearchAndCloseReachable() {
         var dismissed = false
         var selected: Pair<String, String>? = null
@@ -50,6 +70,7 @@ class ChatModelPickerTest {
         rule.onNodeWithText("搜索平台或模型").performTextInput("missing")
         rule.onNodeWithText("没有匹配模型，请在模型设置中添加平台和模型。").assertIsDisplayed()
         rule.onNodeWithText("搜索平台或模型").performTextClearance()
+        rule.onNodeWithTag("chat-model-list").performScrollToNode(hasText("unavailable-model"))
         rule.onNodeWithText("unavailable-model").assertIsNotEnabled()
     }
 

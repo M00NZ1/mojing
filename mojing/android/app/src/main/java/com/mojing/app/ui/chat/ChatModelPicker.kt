@@ -5,16 +5,22 @@ import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.mojing.app.data.ModelPlatform
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selectedLabel: String = "", lastRequestModel: String? = null, isGenerating: Boolean = false, isSaving: Boolean = false, saveError: String? = null, onSelect: (String, String) -> Unit) {
+fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selectedLabel: String = "", lastRequestModel: String? = null, isGenerating: Boolean = false, isSaving: Boolean = false, saveError: String? = null, selectedModel: Pair<String, String>? = null, onSelect: (String, String) -> Unit) {
     var query by remember { mutableStateOf("") }
     ModalBottomSheet(onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
@@ -34,11 +40,13 @@ fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selec
                 Text(saveError, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
             LazyColumn(Modifier.weight(1f).testTag("chat-model-list"), contentPadding = PaddingValues(bottom = 24.dp)) {
-                item(key = "request-info") {
+                if (query.isBlank()) item(key = "request-info") {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("从下一次发送生效，当前回复继续使用原模型。选择后，本场角色与旁白统一使用该线路。",
                             style = MaterialTheme.typography.bodySmall)
                         if (selectedLabel.isNotBlank()) Text("下次发送：$selectedLabel", style = MaterialTheme.typography.bodyMedium)
+                        if (selectedLabel == "跟随角色与模型设置") Text("未指定会话模型时，各角色沿用独立配置或公共设置；思考模型覆盖仍按设置生效。",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         if (lastRequestModel != null || isGenerating) Text(
                             lastRequestModel?.let { "最近请求：$it" } ?: "本轮正在准备上下文",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -52,8 +60,16 @@ fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selec
                                 style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                         }
                         items(names, key = { "${p.id}:$it" }) { name ->
-                            TextButton(onClick = { onSelect(p.id, name) }, enabled = !isSaving && p.apiKey.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
-                                Text(name, modifier = Modifier.fillMaxWidth())
+                            val isSelected = selectedModel == (p.id to name)
+                            TextButton(onClick = { onSelect(p.id, name) }, enabled = !isSaving && p.apiKey.isNotBlank(),
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                    .testTag("chat-model:${p.id}:$name").semantics { selected = isSelected },
+                                colors = ButtonDefaults.textButtonColors(containerColor = if (isSelected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent),
+                            ) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(name, modifier = Modifier.weight(1f), color = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer else LocalContentColor.current)
+                                    if (isSelected) Icon(Icons.Default.Check, "已选择", tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                                }
                             }
                         }
                     }

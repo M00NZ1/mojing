@@ -131,6 +131,7 @@ fun ChatScreen(
     var showModelPicker by remember { mutableStateOf(false) }
     if (showModelPicker) {
         ChatModelPicker(viewModel.availableModelPlatforms(), onDismiss = { showModelPicker = false },
+            selectedModel = viewModel.currentChatModelSelection(),
             selectedLabel = modelLabel, lastRequestModel = state.lastRequestModel, isGenerating = state.isGenerating,
             isSaving = state.modelSelectionSaving, saveError = state.modelSelectionError) { platform, model ->
             viewModel.selectChatModel(platform, model) { showModelPicker = false }
