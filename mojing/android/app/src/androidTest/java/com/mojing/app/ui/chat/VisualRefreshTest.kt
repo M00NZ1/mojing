@@ -6,6 +6,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Create
+import com.mojing.app.ui.common.LlmKeySetupHintCard
 import com.mojing.app.ui.common.ConfirmDialog
 import com.mojing.app.ui.common.SearchBar
 import com.mojing.app.ui.common.ImeHideAwareNavigationBar
@@ -123,6 +124,29 @@ class VisualRefreshTest {
         rule.onNodeWithText("确认").assertIsDisplayed().performClick()
         rule.runOnIdle { assertTrue(confirmed) }
         rule.onNodeWithText("取消").assertIsDisplayed()
+    }
+
+    @Test fun setupCardKeepsLongGuidanceAndOneAccessibleAction() {
+        var opened = 0
+        var actionable by mutableStateOf(true)
+        val message = "补全内容或生成封面前，请先在设置填写 API Key；手动编辑和保存不受影响"
+        rule.setContent {
+            MoJingTheme {
+                Surface(Modifier.fillMaxSize().testTag("visual-review")) {
+                    Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
+                        LlmKeySetupHintCard(message, { opened++ }, showActionButton = actionable)
+                    }
+                }
+            }
+        }
+        rule.onNodeWithText(message, useUnmergedTree = true).assertIsDisplayed()
+        rule.onAllNodes(hasClickAction()).assertCountEquals(1)
+        rule.onNodeWithText("配置模型服务").performClick()
+        rule.runOnIdle { assertTrue(opened == 1) }
+        capture("model-setup")
+        rule.runOnIdle { actionable = false }
+        rule.onNodeWithText(message).assertIsDisplayed()
+        rule.onAllNodes(hasClickAction()).assertCountEquals(0)
     }
 
     @Test fun splashKeepsTheOriginalTagline() {

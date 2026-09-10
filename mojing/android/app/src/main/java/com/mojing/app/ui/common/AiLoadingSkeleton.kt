@@ -1,6 +1,11 @@
 package com.mojing.app.ui.common
 
-import androidx.compose.material3.TextButton
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material3.Icon
+import androidx.compose.ui.semantics.Role
 
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -127,7 +132,7 @@ fun TemplateWorldPromptSkeletonBlock(modifier: Modifier = Modifier) {
     }
 }
 
-/** 未配置公共 LLM Key 时的顶部提示条（与工坊等页一致）。 */
+/** 公共模型配置入口；说明占满可用宽度，整卡作为一个操作目标。 */
 @Composable
 fun LlmKeySetupHintCard(
     message: String,
@@ -135,31 +140,30 @@ fun LlmKeySetupHintCard(
     modifier: Modifier = Modifier,
     showActionButton: Boolean = true,
 ) {
-    Card(
+    Surface(
         modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
-        ),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            Modifier.fillMaxWidth()
+                .then(if (showActionButton) Modifier.clickable(
+                    role = Role.Button, onClickLabel = "配置模型", onClick = onOpenSettings,
+                ) else Modifier)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text(
-                message,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodySmall,
-            )
-            if (showActionButton) {
-                TextButton(
-                    onClick = onOpenSettings,
-                ) {
-                    Text("去设置")
-                }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("配置模型服务", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface)
+                if (showActionButton) Icon(Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = null, tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp))
             }
+            Text(message, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
