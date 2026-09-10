@@ -58,6 +58,7 @@ fun GenerationTaskListScreen(
     var cancelTargetId by remember { mutableStateOf<Long?>(null) }
     var cancelError by remember(cancelTargetId) { mutableStateOf<String?>(null) }
     var detailId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var retryError by remember(detailId) { mutableStateOf<String?>(null) }
     var resultError by remember(detailId) { mutableStateOf<String?>(null) }
     DisposableEffect(viewModel) { onDispose { viewModel.cancelResultLookup() } }
     val dateFormat = remember { SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()) }
@@ -162,6 +163,18 @@ fun GenerationTaskListScreen(
             }
         })
     GenerationTaskDetailHost(tasks, detailId, openingResultId, resultError,
+        busy = busy, retryingIds = retryingIds, retryError = retryError,
+        onRetry = { task ->
+            retryError = null
+            viewModel.retryFailedTask(task) { success ->
+                if (detailId == task.id && !success) retryError = "重新排队未完成，请再试一次。已保存的进度保留。"
+            }
+        },
+        onCancel = { task ->
+            viewModel.cancelResultLookup()
+            detailId = null
+            cancelTargetId = task.id
+        },
         onDismiss = { viewModel.cancelResultLookup(); detailId = null }, onOpen = { t ->
             resultError = null
             viewModel.openResult(t, onOpen = { target -> detailId = null; onOpenResult(target) },
@@ -201,6 +214,11 @@ internal fun rememberGenerationListState(filter: Int, page: Int = 0): LazyListSt
 internal fun GenerationTaskDetailHost(
     tasks: List<GenerationTaskEntity>, selectedId: Long?, openingId: Long?, error: String?,
     onDismiss: () -> Unit, onOpen: (GenerationTaskEntity) -> Unit,
+    busy: Boolean = false,
+    retryingIds: Set<Long> = emptySet(),
+    retryError: String? = null,
+    onRetry: ((GenerationTaskEntity) -> Unit)? = null,
+    onCancel: ((GenerationTaskEntity) -> Unit)? = null,
 ) {
     val latest = tasks.firstOrNull { it.id == selectedId }
     var lastVisible by remember(selectedId) { mutableStateOf<GenerationTaskEntity?>(null) }
@@ -208,6 +226,9 @@ internal fun GenerationTaskDetailHost(
     (latest ?: lastVisible)?.let { t ->
         GenerationTaskDetailSheet(t, onDismiss = onDismiss,
             canOpen = openingId == null, opening = openingId == t.id, openError = error,
+            busy = busy, retrying = t.id in retryingIds, retryError = retryError,
+            onRetry = onRetry?.let { action -> { action(t) } },
+            onCancel = onCancel?.let { action -> { action(t) } },
             onOpen = { onOpen(t) })
     }
 }
@@ -248,14 +269,29 @@ internal fun GenerationTaskDetailSheet(
     onOpen: () -> Unit,
     opening: Boolean = false,
     openError: String? = null,
+    busy: Boolean = false,
+    retrying: Boolean = false,
+    retryError: String? = null,
+    onRetry: (() -> Unit)? = null,
+    onCancel: (() -> Unit)? = null,
 ) {
     val detailScroll = rememberScrollState()
-    LaunchedEffect(openError) { if (openError != null) detailScroll.scrollTo(0) }
+    LaunchedEffect(openError, retryError) { if (openError != null || retryError != null) detailScroll.scrollTo(0) }
     ModalBottomSheet(onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(horizontal = 24.dp)) {
+        BoxWithConstraints(Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(horizontal = 24.dp)) {
+            val actionMaxHeight = maxHeight * 0.5f
+            Column(Modifier.fillMaxSize()) {
             Column(Modifier.weight(1f).verticalScroll(detailScroll),
                 verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                retryError?.let { error ->
+                    Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(12.dp)) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text("继续生成未完成", style = MaterialTheme.typography.titleSmall)
+                            GenerationFeedbackText(error)
+                        }
+                    }
+                }
                 openError?.let { error ->
                     Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(12.dp)) {
                         Column(Modifier.padding(12.dp)) {
@@ -283,13 +319,25 @@ internal fun GenerationTaskDetailSheet(
                 }
                 Spacer(Modifier.height(8.dp))
             }
-            Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            HorizontalDivider()
+            Column(Modifier.fillMaxWidth().heightIn(max = actionMaxHeight).verticalScroll(rememberScrollState())
+                .padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (task.status == GenerationTaskStatus.FAILED && isRetryableKind(task.taskKind) && onRetry != null) {
+                    Button(onClick = onRetry, enabled = !busy && !retrying && !opening, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (retrying) "重新排队中…" else "继续尝试")
+                    }
+                }
                 if (task.progressDone > 0 || task.status == GenerationTaskStatus.COMPLETED) {
                     Button(onClick = onOpen, enabled = canOpen && !opening, modifier = Modifier.fillMaxWidth()) {
                         Text(if (opening) "正在打开…" else if (openError != null) "重试打开" else "查看已生成内容")
                     }
                 }
+                if (task.isActive() && onCancel != null) {
+                    OutlinedButton(onClick = onCancel, enabled = !busy && !retrying && !opening,
+                        modifier = Modifier.fillMaxWidth()) { Text("取消生成") }
+                }
                 TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("关闭") }
+            }
             }
         }
     }

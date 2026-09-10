@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Android 生成详情操作 | 9 项 ViewModel 测试及 Debug 应用、测试 APK 构建通过；Android 35 窄屏下 11 项详情测试通过，另通过短窗口长反馈与操作区滚动测试 | `GenerationTaskListViewModelTest`、`GenerationTaskDetailTest` |
 | Android 生成记录卡片 | Debug 应用与测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 11 项卡片与详情测试通过，覆盖长标题和错误、重试、查看已保存内容、整卡详情、取消菜单与忙碌状态；完成卡片截图检查 | `GenerationTaskCardTest`、`GenerationTaskDetailTest` |
 | Android 补全结果恢复 | 10 项模板 ViewModel 测试及 Debug 构建通过，覆盖读取失败、草稿保留、重复重试、后续任务观察、重进页面和旧读取结果隔离 | `TemplateEditViewModelTest` |
 | Android 世界编辑与补全 | 7 项模板 ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下长文本控件测试通过，覆盖手动摘要与正文保留、生成字段更新、脏状态、重复保存及失败重试 | `TemplateEditViewModelTest`、`MoJingLongTextFieldTest` |

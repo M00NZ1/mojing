@@ -215,4 +215,43 @@ class GenerationTaskDetailTest {
         rule.onNodeWithText("已完成 0 / 0").assertDoesNotExist()
         rule.onNodeWithText("关闭").assertIsDisplayed()
     }
+    @Test fun failedDetailOffersRetryWithInlineFailureAndBusyGuard() {
+        var retrying by mutableStateOf(false)
+        var error by mutableStateOf<String?>(null)
+        var retries = 0
+        val task = GenerationTaskEntity(id = 8, taskKind = GenerationTaskKinds.WORLD_TEMPLATE_PROMPT_AI,
+            title = "雾港世界", status = GenerationTaskStatus.FAILED, progressDone = 1, progressTotal = 3,
+            payloadJson = "{}", errorMessage = "服务暂时不可用".repeat(100))
+        rule.setContent { MaterialTheme {
+            GenerationTaskDetailSheet(task, {}, true, {}, retrying = retrying, retryError = error,
+                onRetry = { retries++ })
+        } }
+        rule.onNodeWithText("继续尝试").performScrollTo().assertIsDisplayed().performClick()
+        rule.runOnIdle { retrying = true }
+        rule.onNodeWithText("重新排队中…").assertIsNotEnabled()
+        rule.runOnIdle { retrying = false; error = "请再试一次" }
+        rule.onNodeWithText("继续生成未完成").assertIsDisplayed()
+        rule.onNodeWithText("继续尝试").performScrollTo().performClick()
+        rule.onNodeWithText("查看已生成内容").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("关闭").performScrollTo().assertIsDisplayed()
+        rule.runOnIdle { assertEquals(2, retries) }
+    }
+
+    @Test fun activeDetailExposesCancellationAndCompletedDetailRemovesIt() {
+        var status by mutableStateOf(GenerationTaskStatus.RUNNING)
+        var busy by mutableStateOf(true)
+        var cancels = 0
+        val task = GenerationTaskEntity(id = 8, taskKind = GenerationTaskKinds.WORLD_TEMPLATE_PROMPT_AI,
+            title = "雾港世界", status = status, payloadJson = "{}")
+        rule.setContent { MaterialTheme {
+            GenerationTaskDetailSheet(task.copy(status = status), {}, true, {}, busy = busy, onCancel = { cancels++ })
+        } }
+        rule.onNodeWithText("取消生成").performScrollTo().assertIsNotEnabled()
+        rule.runOnIdle { busy = false }
+        rule.onNodeWithText("取消生成").performClick()
+        rule.runOnIdle { assertEquals(1, cancels); status = GenerationTaskStatus.COMPLETED }
+        rule.onNodeWithText("取消生成").assertDoesNotExist()
+        rule.onNodeWithText("查看已生成内容").performScrollTo().assertIsDisplayed()
+    }
+
 }

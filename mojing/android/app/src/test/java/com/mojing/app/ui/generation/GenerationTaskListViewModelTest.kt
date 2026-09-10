@@ -206,10 +206,11 @@ class GenerationTaskListViewModelTest {
         val task = com.mojing.app.data.local.entity.GenerationTaskEntity(id = 7L,
             taskKind = "encyclopedia_entries", title = "测试", payloadJson = "{}",
             status = com.mojing.app.data.local.entity.GenerationTaskStatus.FAILED)
-        vm.retryFailedTask(task)
+        val outcomes = mutableListOf<Boolean>()
+        vm.retryFailedTask(task) { outcomes += it }
         assertEquals(setOf(7L), vm.retryingTaskIds.value)
         val oldMessage = vm.snackbar.value!!
-        vm.retryFailedTask(task)
+        vm.retryFailedTask(task) { outcomes += it }
         vm.consumeSnackbar(oldMessage)
         assertEquals("正在重新排队…", vm.snackbar.value)
         runCurrent()
@@ -217,14 +218,16 @@ class GenerationTaskListViewModelTest {
         gate.completeExceptionally(IllegalStateException("disk"))
         advanceUntilIdle()
         assertEquals(emptySet<Long>(), vm.retryingTaskIds.value)
+        assertEquals(listOf(false), outcomes)
         assertEquals("继续失败，请重试", vm.snackbar.value)
         vm.consumeSnackbar("继续失败，请重试")
         assertNull(vm.snackbar.value)
         coEvery { processor.requeueFailedTask(any()) } returns true
-        vm.retryFailedTask(task)
+        vm.retryFailedTask(task) { outcomes += it }
         advanceUntilIdle()
         assertTrue(vm.snackbar.value!!.startsWith("已重新排队"))
         assertTrue(vm.retryingTaskIds.value.isEmpty())
+        assertEquals(listOf(false, true), outcomes)
     }
 
     @Test fun cancellationReportsOutcomeAfterCompletionAndCanRetry() = runTest {

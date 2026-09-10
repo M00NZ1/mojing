@@ -179,7 +179,7 @@ class GenerationTaskListViewModel @Inject constructor(
     fun resumeQueue() = runAction("已继续生成") { processor.resumeAll() }
 
     /** 失败任务：原记录从已保存进度继续，并立即提示避免重复点击。 */
-    fun retryFailedTask(task: GenerationTaskEntity) {
+    fun retryFailedTask(task: GenerationTaskEntity, onResult: (Boolean) -> Unit = {}) {
         if (task.status != GenerationTaskStatus.FAILED) {
             _snackbar.value = "仅失败任务可重新排队"
             return
@@ -192,8 +192,10 @@ class GenerationTaskListViewModel @Inject constructor(
         _retryingIds.value = _retryingIds.value + task.id
         _snackbar.value = "正在重新排队（${task.progressDone}/$total）…"
         viewModelScope.launch {
+            var completed = false
             try {
                 val ok = processor.requeueFailedTask(task)
+                completed = ok
                 _snackbar.value = if (ok) {
                     "已重新排队（${task.progressDone}/$total）"
                 } else {
@@ -205,6 +207,7 @@ class GenerationTaskListViewModel @Inject constructor(
             } finally {
                 _retryingIds.value = _retryingIds.value - task.id
             }
+            onResult(completed)
         }
     }
 }
