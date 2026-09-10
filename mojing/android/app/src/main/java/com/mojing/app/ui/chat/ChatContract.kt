@@ -68,6 +68,7 @@ object ChatContract {
         val streamingText: String = "",
         val isGenerating: Boolean = false,
         val lastRequestModel: String? = null,
+        val lastRequestPlatform: String? = null,
         val modelSelectionSaving: Boolean = false,
         val modelSelectionError: String? = null,
         val memoryCompactionChunk: Int? = null,

@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Android 最近请求线路 | 88 项聊天 ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 5 项模型面板测试通过，覆盖请求参数与平台名称匹配、下次发送与最近请求分离、长名称与搜索入口 | `ChatViewModelTest`、`ChatModelPickerTest` |
 | Android 模型配置入口 | Debug 应用与测试 APK 构建通过；Android 35、320dp 下 5 项视觉测试通过，横向窗口专项测试通过；覆盖完整说明、整卡点击与无操作提示状态 | `VisualRefreshTest`；`.codex-work/ui-refresh-20260910/model-setup.png` |
 | 公共视觉与品牌资源 | Android Debug 与测试 APK、Web 生产构建通过；Android 35、320dp 与横向窗口分别通过 4 项视觉测试，覆盖控件、搜索、导航、长确认说明和启动标语；长文本编辑测试通过；Web 七套主题对比度、确认弹窗、模型配置与长文本回归通过 | `VisualRefreshTest`、`MoJingLongTextFieldTest`；`.codex-work/ui-refresh-20260910/` |
 | Android 生成记录浏览状态 | Debug 构建与 9 项 ViewModel 测试通过；覆盖 SavedStateHandle 恢复分类和第二页游标、筛选与游标原子更新、返回近期模式及既有失败重试 | `GenerationTaskListViewModelTest` |

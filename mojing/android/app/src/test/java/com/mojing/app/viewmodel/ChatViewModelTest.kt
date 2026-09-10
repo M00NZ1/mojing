@@ -999,11 +999,13 @@ class ChatViewModelTest {
             val engine = mockk<ChatEngine>(relaxed = true)
             every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
                 assertEquals(args[5], vm.state.value.lastRequestModel)
+                assertEquals(if (args[3] == "fake-a") "A" else "B", vm.state.value.lastRequestPlatform)
                 routes.add(listOf(args[3] as String, args[4] as String, args[5] as String))
                 flowOf(StreamState.Done("旁白测试回复"))
             }
             every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
                 assertEquals(args[8], vm.state.value.lastRequestModel)
+                assertEquals(if (args[6] == "fake-a") "A" else "B", vm.state.value.lastRequestPlatform)
                 routes.add(listOf(args[6] as String, args[7] as String, args[8] as String))
                 flowOf(StreamState.Done("角色测试回复"))
             }

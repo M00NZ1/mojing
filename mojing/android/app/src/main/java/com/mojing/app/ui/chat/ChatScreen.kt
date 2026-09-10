@@ -133,7 +133,8 @@ fun ChatScreen(
         ChatModelPicker(viewModel.availableModelPlatforms(), onDismiss = { showModelPicker = false },
             selectedModel = viewModel.currentChatModelSelection(),
             onFollowSettings = { viewModel.followConfiguredChatModels { showModelPicker = false } },
-            selectedLabel = modelLabel, lastRequestModel = state.lastRequestModel, isGenerating = state.isGenerating,
+            selectedLabel = modelLabel, lastRequestModel = state.lastRequestModel,
+            lastRequestPlatform = state.lastRequestPlatform, isGenerating = state.isGenerating,
             isSaving = state.modelSelectionSaving, saveError = state.modelSelectionError) { platform, model ->
             viewModel.selectChatModel(platform, model) { showModelPicker = false }
         }

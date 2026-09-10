@@ -57,7 +57,7 @@ class ChatModelPickerTest {
                 ChatModelPicker(
                     platforms = listOf(ModelPlatform("a", "平台 A", "https://a.test", "test-key", models)),
                     onDismiss = { dismissed = true }, selectedLabel = "平台 A · " + "long-model-".repeat(80),
-                    lastRequestModel = "previous-model-".repeat(80), isGenerating = true
+                    lastRequestModel = "previous-model-".repeat(80), lastRequestPlatform = "旧平台-".repeat(80), isGenerating = true
                 ) { platform, model -> selected = platform to model }
             }
         }
@@ -75,12 +75,12 @@ class ChatModelPickerTest {
             MaterialTheme {
                 ChatModelPicker(
                     platforms = listOf(ModelPlatform("b", "平台 B", "https://b.test", "", listOf("unavailable-model"))),
-                    onDismiss = {}, selectedLabel = "平台 A · next-model", lastRequestModel = "previous-model"
+                    onDismiss = {}, selectedLabel = "平台 A · next-model", lastRequestModel = "previous-model", lastRequestPlatform = "旧平台"
                 ) { _, _ -> error("An unconfigured platform must not be selected") }
             }
         }
         rule.onNodeWithText("下次发送：平台 A · next-model").assertIsDisplayed()
-        rule.onNodeWithText("最近请求：previous-model").assertIsDisplayed()
+        rule.onNodeWithText("最近请求：旧平台 · previous-model").assertIsDisplayed()
         rule.onNodeWithText("unavailable-model").assertIsNotEnabled()
         rule.onNodeWithText("搜索平台或模型").performTextInput("missing")
         rule.onNodeWithText("没有匹配模型，请在模型设置中添加平台和模型。").assertIsDisplayed()

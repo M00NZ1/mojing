@@ -20,7 +20,7 @@ import com.mojing.app.data.ModelPlatform
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selectedLabel: String = "", lastRequestModel: String? = null, isGenerating: Boolean = false, isSaving: Boolean = false, saveError: String? = null, selectedModel: Pair<String, String>? = null, onFollowSettings: (() -> Unit)? = null, onSelect: (String, String) -> Unit) {
+fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selectedLabel: String = "", lastRequestModel: String? = null, isGenerating: Boolean = false, isSaving: Boolean = false, saveError: String? = null, selectedModel: Pair<String, String>? = null, onFollowSettings: (() -> Unit)? = null, lastRequestPlatform: String? = null, onSelect: (String, String) -> Unit) {
     var query by remember { mutableStateOf("") }
     val followMatches = onFollowSettings != null && (query.isBlank() || "跟随角色与模型设置".contains(query, true))
     ModalBottomSheet(onDismissRequest = onDismiss,
@@ -49,7 +49,8 @@ fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selec
                         if (selectedLabel == "跟随角色与模型设置") Text("未指定会话模型时，各角色沿用独立配置或公共设置；思考模型覆盖仍按设置生效。",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         if (lastRequestModel != null || isGenerating) Text(
-                            lastRequestModel?.let { "最近请求：$it" } ?: "本轮正在准备上下文",
+                            lastRequestModel?.let { model -> "最近请求：" +
+                                listOfNotNull(lastRequestPlatform?.takeIf { it.isNotBlank() }, model).joinToString(" · ") } ?: "本轮正在准备上下文",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
