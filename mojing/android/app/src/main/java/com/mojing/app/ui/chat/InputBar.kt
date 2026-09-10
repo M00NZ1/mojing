@@ -80,11 +80,12 @@ fun InputBar(
     /** 朗读当前输入框文字（不发送） */
     onPreviewSpeak: () -> Unit,
     modifier: Modifier = Modifier,
+    narratorGuidance: String = "",
+    onNarratorGuidanceChange: (String) -> Unit = {},
 ) {
     var showActionSheet by remember { mutableStateOf(false) }
     var showMacros by remember { mutableStateOf(false) }
     var showNarratorDialog by remember { mutableStateOf(false) }
-    var narratorGuidance by remember { mutableStateOf("") }
     var restoreInputFocus by remember { mutableStateOf(false) }
     val inputFocusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -99,7 +100,6 @@ fun InputBar(
         if (isGenerating || isAddingAttachment) {
             showActionSheet = false
             showNarratorDialog = false
-            narratorGuidance = ""
             restoreInputFocus = false
         }
     }
@@ -374,7 +374,7 @@ fun InputBar(
     if (showNarratorDialog) {
         NarratorRequestDialog(
             guidance = narratorGuidance,
-            onGuidanceChange = { narratorGuidance = it },
+            onGuidanceChange = onNarratorGuidanceChange,
             onDismiss = {
                 dismissKeyboard()
                 showNarratorDialog = false
@@ -382,7 +382,6 @@ fun InputBar(
             onGenerate = { guidance ->
                 dismissKeyboard()
                 showNarratorDialog = false
-                narratorGuidance = ""
                 onRequestNarrator(guidance)
             },
         )

@@ -83,6 +83,7 @@ object ChatContract {
         val isDrawerOpen: Boolean = false,
         val error: String? = null,
         val inputText: String = "",
+        val narratorGuidance: String = "",
         val pendingLocalImagePaths: List<String> = emptyList(),
         val isReady: Boolean = false,
         /** 首次读取本机会话失败；与普通聊天操作错误分离，以便页面持续提供重试。 */

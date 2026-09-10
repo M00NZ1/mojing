@@ -121,3 +121,7 @@ Release 启用 R8 与资源收缩，输出 arm64-v8a、armeabi-v7a 和 universal
 JVM 测试位于 `app/src/test/`，Room 与 Compose 测试位于 `app/src/androidTest/`。连接设备后可运行 `connectedDebugAndroidTest`。
 
 数据变更覆盖旧 schema 迁移、事务回滚和恢复；交互变更覆盖键盘、返回、旋转、文件选择与权限。完整命令见[构建与维护](MAINTENANCE.md)。
+
+### 旁白方向草稿
+
+旁白方向由 ChatViewModel 管理，随会话草稿存入现有 `chat_drafts_v1`。JSON 增加可选字段 `narratorGuidance`，旧记录缺失时读取为空；消息正文、附件和提交标记保持原有语义。方向写入对话成功后清空对应草稿，期间改写通过修订号保留。

@@ -12,6 +12,7 @@ data class ChatDraftSnapshot(
     val inputText: String = "",
     val pendingAttachmentPaths: List<String> = emptyList(),
     val pendingSubmissionId: String? = null,
+    val narratorGuidance: String = "",
 )
 
 /** 按会话保存未发送内容；它是草稿单一持久化 owner，不承载已发送消息。 */
@@ -34,6 +35,7 @@ class ChatDraftStore @Inject constructor(
                 .orEmpty()
                 .distinct()
             ChatDraftSnapshot(
+                narratorGuidance = root.get("narratorGuidance")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty(),
                 inputText = root.get("inputText")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty(),
                 pendingAttachmentPaths = paths,
                 pendingSubmissionId = root.get("pendingSubmissionId")
@@ -61,7 +63,7 @@ class ChatDraftStore @Inject constructor(
         val submissionId = snapshot.pendingSubmissionId
             ?.trim()
             ?.takeIf { it.length in 1..MAX_SUBMISSION_ID_LENGTH }
-        if (snapshot.inputText.isEmpty() && snapshot.pendingAttachmentPaths.isEmpty() && submissionId == null) {
+        if (snapshot.narratorGuidance.isEmpty() && snapshot.inputText.isEmpty() && snapshot.pendingAttachmentPaths.isEmpty() && submissionId == null) {
             if (synchronous) return editor.remove(key(sessionId)).commit()
             editor.remove(key(sessionId)).apply()
             return true
@@ -69,6 +71,7 @@ class ChatDraftStore @Inject constructor(
         val root = JsonObject().apply {
             addProperty("version", VERSION)
             addProperty("inputText", snapshot.inputText)
+            addProperty("narratorGuidance", snapshot.narratorGuidance)
             add("pendingAttachmentPaths", JsonArray().also { array ->
                 snapshot.pendingAttachmentPaths.distinct().forEach(array::add)
             })

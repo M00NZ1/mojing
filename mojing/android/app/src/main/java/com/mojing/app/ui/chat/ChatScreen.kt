@@ -833,6 +833,8 @@ fun ChatScreen(
                             )
                         }
                         InputBar(
+                            narratorGuidance = state.narratorGuidance,
+                            onNarratorGuidanceChange = viewModel::updateNarratorGuidance,
                             value = inputFieldValue,
                             onValueChange = { value ->
                                 inputFieldValue = value
@@ -851,7 +853,7 @@ fun ChatScreen(
                             },
                             onRequestNarrator = { guidance ->
                                 if (state.isGenerating) showGenerationLockedMessage()
-                                else viewModel.requestNarrator(guidance)
+                                else viewModel.submitNarratorGuidance(guidance)
                             },
                             onInsertMacro = { macro ->
                                 val updated = insertTextAtSelection(

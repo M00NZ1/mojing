@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Android 旁白方向草稿 | 90 项 Chat ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 5 项草稿、输入栏与旁白界面测试通过；覆盖旧草稿读取、会话隔离、恢复、预检失败保留、写入完成清空与等待期间改写保护 | `ChatViewModelTest`、`ChatDraftStoreInstrumentedTest` |
 | Android 旁白操作面板 | Debug 应用与测试 APK 构建通过；Android 35、320dp 窄屏下 3 项旁白与输入栏测试通过，横向窗口下旁白测试通过，覆盖空白方向、长输入、两种生成请求和返回操作 | `NarratorRequestDialogTest`、`InputBarAttachmentStateTest` |
 | Android 百科主列表分页 | 19 项百科 ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 3 项 Room 与分页控件测试通过，覆盖 205 条分类遍历、分页恢复、失败重试、重复翻页与批量补全全分类 ID | `EncyclopediaDetailViewModelTest`、`SedimentConfirmationDaoTest`、`SedimentPageControlsTest` |
 | Android 关系条目选择 | 17 项百科 ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 4 项 Room 与选择面板测试通过，覆盖精简字段分页、中文查询、标点按原文匹配、第二页、搜索失败重试、选择及关闭取消读取 | `EncyclopediaDetailViewModelTest`、`SedimentConfirmationDaoTest`、`EncyclopediaEntryPickerTest` |

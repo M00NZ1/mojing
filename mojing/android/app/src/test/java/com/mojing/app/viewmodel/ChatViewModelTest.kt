@@ -1741,6 +1741,44 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun narratorDirectionRestoresAndSurvivesOtherDraftUpdates() = runTest(testDispatcher) {
+        val store = emptyDraftStore()
+        every { store.load(42L) } returns ChatDraftSnapshot(narratorGuidance = "恢复方向")
+        val vm = createViewModel(chatDraftStore = store)
+        advanceUntilIdle()
+        assertEquals("恢复方向", vm.state.value.narratorGuidance)
+        vm.updateInput("独立消息")
+        verify { store.save(42L, match { it.inputText == "独立消息" && it.narratorGuidance == "恢复方向" }) }
+        vm.updateNarratorGuidance("新方向")
+        verify { store.save(42L, match { it.inputText == "独立消息" && it.narratorGuidance == "新方向" }) }
+    }
+
+    @Test
+    fun narratorDirectionClearsOnlyAfterCommitAndKeepsNewerEdits() = runTest(testDispatcher) {
+        for (editDuringSave in listOf(false, true)) {
+            val gate = kotlinx.coroutines.CompletableDeferred<Long>()
+            val messages = mockk<MessageDao>(relaxed = true)
+            coEvery { messages.insert(match { it.speakerType == "user" }) } coAnswers { gate.await() }
+            val world = mockk<SessionWorldDao>(relaxed = true)
+            coEvery { world.getBySession(42L) } returns SessionWorldEntity(sessionId = 42)
+            val vm = createViewModel(messageDao = messages, sessionWorldDao = world,
+                secureStorage = validSecureStorage(), llmApiService = validLlmApiService())
+            advanceUntilIdle()
+            vm.updateNarratorGuidance("  当前方向  ")
+            assertTrue(vm.submitNarratorGuidance("当前方向"))
+            runCurrent()
+            assertEquals("  当前方向  ", vm.state.value.narratorGuidance)
+            if (editDuringSave) {
+                vm.updateNarratorGuidance("改写后又恢复")
+                vm.updateNarratorGuidance("  当前方向  ")
+            }
+            gate.complete(99)
+            advanceUntilIdle()
+            assertEquals(if (editDuringSave) "  当前方向  " else "", vm.state.value.narratorGuidance)
+        }
+    }
+
+    @Test
     fun novelGuidancePreflightRejectsMissingKeyModelAndBaseWithoutWritingOrClearingDraft() = runTest(testDispatcher) {
         data class Case(val storage: SecureStorage, val error: String)
         val cases = listOf(
@@ -1767,11 +1805,13 @@ class ChatViewModelTest {
             advanceUntilIdle()
 
             vm.updateInput("预检失败仍需保留")
-            vm.requestNarrator("预检失败的剧情走向")
+            vm.updateNarratorGuidance("预检失败的剧情走向")
+            vm.submitNarratorGuidance("预检失败的剧情走向")
             advanceUntilIdle()
 
             assertEquals(case.error, vm.state.value.error)
             assertEquals("预检失败仍需保留", vm.state.value.inputText)
+            assertEquals("预检失败的剧情走向", vm.state.value.narratorGuidance)
             coVerify(exactly = 0) { messageDao.insert(any()) }
             verify(exactly = 0) { draftStore.save(42L, ChatDraftSnapshot()) }
         }

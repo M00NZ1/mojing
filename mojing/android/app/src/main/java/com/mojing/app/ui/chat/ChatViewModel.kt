@@ -253,6 +253,7 @@ class ChatViewModel @Inject constructor(
     private var messageSearchJob: Job? = null
     private var messageSearchRevision = 0L
     private var activeDraftSubmissionId: String? = null
+    private var narratorDraftRevision = 0L
 
     private fun persistCurrentDraft() {
         val current = _state.value
@@ -261,6 +262,7 @@ class ChatViewModel @Inject constructor(
                 sessionId,
                 ChatDraftSnapshot(
                     inputText = current.inputText,
+                    narratorGuidance = current.narratorGuidance,
                     pendingAttachmentPaths = current.pendingLocalImagePaths,
                     pendingSubmissionId = activeDraftSubmissionId,
                 ),
@@ -280,6 +282,7 @@ class ChatViewModel @Inject constructor(
                 sessionId,
                 ChatDraftSnapshot(
                     inputText = current.inputText,
+                    narratorGuidance = current.narratorGuidance,
                     pendingAttachmentPaths = current.pendingLocalImagePaths,
                     pendingSubmissionId = submissionId,
                 ),
@@ -942,6 +945,7 @@ class ChatViewModel @Inject constructor(
             displayContextTokenLimit = displayCap,
             conversationTokenEstimate = convEst,
             inputText = _state.value.inputText.ifEmpty { restoredInputText },
+            narratorGuidance = if (narratorDraftRevision == 0L) restoredDraft.narratorGuidance else _state.value.narratorGuidance,
             pendingLocalImagePaths = if (_state.value.pendingLocalImagePaths.isEmpty()) {
                 restoredAttachmentPaths
             } else {
@@ -1056,6 +1060,21 @@ class ChatViewModel @Inject constructor(
             sessionDao.updateThinkMax(sessionId, enabled)
             _state.value = _state.value.copy(sessionThinkMaxEnabled = enabled)
         }
+    }
+
+    fun updateNarratorGuidance(text: String) {
+        narratorDraftRevision++
+        _state.update { it.copy(narratorGuidance = text) }
+        persistCurrentDraft()
+    }
+
+    fun submitNarratorGuidance(guidance: String): Boolean {
+        val revision = narratorDraftRevision
+        return requestNarrator(guidance, onGuidanceCommitted = {
+            if (revision == narratorDraftRevision && _state.value.narratorGuidance.trim() == guidance.trim()) {
+                updateNarratorGuidance("")
+            }
+        })
     }
 
     fun updateInput(text: String) {
