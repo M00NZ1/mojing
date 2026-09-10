@@ -287,6 +287,73 @@ class EncyclopediaDetailViewModelTest {
     }
 
     @Test
+    fun rapidTypeRoundTripCannotPublishEarlierResultForSameType() = runTest(dispatcher) {
+        val dao = mockk<EncyclopediaDao> {
+            coEvery { getById(3L) } returns EncyclopediaEntity(id = 3L, name = "雾海")
+        }
+        val entries = mockk<EncyclopediaEntryDao>(relaxed = true)
+        val vm = createViewModel(dao, entries)
+        vm.load(3L)
+        val old = EncyclopediaEntryEntity(id = 9L, encyclopediaId = 3L, title = "旧雾港", entryType = "location")
+        val latest = old.copy(title = "新雾港")
+        val gate = kotlinx.coroutines.CompletableDeferred<List<EncyclopediaEntryEntity>>()
+        coEvery { entries.getByType(3L, "location") } coAnswers { gate.await() }
+        vm.selectType("location")
+        vm.selectType("character")
+        coEvery { entries.getByType(3L, "location") } returns listOf(latest)
+        vm.selectType("location")
+        vm.setPreviewEntry(9L)
+
+        gate.complete(listOf(old))
+
+        assertEquals("location", vm.state.value.selectedType)
+        assertEquals(listOf(latest), vm.state.value.entries)
+        assertEquals(9L, vm.state.value.previewEntryId)
+    }
+
+    @Test
+    fun oldTypeRefreshCannotOverwriteReloadedEncyclopedia() = runTest(dispatcher) {
+        val dao = mockk<EncyclopediaDao> {
+            coEvery { getById(3L) } returns EncyclopediaEntity(id = 3L, name = "雾海")
+        }
+        val entries = mockk<EncyclopediaEntryDao>(relaxed = true)
+        val vm = createViewModel(dao, entries)
+        vm.load(3L)
+        val gate = kotlinx.coroutines.CompletableDeferred<List<EncyclopediaEntryEntity>>()
+        coEvery { entries.getByType(3L, "location") } coAnswers { gate.await() }
+        vm.selectType("location")
+        val latest = EncyclopediaEntryEntity(id = 10L, encyclopediaId = 3L, title = "新码头", entryType = "location")
+        coEvery { entries.getByEncyclopedia(3L) } returns listOf(latest)
+        coEvery { entries.getByType(3L, "location") } returns listOf(latest)
+        vm.load(3L)
+
+        gate.complete(emptyList())
+
+        assertEquals(listOf(latest), vm.state.value.entries)
+    }
+
+    @Test
+    fun oldSedimentRefreshCannotReplaceNewerConfirmedSnapshot() = runTest(dispatcher) {
+        val dao = mockk<EncyclopediaDao> {
+            coEvery { getById(3L) } returns EncyclopediaEntity(id = 3L, name = "雾海")
+        }
+        val entries = mockk<EncyclopediaEntryDao>(relaxed = true)
+        val vm = createViewModel(dao, entries)
+        vm.load(3L)
+        val gate = kotlinx.coroutines.CompletableDeferred<List<EncyclopediaEntryEntity>>()
+        coEvery { entries.getSedimentEntries(3L) } coAnswers { gate.await() }
+        vm.setMainTab(EncyclopediaMainTab.SEDIMENT)
+        val confirmed = EncyclopediaEntryEntity(id = 9L, encyclopediaId = 3L, title = "潮汐钟", confidence = "confirmed")
+        coEvery { entries.getSedimentEntries(3L) } returns listOf(confirmed)
+        vm.setMainTab(EncyclopediaMainTab.GRAPH)
+        vm.setMainTab(EncyclopediaMainTab.SEDIMENT)
+
+        gate.complete(listOf(confirmed.copy(confidence = "inferred")))
+
+        assertEquals(listOf(confirmed), vm.state.value.sedimentEntries)
+    }
+
+    @Test
     fun returningToSameIdDoesNotLetOldSaveCloseNewDraft() = runTest(dispatcher) {
         val gate = kotlinx.coroutines.CompletableDeferred<Int>()
         val dao = mockk<EncyclopediaDao> {

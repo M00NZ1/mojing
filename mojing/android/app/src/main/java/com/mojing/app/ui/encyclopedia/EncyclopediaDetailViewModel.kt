@@ -94,6 +94,8 @@ class EncyclopediaDetailViewModel @Inject constructor(
     private var loadJob: Job? = null
     // 同一百科的多次读取也必须按最后一次请求发布。
     private var loadRevision = 0L
+    private var entriesRevision = 0L
+    private var relationsRevision = 0L
     // 离开再返回相同 ID 仍是新的页面归属。
     private var pageRevision = 0L
     // 读取多个表期间保存的名称优先于读取开始时的快照。
@@ -117,6 +119,8 @@ class EncyclopediaDetailViewModel @Inject constructor(
             pageRevision++
         }
         val requestRevision = ++loadRevision
+        entriesRevision++
+        relationsRevision++
         val initialNameRevision = nameRevision
         loadJob?.cancel()
         encId = id
@@ -461,12 +465,15 @@ class EncyclopediaDetailViewModel @Inject constructor(
     }
 
     private suspend fun refreshEntries() {
+        val id = encId
+        val revision = ++entriesRevision
         val type = _state.value.selectedType
         val entries = if (type.isEmpty() || type == "全部") {
-            entryDao.getByEncyclopedia(encId)
+            entryDao.getByEncyclopedia(id)
         } else {
-            entryDao.getByType(encId, type)
+            entryDao.getByType(id, type)
         }
+        if (revision != entriesRevision || id != encId || type != _state.value.selectedType) return
         val prevPreview = _state.value.previewEntryId
         val nextPreview =
             if (prevPreview != null && entries.none { it.id == prevPreview }) null else prevPreview
@@ -474,11 +481,14 @@ class EncyclopediaDetailViewModel @Inject constructor(
     }
 
     private suspend fun refreshTimelineAndRelations() {
-        val events = timelineEventDao.getByEncyclopedia(encId)
-        val rels = entryRelationDao.getByEncyclopedia(encId)
-        val allEntries = entryDao.getByEncyclopedia(encId)
+        val id = encId
+        val revision = ++relationsRevision
+        val events = timelineEventDao.getByEncyclopedia(id)
+        val rels = entryRelationDao.getByEncyclopedia(id)
+        val allEntries = entryDao.getByEncyclopedia(id)
         val titles = allEntries.associate { it.id to it.title }
-        val sediment = entryDao.getSedimentEntries(encId)
+        val sediment = entryDao.getSedimentEntries(id)
+        if (revision != relationsRevision || id != encId) return
         _state.value = _state.value.copy(
             timelineEvents = events,
             relations = rels,
