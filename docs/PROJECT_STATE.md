@@ -35,6 +35,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
 | Web 消息操作状态 | Web 构建、桌面与 320px 消息操作回归通过；编辑、删除及上下文调整集成回归通过，覆盖生成中禁用、只读入口、结束后恢复和移动端分支操作 | `test-message-generation-actions.mjs`、`test-message-deletion.mjs`，本地 API 模拟 |
+| Web 消息阅读对比度 | 七套主题、两类气泡的正文、引用、链接、代码和表格样本检查通过，最低对比度 7.73；深浅主题截图检查、消息操作回归和生产构建通过 | `test-message-contrast.mjs`；`.codex-work/message-contrast-20260911/` |
 | 引用预览布局 | Web 与 Android Debug 构建通过；Chrome 320px 截图检查与消息操作回归通过；Android 35、320dp 下长名字和长原文取消操作测试通过 | `test-message-deletion.mjs`、`QuoteDraftPreviewTest`；`.codex-work/quote-preview-20260911/quote-draft-320.png` |
 | Web 发送中草稿保护 | Chrome 模拟延迟响应复现并修复同文新草稿被清空；模型与消息操作回归、Web 构建通过，覆盖新草稿本地保留及未编辑草稿正常清理 | `test-model-platforms.mjs`、`test-message-deletion.mjs` |
 | Web 引用草稿恢复 | Web 构建与 Chrome 模拟 API 回归通过，覆盖刷新、会话隔离、取消、长原文片段限制、失败保留及消息保存后清理 | `test-message-deletion.mjs`、`test-model-platforms.mjs` |
