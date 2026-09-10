@@ -62,6 +62,7 @@ data class CharacterEditState(
     val avatarImagePath: String = "",
     val cardImagePath: String = "",
     val isSaving: Boolean = false,
+    val saveError: String? = null,
     val isAiCompleting: Boolean = false,
     val isLoaded: Boolean = false,
     val loadError: String? = null,
@@ -226,7 +227,7 @@ class CharacterEditViewModel @Inject constructor(
 
     private fun updateDraft(transform: (CharacterEditState) -> CharacterEditState) {
         val next = transform(_state.value)
-        _state.value = next.copy(isDirty = next.toDraftSnapshot() != savedDraft)
+        _state.value = next.copy(isDirty = next.saveError != null || next.toDraftSnapshot() != savedDraft)
     }
 
     private fun startCharacterQueueObservation(id: Long) {
@@ -573,28 +574,29 @@ class CharacterEditViewModel @Inject constructor(
     }
 
     fun save(routeCharacterId: Long) {
+        val submittedState = _state.value
+        if (submittedState.isSaving || submittedState.isAiCompleting || !submittedState.isLoaded || submittedState.loadError != null) return
+        val submittedDraft = submittedState.toDraftSnapshot()
+        submittedState.samplingError()?.let {
+            showSnackbar(it)
+            return
+        }
+        if (submittedState.name.isBlank()) {
+            showSnackbar(UserFacingStrings.characterNameRequired())
+            return
+        }
+        val rawJson = submittedState.characterCardJsonRaw.trim()
+        if (rawJson.isNotBlank()) {
+            val parsed = runCatching { JsonParser.parseString(rawJson) }.getOrNull()
+            if (parsed == null || !parsed.isJsonObject) {
+                showSnackbar("扩展设定 JSON 须为对象 {…}，请修正后重试")
+                return
+            }
+        }
+        val profileJsonForStorage = rawJson.ifBlank { "{}" }
+        val previousProfileJson = savedDraft.characterCardJsonRaw
+        _state.value = _state.value.copy(isSaving = true, saveError = null)
         viewModelScope.launch {
-            val submittedState = _state.value
-            val submittedDraft = submittedState.toDraftSnapshot()
-            submittedState.samplingError()?.let {
-                showSnackbar(it)
-                return@launch
-            }
-            if (submittedState.name.isBlank()) {
-                showSnackbar(UserFacingStrings.characterNameRequired())
-                return@launch
-            }
-            val rawJson = submittedState.characterCardJsonRaw.trim()
-            if (rawJson.isNotBlank()) {
-                val parsed = runCatching { JsonParser.parseString(rawJson) }.getOrNull()
-                if (parsed == null || !parsed.isJsonObject) {
-                    showSnackbar("扩展设定 JSON 须为对象 {…}，请修正后重试")
-                    return@launch
-                }
-            }
-            val profileJsonForStorage = rawJson.ifBlank { "{}" }
-            val previousProfileJson = savedDraft.characterCardJsonRaw
-            _state.value = _state.value.copy(isSaving = true)
             var characterSaved = false
             var savedEntity: CharacterEntity? = null
             try {
@@ -630,6 +632,9 @@ class CharacterEditViewModel @Inject constructor(
                 )
                 val effectiveId = saveCharacterBinding(toSave)
                 characterSaved = true
+                savedEntity = toSave.copy(id = effectiveId)
+                currentEntity = savedEntity
+                lastLoadedCharacterId = effectiveId
                 val persistedEntity = checkNotNull(characterDao.getById(effectiveId)) { "角色保存后无法读取" }
                 savedEntity = persistedEntity
                 val profExisting = characterProfileDao.getByCharacter(effectiveId)
@@ -658,6 +663,9 @@ class CharacterEditViewModel @Inject constructor(
                     persisted.copy(snackbar = UserFacingStrings.saveSuccessGeneric())
                 }
                 _state.value = result.copy(isDirty = result.toDraftSnapshot() != savedDraft)
+            } catch (cancelled: CancellationException) {
+                _state.value = _state.value.copy(isSaving = false)
+                throw cancelled
             } catch (_: Exception) {
                 val latest = _state.value
                 if (characterSaved && savedEntity != null) {
@@ -671,11 +679,12 @@ class CharacterEditViewModel @Inject constructor(
                     val result = latest.copy(
                         isSaving = false,
                         isPersisted = true,
-                        snackbar = "角色已保存，但扩展资料保存失败，请重试",
+                        snackbar = "角色已保存，资料更新未完成，请重试",
+                        saveError = "角色已保存，资料更新未完成。再次保存会更新同一角色。",
                     )
-                    _state.value = result.copy(isDirty = result.toDraftSnapshot() != savedDraft)
+                    _state.value = result.copy(isDirty = true)
                 } else {
-                    _state.value = latest.copy(isSaving = false, snackbar = "保存失败，请重试")
+                    _state.value = latest.copy(isSaving = false, saveError = "保存失败，编辑内容已保留，请重试。", snackbar = "保存失败，请重试")
                 }
             }
         }

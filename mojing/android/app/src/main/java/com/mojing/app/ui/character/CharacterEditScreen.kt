@@ -96,7 +96,7 @@ fun CharacterEditScreen(
     var pendingExport by remember { mutableStateOf<PendingExport?>(null) }
     var isWritingExport by remember { mutableStateOf(false) }
 
-    val canSave = state.loadError == null && (!state.isPersisted || state.isDirty)
+    val canSave = state.loadError == null && (!state.isPersisted || state.isDirty || state.saveError != null)
     val pageBusy = state.isSaving || isAvatarImporting || isCardImageProcessing ||
         state.isGeneratingCardImage || state.isPreparingExport || pendingExport != null || isWritingExport
 
@@ -672,6 +672,14 @@ fun CharacterEditScreen(
                 }
             }
 
+            state.saveError?.let { error ->
+                Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth()) {
+                    Text(error, modifier = Modifier.padding(16.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer)
+                }
+            }
             Button(
                 onClick = { viewModel.save(characterId) },
                 enabled = canSave && !pageBusy && !state.isAiCompleting,

@@ -314,4 +314,45 @@ class CharacterEditViewModelTest {
         assertTrue(viewModel.state.value.isPersisted)
         assertTrue(viewModel.state.value.isDirty)
     }
+    @Test
+    fun savedNewCharacterRetainsIdWhenReadbackFailsAndRetryUpdatesIt() = runTest(dispatcher) {
+        val dao = mockk<CharacterDao> { coEvery { getById(51) } throws IllegalStateException("read failed") }
+        val save = mockk<SaveCharacterBindingUseCase>()
+        val savedIds = mutableListOf<Long>()
+        coEvery { save(any()) } coAnswers { savedIds += firstArg<CharacterEntity>().id; 51L }
+        val vm = createSubject(dao, saveCharacterBinding = save).viewModel
+        vm.load(0)
+        vm.updateName("新角色")
+        vm.save(0)
+        assertTrue(vm.state.value.isPersisted)
+        assertTrue(vm.state.value.isDirty)
+        assertNotNull(vm.state.value.saveError)
+        assertEquals("新角色", vm.state.value.name)
+        vm.updateName("改名角色")
+        coEvery { dao.getById(51) } returns CharacterEntity(id = 51, name = "改名角色")
+        vm.save(0)
+        assertEquals(listOf(0L, 51L), savedIds)
+        assertFalse(vm.state.value.isDirty)
+        assertEquals(null, vm.state.value.saveError)
+    }
+
+    @Test
+    fun saveBlocksDuplicateCallsBeforeDispatcherStarts() = runTest(dispatcher) {
+        Dispatchers.setMain(kotlinx.coroutines.test.StandardTestDispatcher(testScheduler))
+        val dao = mockk<CharacterDao> { coEvery { getById(7) } returns CharacterEntity(id = 7, name = "角色") }
+        val save = mockk<SaveCharacterBindingUseCase> { coEvery { this@mockk.invoke(any()) } throws IllegalStateException("disk") }
+        val vm = createSubject(dao, saveCharacterBinding = save).viewModel
+        vm.load(7)
+        advanceUntilIdle()
+        vm.updateName("修改")
+        vm.save(7)
+        vm.save(7)
+        assertTrue(vm.state.value.isSaving)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { save(any()) }
+        assertFalse(vm.state.value.isSaving)
+        assertNotNull(vm.state.value.saveError)
+        assertEquals("修改", vm.state.value.name)
+    }
+
 }
