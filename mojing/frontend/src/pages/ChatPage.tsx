@@ -25,7 +25,7 @@ import MessageContextDialog from '../components/MessageContextDialog';
 import { friendlyFetchError } from '../utils/userFacingError';
 import { extractChoicesFromMessage, mergeRoundChoices, stripChoicesFromMessageContent } from '../utils/chatChoiceParsing';
 import { getRegenerationBranchPoint } from '../utils/chatBranching';
-import { clearChatDraft, loadChatDraft, saveChatDraft } from '../utils/chatDraftStorage';
+import { clearChatDraft, loadChatDraft, saveChatDraft, loadChatQuote, saveChatQuote, type ChatQuoteDraft } from '../utils/chatDraftStorage';
 import { loadSpeakerTurnMode, saveSpeakerTurnMode, type SpeakerTurnMode } from '../utils/speakerTurnMode';
 import { canCreateEntryFromMessage, isPersistedMessageId } from '../utils/messageAvailability';
 import { removeSelectedFiles } from '../utils/fileSelection';
@@ -117,7 +117,13 @@ export default function ChatPage() {
   const [speakerTurnMode, setSpeakerTurnMode] = useState<SpeakerTurnMode>(() => loadSpeakerTurnMode());
   const [maxAutoSpeakers, setMaxAutoSpeakers] = useState(2);
   const [manualReplyCharacterId, setManualReplyCharacterId] = useState<number | null>(null);
-  const [quotingMessage, setQuotingMessage] = useState<Message | null>(null);
+  const [quotingMessage, setQuoteState] = useState<ChatQuoteDraft | null>(() => loadChatQuote(sessionId));
+  const quoteRevisionRef = useRef(0);
+  const setQuotingMessage = useCallback((quote: ChatQuoteDraft | null) => {
+    quoteRevisionRef.current += 1;
+    setQuoteState(quote);
+    saveChatQuote(sessionId, quote);
+  }, [sessionId]);
   const [showPromptDebug, setShowPromptDebug] = useState(false);
   const selectedBranchId = normalizeBranchId(searchParams.get('branch'));
   const selectedBranchRef = useRef(selectedBranchId);
@@ -269,6 +275,8 @@ export default function ChatPage() {
     } else {
       setInput('');
     }
+    quoteRevisionRef.current += 1;
+    setQuoteState(loadChatQuote(sessionId));
     setFiles([]);
     setSessionSearchDraft('');
   }, [sessionId]);
@@ -915,7 +923,7 @@ export default function ChatPage() {
     branchId: string;
     userMessage?: string;
     filesToSend?: File[];
-    quoteMessage?: Message | null;
+    quoteMessage?: ChatQuoteDraft | null;
     streamIntoCurrentList?: boolean;
     narratorOnly?: boolean;
     useStoryModeNarrator?: boolean;
@@ -932,11 +940,14 @@ export default function ChatPage() {
     const outboundUserMessage = userMessage?.trim()
       ? (quoteMessage ? buildQuotePrefix(quoteMessage) + userMessage.trim() : userMessage.trim())
       : undefined;
+    const submittedQuoteRevision = quoteRevisionRef.current;
     let outboundPersisted = false;
     let generationRequestStarted = false;
     const markOutboundPersisted = () => {
       if (outboundPersisted) return;
       outboundPersisted = true;
+      if (userMessage !== undefined && sessionIdRef.current === sessionId
+        && quoteRevisionRef.current === submittedQuoteRevision) setQuotingMessage(null);
       if (
         userMessage !== undefined
         && sessionIdRef.current === sessionId
@@ -978,15 +989,12 @@ export default function ChatPage() {
           branch_id: branchId,
         }, abortController.signal);
         markOutboundPersisted();
-        setQuotingMessage(null);
       } else if (outboundUserMessage && effectiveNarratorOnly) {
         appendOptimisticUserMessage(outboundUserMessage);
         await api.addUserMessage(sessionId, outboundUserMessage, branchId);
         markOutboundPersisted();
-        setQuotingMessage(null);
       } else if (outboundUserMessage) {
         appendOptimisticUserMessage(outboundUserMessage);
-        setQuotingMessage(null);
       }
 
       await api.streamGenerate(
@@ -1059,7 +1067,7 @@ export default function ChatPage() {
   }
 
   const sendMutation = useMutation({
-    mutationFn: async (variables: { sessionId: number; branchId: string; userMessage: string; filesToSend: File[]; quoteMessage: Message | null }) =>
+    mutationFn: async (variables: { sessionId: number; branchId: string; userMessage: string; filesToSend: File[]; quoteMessage: ChatQuoteDraft | null }) =>
       runStreamGeneration({
         branchId: variables.branchId,
         userMessage: variables.userMessage,
@@ -1471,7 +1479,7 @@ export default function ChatPage() {
     return map;
   }, [branchesQuery.data]);
 
-  function buildQuotePrefix(message: Message): string {
+  function buildQuotePrefix(message: ChatQuoteDraft): string {
     const label =
       message.speaker_type === 'user'
         ? '你'

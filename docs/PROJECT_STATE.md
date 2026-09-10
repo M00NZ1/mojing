@@ -35,6 +35,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
 | Web 消息操作状态 | Web 构建、桌面与 320px 消息操作回归通过；编辑、删除及上下文调整集成回归通过，覆盖生成中禁用、只读入口、结束后恢复和移动端分支操作 | `test-message-generation-actions.mjs`、`test-message-deletion.mjs`，本地 API 模拟 |
+| Web 引用草稿恢复 | Web 构建与 Chrome 模拟 API 回归通过，覆盖刷新、会话隔离、取消、长原文片段限制、失败保留及消息保存后清理 | `test-message-deletion.mjs`、`test-model-platforms.mjs` |
 | Android 引用草稿恢复 | 98 项 ChatViewModel 测试、Debug 构建通过；Android 35 下 3 项草稿存储测试通过，覆盖引用独立保存、重建读取、旧格式兼容、无效引用、取消和发送交接 | `ChatViewModelTest`、`ChatDraftStoreInstrumentedTest` |
 | Android 生成中引用 | 定向 ViewModel 测试通过，覆盖生成中选择引用、停止后保留草稿及再次发送引用原文；Debug 与测试 APK 构建通过；Android 35、320dp 下 3 项消息面板测试通过 | `ChatViewModelTest.quoteChosenDuringGenerationRemainsAvailableForNextSend`、`MessageActionPanelTest` |
 | Android 消息操作布局 | Debug 应用与测试 APK 构建通过；Android 35、320dp 下 3 项消息面板测试通过，覆盖生成中禁用、图片保存状态、短面板滚动及引用、分支、撤回操作分发 | `MessageActionPanelTest` |

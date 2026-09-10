@@ -100,6 +100,9 @@ try {
     } else if (endpoint === '/sessions/1/messages') data = { items: history.slice(-40), next_cursor: history.at(-40).id };
     else if (endpoint === '/sessions') data = [chat];
     else if (endpoint === '/sessions/1') data = chat;
+    else if (endpoint === '/sessions/2') data = { ...chat, id: 2, title: '另一段故事' };
+    else if (endpoint === '/sessions/2/messages') data = { items: [], next_cursor: null };
+    else if (endpoint === '/sessions/2/world') data = world;
     else if (endpoint === '/sessions/1/world') data = world;
     else if (endpoint === '/sessions/1/branches') data = [{ branch_id: 'main', label: '主线' }];
     else if (endpoint === '/sessions/1/memory-segments') { memoryReads++; data = memoryRemoved ? [] : [{ id: 1, summary: '旧信封中的自动记忆', key_facts: [], start_message_id: 1, end_message_id: 12 }]; }
@@ -172,6 +175,30 @@ try {
     await dialog.waitFor();
   }
   await page.goto(`http://127.0.0.1:${port}/chat/1`, { waitUntil: 'domcontentloaded' });
+  const quoteRow = page.locator('[data-chat-message-id="6000"]');
+  await quoteRow.hover();
+  await quoteRow.getByRole('button', { name: '更多消息操作', exact: true }).click();
+  await quoteRow.getByRole('menuitem', { name: '引用回复', exact: true }).click();
+  await page.getByRole('textbox', { name: '消息内容', exact: true }).fill('引用草稿正文');
+  const savedQuoteText = await page.locator('.quote-reply-text').textContent();
+  await page.reload();
+  await page.locator('.quote-reply-text').waitFor();
+  assert.equal(await page.locator('.quote-reply-text').textContent(), savedQuoteText);
+  assert.equal(await page.getByRole('textbox', { name: '消息内容', exact: true }).inputValue(), '引用草稿正文');
+  const persistedQuote = await page.evaluate(() => JSON.parse(localStorage.getItem('mojing:chat-quote:v1:1')));
+  assert.equal(persistedQuote.id, 6000);
+  assert.ok(persistedQuote.content.length <= 120, 'quote storage must not retain a full long message');
+  await page.evaluate(() => { history.pushState({}, '', '/chat/2'); window.dispatchEvent(new PopStateEvent('popstate')); });
+  await page.waitForFunction(() => !document.querySelector('.quote-reply-text'));
+  await page.evaluate(() => { history.pushState({}, '', '/chat/1'); window.dispatchEvent(new PopStateEvent('popstate')); });
+  await page.locator('.quote-reply-text').waitFor();
+  assert.equal(await page.locator('.quote-reply-text').textContent(), savedQuoteText);
+  await page.locator('.quote-reply-clear').click();
+  await page.reload();
+  await page.locator('[data-chat-message-id="6000"]').waitFor();
+  assert.equal(await page.locator('.quote-reply-text').count(), 0);
+  assert.equal(await page.getByRole('textbox', { name: '消息内容', exact: true }).inputValue(), '引用草稿正文');
+  await page.getByRole('textbox', { name: '消息内容', exact: true }).fill('');
   await page.locator('[data-chat-message-id="6000"]').hover();
   await page.locator('[data-message-edit-trigger="6000"]').click();
   const editor = page.getByRole('dialog', { name: '编辑消息', exact: true });

@@ -32,6 +32,7 @@ try {
   ]);
   browser = await chromium.launch({ headless: true, channel: process.env.SMOKE_BROWSER || undefined });
   const context = await browser.newContext({ viewport: { width: 1365, height: 900 } });
+  let quoteSendFailure = false;
   await context.route('**/*', (route) => {
     const url = new URL(route.request().url());
     return url.hostname === '127.0.0.1' && url.port === String(port) ? route.continue() : route.abort();
@@ -91,6 +92,8 @@ try {
     else if (endpoint === '/sessions/1/participants') data = [{ id: 1, character: { id: 1, name: '沈照', avatar_path: '', persona_prompt: '守灯人', talkativeness: 0.5 }, character_id: 1, sort_order: 0 }];
     else if (endpoint === '/sessions/1/speaker-plan') data = { character_ids: [1], reason: '' };
     else if (endpoint === '/sessions/1/generate/stream') {
+      assert.equal(JSON.parse(route.request().postData()).user_message, '> 旁白：码头见\n\n测试下一次发送');
+      if (quoteSendFailure) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ detail: '发送暂不可用' }) });
       return route.fulfill({ contentType: 'text/event-stream', body: 'data: {"type":"session","session_id":1}\n\ndata: {"type":"done"}\n\n' });
     }
     await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
@@ -216,9 +219,22 @@ try {
   await page.keyboard.press('Enter');
   await page.getByRole('dialog').waitFor({ state: 'hidden' });
   assert.equal(choice.selection.model, 'large-model-4999');
+  await page.evaluate(() => localStorage.setItem('mojing:chat-quote:v1:1', JSON.stringify({ id: 7, session_id: 1, speaker_type: 'narrator', content: '码头见' })));
+  await page.reload();
+  await page.locator('.quote-reply-text').waitFor();
+  quoteSendFailure = true;
   await page.getByLabel('消息内容', { exact: true }).fill('测试下一次发送');
   await Promise.all([page.waitForResponse((r) => r.url().includes('/generate/stream')), page.getByRole('button', { name: '发送', exact: true }).click()]);
+  await page.getByText('发送暂不可用', { exact: true }).waitFor();
+  assert.ok((await page.locator('.quote-reply-text').textContent()).includes('码头见'));
+  assert.equal(await page.getByLabel('消息内容', { exact: true }).inputValue(), '测试下一次发送');
+  quoteSendFailure = false;
+
+  await Promise.all([page.waitForResponse((r) => r.url().includes('/generate/stream')), page.getByRole('button', { name: '发送', exact: true }).click()]);
   assert.ok(requests.some((r) => r.endpoint === '/sessions/1/generate/stream'));
+  await page.locator('.quote-reply-text').waitFor({ state: 'hidden' });
+  assert.equal(await page.evaluate(() => localStorage.getItem('mojing:chat-quote:v1:1')), null);
+
   await page.locator('.chat-model-trigger').click();
   const dialogBounds = await page.getByRole('dialog').boundingBox();
   assert.ok(dialogBounds.x >= 10 && dialogBounds.y >= 10);

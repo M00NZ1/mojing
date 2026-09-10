@@ -171,3 +171,7 @@ node mojing/frontend/scripts/generate-brand-assets.mjs
 ```
 
 启动页复用 Android 前景资源，标语维护在字符串资源中。
+
+### Web 引用草稿
+
+`chatDraftStorage.ts` 保留原有 v1 文字草稿键，引用使用独立的 `mojing:chat-quote:v1:<sessionId>` 记录，保存消息 ID、发言者和最多 120 字符的已选原文首行。引用不保存完整长消息或附件。读取时校验会话与字段，损坏的引用记录不影响文字草稿；发送确认通过引用修订号保护期间的新选择。
