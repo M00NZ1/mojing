@@ -1,5 +1,7 @@
 package com.mojing.app.ui.character
 
+import com.mojing.app.ui.common.MoJingLongTextField
+
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingButton as Button
 import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
@@ -276,7 +278,7 @@ fun CharacterEditScreen(
                     }
                 }
             }
-            OutlinedTextField(value = state.personaPrompt, onValueChange = { viewModel.updatePersonaPrompt(it) }, label = { Text("人设提示词") }, placeholder = { Text("描述角色的性格、背景、说话风格...") }, modifier = Modifier.fillMaxWidth(), minLines = 4)
+            MoJingLongTextField(value = state.personaPrompt, onValueChange = { viewModel.updatePersonaPrompt(it) }, label = "人设提示词", placeholder = "描述角色的性格、背景、说话风格...", modifier = Modifier.fillMaxWidth())
             TextButton(onClick = { focusManager.clearFocus(); showMacroSheet = true }, modifier = Modifier.align(Alignment.Start)) {
                 Text("插入宏变量")
             }

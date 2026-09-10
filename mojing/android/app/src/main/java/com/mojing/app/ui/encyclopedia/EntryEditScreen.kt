@@ -1,5 +1,7 @@
 package com.mojing.app.ui.encyclopedia
 
+import com.mojing.app.ui.common.MoJingLongTextField
+
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingButton as Button
 import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
@@ -271,9 +273,9 @@ fun EntryEditScreen(
                             label = { Text("摘要") }, placeholder = { Text("一句话描述...") }, modifier = Modifier.fillMaxWidth(), maxLines = 2
                         )
 
-                        OutlinedTextField(
+                        MoJingLongTextField(
                             value = state.content, onValueChange = { viewModel.updateContent(it) },
-                            label = { Text("详细内容") }, placeholder = { Text("详细的百科条目内容...") }, modifier = Modifier.fillMaxWidth(), minLines = 6
+                            label = "详细内容", placeholder = "详细的百科条目内容...", modifier = Modifier.fillMaxWidth(),
                         )
 
                         OutlinedTextField(
