@@ -44,6 +44,7 @@ try {
   let choice = { version: 1, selection: null };
   let discoveryMode = 'success';
   let selectionFailure = false;
+  let selectionGate = null;
   const requests = [];
   const providers = [
     ['deepseek_official', 'DeepSeek', 'https://api.deepseek.com'], ['openai', 'OpenAI', 'https://api.openai.com/v1'],
@@ -75,6 +76,7 @@ try {
       }
       data = catalog;
     } else if (endpoint === '/sessions/1/model-choice') {
+      if (method === 'PUT' && selectionGate) await selectionGate;
       if (method === 'PUT' && selectionFailure) { status = 500; data = { detail: '保存失败，请重试' }; }
       else { if (method === 'PUT') choice = { version: 1, ...payload }; data = choice; }
     } else if (endpoint === '/providers/catalog') data = providers;
@@ -181,8 +183,30 @@ try {
   const dialogBounds = await page.getByRole('dialog').boundingBox();
   assert.ok(dialogBounds.x >= 10 && dialogBounds.y >= 10);
   if (output) await page.screenshot({ path: path.join(output, 'model-picker-mobile.png') });
+  await page.setViewportSize({ width: 320, height: 480 });
+  const closeButton = page.getByRole('dialog').getByRole('button', { name: '关闭', exact: true });
+  const closeBefore = await closeButton.boundingBox();
+  await page.locator('.chat-model-options').evaluate((node) => { node.scrollTop = node.scrollHeight; });
+  const closeAfter = await closeButton.boundingBox();
+  assert.ok(Math.abs(closeBefore.y - closeAfter.y) < 1, 'close stays fixed while list scrolls');
+  const manage = await page.getByRole('link', { name: '管理平台与模型' }).boundingBox();
+  assert.ok(manage.y + manage.height <= 480, 'management stays visible on a short screen');
+  await page.getByPlaceholder('搜索平台或模型名称').fill('large-model-4999');
+  assert.equal(await page.getByRole('button', { name: 'DeepSeek large-model-4999', exact: true }).getAttribute('aria-pressed'), 'true');
+  await page.getByPlaceholder('搜索平台或模型名称').evaluate((node) => node.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true, cancelable: true })));
+  assert.equal(await page.getByRole('dialog').count(), 1);
+  let releaseSelection;
+  selectionGate = new Promise((resolve) => { releaseSelection = resolve; });
+  await page.getByRole('button', { name: '跟随角色与模型设置', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: '正在保存模型选择…' }).waitFor();
+  assert.equal(await closeButton.isEnabled(), false);
   await page.keyboard.press('Escape');
+  assert.equal(await page.getByRole('dialog').count(), 1);
+  releaseSelection(); selectionGate = null;
   await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  assert.equal(choice.selection, null);
+  await page.locator('.chat-model-trigger').filter({ hasText: '跟随角色与模型设置' }).waitFor();
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.locator('input[type=file][accept="image/*"]').setInputFiles({
     name: 'preview.png', mimeType: 'image/png',
     buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'),

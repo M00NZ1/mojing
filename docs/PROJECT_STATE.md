@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Web 模型面板布局与反馈 | 生产构建及 Chrome 模拟 API 回归通过，覆盖 5000 模型虚拟列表、320×480 固定入口、选中状态、恢复默认、保存中关闭保护、失败重试与输入法保护；390px 截图检查通过 | `test-model-platforms.mjs`；`.codex-work/web-model-panel-20260910/model-picker-mobile.png` |
 | Android 恢复默认模型配置 | 88 项聊天 ViewModel 与 7 项平台存储测试通过，覆盖恢复失败重试、会话隔离、重复恢复与重新读取；Android 35、320dp 下 5 项模型面板测试通过；Debug 应用与测试 APK 构建通过 | `ChatViewModelTest`、`ModelPlatformsTest`、`ChatModelPickerTest`；`.codex-work/android-ui-20260910/model-follow-tests.txt` |
 | Android 模型选择显示 | 87 项聊天 ViewModel 测试通过；Android 35、320dp 下 4 项模型面板测试通过，覆盖同名平台选择、搜索空状态恢复、缺少 Key 禁用、保存失败重试与长线路说明；Debug 应用与测试 APK 构建通过 | `ChatViewModelTest`、`ChatModelPickerTest`；`.codex-work/android-ui-20260910/model-label-tests.txt` |
 | Android 消息编辑保存反馈 | 87 项聊天 ViewModel 测试通过，覆盖写入前失败与已提交后加载失败的结果区分；Android 35、320dp 下 3 项编辑界面测试通过，覆盖保存锁定、失败重试、草稿保留与已提交禁用；Debug 应用与测试 APK 构建通过 | `ChatViewModelTest`、`MessageEditDialogTest`；`.codex-work/android-ui-20260910/edit-saving-tests.txt` |

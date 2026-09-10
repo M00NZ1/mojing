@@ -29,3 +29,20 @@
 .chat-model-option:hover, .chat-model-option:focus-visible { background: var(--surface-2, var(--bg)); }
 .chat-model-option:disabled { opacity: .5; cursor: default; }
 @media (max-width: 600px) { .model-platform-row { align-items: start; flex-direction: column; gap: 10px; } .model-platform-fields { grid-template-columns: minmax(0, 1fr); } .model-platform-editor, .chat-model-dialog { padding: 16px; } }
+
+.chat-model-dialog[open] { display: flex; flex-direction: column; gap: 10px; height: min(720px, calc(100dvh - 32px)); overflow: hidden; }
+.chat-model-dialog > :not(.chat-model-options) { flex-shrink: 0; }
+.chat-model-dialog > p { margin: 0; }
+.chat-model-dialog > p[hidden] { display: none; }
+.chat-model-dialog .model-platform-heading { align-items: center; }
+.chat-model-dialog .model-platform-heading h3 { margin: 0; }
+.chat-model-dialog .chat-model-options { flex: 1; min-height: 0; height: auto; margin: 0; }
+.chat-model-option[aria-pressed="true"] { background: var(--surface-2); box-shadow: inset 3px 0 var(--accent); }
+.chat-model-option[aria-pressed="true"] small { color: var(--text); }
+.chat-model-virtual-option .chat-model-check { display: inline; margin-left: 8px; }
+.chat-model-saving { color: var(--text-2); }
+.chat-model-dialog > [role="alert"] { max-height: min(18dvh, 9rem); overflow-y: auto; overflow-wrap: anywhere; }
+@media (max-height: 560px) {
+  .chat-model-dialog[open] { gap: 6px; padding: 12px; }
+  .chat-model-dialog > p:not([role]) { display: none; }
+}
