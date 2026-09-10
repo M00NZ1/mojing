@@ -217,11 +217,19 @@ class ChatViewModel @Inject constructor(
     }
 
     fun selectChatModel(platformId: String, model: String, onSaved: () -> Unit = {}) {
+        saveChatModelSelection({ secureStorage.selectSessionModel(sessionId, platformId, model) }, onSaved)
+    }
+
+    fun followConfiguredChatModels(onSaved: () -> Unit = {}) {
+        saveChatModelSelection({ secureStorage.clearSessionModelSelection(sessionId) }, onSaved)
+    }
+
+    private fun saveChatModelSelection(save: () -> Unit, onSaved: () -> Unit) {
         if (_state.value.modelSelectionSaving) return
         _state.update { it.copy(modelSelectionSaving = true, modelSelectionError = null) }
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) { secureStorage.selectSessionModel(sessionId, platformId, model) }
+                withContext(Dispatchers.IO) { save() }
                 refreshModelSelection()
                 onSaved()
             } catch (e: CancellationException) {

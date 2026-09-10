@@ -20,8 +20,9 @@ import com.mojing.app.data.ModelPlatform
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selectedLabel: String = "", lastRequestModel: String? = null, isGenerating: Boolean = false, isSaving: Boolean = false, saveError: String? = null, selectedModel: Pair<String, String>? = null, onSelect: (String, String) -> Unit) {
+fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selectedLabel: String = "", lastRequestModel: String? = null, isGenerating: Boolean = false, isSaving: Boolean = false, saveError: String? = null, selectedModel: Pair<String, String>? = null, onFollowSettings: (() -> Unit)? = null, onSelect: (String, String) -> Unit) {
     var query by remember { mutableStateOf("") }
+    val followMatches = onFollowSettings != null && (query.isBlank() || "跟随角色与模型设置".contains(query, true))
     ModalBottomSheet(onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(horizontal = 24.dp),
@@ -52,6 +53,16 @@ fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selec
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
+                if (followMatches && onFollowSettings != null) {
+                    item(key = "follow-settings") {
+                        TextButton(onClick = onFollowSettings, enabled = !isSaving,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                .testTag("chat-model-follow-settings").semantics { selected = selectedLabel == "跟随角色与模型设置" }) {
+                            Text("跟随角色与模型设置", Modifier.weight(1f))
+                            if (selectedLabel == "跟随角色与模型设置") Icon(Icons.Default.Check, "已选择")
+                        }
+                    }
+                }
                 platforms.forEach { p ->
                     val names = p.models.filter { p.name.contains(query, true) || it.contains(query, true) }
                     if (names.isNotEmpty()) {
@@ -74,7 +85,7 @@ fun ChatModelPicker(platforms: List<ModelPlatform>, onDismiss: () -> Unit, selec
                         }
                     }
                 }
-                if (platforms.none { p -> p.models.any { p.name.contains(query, true) || it.contains(query, true) } }) {
+                if (!followMatches && platforms.none { p -> p.models.any { p.name.contains(query, true) || it.contains(query, true) } }) {
                     item { Text("没有匹配模型，请在模型设置中添加平台和模型。", modifier = Modifier.padding(vertical = 20.dp)) }
                 }
             }

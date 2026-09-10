@@ -894,6 +894,32 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun followingConfiguredModelsRetainsSelectionOnFailureAndCanRetry() = runTest(testDispatcher) {
+        val storage = validSecureStorage()
+        var selection: Pair<String, String>? = "a" to "one"
+        every { storage.modelPlatforms() } returns listOf(com.mojing.app.data.ModelPlatform("a", "A", "https://a.test", "test-key", listOf("one")))
+        every { storage.sessionModelSelection(42L) } answers { selection }
+        every { storage.clearSessionModelSelection(42L) } throws IllegalStateException("write failed")
+        val vm = createViewModel(secureStorage = storage)
+        advanceUntilIdle()
+        var saved = false
+        vm.followConfiguredChatModels { saved = true }
+        vm.followConfiguredChatModels { saved = true }
+        vm.state.first { !it.modelSelectionSaving }
+        assertFalse(saved)
+        assertNotNull(vm.state.value.modelSelectionError)
+        assertEquals("A · one", vm.modelSelectionLabel.value)
+        verify(exactly = 1) { storage.clearSessionModelSelection(42L) }
+        every { storage.clearSessionModelSelection(42L) } answers { selection = null }
+        vm.followConfiguredChatModels { saved = true }
+        vm.state.first { !it.modelSelectionSaving }
+        assertTrue(saved)
+        assertEquals(null, vm.state.value.modelSelectionError)
+        assertEquals(null, vm.currentChatModelSelection())
+        assertEquals("跟随角色与模型设置", vm.modelSelectionLabel.value)
+    }
+
+    @Test
     fun failedModelSelectionKeepsOldLabelAndCanRetry() = runTest(testDispatcher) {
         val storage = validSecureStorage()
         val platform = com.mojing.app.data.ModelPlatform("a", "A", "https://a.test", "test-key", listOf("old", "new"))

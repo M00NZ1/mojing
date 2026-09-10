@@ -45,6 +45,11 @@ class SecureStorage {
             .putString("chat_model_$sessionId", model).commit()) { "模型选择保存失败" }
     }
 
+    fun clearSessionModelSelection(sessionId: Long) {
+        check(checkNotNull(prefs).edit().remove("chat_platform_$sessionId")
+            .remove("chat_model_$sessionId").commit()) { "模型选择保存失败" }
+    }
+
     fun init(applicationContext: Context) {
         if (prefs != null) return
         val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)

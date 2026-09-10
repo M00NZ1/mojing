@@ -29,9 +29,11 @@ class ModelPlatformsTest {
         every { prefs.getString(any(), any()) } answers { values[firstArg()] ?: secondArg() }
         every { prefs.edit() } answers {
             val changes = mutableMapOf<String, String>()
+            val removed = mutableSetOf<String>()
             val editor = mockk<SharedPreferences.Editor>()
             every { editor.putString(any(), any()) } answers { changes[firstArg()] = secondArg(); editor }
-            every { editor.commit() } answers { values.putAll(changes); true }
+            every { editor.remove(any()) } answers { removed += firstArg<String>(); editor }
+            every { editor.commit() } answers { removed.forEach(values::remove); values.putAll(changes); true }
             every { editor.apply() } answers { values.putAll(changes) }
             editor
         }
@@ -66,6 +68,20 @@ class ModelPlatformsTest {
 
     @Test fun manualModelNamesPreserveOrderAndRemoveDuplicates() {
         assertEquals(listOf("a", "org/b", "c"), ModelPlatformCodec.modelNames(" a，org/b\na,c\r\n"))
+    }
+
+    @Test fun followingSettingsClearsOnlyTheSelectedSessionAndSurvivesReopen() {
+        val values = mutableMapOf<String, String>()
+        val s = storage(values)
+        s.saveModelPlatform(ModelPlatform("p", "P", "https://p.test", "test-key", listOf("one")))
+        s.selectSessionModel(1, "p", "one")
+        s.selectSessionModel(2, "p", "one")
+        val before = values.toMap()
+        s.clearSessionModelSelection(1)
+        s.clearSessionModelSelection(1)
+        assertEquals(before.filterKeys { it != "chat_platform_1" && it != "chat_model_1" }, values)
+        assertNull(storage(values).sessionModelSelection(1))
+        assertEquals("p" to "one", storage(values).sessionModelSelection(2))
     }
 
     @Test fun unknownModelCannotChangeSavedSessionSelection() {

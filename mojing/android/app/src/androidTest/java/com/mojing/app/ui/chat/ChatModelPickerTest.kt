@@ -13,6 +13,21 @@ import org.junit.Test
 class ChatModelPickerTest {
     @get:Rule val rule = createComposeRule()
 
+    @Test fun followSettingsIsSearchableAndSharesTheSaveLock() {
+        val saving = mutableStateOf(true)
+        var followed = false
+        rule.setContent { MaterialTheme {
+            ChatModelPicker(emptyList(), onDismiss = {}, selectedLabel = "跟随角色与模型设置",
+                isSaving = saving.value, onFollowSettings = { followed = true }) { _, _ -> }
+        } }
+        rule.onNodeWithText("搜索平台或模型").performTextInput("跟随")
+        rule.onNodeWithTag("chat-model-follow-settings").assertIsSelected().assertIsNotEnabled()
+        rule.onNodeWithText("没有匹配模型，请在模型设置中添加平台和模型。").assertDoesNotExist()
+        rule.runOnIdle { saving.value = false }
+        rule.onNodeWithTag("chat-model-follow-settings").performClick()
+        rule.runOnIdle { assertTrue(followed) }
+    }
+
     @Test fun selectionUsesPlatformIdentityEvenWhenNamesMatch() {
         val selection = mutableStateOf("a" to "shared-model")
         rule.setContent { MaterialTheme {
