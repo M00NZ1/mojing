@@ -14,6 +14,7 @@ data class ChatDraftSnapshot(
     val pendingSubmissionId: String? = null,
     val narratorGuidance: String = "",
     val imagePrompt: String = "",
+    val quotedMessageId: Long? = null,
 )
 
 /** 按会话保存未发送内容；它是草稿单一持久化 owner，不承载已发送消息。 */
@@ -36,6 +37,7 @@ class ChatDraftStore @Inject constructor(
                 .orEmpty()
                 .distinct()
             ChatDraftSnapshot(
+                quotedMessageId = runCatching { root.get("quotedMessageId")?.asLong }.getOrNull()?.takeIf { it > 0L },
                 imagePrompt = root.get("imagePrompt")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty(),
                 narratorGuidance = root.get("narratorGuidance")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty(),
                 inputText = root.get("inputText")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty(),
@@ -65,7 +67,7 @@ class ChatDraftStore @Inject constructor(
         val submissionId = snapshot.pendingSubmissionId
             ?.trim()
             ?.takeIf { it.length in 1..MAX_SUBMISSION_ID_LENGTH }
-        if (snapshot.imagePrompt.isEmpty() && snapshot.narratorGuidance.isEmpty() && snapshot.inputText.isEmpty() && snapshot.pendingAttachmentPaths.isEmpty() && submissionId == null) {
+        if (snapshot.imagePrompt.isEmpty() && snapshot.narratorGuidance.isEmpty() && snapshot.inputText.isEmpty() && snapshot.quotedMessageId == null && snapshot.pendingAttachmentPaths.isEmpty() && submissionId == null) {
             if (synchronous) return editor.remove(key(sessionId)).commit()
             editor.remove(key(sessionId)).apply()
             return true
@@ -73,6 +75,7 @@ class ChatDraftStore @Inject constructor(
         val root = JsonObject().apply {
             addProperty("version", VERSION)
             addProperty("inputText", snapshot.inputText)
+            snapshot.quotedMessageId?.takeIf { it > 0L }?.let { addProperty("quotedMessageId", it) }
             addProperty("narratorGuidance", snapshot.narratorGuidance)
             addProperty("imagePrompt", snapshot.imagePrompt)
             add("pendingAttachmentPaths", JsonArray().also { array ->

@@ -11,6 +11,22 @@ import org.junit.runner.RunWith
 class ChatDraftStoreInstrumentedTest {
 
     @Test
+    fun quoteOnlyDraftSurvivesRecreationAndMalformedReferenceKeepsText() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = ChatDraftStore(context)
+        val prefs = context.getSharedPreferences("chat_drafts_v1", 0)
+        try {
+            store.save(8290004, ChatDraftSnapshot(quotedMessageId = 71L))
+            assertEquals(ChatDraftSnapshot(quotedMessageId = 71L), ChatDraftStore(context).load(8290004))
+            prefs.edit().putString("session_8290004", """{"version":1,"inputText":"保留正文","quotedMessageId":"bad"}""").commit()
+            assertEquals(ChatDraftSnapshot(inputText = "保留正文"), store.load(8290004))
+        } finally {
+            store.save(8290004, ChatDraftSnapshot())
+        }
+        assertEquals(ChatDraftSnapshot(), store.load(8290004))
+    }
+
+    @Test
     fun guidanceOnlyDraftIsScopedAndOldDraftRemainsReadable() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val store = ChatDraftStore(context)
@@ -38,6 +54,7 @@ class ChatDraftStoreInstrumentedTest {
             inputText = "进程重建后继续写",
             narratorGuidance = "夜晚传来脚步声",
             imagePrompt = "雨夜街景",
+            quotedMessageId = 71L,
             pendingAttachmentPaths = listOf("/tmp/a.png", "/tmp/b.png"),
             pendingSubmissionId = "submission-8290001",
         )

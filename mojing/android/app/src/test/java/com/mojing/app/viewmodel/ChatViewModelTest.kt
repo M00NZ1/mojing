@@ -1395,6 +1395,67 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun quoteDraftRestoresFromSourceAndClearPersists() = runTest(testDispatcher) {
+        val draftStore = emptyDraftStore()
+        every { draftStore.load(42L) } returns ChatDraftSnapshot(inputText = "继续", quotedMessageId = 71L)
+        val dao = mockk<MessageDao>(relaxed = true)
+        val source = MessageEntity(id = 71L, sessionId = 42L, speakerType = "narrator", content = "最新原文")
+        coEvery { dao.getByIdInSession(71L, 42L) } returns source
+        val vm = createViewModel(messageDao = dao, chatDraftStore = draftStore)
+        advanceUntilIdle()
+        assertEquals(source, vm.state.value.quotingMessage)
+        assertEquals("继续", vm.state.value.inputText)
+        vm.setQuotingMessage(null)
+        verify { draftStore.save(42L, ChatDraftSnapshot(inputText = "继续")) }
+        vm.setQuotingMessage(source)
+        verify { draftStore.save(42L, ChatDraftSnapshot(inputText = "继续", quotedMessageId = 71L)) }
+    }
+
+    @Test
+    fun delayedQuoteRestoreDoesNotUndoUserCancellation() = runTest(testDispatcher) {
+        val draftStore = emptyDraftStore()
+        every { draftStore.load(42L) } returns ChatDraftSnapshot(quotedMessageId = 71L)
+        val dao = mockk<MessageDao>(relaxed = true)
+        val gate = CompletableDeferred<MessageEntity?>()
+        coEvery { dao.getByIdInSession(71L, 42L) } coAnswers { gate.await() }
+        val vm = createViewModel(messageDao = dao, chatDraftStore = draftStore)
+        runCurrent()
+        vm.setQuotingMessage(null)
+        gate.complete(null)
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.quotingMessage)
+        verify { draftStore.save(42L, ChatDraftSnapshot()) }
+    }
+
+    @Test
+    fun unavailableQuotePreservesTextAndRemovesStaleReference() = runTest(testDispatcher) {
+        val draftStore = emptyDraftStore()
+        every { draftStore.load(42L) } returns ChatDraftSnapshot(inputText = "继续", quotedMessageId = 71L)
+        val dao = mockk<MessageDao>(relaxed = true)
+        coEvery { dao.getByIdInSession(71L, 42L) } returns null
+        val vm = createViewModel(messageDao = dao, chatDraftStore = draftStore)
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.quotingMessage)
+        assertEquals("继续", vm.state.value.inputText)
+        assertTrue(vm.state.value.error.orEmpty().contains("引用原文已不可用"))
+        verify { draftStore.save(42L, ChatDraftSnapshot(inputText = "继续")) }
+    }
+
+    @Test
+    fun committedSubmissionDoesNotRestoreAlreadySentQuote() = runTest(testDispatcher) {
+        val draftStore = emptyDraftStore()
+        every { draftStore.load(42L) } returns ChatDraftSnapshot(inputText = "已发送", quotedMessageId = 71L, pendingSubmissionId = "sent")
+        val dao = mockk<MessageDao>(relaxed = true)
+        coEvery { dao.countDraftSubmission(any(), any()) } returns 1
+        val vm = createViewModel(messageDao = dao, chatDraftStore = draftStore)
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.quotingMessage)
+        assertEquals("", vm.state.value.inputText)
+        verify { draftStore.save(42L, ChatDraftSnapshot()) }
+        coVerify(exactly = 0) { dao.getByIdInSession(71L, 42L) }
+    }
+
+    @Test
     fun restoresSessionDraftAndDropsInvalidOrAlreadySentAttachments() = runTest(testDispatcher) {
         val root = createTempDirectory("mojing-draft-test").toFile()
         try {

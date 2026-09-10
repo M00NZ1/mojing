@@ -255,6 +255,7 @@ class ChatViewModel @Inject constructor(
     private var activeDraftSubmissionId: String? = null
     private var narratorDraftRevision = 0L
     private var imageDraftRevision = 0L
+    private var quoteDraftRevision = 0L
 
     private fun persistCurrentDraft() {
         val current = _state.value
@@ -263,6 +264,7 @@ class ChatViewModel @Inject constructor(
                 sessionId,
                 ChatDraftSnapshot(
                     inputText = current.inputText,
+                    quotedMessageId = current.quotingMessage?.id,
                     narratorGuidance = current.narratorGuidance,
                     imagePrompt = current.imagePrompt,
                     pendingAttachmentPaths = current.pendingLocalImagePaths,
@@ -284,6 +286,7 @@ class ChatViewModel @Inject constructor(
                 sessionId,
                 ChatDraftSnapshot(
                     inputText = current.inputText,
+                    quotedMessageId = current.quotingMessage?.id,
                     narratorGuidance = current.narratorGuidance,
                     imagePrompt = current.imagePrompt,
                     pendingAttachmentPaths = current.pendingLocalImagePaths,
@@ -859,15 +862,20 @@ class ChatViewModel @Inject constructor(
             draftSubmissionSearchMarker(pendingSubmissionId),
         ) > 0
         val restoredInputText = if (draftSubmissionCommitted) "" else restoredDraft.inputText
+        val restoredQuote = if (draftSubmissionCommitted) null else restoredDraft.quotedMessageId?.let {
+            messageDao.getByIdInSession(it, sessionId)
+        }?.takeIf { ChatMessageTextFormat.quoteSnippet(it.content, 120, it.speakerType).isNotBlank() }
+        val unavailableQuote = !draftSubmissionCommitted && restoredDraft.quotedMessageId != null && restoredQuote == null
+
         if (
-            invalidRestoredAttachmentCount > 0 ||
-            alreadySentAttachmentCount > 0 ||
-            pendingSubmissionId != null
+            quoteDraftRevision == 0L && (unavailableQuote || invalidRestoredAttachmentCount > 0 ||
+                alreadySentAttachmentCount > 0 || pendingSubmissionId != null)
         ) {
             chatDraftStore.save(
                 sessionId,
                 restoredDraft.copy(
                     inputText = restoredInputText,
+                    quotedMessageId = restoredQuote?.id,
                     pendingAttachmentPaths = restoredAttachmentPaths,
                     pendingSubmissionId = null,
                 ),
@@ -948,6 +956,7 @@ class ChatViewModel @Inject constructor(
             displayContextTokenLimit = displayCap,
             conversationTokenEstimate = convEst,
             inputText = _state.value.inputText.ifEmpty { restoredInputText },
+            quotingMessage = if (quoteDraftRevision == 0L) restoredQuote else _state.value.quotingMessage,
             imagePrompt = if (imageDraftRevision == 0L) restoredDraft.imagePrompt else _state.value.imagePrompt,
             narratorGuidance = if (narratorDraftRevision == 0L) restoredDraft.narratorGuidance else _state.value.narratorGuidance,
             pendingLocalImagePaths = if (_state.value.pendingLocalImagePaths.isEmpty()) {
@@ -956,6 +965,7 @@ class ChatViewModel @Inject constructor(
                 _state.value.pendingLocalImagePaths
             },
             error = _state.value.error ?: buildList {
+                if (unavailableQuote && quoteDraftRevision == 0L) add("引用原文已不可用，请重新选择；输入草稿已保留")
                 if (invalidRestoredAttachmentCount > 0) {
                     add("已移除 $invalidRestoredAttachmentCount 个无法读取的待发送图片")
                 }
@@ -1873,6 +1883,7 @@ class ChatViewModel @Inject constructor(
         val draftSubmissionId = UUID.randomUUID().toString()
         if (!beginDraftSubmission(draftSubmissionId)) return
         val quote = _state.value.quotingMessage
+        val submittedQuoteRevision = quoteDraftRevision
         val quotedPrefix = quote?.let { q ->
             val label = when (q.speakerType) {
                 "user" -> secureStorage.userName.ifBlank { "?" }
@@ -1891,7 +1902,7 @@ class ChatViewModel @Inject constructor(
                 _state.update { state ->
                     state.copy(
                         inputText = if (activeDraftSubmissionId == draftSubmissionId) "" else state.inputText,
-                        quotingMessage = if (state.quotingMessage?.id == quote?.id) null else state.quotingMessage,
+                        quotingMessage = if (quoteDraftRevision == submittedQuoteRevision) null else state.quotingMessage,
                     )
                 }
                 finishDraftSubmission(draftSubmissionId)
@@ -1960,7 +1971,7 @@ class ChatViewModel @Inject constructor(
                         ) {
                             current.pendingLocalImagePaths.drop(pendingImageLocalPaths.size)
                         } else current.pendingLocalImagePaths,
-                        quotingMessage = if (current.quotingMessage?.id == quote?.id) null else current.quotingMessage,
+                        quotingMessage = if (quoteDraftRevision == submittedQuoteRevision) null else current.quotingMessage,
                     )
                 }
                 finishDraftSubmission(draftSubmissionId)
@@ -2854,7 +2865,10 @@ class ChatViewModel @Inject constructor(
             _state.value = _state.value.copy(error = UserFacingStrings.messageHasNoQuotableText())
             return
         }
+        quoteDraftRevision++
+        if (message != _state.value.quotingMessage) activeDraftSubmissionId = null
         _state.value = _state.value.copy(quotingMessage = message)
+        persistCurrentDraft()
     }
 
     fun currentSpeakerTurnMode(): String = secureStorage.speakerTurnMode
