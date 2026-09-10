@@ -4,9 +4,10 @@ import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -29,10 +30,15 @@ fun SearchBar(
         placeholder = { Text(placeholder) },
         leadingIcon = { Icon(Icons.Default.Search, "搜索") },
         singleLine = true,
-        shape = RoundedCornerShape(24.dp),
+        trailingIcon = if (query.isNotEmpty()) ({
+            IconButton(onClick = { onQueryChange("") }) { Icon(Icons.Default.Close, "清空搜索") }
+        }) else null,
+        shape = MaterialTheme.shapes.small,
         colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-            unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            focusedBorderColor = MaterialTheme.colorScheme.primary,
+            unfocusedBorderColor = androidx.compose.ui.graphics.Color.Transparent
         )
     )
 }

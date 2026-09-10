@@ -2,6 +2,14 @@ package com.mojing.app.ui.chat
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Create
+import com.mojing.app.ui.common.ConfirmDialog
+import com.mojing.app.ui.common.SearchBar
+import com.mojing.app.ui.common.ImeHideAwareNavigationBar
+import com.mojing.app.ui.navigation.MoJingNavItem
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -50,7 +58,7 @@ class VisualRefreshTest {
             MoJingTheme(themeMode = mode.value) {
                 palette = MaterialTheme.colorScheme
                 Surface(Modifier.fillMaxSize().testTag("visual-review"), color = MaterialTheme.colorScheme.background) {
-                    Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                    Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                         Text("墨境", style = MaterialTheme.typography.headlineLarge)
                         Text("每一段对话，都通往新的世界。", style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -81,8 +89,40 @@ class VisualRefreshTest {
         }
         rule.onNodeWithText("角色名称").performTextInput("林汐")
         rule.onNodeWithText("林汐").assertExists()
-        rule.onNodeWithText("开始对话").performClick()
+        rule.onNodeWithText("开始对话").performScrollTo().performClick()
         rule.runOnIdle { assertTrue(clicked) }
+    }
+
+    @Test fun navigationSelectionAndSearchClearRemainAccessible() {
+        var query by mutableStateOf("雾港")
+        var selected by mutableStateOf(false)
+        rule.setContent {
+            MoJingTheme {
+                Column {
+                    SearchBar(query, { query = it })
+                    ImeHideAwareNavigationBar {
+                        MoJingNavItem(selected, { selected = true }, Icons.Default.Create, "创作")
+                    }
+                }
+            }
+        }
+        rule.onNodeWithContentDescription("清空搜索").performClick()
+        rule.runOnIdle { assertTrue(query.isEmpty()) }
+        rule.onNodeWithContentDescription("清空搜索").assertDoesNotExist()
+        rule.onNodeWithText("创作").assertIsNotSelected().performClick().assertIsSelected()
+    }
+
+    @Test fun longConfirmationKeepsItsActionVisible() {
+        var confirmed = false
+        rule.setContent {
+            MoJingTheme {
+                ConfirmDialog("继续整理", "长说明，保留当前内容。\n".repeat(200),
+                    onConfirm = { confirmed = true }, onDismiss = {})
+            }
+        }
+        rule.onNodeWithText("确认").assertIsDisplayed().performClick()
+        rule.runOnIdle { assertTrue(confirmed) }
+        rule.onNodeWithText("取消").assertIsDisplayed()
     }
 
     @Test fun splashKeepsTheOriginalTagline() {

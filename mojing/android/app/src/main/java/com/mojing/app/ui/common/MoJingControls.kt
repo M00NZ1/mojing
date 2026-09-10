@@ -6,6 +6,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Shape
@@ -15,18 +21,19 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 private fun fieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
     unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
     disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
     focusedBorderColor = MaterialTheme.colorScheme.primary,
-    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f),
+    errorContainerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f),
 )
 
 @Composable
 fun MoJingTextField(
     value: String, onValueChange: (String) -> Unit, modifier: Modifier = Modifier,
     enabled: Boolean = true, readOnly: Boolean = false,
-    textStyle: TextStyle = LocalTextStyle.current,
+    textStyle: TextStyle = MaterialTheme.typography.bodyLarge,
     label: @Composable (() -> Unit)? = null, placeholder: @Composable (() -> Unit)? = null,
     leadingIcon: @Composable (() -> Unit)? = null, trailingIcon: @Composable (() -> Unit)? = null,
     prefix: @Composable (() -> Unit)? = null, suffix: @Composable (() -> Unit)? = null,
@@ -36,19 +43,20 @@ fun MoJingTextField(
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     singleLine: Boolean = false, maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE, minLines: Int = 1,
     interactionSource: MutableInteractionSource? = null,
-    shape: Shape = MaterialTheme.shapes.medium, colors: TextFieldColors = fieldColors(),
+    shape: Shape = MaterialTheme.shapes.small, colors: TextFieldColors = fieldColors(),
 ) {
+    val source = interactionSource ?: remember { MutableInteractionSource() }
     OutlinedTextField(value, onValueChange, modifier, enabled, readOnly, textStyle,
         label, placeholder, leadingIcon, trailingIcon, prefix, suffix, supportingText, isError,
         visualTransformation, keyboardOptions, keyboardActions, singleLine, maxLines, minLines,
-        interactionSource, shape, colors)
+        source, shape, colors)
 }
 
 @Composable
 fun MoJingTextField(
     value: TextFieldValue, onValueChange: (TextFieldValue) -> Unit, modifier: Modifier = Modifier,
     enabled: Boolean = true, readOnly: Boolean = false,
-    textStyle: TextStyle = LocalTextStyle.current,
+    textStyle: TextStyle = MaterialTheme.typography.bodyLarge,
     label: @Composable (() -> Unit)? = null, placeholder: @Composable (() -> Unit)? = null,
     leadingIcon: @Composable (() -> Unit)? = null, trailingIcon: @Composable (() -> Unit)? = null,
     prefix: @Composable (() -> Unit)? = null, suffix: @Composable (() -> Unit)? = null,
@@ -58,12 +66,13 @@ fun MoJingTextField(
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     singleLine: Boolean = false, maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE, minLines: Int = 1,
     interactionSource: MutableInteractionSource? = null,
-    shape: Shape = MaterialTheme.shapes.medium, colors: TextFieldColors = fieldColors(),
+    shape: Shape = MaterialTheme.shapes.small, colors: TextFieldColors = fieldColors(),
 ) {
+    val source = interactionSource ?: remember { MutableInteractionSource() }
     OutlinedTextField(value, onValueChange, modifier, enabled, readOnly, textStyle,
         label, placeholder, leadingIcon, trailingIcon, prefix, suffix, supportingText, isError,
         visualTransformation, keyboardOptions, keyboardActions, singleLine, maxLines, minLines,
-        interactionSource, shape, colors)
+        source, shape, colors)
 }
 
 @Composable
@@ -77,8 +86,12 @@ fun MoJingButton(
     interactionSource: MutableInteractionSource? = null,
     content: @Composable RowScope.() -> Unit,
 ) {
-    Button(onClick, modifier.heightIn(min = 48.dp), enabled, shape, colors,
-        elevation, border, contentPadding, interactionSource, content)
+    val source = interactionSource ?: remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed && enabled) 0.975f else 1f,
+        tween(120), label = "buttonPress")
+    Button(onClick, modifier.heightIn(min = 48.dp).graphicsLayer { scaleX = scale; scaleY = scale }, enabled, shape, colors,
+        elevation, border, contentPadding, source, content)
 }
 
 @Composable
@@ -92,8 +105,12 @@ fun MoJingOutlinedButton(
     interactionSource: MutableInteractionSource? = null,
     content: @Composable RowScope.() -> Unit,
 ) {
-    OutlinedButton(onClick, modifier.heightIn(min = 48.dp), enabled, shape, colors,
-        elevation, border, contentPadding, interactionSource, content)
+    val source = interactionSource ?: remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed && enabled) 0.975f else 1f,
+        tween(120), label = "buttonPress")
+    OutlinedButton(onClick, modifier.heightIn(min = 48.dp).graphicsLayer { scaleX = scale; scaleY = scale }, enabled, shape, colors,
+        elevation, border, contentPadding, source, content)
 }
 
 @Composable
@@ -107,6 +124,10 @@ fun MoJingTonalButton(
     interactionSource: MutableInteractionSource? = null,
     content: @Composable RowScope.() -> Unit,
 ) {
-    FilledTonalButton(onClick, modifier.heightIn(min = 48.dp), enabled, shape, colors,
-        elevation, border, contentPadding, interactionSource, content)
+    val source = interactionSource ?: remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed && enabled) 0.975f else 1f,
+        tween(120), label = "buttonPress")
+    FilledTonalButton(onClick, modifier.heightIn(min = 48.dp).graphicsLayer { scaleX = scale; scaleY = scale }, enabled, shape, colors,
+        elevation, border, contentPadding, source, content)
 }

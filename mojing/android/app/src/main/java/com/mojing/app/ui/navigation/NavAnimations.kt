@@ -13,11 +13,11 @@ import androidx.navigation.NavBackStackEntry
 
 object NavAnimations {
     fun enterTransition(): AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
-        fadeIn(tween(220)) + slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { it / 12 }
+        fadeIn(tween(220)) + slideInHorizontally(tween(240, easing = FastOutSlowInEasing)) { it / 18 }
     }
 
     fun exitTransition(): AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
-        fadeOut(tween(140)) + slideOutHorizontally(tween(220)) { -it / 24 }
+        fadeOut(tween(140)) + slideOutHorizontally(tween(180, easing = FastOutSlowInEasing)) { -it / 36 }
     }
 
     fun popEnterTransition(): AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
@@ -25,6 +25,6 @@ object NavAnimations {
     }
 
     fun popExitTransition(): AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
-        fadeOut(tween(180)) + slideOutHorizontally(tween(240)) { it / 12 }
+        fadeOut(tween(180)) + slideOutHorizontally(tween(200, easing = FastOutSlowInEasing)) { it / 18 }
     }
 }

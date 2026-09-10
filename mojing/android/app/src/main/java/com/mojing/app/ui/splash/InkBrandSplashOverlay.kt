@@ -6,6 +6,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.BlurredEdgeTreatment
@@ -52,8 +54,8 @@ import com.mojing.app.ui.theme.MoJingTheme
 import kotlinx.coroutines.delay
 
 private val InkTop = Color(0xFF050507)
-private val InkMid = Color(0xFF101B18)
-private val InkDeep = Color(0xFF122720)
+private val InkMid = Color(0xFF10211D)
+private val InkDeep = Color(0xFF18312A)
 private val InkFloor = Color(0xFF0F1916)
 private val RicePaper = Color(0xFFEAE6DC)
 private val RicePaperMuted = Color(0xFFB8B2A8)
@@ -115,28 +117,32 @@ private fun InkBrandSplashTextBlock(
         modifier = Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.systemBars)
-            .padding(horizontal = 40.dp),
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         Image(painterResource(R.drawable.ic_launcher_foreground), contentDescription = null,
-            modifier = Modifier.size(144.dp).alpha(titleAlpha).graphicsLayer {
+            modifier = Modifier.size(128.dp).alpha(titleAlpha).graphicsLayer {
                 translationY = (1f - titleAlpha) * 20.dp.toPx()
             })
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(20.dp))
         Text(
             text = stringResource(R.string.app_name),
             modifier = Modifier.alpha(titleAlpha),
             color = RicePaper,
-            fontSize = 34.sp,
+            fontSize = 32.sp,
             fontWeight = FontWeight.Medium,
-            letterSpacing = 5.sp,
+            letterSpacing = 8.sp,
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(8.dp))
+        Text("M O J I N G", color = RicePaperMuted, fontSize = 10.sp,
+            letterSpacing = 3.sp, modifier = Modifier.alpha(titleAlpha))
+        Spacer(Modifier.height(28.dp))
         HorizontalDivider(
             modifier = Modifier
-                .width((40f * lineFrac).dp)
+                .width((24f * lineFrac).dp)
                 .alpha(0.88f),
             thickness = 0.5.dp,
             color = Color(0xFF91D4BF).copy(alpha = 0.5f),
@@ -148,10 +154,10 @@ private fun InkBrandSplashTextBlock(
                 .alpha(taglineAlpha)
                 .fillMaxWidth(),
             color = RicePaperMuted.copy(alpha = 0.92f),
-            fontSize = 15.sp,
+            fontSize = 14.sp,
             fontWeight = FontWeight.Normal,
             lineHeight = 28.sp,
-            letterSpacing = 1.2.sp,
+            letterSpacing = 0.8.sp,
             textAlign = TextAlign.Center,
         )
     }

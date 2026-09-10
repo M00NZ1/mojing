@@ -10,11 +10,14 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.material3.NavigationBar
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -47,12 +50,15 @@ fun ImeHideAwareNavigationBar(
             shrinkTowards = Alignment.Bottom
         )
     ) {
-        NavigationBar(
-            modifier = Modifier.navigationBarsPadding().padding(horizontal = 12.dp, vertical = 6.dp).clip(MaterialTheme.shapes.large),
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            windowInsets = WindowInsets(0, 0, 0, 0),
-            tonalElevation = 0.dp,
-            content = content)
+        Surface(
+            modifier = Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.surfaceContainerLowest,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+            shadowElevation = 8.dp,
+        ) {
+            Row(Modifier.fillMaxWidth().selectableGroup().padding(4.dp), verticalAlignment = Alignment.CenterVertically, content = content)
+        }
     }
 }
 

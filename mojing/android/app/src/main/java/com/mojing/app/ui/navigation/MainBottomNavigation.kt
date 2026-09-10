@@ -5,7 +5,17 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBarItem
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -99,23 +109,38 @@ fun MainAppBottomNavigation(
         onNavigateRequest?.invoke(action) ?: action()
     }
     ImeHideAwareNavigationBar(modifier) {
-        NavigationBarItem(
+        MoJingNavItem(
             selected = selected == MainNavTab.Session,
             onClick = { requestNavigation { navController.returnToSessionHome() } },
-            icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null) },
-            label = { Text("对话") },
+            icon = Icons.AutoMirrored.Filled.Chat, label = "对话",
         )
-        NavigationBarItem(
+        MoJingNavItem(
             selected = selected == MainNavTab.Create,
             onClick = { requestNavigation { navController.returnToCreationHub() } },
-            icon = { Icon(Icons.Default.Create, contentDescription = null) },
-            label = { Text("创作") },
+            icon = Icons.Default.Create, label = "创作",
         )
-        NavigationBarItem(
+        MoJingNavItem(
             selected = selected == MainNavTab.Settings,
             onClick = { requestNavigation { navController.navigateToMainTab(Routes.SETTINGS) } },
-            icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-            label = { Text("设置") },
+            icon = Icons.Default.Settings, label = "设置",
         )
+    }
+}
+
+@Composable
+internal fun RowScope.MoJingNavItem(selected: Boolean, onClick: () -> Unit, icon: ImageVector, label: String) {
+    val palette = MaterialTheme.colorScheme
+    val background by animateColorAsState(if (selected) palette.primaryContainer else androidx.compose.ui.graphics.Color.Transparent, label = "tabSurface")
+    val foreground by animateColorAsState(if (selected) palette.onPrimaryContainer else palette.onSurfaceVariant, label = "tabInk")
+    Column(
+        Modifier.weight(1f).padding(4.dp).clip(MaterialTheme.shapes.medium)
+            .background(background).selectable(selected, onClick = onClick, role = Role.Tab)
+            .padding(horizontal = 4.dp, vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(22.dp))
+        Text(label, color = foreground, style = MaterialTheme.typography.labelMedium,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
