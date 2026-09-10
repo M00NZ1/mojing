@@ -31,6 +31,50 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class EntryEditViewModelTest {
+    @Test fun sourcePreviewKeepsDraftAndAllowsRetry() = runTest(dispatcher) {
+        val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, sourceSessionId = 42, sourceMessageId = 6)
+        val dao = mockk<EncyclopediaEntryDao> { coEvery { getById(8) } returns entry }
+        val messages = mockk<com.mojing.app.data.local.dao.MessageDao>()
+        coEvery { messages.getByIdInSession(6, 42) } throws IllegalStateException("read")
+        val vm = createViewModel(encyclopediaDao(), dao, messageDao = messages)
+        vm.load(3, 8)
+        vm.updateTitle("未保存修改")
+        assertTrue(vm.state.value.hasSourceMessage)
+        vm.openSourcePreview()
+        assertEquals("原文读取失败，请重试。", vm.state.value.sourceError)
+        coEvery { messages.getByIdInSession(6, 42) } returns com.mojing.app.data.local.entity.MessageEntity(id = 6, sessionId = 42, content = "原始剧情")
+        vm.openSourcePreview()
+        assertEquals("原始剧情", vm.state.value.sourceContent)
+        vm.closeSourcePreview()
+        assertFalse(vm.state.value.sourcePreviewOpen)
+        assertEquals("未保存修改", vm.state.value.title)
+        assertTrue(vm.state.value.isDirty)
+        coEvery { messages.getByIdInSession(6, 42) } returns null
+        vm.openSourcePreview()
+        assertEquals("原始对话已不存在，百科内容仍保留。", vm.state.value.sourceError)
+    }
+
+    @Test fun closingSourcePreviewRejectsLateContent() = runTest(dispatcher) {
+        val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, sourceSessionId = 42, sourceMessageId = 6)
+        val dao = mockk<EncyclopediaEntryDao> { coEvery { getById(8) } returns entry }
+        val messages = mockk<com.mojing.app.data.local.dao.MessageDao>()
+        val gate = CompletableDeferred<Unit>()
+        coEvery { messages.getByIdInSession(6, 42) } coAnswers {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { gate.await() }
+            com.mojing.app.data.local.entity.MessageEntity(id = 6, sessionId = 42, content = "迟到原文")
+        }
+        val vm = createViewModel(encyclopediaDao(), dao, messageDao = messages)
+        vm.load(3, 8)
+        vm.openSourcePreview()
+        vm.openSourcePreview()
+        coVerify(exactly = 1) { messages.getByIdInSession(6, 42) }
+        vm.closeSourcePreview()
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertFalse(vm.state.value.sourcePreviewOpen)
+        assertEquals(null, vm.state.value.sourceContent)
+    }
+
     @Test
     fun loadingVersionRequiresDraftReplacementAndRejectsOtherEntries() = runTest(dispatcher) {
         val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, title = "当前正文")
@@ -142,6 +186,7 @@ class EntryEditViewModelTest {
         saveEntry: SaveCharacterEntryUseCase = mockk(relaxed = true),
         aiCompleter: AiCompleter = mockk(relaxed = true),
         publicKey: String = "",
+        messageDao: com.mojing.app.data.local.dao.MessageDao = mockk(relaxed = true),
     ): EntryEditViewModel {
         val secureStorage = mockk<SecureStorage>(relaxed = true)
         every { secureStorage.publicApiKey } returns publicKey
@@ -153,6 +198,7 @@ class EntryEditViewModelTest {
             aiCompleter = aiCompleter,
             secureStorage = secureStorage,
             imageRepository = mockk<ImageRepository>(relaxed = true),
+            messageDao = messageDao,
         )
     }
 

@@ -19,6 +19,8 @@
 
 产品功能与实现统一维护在[产品与架构](../mojing/PROJECT.md)。此处记录近期完成的流程和继续工作的入口。
 
+Android 百科编辑新增“查看对话原文”，按来源会话与消息读取单条原文，支持长文本滚动、复制、失败重试和关闭后继续编辑。来源已删除时显示提示并保留条目。
+
 - **角色与世界**：初始目录“雾港来信”包含一个百科、一个世界、沈照与林汐两个角色。角色可以不绑定百科直接开聊；百科支持重命名。开局区分工坊玩法和百科知识，组合设定可预览。
 - **Android 视觉与导航**：八套主题使用统一控件、文字和表面层级；首页、悬浮导航、页面过渡、应用图标和启动页已更新。启动标语保持“以墨为界，入境如梦。”。系统栏明暗随当前页面变化，小屏大字号保留主要操作入口。
 - **模型配置与切换**：平台独立保存 Key、地址和模型列表。预设为 DeepSeek、OpenAI、硅基流动、Anthropic 和自定义；支持发现与手动填写模型。聊天选择从下次发送生效，当前轮使用固定线路。Android 面板展示下次发送和最近请求，支持搜索、保存状态与失败重试。
@@ -30,6 +32,7 @@
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Android 百科原文预览 | 本批 12 项百科 ViewModel 测试、1 项 Android 35 预览交互测试通过；Debug 应用与测试 APK 构建通过 | `EntryEditViewModelTest`；`.codex-work/android-ui-20260910/entry-source-tests.txt` |
 | Android JVM 全量 | `b1c67e6a`：94 个测试类，534 项通过，失败、错误、跳过均为 0；耗时 28 秒 | `gradlew.bat testDebugUnitTest`；`mojing/android/app/build/test-results/testDebugUnitTest/` |
 | Web 浏览器回归 | `b1c67e6a`：七套主题主按钮默认与悬停对比度达到 4.5:1；确认替换、中止、长说明、小屏和输入法通过；对话编辑、删除、上下文参与及历史定位回归通过 | `test-control-states.mjs`、`test-confirm-dialog.mjs`、`test-message-deletion.mjs` |
 | Web 生产构建 | `b1c67e6a` 对应源码构建通过 | `npm run build` |

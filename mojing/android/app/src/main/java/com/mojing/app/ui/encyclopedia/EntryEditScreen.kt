@@ -79,6 +79,11 @@ fun EntryEditScreen(
     viewModel: EntryEditViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    DisposableEffect(viewModel) { onDispose { viewModel.closeSourcePreview() } }
+    if (state.sourcePreviewOpen) {
+        EntrySourcePreview(state.sourceLoading, state.sourceContent, state.sourceError,
+            onClose = viewModel::closeSourcePreview, onRetry = viewModel::openSourcePreview)
+    }
     var subTab by remember { mutableStateOf(EntryEditSubTab.EDIT) }
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -230,6 +235,9 @@ fun EntryEditScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text("条目内容", style = MaterialTheme.typography.titleMedium)
+                    if (state.hasSourceMessage) {
+                        OutlinedButton(onClick = viewModel::openSourcePreview) { Text("查看对话原文") }
+                    }
                     if (state.isConversationNote) {
                         Text(
                             "对话资料 · 在此编辑正文与确认状态；角色设定在角色页管理。",

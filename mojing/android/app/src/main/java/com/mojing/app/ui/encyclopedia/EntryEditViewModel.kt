@@ -25,6 +25,11 @@ import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 data class EntryEditState(
+    val hasSourceMessage: Boolean = false,
+    val sourcePreviewOpen: Boolean = false,
+    val sourceLoading: Boolean = false,
+    val sourceContent: String? = null,
+    val sourceError: String? = null,
     val isConversationNote: Boolean = false,
     val title: String = "",
     val entryType: String = "character",
@@ -81,6 +86,7 @@ private fun EntryEditState.toDraftSnapshot() = EntryDraftSnapshot(
 )
 
 private fun EntryEditState.withPersistedEntry(entry: EncyclopediaEntryEntity) = copy(
+    hasSourceMessage = (entry.sourceSessionId ?: 0) > 0 && (entry.sourceMessageId ?: 0) > 0,
     isConversationNote = CharacterEncyclopediaSync.isConversationNote(entry),
     title = entry.title,
     entryType = entry.entryType,
@@ -105,6 +111,7 @@ class EntryEditViewModel @Inject constructor(
     private val aiCompleter: AiCompleter,
     private val secureStorage: SecureStorage,
     private val imageRepository: ImageRepository,
+    private val messageDao: com.mojing.app.data.local.dao.MessageDao,
 ) : ViewModel() {
     private val _state = MutableStateFlow(EntryEditState())
     val state: StateFlow<EntryEditState> = _state.asStateFlow()
@@ -112,6 +119,35 @@ class EntryEditViewModel @Inject constructor(
     private var encId: Long = 0
     private var currentEntry: EncyclopediaEntryEntity? = null
     private var savedDraft = _state.value.toDraftSnapshot()
+    private var sourceJob: kotlinx.coroutines.Job? = null
+    private var sourceRevision = 0L
+
+    fun closeSourcePreview() {
+        sourceRevision++
+        sourceJob?.cancel()
+        sourceJob = null
+        _state.value = _state.value.copy(sourcePreviewOpen = false, sourceLoading = false, sourceContent = null, sourceError = null)
+    }
+
+    fun openSourcePreview() {
+        val entry = currentEntry ?: return
+        val sessionId = entry.sourceSessionId?.takeIf { it > 0 } ?: return
+        val messageId = entry.sourceMessageId?.takeIf { it > 0 } ?: return
+        if (_state.value.sourceLoading) return
+        val revision = ++sourceRevision
+        _state.value = _state.value.copy(sourcePreviewOpen = true, sourceLoading = true, sourceContent = null, sourceError = null)
+        sourceJob = viewModelScope.launch {
+            try {
+                val message = messageDao.getByIdInSession(messageId, sessionId)
+                if (sourceRevision != revision || currentEntry?.id != entry.id) return@launch
+                _state.value = _state.value.copy(sourceLoading = false, sourceContent = message?.content,
+                    sourceError = if (message == null) "原始对话已不存在，百科内容仍保留。" else null)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (sourceRevision == revision) _state.value = _state.value.copy(sourceLoading = false, sourceError = "原文读取失败，请重试。")
+            }
+        }
+    }
 
     private fun updateDraft(transform: (EntryEditState) -> EntryEditState) {
         val next = transform(_state.value)
@@ -127,6 +163,7 @@ class EntryEditViewModel @Inject constructor(
     }
 
     fun load(encyclopediaId: Long, entryId: Long) {
+        closeSourcePreview()
         encId = encyclopediaId
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoaded = false, loadError = null)
