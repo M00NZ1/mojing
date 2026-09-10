@@ -168,6 +168,23 @@ class GenerationTaskDetailTest {
         rule.runOnIdle { assertEquals(1, retries); assertEquals(1, closes) }
     }
 
+    @Test fun expandedOpenFailureKeepsActionsReachable() {
+        var retries = 0
+        var closed = 0
+        rule.setContent { MaterialTheme {
+            GenerationTaskDetailSheet(
+                GenerationTaskEntity(taskKind = GenerationTaskKinds.ENCYCLOPEDIA_ENTRIES,
+                    title = "很长的世界设定任务名称".repeat(30), status = GenerationTaskStatus.COMPLETED,
+                    progressDone = 2, payloadJson = "{}"),
+                onDismiss = { closed++ }, canOpen = true,
+                openError = "读取失败，请重试。\n".repeat(100), onOpen = { retries++ })
+        } }
+        rule.onNodeWithText("展开反馈").performScrollTo().performClick()
+        rule.onNodeWithText("重试打开").assertIsDisplayed().performClick()
+        rule.onNodeWithText("关闭").assertIsDisplayed().performClick()
+        rule.runOnIdle { assertEquals(1, retries); assertEquals(1, closed) }
+    }
+
     @Test fun feedbackExpandsAndResetsWhenContentChanges() {
         val text = mutableStateOf("请求中断，请稍后继续。\n".repeat(100))
         rule.setContent { MaterialTheme { GenerationFeedbackText(text.value) } }

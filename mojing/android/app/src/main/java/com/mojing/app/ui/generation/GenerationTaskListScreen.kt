@@ -266,11 +266,21 @@ internal fun GenerationTaskDetailSheet(
     opening: Boolean = false,
     openError: String? = null,
 ) {
+    val detailScroll = rememberScrollState()
+    LaunchedEffect(openError) { if (openError != null) detailScroll.scrollTo(0) }
     ModalBottomSheet(onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(horizontal = 24.dp)) {
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),
+            Column(Modifier.weight(1f).verticalScroll(detailScroll),
                 verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                openError?.let { error ->
+                    Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(12.dp)) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text("打开失败", style = MaterialTheme.typography.titleSmall)
+                            GenerationFeedbackText(error)
+                        }
+                    }
+                }
                 Text("${kindLabel(task.taskKind)} · ${statusLabel(task.status)}",
                     style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 SelectionContainer { Text(task.title, style = MaterialTheme.typography.headlineSmall) }
@@ -291,7 +301,6 @@ internal fun GenerationTaskDetailSheet(
                 Spacer(Modifier.height(8.dp))
             }
             Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                openError?.let { GenerationFeedbackText(it) }
                 if (task.progressDone > 0 || task.status == GenerationTaskStatus.COMPLETED) {
                     Button(onClick = onOpen, enabled = canOpen && !opening, modifier = Modifier.fillMaxWidth()) {
                         Text(if (opening) "正在打开…" else if (openError != null) "重试打开" else "查看已生成内容")
