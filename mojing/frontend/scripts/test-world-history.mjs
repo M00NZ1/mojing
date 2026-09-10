@@ -33,7 +33,8 @@ try {
       const url = new URL(route.request().url());
       return url.hostname === '127.0.0.1' && url.port === String(port) ? route.continue() : route.abort();
     });
-    let empty = true, failDetail = true, failSave = true;
+    let empty = true, failDetail = true, failSave = true, failPause = true, pauseStatus = 'running', releasePause;
+    const longError = '连接中断，供应商暂时无法完成请求。\n'.repeat(150);
     const errors = [], requests = [];
     const result = { job_id: 40, template: { template_id: 'fog', label: '雾港回声', category: '悬疑', summary: '灯塔来信之后，寻找失踪的航海家。', world_prompt: '完整世界正文：港口、灯塔与远海。', gameplay_mode: '自由剧情' }, saved_template: null,
       lore_entries: Array.from({ length: 41 }, (_, index) => ({ title: `地方志 ${index + 1}`, content: `完整条目 ${index + 1}` })),
@@ -44,10 +45,15 @@ try {
       requests.push(endpoint + url.search);
       let data = [], status = 200;
       if (endpoint === '/jobs/world-history') {
-        data = { items: empty ? [] : (url.search ? [{ id: 19, job_type: 'world_generate', status: 'failed', label: '远海之旅', error_message: '连接中断', created_at: '2026-09-06T00:00:00Z' }] : [
+        data = { items: empty ? [] : (url.search ? [{ id: 19, job_type: 'world_generate', status: 'failed', label: '远海之旅', error_message: longError, created_at: '2026-09-06T00:00:00Z' }] : [
           { id: 40, job_type: 'world_generate', status: 'succeeded', label: '雾港回声', result_version: 1, created_at: '2026-09-07T00:00:00Z' },
+          { id: 38, job_type: 'world_generate', status: pauseStatus, request_version: 1, completed_steps: 3, stage_label: '整理人物', label: '正在整理的世界', created_at: '2026-09-06T00:00:00Z' },
           { id: 39, job_type: 'world_import', status: 'succeeded', label: '旧世界', result_version: null, created_at: '2026-09-06T00:00:00Z' },
         ]), next_cursor: !empty && !url.search ? 20 : null };
+      } else if (endpoint === '/jobs/38/pause-world') {
+        await new Promise(resolve => { releasePause = resolve; });
+        if (failPause) { status = 500; data = { detail: '暂时无法暂停' }; }
+        else { pauseStatus = 'paused'; data = { status: 'paused' }; }
       } else if (endpoint === '/jobs/40/world-result') {
         if (failDetail) { status = 500; data = { detail: '暂时无法读取' }; } else data = result;
       } else if (endpoint === '/jobs/40/save-world') {
@@ -70,9 +76,28 @@ try {
     assert.ok(!requests.some((request) => request.includes('world-result')));
     if (output) await page.screenshot({ path: path.join(output, `world-history-${width}.png`), fullPage: true });
     await page.getByRole('button', { name: '更早记录' }).click();
-    await page.getByText('连接中断', { exact: true }).waitFor();
+    const failure = page.locator('.world-history-failure');
+    assert.equal(await failure.getAttribute('open'), null);
+    await failure.locator('summary').click();
+    const errorBox = failure.locator('.world-history-error');
+    await errorBox.waitFor();
+    assert.ok(await errorBox.evaluate(el => el.scrollHeight > el.clientHeight));
+    assert.ok((await errorBox.boundingBox()).height <= 205);
     assert.ok(requests.includes('/jobs/world-history?before_id=20'));
     await page.getByRole('button', { name: '较新记录' }).click();
+    const running = page.getByRole('article', { name: '正在整理的世界' });
+    await running.getByRole('button', { name: '暂停', exact: true }).click();
+    await running.getByRole('button', { name: '正在提交暂停…', exact: true }).waitFor();
+    assert.equal(await running.getByRole('button').isDisabled(), true);
+    for (let i = 0; !releasePause && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.ok(releasePause); releasePause(); releasePause = undefined;
+    await running.getByRole('alert').waitFor();
+    failPause = false;
+    await running.getByRole('button', { name: '重试', exact: true }).click();
+    for (let i = 0; !releasePause && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.ok(releasePause); releasePause(); releasePause = undefined;
+    await running.getByText('已暂停', { exact: true }).waitFor();
+    await running.getByRole('button', { name: '继续生成', exact: true }).waitFor();
     await page.getByRole('button', { name: '查看结果', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: '结果读取失败' }).waitFor();
     failDetail = false;
