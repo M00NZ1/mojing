@@ -29,6 +29,14 @@ interface GenerationTaskDao {
     )
     fun observeQueueVisible(): Flow<List<GenerationTaskEntity>>
 
+    @Query("""
+        SELECT * FROM generation_tasks WHERE id < :beforeId
+        AND (:filter = 0 OR (:filter = 1 AND status IN ('QUEUED','RUNNING','PAUSED'))
+            OR (:filter = 2 AND status = 'FAILED'))
+        ORDER BY id DESC LIMIT 51
+    """)
+    fun observeHistoryPage(beforeId: Long, filter: Int): Flow<List<GenerationTaskEntity>>
+
     @Query(
         """
         SELECT COUNT(*) FROM generation_tasks

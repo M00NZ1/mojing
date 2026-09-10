@@ -42,6 +42,9 @@ fun GenerationTaskListScreen(
     viewModel: GenerationTaskListViewModel = hiltViewModel(),
 ) {
     val tasks by viewModel.tasks.collectAsStateWithLifecycle()
+    val historyCursors by viewModel.historyCursors.collectAsStateWithLifecycle()
+    val hasOlder by viewModel.hasOlder.collectAsStateWithLifecycle()
+    val browsingHistory = historyCursors.isNotEmpty()
     val openingResultId by viewModel.openingResultId.collectAsStateWithLifecycle()
     val loading by viewModel.loading.collectAsStateWithLifecycle()
     val loadError by viewModel.loadError.collectAsStateWithLifecycle()
@@ -51,7 +54,7 @@ fun GenerationTaskListScreen(
     val message by viewModel.snackbar.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var filter by rememberSaveable { mutableIntStateOf(0) }
-    val listState = rememberGenerationListState(filter)
+    val listState = rememberGenerationListState(filter, historyCursors.size)
     var cancelTargetId by remember { mutableStateOf<Long?>(null) }
     var cancelError by remember(cancelTargetId) { mutableStateOf<String?>(null) }
     var detailId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -63,8 +66,12 @@ fun GenerationTaskListScreen(
     val visible = tasks.filter { when (filter) { 1 -> it.isActive(); 2 -> it.status == GenerationTaskStatus.FAILED; else -> true } }
     GenerationTaskFeedback(message, snackbar, viewModel::consumeSnackbar)
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }, topBar = {
-        TopAppBar(title = { Text("生成记录") }, navigationIcon = {
+        TopAppBar(title = { Text(if (browsingHistory) "全部记录" else "生成记录", maxLines = 1, overflow = TextOverflow.Ellipsis) }, navigationIcon = {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+        }, actions = {
+            TextButton(onClick = { filter = 0; if (browsingHistory) viewModel.showRecent() else viewModel.showHistory() }) {
+                Text(if (browsingHistory) "近期记录" else "全部记录")
+            }
         })
     }) { padding ->
         LazyColumn(Modifier.padding(padding).fillMaxSize(), state = listState, contentPadding = PaddingValues(16.dp),
@@ -88,7 +95,7 @@ fun GenerationTaskListScreen(
                     }
                 }
             }
-            if (tasks.isNotEmpty() || (!loading && loadError == null)) item {
+            if (!browsingHistory && (tasks.isNotEmpty() || (!loading && loadError == null))) item {
                 Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(20.dp)) {
                     Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(if (paused) if (tasks.any { it.status == GenerationTaskStatus.RUNNING }) "正在完成当前步骤" else "生成已暂停" else if (active > 0) "正在为你的世界添笔" else "每一次灵感，都有迹可循",
@@ -105,17 +112,17 @@ fun GenerationTaskListScreen(
                 }
             }
             stickyHeader(key = "generation-filter") {
-                GenerationTaskFilterBar(filter) { filter = it }
+                GenerationTaskFilterBar(filter) { filter = it; viewModel.selectHistoryFilter(it) }
             }
             if (visible.isEmpty() && !loading && loadError == null) item {
                 Column(Modifier.fillMaxWidth().padding(vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(if (tasks.isEmpty()) "还没有生成记录" else "这里暂时没有任务", style = MaterialTheme.typography.titleMedium)
-                    Text(if (tasks.isEmpty()) "从角色、百科或世界的 AI 创作开始，进度会汇集在这里。" else "可以切换分类查看其他记录。",
+                    Text(if (browsingHistory) "当前分类没有记录" else if (tasks.isEmpty()) "还没有生成记录" else "这里暂时没有任务", style = MaterialTheme.typography.titleMedium)
+                    Text(if (browsingHistory) "可切换分类或返回近期记录。" else if (tasks.isEmpty()) "从角色、百科或世界的 AI 创作开始，进度会汇集在这里。" else "可以切换分类查看其他记录。",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            items(visible, key = { it.id }) { t ->
+            items(if (loading) emptyList() else visible, key = { it.id }) { t ->
                 val retrying = t.id in retryingIds
                 val color = when (t.status) {
                     GenerationTaskStatus.FAILED -> MaterialTheme.colorScheme.error
@@ -164,7 +171,15 @@ fun GenerationTaskListScreen(
                     }
                 }
             }
-            if (tasks.isNotEmpty()) item {
+            if (browsingHistory) item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(enabled = !loading && historyCursors.size > 1, onClick = viewModel::newerPage) { Text("上一页") }
+                    Text("第 ${historyCursors.size} 页", style = MaterialTheme.typography.bodySmall)
+                    TextButton(enabled = !loading && loadError == null && hasOlder, onClick = viewModel::olderPage) { Text("下一页") }
+                }
+            }
+            if (!browsingHistory && tasks.isNotEmpty()) item {
                 Text("显示最近 150 项记录，进行中的任务优先。取消和失败均保留已保存内容。",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -202,11 +217,13 @@ internal fun GenerationTaskFilterBar(filter: Int, onSelect: (Int) -> Unit) {
 }
 
 @Composable
-internal fun rememberGenerationListState(filter: Int): LazyListState {
+internal fun rememberGenerationListState(filter: Int, page: Int = 0): LazyListState {
     val state = rememberLazyListState()
     var previousFilter by rememberSaveable { mutableIntStateOf(filter) }
-    LaunchedEffect(filter) {
-        if (previousFilter != filter) {
+    var previousPage by rememberSaveable { mutableIntStateOf(page) }
+    LaunchedEffect(filter, page) {
+        if (previousFilter != filter || previousPage != page) {
+            previousPage = page
             previousFilter = filter
             state.scrollToItem(0)
         }

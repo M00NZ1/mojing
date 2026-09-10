@@ -30,10 +30,11 @@ class GenerationTaskDetailTest {
     @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
     @Test fun listPositionRestoresButResetsWhenFilterChanges() {
         val filter = mutableStateOf(0)
+        val page = mutableStateOf(0)
         val restoration = StateRestorationTester(rule)
         lateinit var state: androidx.compose.foundation.lazy.LazyListState
         restoration.setContent {
-            state = rememberGenerationListState(filter.value)
+            state = rememberGenerationListState(filter.value, page.value)
             androidx.compose.foundation.lazy.LazyColumn(state = state,
                 modifier = androidx.compose.ui.Modifier.fillMaxSize().systemBarsPadding().testTag("generation-list")) {
                 stickyHeader { GenerationTaskFilterBar(filter.value) { filter.value = it } }
@@ -51,6 +52,10 @@ class GenerationTaskDetailTest {
         rule.onNodeWithText("需处理").assertIsDisplayed().performClick()
         rule.waitForIdle()
         rule.runOnIdle { assertEquals(0, state.firstVisibleItemIndex); assertEquals(0, state.firstVisibleItemScrollOffset) }
+        rule.onNodeWithTag("generation-list").performScrollToIndex(80)
+        rule.runOnIdle { page.value = 2 }
+        rule.waitForIdle()
+        rule.runOnIdle { assertEquals(0, state.firstVisibleItemIndex) }
     }
 
     @Test fun selectedTaskRestoresAndUsesFreshProgress() {

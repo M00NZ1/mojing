@@ -7,6 +7,9 @@ import com.mojing.app.data.local.entity.GenerationTaskEntity
 import com.mojing.app.data.local.entity.GenerationTaskStatus
 import com.mojing.app.domain.generation.GenerationQueueProcessor
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +25,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ensureActive
 import javax.inject.Inject
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class GenerationTaskListViewModel @Inject constructor(
     taskDao: GenerationTaskDao,
@@ -85,19 +89,44 @@ class GenerationTaskListViewModel @Inject constructor(
         retryLoads.trySend(Unit)
     }
 
-    val tasks = taskDao.observeQueueVisible()
-        .onStart {
-            retryLoads.tryReceive()
-            _loading.value = true
-            _loadError.value = null
-        }
-        .onEach { _loading.value = false; _loadError.value = null }
-        .retryWhen { cause, _ ->
-            if (cause is kotlinx.coroutines.CancellationException) throw cause
-            _loading.value = false
-            _loadError.value = "生成记录读取失败，请重试"
-            retryLoads.receive()
-            true
+    private val _historyCursors = MutableStateFlow<List<Long>>(emptyList())
+    val historyCursors = _historyCursors.asStateFlow()
+    private val historyFilter = MutableStateFlow(0)
+    private val _hasOlder = MutableStateFlow(false)
+    val hasOlder = _hasOlder.asStateFlow()
+
+    fun showHistory() { _loading.value = true; historyFilter.value = 0; _historyCursors.value = listOf(Long.MAX_VALUE) }
+    fun showRecent() { _loading.value = true; _historyCursors.value = emptyList() }
+    fun selectHistoryFilter(filter: Int) {
+        if (filter !in 0..2 || historyFilter.value == filter) return
+        _loading.value = true
+        historyFilter.value = filter
+        if (_historyCursors.value.isNotEmpty()) _historyCursors.value = listOf(Long.MAX_VALUE)
+    }
+    fun olderPage() {
+        if (_loading.value || !_hasOlder.value || _historyCursors.value.isEmpty()) return
+        val cursor = tasks.value.lastOrNull()?.id ?: return
+        _loading.value = true
+        _historyCursors.value = _historyCursors.value + cursor
+    }
+    fun newerPage() {
+        if (!_loading.value && _historyCursors.value.size > 1) { _loading.value = true; _historyCursors.value = _historyCursors.value.dropLast(1) }
+    }
+
+    val tasks = combine(_historyCursors, historyFilter) { cursors, filter -> cursors to filter }
+        .flatMapLatest { (cursors, filter) ->
+            val history = cursors.isNotEmpty()
+            (if (history) taskDao.observeHistoryPage(cursors.last(), filter) else taskDao.observeQueueVisible())
+                .onStart { retryLoads.tryReceive(); _loading.value = true; _loadError.value = null }
+                .map { rows -> _hasOlder.value = history && rows.size > 50; if (history) rows.take(50) else rows }
+                .onEach { _loading.value = false; _loadError.value = null }
+                .retryWhen { cause, _ ->
+                    if (cause is kotlinx.coroutines.CancellationException) throw cause
+                    _loading.value = false
+                    _loadError.value = "生成记录读取失败，请重试"
+                    retryLoads.receive()
+                    true
+                }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 

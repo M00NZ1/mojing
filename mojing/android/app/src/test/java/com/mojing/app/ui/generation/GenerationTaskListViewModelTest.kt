@@ -19,6 +19,35 @@ class GenerationTaskListViewModelTest {
     @Before fun setup() { Dispatchers.setMain(dispatcher) }
     @After fun teardown() { Dispatchers.resetMain() }
 
+    @Test fun historyPagingIsBoundedAndCanLeaveFailedPage() = runTest {
+        val processor = mockk<GenerationQueueProcessor>()
+        every { processor.pausedState } returns MutableStateFlow(false)
+        val dao = mockk<GenerationTaskDao>()
+        val rows = (200L downTo 150L).map { id -> com.mojing.app.data.local.entity.GenerationTaskEntity(
+            id = id, taskKind = "world_template_prompt_ai", title = "$id", status = "COMPLETED", payloadJson = "{}") }
+        every { dao.observeQueueVisible() } returns flowOf(rows.take(1))
+        every { dao.observeHistoryPage(Long.MAX_VALUE, 0) } returns flowOf(rows)
+        every { dao.observeHistoryPage(151L, 0) } returns kotlinx.coroutines.flow.flow { throw IllegalStateException("read failed") }
+        every { dao.observeHistoryPage(Long.MAX_VALUE, 2) } returns flowOf(rows.takeLast(1))
+        val vm = GenerationTaskListViewModel(dao, processor, mockk())
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.tasks.collect {} }
+        runCurrent()
+        vm.showHistory(); runCurrent()
+        assertEquals(50, vm.tasks.value.size)
+        assertTrue(vm.hasOlder.value)
+        vm.olderPage(); vm.olderPage(); runCurrent()
+        assertEquals(2, vm.historyCursors.value.size)
+        assertNotNull(vm.loadError.value)
+        vm.selectHistoryFilter(2); runCurrent()
+        assertEquals(listOf(Long.MAX_VALUE), vm.historyCursors.value)
+        assertNull(vm.loadError.value)
+        assertEquals(listOf(150L), vm.tasks.value.map { it.id })
+        assertFalse(vm.hasOlder.value)
+        vm.showRecent(); runCurrent()
+        assertEquals(listOf(200L), vm.tasks.value.map { it.id })
+        assertTrue(vm.historyCursors.value.isEmpty())
+    }
+
     @Test fun resultLookupBlocksDuplicateNavigationAndKeepsMissingRecord() = runTest {
         val processor = mockk<GenerationQueueProcessor>()
         every { processor.pausedState } returns MutableStateFlow(false)

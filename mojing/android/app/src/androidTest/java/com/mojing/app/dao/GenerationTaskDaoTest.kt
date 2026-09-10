@@ -37,6 +37,25 @@ class GenerationTaskDaoTest {
         db.close()
     }
 
+    @Test fun historyCursorTraversesOldRecordsAndFiltersBeforeLimiting() = runBlocking {
+        for (id in 1L..205L) taskDao.insert(GenerationTaskEntity(id = id,
+            taskKind = GenerationTaskKinds.ENCYCLOPEDIA_ENTRIES, title = "$id", payloadJson = "{}",
+            status = if (id % 3L == 0L) GenerationTaskStatus.FAILED else GenerationTaskStatus.COMPLETED))
+        for (filter in listOf(0, 2)) {
+            var cursor = Long.MAX_VALUE
+            val seen = mutableListOf<Long>()
+            do {
+                val page = taskDao.observeHistoryPage(cursor, filter).first()
+                assertTrue(page.size <= 51)
+                seen.addAll(page.take(50).map { it.id })
+                if (page.size <= 50) break
+                cursor = page[49].id
+            } while (true)
+            assertEquals((205L downTo 1L).filter { filter == 0 || it % 3L == 0L }, seen)
+        }
+        assertTrue(taskDao.observeHistoryPage(Long.MAX_VALUE, 1).first().isEmpty())
+    }
+
     @Test
     fun observeQueueVisibleIncludesCompletedAndFailed() = runBlocking {
         val t = System.currentTimeMillis()
