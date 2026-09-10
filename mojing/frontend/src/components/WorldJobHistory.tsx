@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, useMutationState } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import type { WorldGenerationResult } from '../types';
@@ -20,7 +20,15 @@ export default function WorldJobHistory({ onManage, onResume, generationActive =
   const history = useQuery({ queryKey: ['jobs', 'world', 'history', cursor], queryFn: () => api.worldJobHistory(cursor),
     refetchInterval: (query) => query.state.data?.items.some((job) => ['pending', 'running', 'pause_requested'].includes(job.status)) ? 5000 : false });
   const detail = useQuery({ queryKey: ['world-result', selected], queryFn: () => api.worldJobResult(selected!), enabled: selected !== null, gcTime: 0, retry: false });
-  const save = useMutation({ mutationFn: (id: number) => api.saveWorldJobResult(id), onSuccess: (result, id) => {
+  const savingRecords = useMutationState({ filters: { mutationKey: ['save-world-result'], exact: true },
+    select: (mutation) => ({ id: mutation.state.variables as number, status: mutation.state.status, error: mutation.state.error }) });
+  const selectedSaves = savingRecords.filter((record) => record.id === selected);
+  const savingSelected = selectedSaves.some((record) => record.status === 'pending');
+  const latestSave = selectedSaves[selectedSaves.length - 1];
+  const save = useMutation({ mutationKey: ['save-world-result'],
+    onMutate: (id: number) => client.cancelQueries({ queryKey: ['world-result', id], exact: true }),
+    mutationFn: (id: number) => api.saveWorldJobResult(id), onSuccess: async (result, id) => {
+    await client.cancelQueries({ queryKey: ['world-result', id], exact: true });
     client.setQueryData(['world-result', id], result);
     void client.invalidateQueries({ queryKey: ['world-templates'] });
   } });
@@ -70,8 +78,8 @@ export default function WorldJobHistory({ onManage, onResume, generationActive =
       {result && <div className="world-history-result">
         <span className="world-job-status world-job-succeeded">{result.saved_template ? '已保存到世界库' : '结果已保留 · 尚未加入世界库'}</span>
         <h3>{result.template.label}</h3><p>{result.template.summary}</p>
-        <div className="button-row">{result.saved_template ? <button type="button" className="btn btn-primary" onClick={() => onManage(result)}>管理此世界</button> : <button type="button" className="btn btn-primary" disabled={save.isPending} onClick={() => save.mutate(selected)}>{save.isPending ? '正在保存…' : '保存到世界库'}</button>}</div>
-        {save.isError && <InlineQueryError message="保存失败，结果仍在记录中" error={save.error} retrying={save.isPending} onRetry={() => save.mutate(selected)} />}
+        <div className="button-row">{result.saved_template ? <button type="button" className="btn btn-primary" onClick={() => onManage(result)}>管理此世界</button> : <button type="button" className="btn btn-primary" disabled={savingSelected} onClick={() => { if (!savingSelected) save.mutate(selected); }}>{savingSelected ? '正在保存…' : '保存到世界库'}</button>}</div>
+        {!result.saved_template && latestSave?.status === 'error' && <InlineQueryError message="保存失败，结果仍在记录中" error={latestSave.error} retrying={savingSelected} onRetry={() => save.mutate(selected)} />}
         <h4>世界设定</h4><WorldResultText key={selected} label="世界设定正文" text={result.template.world_prompt} />
         <h4>世界条目 · {result.lore_entries.length}</h4>
         {result.lore_entries.slice(lorePage * 20, (lorePage + 1) * 20).map((entry, index) => <details className="world-history-lore" key={`${selected}-${lorePage}-${index}`}><summary>{entry.title}</summary><WorldResultText label={`${entry.title}正文`} text={entry.content} /></details>)}

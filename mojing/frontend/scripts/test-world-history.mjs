@@ -42,7 +42,7 @@ try {
       const url = new URL(route.request().url());
       return url.hostname === '127.0.0.1' && url.port === String(port) ? route.continue() : route.abort();
     });
-    let empty = true, failDetail = true, failSave = true, failPause = true, pauseStatus = 'running', releasePause;
+    let empty = true, failDetail = true, failSave = true, failPause = true, pauseStatus = 'running', releasePause, releaseSave, releaseDetail, holdDetail = false;
     const longError = '连接中断，供应商暂时无法完成请求。\n'.repeat(150);
     const errors = [], requests = [];
     const result = { job_id: 40, template: { template_id: 'fog', label: '雾港回声', category: '悬疑', summary: '灯塔来信之后，寻找失踪的航海家。', world_prompt: '完整世界正文：港口、灯塔与远海。\n'.repeat(200), gameplay_mode: '自由剧情' }, saved_template: null,
@@ -64,10 +64,13 @@ try {
         if (failPause) { status = 500; data = { detail: '暂时无法暂停' }; }
         else { pauseStatus = 'paused'; data = { status: 'paused' }; }
       } else if (endpoint === '/jobs/40/world-result') {
-        if (failDetail) { status = 500; data = { detail: '暂时无法读取' }; } else data = result;
+        if (failDetail) { status = 500; data = { detail: '暂时无法读取' }; } else {
+          data = structuredClone(result);
+          if (holdDetail) await new Promise(resolve => { releaseDetail = resolve; });
+        }
       } else if (endpoint === '/jobs/40/save-world') {
         if (failSave) { status = 500; data = { detail: '写入失败' }; }
-        else { result.saved_template = { ...result.template, id: 3, is_builtin: false }; data = result; }
+        else { await new Promise(resolve => { releaseSave = resolve; }); result.saved_template = { ...result.template, id: 3, is_builtin: false }; data = result; }
       } else if (endpoint === '/worlds/templates') data = result.saved_template ? [result.saved_template] : [];
       await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
     });
@@ -136,9 +139,30 @@ try {
     await page.getByText('完整条目 21', { exact: true }).waitFor();
     await page.getByRole('button', { name: '保存到世界库', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: '结果仍在记录中' }).waitFor();
+    // Leaving and remounting the history component must preserve the failed save.
+    await page.getByRole('button', { name: '我的世界', exact: true }).click();
+    await page.getByRole('button', { name: '生成记录', exact: true }).click();
+    await page.getByRole('button', { name: '查看结果', exact: true }).click();
+    await page.getByRole('alert').filter({ hasText: '结果仍在记录中' }).waitFor();
     failSave = false;
     await page.getByRole('button', { name: '重试', exact: true }).click();
+    await page.getByRole('button', { name: '正在保存…', exact: true }).waitFor();
+    await page.getByRole('button', { name: '返回记录', exact: true }).click();
+    await page.getByRole('button', { name: '查看结果', exact: true }).click();
+    assert.equal(await page.getByRole('button', { name: '正在保存…', exact: true }).isDisabled(), true);
+    holdDetail = true;
+    await page.getByRole('button', { name: '返回记录', exact: true }).click();
+    await page.getByRole('button', { name: '查看结果', exact: true }).click();
+    for (let i = 0; (!releaseSave || !releaseDetail) && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.ok(releaseSave && releaseDetail);
+    releaseSave();
     await page.getByText('已保存到世界库', { exact: true }).waitFor();
+    const staleResponse = page.waitForResponse(response => response.url().endsWith('/jobs/40/world-result'));
+    releaseDetail(); holdDetail = false;
+    await staleResponse;
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await page.getByRole('button', { name: '管理此世界', exact: true }).waitFor();
+    assert.equal(requests.filter(request => request === '/jobs/40/save-world').length, 2);
     await page.reload();
     await page.getByText('已保存到世界库', { exact: true }).waitFor();
     assert.ok(page.url().includes('job=40'));
