@@ -131,11 +131,14 @@ def list_sessions(q: str = "", db: Session = Depends(get_db)):
 def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
     runtime_config = get_local_config(db)
     final_template_id = payload.template_id or str(runtime_config.get("default_world_template_id") or "custom")
-    final_narrator_enabled = bool(payload.narrator_enabled or runtime_config.get("default_narrator_enabled", False))
-    final_choice_generation_enabled = bool(
-        payload.choice_generation_enabled or runtime_config.get("default_choice_generation_enabled", True)
-    )
-    final_anti_cheat_enabled = bool(payload.anti_cheat_enabled or runtime_config.get("default_anti_cheat_enabled", True))
+    def opening_flag(name: str) -> bool:
+        if name in payload.model_fields_set:
+            return bool(getattr(payload, name))
+        return bool(runtime_config.get(f"default_{name}", getattr(payload, name)))
+
+    final_narrator_enabled = opening_flag("narrator_enabled")
+    final_choice_generation_enabled = opening_flag("choice_generation_enabled")
+    final_anti_cheat_enabled = opening_flag("anti_cheat_enabled")
     session = ChatSessionModel(title=payload.title or "新对话")
     db.add(session)
     db.flush()

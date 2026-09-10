@@ -1370,6 +1370,8 @@ input[type="range"]::-moz-range-thumb {
   overflow-y: auto;
 }
 
+.session-create-box > * { flex-shrink: 0; }
+
 .session-create-header {
   display: flex;
   align-items: flex-start;
@@ -6594,3 +6596,11 @@ img {
 .message-action-description small { display: block; margin-top: 3px; font-size: .75rem; line-height: 1.5; font-weight: 400; color: var(--text-2); white-space: normal; }
 .message-action-busy { margin: 0 0 10px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); color: var(--text-2); font-size: .8rem; line-height: 1.6; }
 .chat-msg-more-item:disabled { opacity: .45; cursor: not-allowed; }
+
+.session-create-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; padding: 8px 10px; cursor: pointer; }
+.session-create-toggle > span { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.session-create-toggle strong { font-size: 0.85rem; font-weight: 500; }
+.session-create-toggle small { color: var(--text-2); font-size: 0.75rem; }
+.session-create-toggle input { flex: 0 0 20px; width: 20px; height: 20px; accent-color: var(--accent); }
+
+.session-create-error { color: var(--accent-3); font-size: 0.82rem; margin: 4px 0; overflow-wrap: anywhere; }

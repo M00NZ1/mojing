@@ -8,6 +8,12 @@ import { useUndoDelete } from './UndoToast';
 import { useToast } from '../hooks/useToast';
 import UiIcon from './UiIcon';
 
+const OPENING_OPTIONS = [
+  { key: 'narrator_enabled', configKey: 'default_narrator_enabled', label: '旁白', description: '加入场景叙述与剧情推进', fallback: false },
+  { key: 'choice_generation_enabled', configKey: 'default_choice_generation_enabled', label: '剧情选项', description: '在回复后提供可选行动', fallback: true },
+  { key: 'anti_cheat_enabled', configKey: 'default_anti_cheat_enabled', label: '规则约束', description: '应用世界设定中的行为约束', fallback: true },
+] as const;
+
 function defaultSessionTitle() {
   return '新对话';
 }
@@ -23,6 +29,7 @@ export default function SessionSidebar() {
   const [title, setTitle] = useState(defaultSessionTitle);
   const [templateId, setTemplateId] = useState('custom');
   const [encyclopediaId, setEncyclopediaId] = useState<number | null>(null);
+  const [openingOverrides, setOpeningOverrides] = useState<Partial<Record<typeof OPENING_OPTIONS[number]['key'], boolean>>>({});
   const [selectedCharacterIds, setSelectedCharacterIds] = useState<Set<number>>(new Set());
   const importArchiveInputRef = useRef<HTMLInputElement>(null);
   const createToggleButtonRef = useRef<HTMLButtonElement>(null);
@@ -109,9 +116,9 @@ export default function SessionSidebar() {
       template_id: templateId,
       encyclopedia_id: encyclopediaId,
       gameplay_mode: template?.gameplay_mode ?? '自由剧情',
-      narrator_enabled: localConfigQuery.data?.default_narrator_enabled ?? false,
-      choice_generation_enabled: localConfigQuery.data?.default_choice_generation_enabled ?? true,
-      anti_cheat_enabled: localConfigQuery.data?.default_anti_cheat_enabled ?? true,
+      narrator_enabled: openingOverrides.narrator_enabled ?? localConfigQuery.data?.default_narrator_enabled ?? false,
+      choice_generation_enabled: openingOverrides.choice_generation_enabled ?? localConfigQuery.data?.default_choice_generation_enabled ?? true,
+      anti_cheat_enabled: openingOverrides.anti_cheat_enabled ?? localConfigQuery.data?.default_anti_cheat_enabled ?? true,
       initial_character_ids: [...selectedCharacterIds],
     }),
     onSuccess: async (session) => {
@@ -120,6 +127,7 @@ export default function SessionSidebar() {
       setTitle(defaultSessionTitle());
       setTemplateId('custom');
       setEncyclopediaId(null);
+      setOpeningOverrides({});
       setSelectedCharacterIds(new Set());
       characterDefaultsInitializedRef.current = false;
       templateDefaultInitializedRef.current = false;
@@ -317,6 +325,21 @@ export default function SessionSidebar() {
               </select>
             </div>
           </details>
+          <details className="session-create-options">
+            <summary><span>对话设置</span><small>仅用于这次新对话</small></summary>
+            {OPENING_OPTIONS.map(option => (
+              <label key={option.key} className="session-create-toggle">
+                <span><strong>{option.label}</strong><small>{option.description}</small></span>
+                <input type="checkbox" aria-label={option.label}
+                  checked={openingOverrides[option.key] ?? localConfigQuery.data?.[option.configKey] ?? option.fallback}
+                  disabled={createOptionsLoading || createSession.isPending}
+                  onChange={event => setOpeningOverrides(current => ({ ...current, [option.key]: event.target.checked }))} />
+              </label>
+            ))}
+          </details>
+          {createSession.isError && <p className="session-create-error" role="alert">
+            {createSession.error instanceof Error ? createSession.error.message : '创建会话失败，请重试'}
+          </p>}
           <button type="button" className="btn btn-primary" onClick={() => createSession.mutate()} disabled={createSession.isPending || createOptionsLoading}>
             {createSession.isPending ? '创建中...' : createOptionsLoading ? '正在准备选项…' : '开始新对话'}
           </button>
