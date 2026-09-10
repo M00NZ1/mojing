@@ -1535,6 +1535,20 @@ class ChatViewModel @Inject constructor(
         _state.update { it.copy(focusedMessageId = null) }
     }
 
+    fun showSavedImage(): Boolean {
+        val notice = _state.value.savedImageNotice ?: return false
+        if (currentBranchId() != notice.branchId) return false
+        return launchHistoryLoad { branchId ->
+            val found = loadMessageWindow(branchId, notice.messageId)
+            _state.update {
+                if (it.savedImageNotice != notice) it else it.copy(
+                    savedImageNotice = null,
+                    error = if (found) null else "配图消息已删除或不在当前故事线",
+                )
+            }
+        }
+    }
+
     fun updateImagePrompt(text: String) {
         imageDraftRevision++
         _state.update { it.copy(imagePrompt = text) }
@@ -1607,7 +1621,15 @@ class ChatViewModel @Inject constructor(
                                     updateImagePrompt("")
                                 }
                             }
-                            refreshMessagesUi()
+                            try {
+                                refreshMessagesUi(generation.branchId)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                generation.ensureCurrent()
+                                _state.update { it.copy(savedImageNotice = SavedImageNotice(requireNotNull(insertedMessageId), generation.branchId)) }
+                                return@fold
+                            }
                             _state.value = _state.value.copy(error = null)
                             if (attempt.succeededOnPublicRetry) {
                                 UsbSessionLog.i(

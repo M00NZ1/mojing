@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Android 已保存配图恢复 | 93 项 Chat ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下提示卡测试通过，覆盖保存后刷新失败、重复读取保护、读取失败重试与原消息定位，生成和消息插入各执行一次 | `ChatViewModelTest`、`SavedImageNoticeCardTest` |
 | Android 配图输入与草稿 | 92 项 Chat ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 3 项草稿和配图面板测试通过，横向窗口下配图面板测试通过，覆盖长输入、空白与忙碌状态、成功提交、失败、取消及新编辑保护 | `ChatViewModelTest`、`ChatDraftStoreInstrumentedTest`、`ImagePromptDialogTest` |
 | Android 旁白方向草稿 | 90 项 Chat ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 5 项草稿、输入栏与旁白界面测试通过；覆盖旧草稿读取、会话隔离、恢复、预检失败保留、写入完成清空与等待期间改写保护 | `ChatViewModelTest`、`ChatDraftStoreInstrumentedTest` |
 | Android 旁白操作面板 | Debug 应用与测试 APK 构建通过；Android 35、320dp 窄屏下 3 项旁白与输入栏测试通过，横向窗口下旁白测试通过，覆盖空白方向、长输入、两种生成请求和返回操作 | `NarratorRequestDialogTest`、`InputBarAttachmentStateTest` |

@@ -10,6 +10,8 @@ import com.mojing.app.data.local.entity.SessionWorldEntity
 import com.mojing.app.data.local.entity.MessageBookmarkEntity
 import com.mojing.app.data.local.entity.SessionMemoryCorrectionEntity
 
+data class SavedImageNotice(val messageId: Long, val branchId: String)
+
 data class BranchAnchor(val branchId: String, val label: String)
 
 data class MemoryCorrectionPromptTrace(
@@ -85,6 +87,7 @@ object ChatContract {
         val inputText: String = "",
         val narratorGuidance: String = "",
         val imagePrompt: String = "",
+        val savedImageNotice: SavedImageNotice? = null,
         val pendingLocalImagePaths: List<String> = emptyList(),
         val isReady: Boolean = false,
         /** 首次读取本机会话失败；与普通聊天操作错误分离，以便页面持续提供重试。 */

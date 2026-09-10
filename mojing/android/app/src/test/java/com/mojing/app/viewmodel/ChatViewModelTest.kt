@@ -1742,6 +1742,46 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun savedImageReadFailureOffersLocalRecoveryWithoutGeneratingAgain() = runTest(testDispatcher) {
+        val images = mockk<com.mojing.app.data.repository.ImageRepository>(relaxed = true)
+        coEvery { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns Result.success("mock-image")
+        coEvery { images.saveGeneratedImageForSession(any(), 42L) } returns "/mock/image.png"
+        val messages = mockk<MessageDao>(relaxed = true)
+        var saved: MessageEntity? = null
+        coEvery { messages.insert(any()) } answers { saved = firstArg<MessageEntity>().copy(id = 99); 99L }
+        coEvery { messages.getMainMessagesTail(42L, 81) } answers {
+            if (saved != null) throw IllegalStateException("read failed after commit")
+            emptyList()
+        }
+        val vm = createViewModel(messageDao = messages, imageRepository = images, secureStorage = validSecureStorage())
+        advanceUntilIdle()
+        vm.updateImagePrompt("雨夜街景")
+        vm.generateAndAttachUserMessage("雨夜街景")
+        advanceUntilIdle()
+        assertEquals("", vm.state.value.imagePrompt)
+        assertEquals(null, vm.state.value.error)
+        assertEquals(99L, vm.state.value.savedImageNotice?.messageId)
+        assertFalse(vm.state.value.isGenerating)
+        val gate = CompletableDeferred<MessageEntity?>()
+        coEvery { messages.getMainMessageById(42L, 99L) } coAnswers { gate.await() }
+        assertTrue(vm.showSavedImage())
+        runCurrent()
+        assertFalse(vm.showSavedImage())
+        gate.completeExceptionally(IllegalStateException("still unavailable"))
+        advanceUntilIdle()
+        assertEquals(99L, vm.state.value.savedImageNotice?.messageId)
+        coEvery { messages.getMainMessageById(42L, 99L) } answers { saved }
+        assertTrue(vm.showSavedImage())
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.savedImageNotice)
+        assertEquals(null, vm.state.value.error)
+        assertEquals(99L, vm.state.value.focusedMessageId)
+        assertEquals(listOf(saved), vm.state.value.messages)
+        coVerify(exactly = 1) { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 1) { messages.insert(any()) }
+    }
+
+    @Test
     fun imagePromptRestoresAndRemainsInSharedDraftUpdates() = runTest(testDispatcher) {
         val store = emptyDraftStore()
         every { store.load(42L) } returns ChatDraftSnapshot(imagePrompt = "雨夜街景")

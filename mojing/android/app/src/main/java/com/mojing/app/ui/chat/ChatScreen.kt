@@ -825,6 +825,12 @@ fun ChatScreen(
                                 },
                             )
                         }
+                        state.savedImageNotice?.takeIf { it.branchId == state.currentBranchId }?.let {
+                            SavedImageNoticeCard(
+                                busy = state.isLoadingHistory || state.isGenerating,
+                                onOpen = { viewModel.showSavedImage() },
+                            )
+                        }
                         state.quotingMessage?.let { q ->
                             QuoteDraftPreview(
                                 text = ChatMessageTextFormat.quoteSnippet(q.content, 120, q.speakerType),
