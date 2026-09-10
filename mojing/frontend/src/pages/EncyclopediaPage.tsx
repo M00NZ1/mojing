@@ -667,6 +667,7 @@ export default function EncyclopediaPage() {
   const [entryFormBaseline, setEntryFormBaseline] = useState('');
   const saveEntrySubmittingRef = useRef(false);
   const entryFormRevisionRef = useRef(0);
+  const entryCoverSubmittingRef = useRef(false);
   const focusEntryAfterSaveRef = useRef(false);
   const [showEncForm, setShowEncForm] = useState(false);
   const [encyclopediaFormBaseline, setEncyclopediaFormBaseline] = useState('');
@@ -1009,16 +1010,16 @@ export default function EncyclopediaPage() {
   });
 
   const generateEntryCoverMutation = useMutation({
-    mutationFn: async (p: { hint: string; id?: number }) => {
+    mutationFn: async (p: { hint: string; id?: number; draft: EncyclopediaEntryDraft; routeKey: string; formRevision: number }) => {
       const hint = p.hint ?? '';
-      const targetId = p.id ?? editingEntry?.id;
+      const targetId = p.id ?? p.draft.id;
       if (targetId) {
         return {
           kind: 'persisted' as const,
           entry: await api.generateEncyclopediaEntryCoverImage(targetId, { prompt_hint: hint, size: '1024x1792' }),
         };
       }
-      const e = editingEntry;
+      const e = p.draft;
       if (!e?.title?.trim()) throw new Error('请先填写标题');
       const prev = await api.previewEncyclopediaEntryCoverImage({
         title: e.title.trim(),
@@ -1034,28 +1035,36 @@ export default function EncyclopediaPage() {
       const { cover_image_path } = await api.persistEncyclopediaEntryCoverFromUrl({ image_url: u });
       return { kind: 'draft' as const, cover_image_path };
     },
-    onSuccess: (data) => {
+    onSuccess: (data, request) => {
+      const sameForm = routeSnapshotRef.current.key === request.routeKey
+        && entryFormRevisionRef.current === request.formRevision;
       if (data.kind === 'draft') {
-        setEditingEntry((prev) => (prev ? { ...prev, cover_image_path: data.cover_image_path } : prev));
+        if (!sameForm) return;
+        setEditingEntry((prev) => ({ ...prev, cover_image_path: data.cover_image_path }));
         showToast('封面已生成，请点击保存写入条目', 'success');
         return;
       }
       const updated = data.entry;
       queryClient.invalidateQueries({ queryKey: ['encyclopedia-entries'] });
       queryClient.invalidateQueries({ queryKey: ['entry-detail', updated.id] });
-      setEditingEntry((prev) => (
-        prev && prev.id === updated.id
-          ? { ...prev, cover_image_path: updated.cover_image_path }
-          : prev
-      ));
-      setEntryFormBaseline((baseline) => mergeEncyclopediaEntryDraftSnapshot(
-        baseline,
-        { cover_image_path: updated.cover_image_path },
-      ));
+      if (sameForm && request.draft.id === updated.id) {
+        setEditingEntry((prev) => prev.id === updated.id ? { ...prev, cover_image_path: updated.cover_image_path } : prev);
+        setEntryFormBaseline((baseline) => mergeEncyclopediaEntryDraftSnapshot(
+          baseline, { cover_image_path: updated.cover_image_path },
+        ));
+      }
       showToast('条目封面已生成', 'success');
     },
     onError: (e) => showToast(String(e), 'error'),
+    onSettled: () => { entryCoverSubmittingRef.current = false; },
   });
+  function generateEntryCover(hint: string, id?: number) {
+    if (entryCoverSubmittingRef.current) return;
+    entryCoverSubmittingRef.current = true;
+    generateEntryCoverMutation.mutate({ hint, id, draft: { ...editingEntry },
+      routeKey: routeSnapshotRef.current.key, formRevision: entryFormRevisionRef.current });
+  }
+
   const deleteEntryMutation = useMutation({
     mutationFn: (request: { id: number; routeKey: string }) => api.delete(`/encyclopedia/entries/${request.id}`),
     onSuccess: (_result, request) => {
@@ -1896,20 +1905,22 @@ export default function EncyclopediaPage() {
                 <div className="form-section-title">条目封面</div>
                 <p className="hint">
                   封面会出现在列表和网格里；用设置里配好的生图账号出图。
-                  {editingEntry.id ? ' 已保存条目将直接写入数据库。' : ' 新建条目为预览落盘，保存条目后写入数据库。'}
+                  {editingEntry.id ? ' 生成完成后自动更新封面。' : ' 生成完成后请保存条目。'}
                 </p>
-                <input
-                  placeholder="可选：画面补充说明"
+                <div style={{ width: '100%' }}>
+                  <ExpandableTextArea
+                  aria-label="封面补充说明"
                   value={entryCoverHint}
                   onChange={(e) => setEntryCoverHint(e.target.value)}
-                  style={{ maxWidth: 480, width: '100%' }}
-                />
+                  placeholder="补充人物、场景、光线与风格（可选）"
+                  />
+                </div>
                 <div style={{ marginTop: 8, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
                   <button
                     type="button"
                     className="btn btn-primary btn-sm"
                     disabled={generateEntryCoverMutation.isPending}
-                    onClick={() => generateEntryCoverMutation.mutate({ hint: entryCoverHint })}
+                    onClick={() => generateEntryCover(entryCoverHint)}
                   >
                     {generateEntryCoverMutation.isPending ? '生成中…' : 'AI 生成条目封面'}
                   </button>
@@ -2372,17 +2383,19 @@ export default function EncyclopediaPage() {
               <div className="button-row" style={{ flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
                 {sedimentLocation?.encyclopediaId === selectedEncId && <button type="button" className="btn btn-ghost btn-sm" onClick={() => { void openLibraryTool('sediment'); }}>返回沉淀资料</button>}
                 <button type="button" className="btn btn-ghost btn-sm" data-encyclopedia-entry-edit-return onClick={() => handleEditEntry(entry)}><UiIcon name="edit" />编辑</button>
-                <input
+                <div style={{ width: '100%' }}>
+                  <ExpandableTextArea
+                  aria-label="封面补充说明"
                   value={entryCoverHint}
                   onChange={(e) => setEntryCoverHint(e.target.value)}
-                  placeholder="封面补充说明（可选）"
-                  style={{ flex: 1, minWidth: 120, maxWidth: 220, fontSize: '0.78rem', padding: '4px 8px' }}
-                />
+                  placeholder="补充人物、场景、光线与风格（可选）"
+                  />
+                </div>
                 <button
                   type="button"
                   className="btn btn-primary btn-sm"
                   disabled={generateEntryCoverMutation.isPending}
-                  onClick={() => generateEntryCoverMutation.mutate({ id: entry.id, hint: entryCoverHint })}
+                  onClick={() => generateEntryCover(entryCoverHint, entry.id)}
                 >
                   <UiIcon name={generateEntryCoverMutation.isPending ? 'loading' : 'sparkles'} className={generateEntryCoverMutation.isPending ? 'ui-icon-loading' : undefined} />
                   {generateEntryCoverMutation.isPending ? '生成中…' : '生成封面'}
