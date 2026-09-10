@@ -12,6 +12,22 @@ import org.junit.Test
 class EntrySourcePreviewTest {
     @get:Rule val rule = createComposeRule()
 
+    @Test fun sourcePagingRemainsAvailableWhenOneMessageIsMissing() {
+        val index = mutableStateOf(1)
+        rule.setContent { MaterialTheme {
+            EntrySourcePreview(false, "原文", if (index.value == 1) "原始对话已不存在" else null,
+                onClose = {}, onRetry = {}, sourceIndex = index.value, sourceCount = 3,
+                onSourceChange = { index.value = it })
+        } }
+        rule.onNodeWithText("2 / 3").assertIsDisplayed()
+        rule.onNodeWithText("上一条").performClick()
+        rule.onNodeWithText("1 / 3").assertIsDisplayed()
+        rule.onNodeWithText("上一条").assertIsNotEnabled()
+        rule.onNodeWithText("下一条").performClick().performClick()
+        rule.onNodeWithText("3 / 3").assertIsDisplayed()
+        rule.onNodeWithText("下一条").assertIsNotEnabled()
+    }
+
     @Test fun sourcePreviewKeepsCloseAndRetryReachable() {
         val loading = mutableStateOf(true)
         val error = mutableStateOf<String?>(null)

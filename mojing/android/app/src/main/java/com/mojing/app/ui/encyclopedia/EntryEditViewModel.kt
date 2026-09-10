@@ -8,6 +8,7 @@ import com.mojing.app.data.local.dao.EntryVersionDao
 import com.mojing.app.data.local.dao.EncyclopediaEntryDao
 import com.mojing.app.domain.usecase.SaveCharacterEntryUseCase
 import com.mojing.app.domain.encyclopedia.CharacterEncyclopediaSync
+import com.mojing.app.domain.encyclopedia.sourceReferences
 import com.mojing.app.data.local.entity.EntryVersionEntity
 import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
 import com.mojing.app.data.repository.ImageRepository
@@ -27,6 +28,8 @@ import javax.inject.Inject
 data class EntrySourceTarget(val sessionId: Long, val messageId: Long, val branchId: String)
 
 data class EntryEditState(
+    val sourceMessageIds: List<Long> = emptyList(),
+    val sourceIndex: Int = 0,
     val sourceTarget: EntrySourceTarget? = null,
     val hasSourceMessage: Boolean = false,
     val sourcePreviewOpen: Boolean = false,
@@ -89,7 +92,7 @@ private fun EntryEditState.toDraftSnapshot() = EntryDraftSnapshot(
 )
 
 private fun EntryEditState.withPersistedEntry(entry: EncyclopediaEntryEntity) = copy(
-    hasSourceMessage = (entry.sourceSessionId ?: 0) > 0 && (entry.sourceMessageId ?: 0) > 0,
+    hasSourceMessage = (entry.sourceSessionId ?: 0) > 0 && entry.sourceReferences().messageIds.isNotEmpty(),
     isConversationNote = CharacterEncyclopediaSync.isConversationNote(entry),
     title = entry.title,
     entryType = entry.entryType,
@@ -132,20 +135,30 @@ class EntryEditViewModel @Inject constructor(
         _state.value = _state.value.copy(sourcePreviewOpen = false, sourceLoading = false, sourceContent = null, sourceError = null, sourceTarget = null)
     }
 
-    fun openSourcePreview() {
+    fun openSourcePreview() = loadSourcePreview(null)
+
+    fun showSourceMessage(index: Int) {
+        if (!_state.value.sourcePreviewOpen || index !in _state.value.sourceMessageIds.indices) return
+        loadSourcePreview(index)
+    }
+
+    private fun loadSourcePreview(requestedIndex: Int?) {
         val entry = currentEntry ?: return
         val sessionId = entry.sourceSessionId?.takeIf { it > 0 } ?: return
-        val messageId = entry.sourceMessageId?.takeIf { it > 0 } ?: return
+        val references = entry.sourceReferences()
+        if (references.messageIds.isEmpty()) return
+        val index = requestedIndex ?: if (_state.value.sourcePreviewOpen) _state.value.sourceIndex
+            else references.messageIds.indexOf(entry.sourceMessageId).coerceAtLeast(0)
+        val messageId = references.messageIds.getOrNull(index) ?: return
         if (_state.value.sourceLoading) return
         val revision = ++sourceRevision
-        _state.value = _state.value.copy(sourcePreviewOpen = true, sourceLoading = true, sourceContent = null, sourceError = null, sourceTarget = null)
+        _state.value = _state.value.copy(sourcePreviewOpen = true, sourceLoading = true, sourceContent = null, sourceError = null, sourceTarget = null,
+            sourceMessageIds = references.messageIds, sourceIndex = index)
         sourceJob = viewModelScope.launch {
             try {
                 val message = messageDao.getByIdInSession(messageId, sessionId)
                 if (sourceRevision != revision || currentEntry?.id != entry.id) return@launch
-                val branchId = runCatching { JsonParser.parseString(entry.metaJson).asJsonObject
-                    .get("source_branch_id")?.asString?.takeIf { it.isNotBlank() } }.getOrNull()
-                    ?: message?.branchId ?: "main"
+                val branchId = references.branchId ?: message?.branchId ?: "main"
                 _state.value = _state.value.copy(sourceLoading = false, sourceContent = message?.content,
                     sourceTarget = message?.let { EntrySourceTarget(sessionId, messageId, branchId) },
                     sourceError = if (message == null) "原始对话已不存在，百科内容仍保留。" else null)

@@ -31,6 +31,34 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class EntryEditViewModelTest {
+    @Test fun sourcePagesReadIndividuallyAndSkipMissingSource() = runTest(dispatcher) {
+        val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, sourceSessionId = 42, sourceMessageId = 9,
+            metaJson = """{"source_message_ids":[6,7,9],"source_branch_id":"story"}""")
+        val dao = mockk<EncyclopediaEntryDao> { coEvery { getById(8) } returns entry }
+        val messages = mockk<com.mojing.app.data.local.dao.MessageDao>()
+        coEvery { messages.getByIdInSession(any(), 42) } answers {
+            val id = firstArg<Long>()
+            if (id == 7L) null else com.mojing.app.data.local.entity.MessageEntity(id = id, sessionId = 42, content = "原文$id")
+        }
+        val vm = createViewModel(encyclopediaDao(), dao, messageDao = messages)
+        vm.load(3, 8)
+        vm.openSourcePreview()
+        assertEquals(listOf(6L, 7L, 9L), vm.state.value.sourceMessageIds)
+        assertEquals(2, vm.state.value.sourceIndex)
+        coVerify(exactly = 0) { messages.getByIdInSession(6, 42) }
+        vm.showSourceMessage(1)
+        assertEquals(null, vm.state.value.sourceTarget)
+        assertNotNull(vm.state.value.sourceError)
+        vm.showSourceMessage(0)
+        assertEquals("原文6", vm.state.value.sourceContent)
+        assertEquals(EntrySourceTarget(42, 6, "story"), vm.state.value.sourceTarget)
+        vm.showSourceMessage(-1)
+        assertEquals(0, vm.state.value.sourceIndex)
+        vm.closeSourcePreview()
+        vm.showSourceMessage(2)
+        assertFalse(vm.state.value.sourcePreviewOpen)
+    }
+
     @Test fun sourcePreviewKeepsDraftAndAllowsRetry() = runTest(dispatcher) {
         val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, sourceSessionId = 42, sourceMessageId = 6,
             metaJson = """{"source_branch_id":"story-2"}""")

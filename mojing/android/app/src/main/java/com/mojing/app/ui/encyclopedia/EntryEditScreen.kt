@@ -84,6 +84,8 @@ fun EntryEditScreen(
     if (state.sourcePreviewOpen) {
         EntrySourcePreview(state.sourceLoading, state.sourceContent, state.sourceError,
             onClose = viewModel::closeSourcePreview, onRetry = viewModel::openSourcePreview,
+            sourceIndex = state.sourceIndex, sourceCount = state.sourceMessageIds.size,
+            onSourceChange = viewModel::showSourceMessage,
             onOpenConversation = state.sourceTarget?.let { target -> { onOpenSource(target) } })
     }
     var subTab by remember { mutableStateOf(EntryEditSubTab.EDIT) }
