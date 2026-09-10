@@ -16,7 +16,7 @@ import com.android.build.api.variant.FilterConfiguration
  */
 private val appVersionMajor = 1
 private val appVersionMinor = 0
-private val appVersionPatch = 21
+private val appVersionPatch = 22
 
 private val appVersionCode = appVersionMajor * 10_000 + appVersionMinor * 100 + appVersionPatch
 

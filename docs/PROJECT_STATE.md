@@ -12,7 +12,7 @@
 | Web | React、TypeScript、Vite；本机 FastAPI、SQLAlchemy、SQLite |
 | Android | Kotlin、Jetpack Compose、Room |
 | Android 应用标识 | `com.mojing.app` |
-| Android 版本 | 1.0.21 / 10021 |
+| Android 版本 | 1.0.22 / 10022 |
 | Room schema | 19 |
 
 ## 当前能力
@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Android 1.0.22 本地安装包 | Release 构建通过，APK 应用标识为 `com.mojing.app`，版本为 1.0.22 / 10022，沿用上一版签名 | `assembleRelease`、`aapt`、`apksigner` |
 | Web 生成记录布局 | Web 生产构建、Chrome 桌面与 390/320px 回归通过，覆盖卡片布局、44px 操作区、分页、暂停失败重试、结果读取与保存、深链和管理跳转；完成桌面与窄屏截图检查 | `test-world-history.mjs`，本地 API 模拟 |
 | Android 生成详情操作 | 9 项 ViewModel 测试及 Debug 应用、测试 APK 构建通过；Android 35 窄屏下 11 项详情测试通过，另通过短窗口长反馈与操作区滚动测试 | `GenerationTaskListViewModelTest`、`GenerationTaskDetailTest` |
 | Android 生成记录卡片 | Debug 应用与测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 11 项卡片与详情测试通过，覆盖长标题和错误、重试、查看已保存内容、整卡详情、取消菜单与忙碌状态；完成卡片截图检查 | `GenerationTaskCardTest`、`GenerationTaskDetailTest` |
@@ -112,9 +113,9 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 ## 本地状态与交付
 
-当前分支为 `main`。近期修改已分批本地提交，尚未推送或发布新版；版本与 schema 保持不变。
+当前分支为 `main`。近期修改已分批本地提交，尚未推送或发布新版。Android 本地安装包为 1.0.22 / 10022，Room schema 为 19。
 
-既有 Android 下载记录：[1.0.21 · 2026-09-09](https://github.com/M00NZ1/mojing/releases/tag/build-20260909-3992bfb0)。下次发布需递增版本并核对 APK 元数据。
+既有 Android 下载记录：[1.0.21 · 2026-09-09](https://github.com/M00NZ1/mojing/releases/tag/build-20260909-3992bfb0)。本地最新安装包位于 `outputs/android/20260911-1.0.22/MoJing-1.0.22-universal-release.apk`。
 
 正式数据库 `mojing/backend/storage/app.db` 为 3,891,200 字节，修改时间为 2026-08-28 23:23:12。本批未修改数据库、媒体、凭据、签名或历史 worktree；测试 AVD 当前已停止，测试日志与截图保留在 `.codex-work/`。
 

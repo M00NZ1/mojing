@@ -81,6 +81,13 @@ Set-Location .\mojing\android
 .\gradlew.bat assembleRelease
 ```
 
+本地 Release 打包可使用独立构建进程，设置 6 GB 堆内存与两个工作线程：
+
+```powershell
+Set-Location .\mojing\android
+.\gradlew.bat assembleRelease --no-daemon '-Dorg.gradle.jvmargs=-Xmx6144m -Dfile.encoding=UTF-8' --max-workers=2 --console=plain
+```
+
 连接设备后的测试入口：
 
 ```powershell
