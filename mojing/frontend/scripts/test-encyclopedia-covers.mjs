@@ -58,6 +58,7 @@ try {
   await page.getByLabel('封面补充说明', { exact: true }).fill('夜色'.repeat(500));
   await generate.click();
   await waitRequest(1);
+  assert.equal(await page.getByRole('button', { name: '封面生成中…', exact: true }).isDisabled(), true);
   assert.equal(requests[0].title, '旧草稿');
   await page.getByRole('button', { name: '取消', exact: true }).click();
   const confirm = page.getByRole('dialog');

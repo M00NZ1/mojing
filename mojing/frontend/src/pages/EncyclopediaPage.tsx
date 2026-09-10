@@ -667,7 +667,7 @@ export default function EncyclopediaPage() {
   const [entryFormBaseline, setEntryFormBaseline] = useState('');
   const saveEntrySubmittingRef = useRef(false);
   const entryFormRevisionRef = useRef(0);
-  const entryCoverSubmittingRef = useRef(false);
+  const entryCoverSubmittingRef = useRef<{ routeKey: string; formRevision: number } | null>(null);
   const focusEntryAfterSaveRef = useRef(false);
   const [showEncForm, setShowEncForm] = useState(false);
   const [encyclopediaFormBaseline, setEncyclopediaFormBaseline] = useState('');
@@ -748,6 +748,8 @@ export default function EncyclopediaPage() {
     newEncName,
     newEncWorldPrompt,
   ]);
+  const formSnapshotsRef = useRef({ entry: entryFormSnapshot, encyclopedia: encyclopediaFormSnapshot });
+  formSnapshotsRef.current = { entry: entryFormSnapshot, encyclopedia: encyclopediaFormSnapshot };
   const isEntryFormDirty = showEntryForm && Boolean(entryFormBaseline) && entryFormSnapshot !== entryFormBaseline;
   const isEncyclopediaFormDirty = showEncForm
     && Boolean(encyclopediaFormBaseline)
@@ -969,6 +971,13 @@ export default function EncyclopediaPage() {
         routeSnapshotRef.current.key === request.routeKey
         && entryFormRevisionRef.current === request.formRevision
       ) {
+        const savedId = Number(result?.id || request.payload.id);
+        if (formSnapshotsRef.current.entry !== encyclopediaEntryDraftSnapshot(request.payload) && savedId > 0) {
+          setEditingEntry(prev => ({ ...prev, id: savedId }));
+          setEntryFormBaseline(encyclopediaEntryDraftSnapshot({ ...request.payload, id: savedId }));
+          showToast('本次内容已保存，新增修改可继续保存', 'success');
+          return;
+        }
         setEntryFormBaseline('');
         setShowEntryForm(false);
         const savedCategory = entryCategoryKey(request.payload.entry_type) || request.category;
@@ -991,6 +1000,7 @@ export default function EncyclopediaPage() {
       routeKey: string;
       formRevision: number;
       editingId: number | null;
+      snapshot: string;
     }) => api.saveEncyclopedia(request.payload),
     onSuccess: (saved, request) => {
       queryClient.invalidateQueries({ queryKey: ['encyclopedias'] });
@@ -998,6 +1008,14 @@ export default function EncyclopediaPage() {
         routeSnapshotRef.current.key === request.routeKey
         && encyclopediaFormRevisionRef.current === request.formRevision
       ) {
+        if (formSnapshotsRef.current.encyclopedia !== request.snapshot) {
+          setEditingEncId(saved.id);
+          setEncyclopediaFormBaseline(encyclopediaLibraryDraftSnapshot({
+            ...JSON.parse(request.snapshot), editingId: saved.id,
+          }));
+          showToast('本次内容已保存，新增修改可继续保存', 'success');
+          return;
+        }
         setEncyclopediaRoute(saved.id, null, null, true, undefined, true);
         discardEncyclopediaForm();
       }
@@ -1056,14 +1074,21 @@ export default function EncyclopediaPage() {
       showToast('条目封面已生成', 'success');
     },
     onError: (e) => showToast(String(e), 'error'),
-    onSettled: () => { entryCoverSubmittingRef.current = false; },
+    onSettled: () => { entryCoverSubmittingRef.current = null; },
   });
   function generateEntryCover(hint: string, id?: number) {
-    if (entryCoverSubmittingRef.current) return;
-    entryCoverSubmittingRef.current = true;
+    if (entryCoverSubmittingRef.current || saveEntrySubmittingRef.current) return;
+    entryCoverSubmittingRef.current = { routeKey: routeSnapshotRef.current.key, formRevision: entryFormRevisionRef.current };
     generateEntryCoverMutation.mutate({ hint, id, draft: { ...editingEntry },
       routeKey: routeSnapshotRef.current.key, formRevision: entryFormRevisionRef.current });
   }
+
+  function hasCurrentEntryCoverRequest() {
+    const request = entryCoverSubmittingRef.current;
+    return request?.routeKey === routeSnapshotRef.current.key
+      && request.formRevision === entryFormRevisionRef.current;
+  }
+  const currentCoverPending = generateEntryCoverMutation.isPending && hasCurrentEntryCoverRequest();
 
   const deleteEntryMutation = useMutation({
     mutationFn: (request: { id: number; routeKey: string }) => api.delete(`/encyclopedia/entries/${request.id}`),
@@ -1445,6 +1470,7 @@ export default function EncyclopediaPage() {
       routeKey: routeSnapshotRef.current.key,
       formRevision: encyclopediaFormRevisionRef.current,
       editingId: editingEncId,
+      snapshot: encyclopediaFormSnapshot,
     });
   }
 
@@ -1876,9 +1902,9 @@ export default function EncyclopediaPage() {
                 <button
                   type="button"
                   className="btn btn-primary btn-sm"
-                  disabled={saveEntryMutation.isPending}
+                  disabled={saveEntryMutation.isPending || currentCoverPending}
                   onClick={() => {
-                    if (saveEntrySubmittingRef.current) return;
+                    if (saveEntrySubmittingRef.current || hasCurrentEntryCoverRequest()) return;
                     saveEntrySubmittingRef.current = true;
                     if (!selectedEncId) {
                       saveEntrySubmittingRef.current = false;
@@ -1894,7 +1920,7 @@ export default function EncyclopediaPage() {
                     });
                   }}
                 >
-                  {saveEntryMutation.isPending ? '保存中...' : '保存'}
+                  {saveEntryMutation.isPending ? '保存中...' : currentCoverPending ? '封面生成中…' : '保存'}
                 </button>
                 <button type="button" className="btn btn-ghost btn-sm" disabled={saveEntryMutation.isPending} onClick={() => { void requestCloseEntryForm(); }}>取消</button>
               </div>
@@ -1919,7 +1945,7 @@ export default function EncyclopediaPage() {
                   <button
                     type="button"
                     className="btn btn-primary btn-sm"
-                    disabled={generateEntryCoverMutation.isPending}
+                    disabled={generateEntryCoverMutation.isPending || saveEntryMutation.isPending}
                     onClick={() => generateEntryCover(entryCoverHint)}
                   >
                     {generateEntryCoverMutation.isPending ? '生成中…' : 'AI 生成条目封面'}
@@ -2394,7 +2420,7 @@ export default function EncyclopediaPage() {
                 <button
                   type="button"
                   className="btn btn-primary btn-sm"
-                  disabled={generateEntryCoverMutation.isPending}
+                  disabled={generateEntryCoverMutation.isPending || saveEntryMutation.isPending}
                   onClick={() => generateEntryCover(entryCoverHint, entry.id)}
                 >
                   <UiIcon name={generateEntryCoverMutation.isPending ? 'loading' : 'sparkles'} className={generateEntryCoverMutation.isPending ? 'ui-icon-loading' : undefined} />

@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Web 百科保存期间编辑 | Web 生产构建与 Chrome 浏览器回归通过，覆盖条目与百科库的保存后新编辑保留、创建 ID 复用、失败重试及封面生成与保存互斥 | `test-encyclopedia-save-races.mjs`、`test-encyclopedia-covers.mjs`，本地 API 模拟 |
 | Web 百科封面流程 | Web 生产构建与 Chrome 浏览器回归通过，覆盖取消旧草稿、切换已保存条目、失败重试、请求快照、生成期间编辑及 320px 长描述展开收起 | `test-encyclopedia-covers.mjs`，本地 API 模拟 |
 | Android 已保存配图恢复 | 93 项 Chat ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下提示卡测试通过，覆盖保存后刷新失败、重复读取保护、读取失败重试与原消息定位，生成和消息插入各执行一次 | `ChatViewModelTest`、`SavedImageNoticeCardTest` |
 | Android 配图输入与草稿 | 92 项 Chat ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 3 项草稿和配图面板测试通过，横向窗口下配图面板测试通过，覆盖长输入、空白与忙碌状态、成功提交、失败、取消及新编辑保护 | `ChatViewModelTest`、`ChatDraftStoreInstrumentedTest`、`ImagePromptDialogTest` |
