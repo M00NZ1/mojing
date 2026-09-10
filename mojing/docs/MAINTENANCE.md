@@ -164,7 +164,7 @@ GitHub Releases 由发布流程单独上传 APK。发布时沿用项目版本与
 
 ## 品牌图标
 
-`frontend/scripts/generate-brand-assets.mjs` 维护门扉与笔尖的矢量路径，生成 Android 自适应前景、单色图标、各密度启动图标，以及 Web 的 SVG、192px 和 512px PNG。使用浏览器回归所配置的 Playwright 环境运行：
+`frontend/scripts/generate-brand-assets.mjs` 维护留白山形与流动墨线的矢量路径，生成 Android 自适应前景、单色图标、各密度启动图标，以及 Web 的 SVG、192px 和 512px PNG。使用浏览器回归所配置的 Playwright 环境运行：
 
 ```powershell
 node mojing/frontend/scripts/generate-brand-assets.mjs
