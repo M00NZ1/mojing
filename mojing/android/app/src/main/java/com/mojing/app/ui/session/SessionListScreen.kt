@@ -250,7 +250,7 @@ fun SessionListScreen(
             MainAppBottomNavigation(navController)
         },
         floatingActionButton = {
-            if (isSessionHomeContentReady && !isImeKeyboardOpen()) {
+            if (isSessionHomeContentReady && sessions.isNotEmpty() && !isImeKeyboardOpen()) {
                 FloatingActionButton(
                     onClick = { openNewSessionDialog() },
                     containerColor = MaterialTheme.colorScheme.primary
@@ -433,7 +433,7 @@ fun SessionListScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
-                    contentPadding = PaddingValues(vertical = 0.dp),
+                    contentPadding = PaddingValues(bottom = 96.dp),
                 ) {
                     itemsIndexed(filteredSessions, key = { _, r -> r.session.id }) { index, row ->
                         Column(Modifier.fillMaxWidth()) {
