@@ -27,7 +27,7 @@ try {
   }
   browser = await chromium.launch({ headless: true, channel: process.env.SMOKE_BROWSER || undefined });
   if (output) await mkdir(output, { recursive: true });
-  for (const width of [1365, 390]) {
+  for (const width of [1365, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 900 } });
     await context.addInitScript(() => {
       window.copiedText = '';
@@ -84,6 +84,15 @@ try {
     await page.getByRole('button', { name: '刷新记录', exact: true }).click();
     await page.getByRole('heading', { name: '雾港回声' }).waitFor();
     assert.equal(await page.getByText('已完成', { exact: true }).count(), 2);
+    const historyRegion = page.getByRole('region', { name: '生成记录', exact: true });
+    assert.equal(await historyRegion.locator('.world-history-meta').count(), 3);
+    const resultAction = historyRegion.getByRole('button', { name: '查看结果', exact: true });
+    assert.ok((await resultAction.getAttribute('class')).includes('btn-primary'));
+    for (const button of await historyRegion.locator('.world-history-actions button').all()) {
+      const box = await button.boundingBox();
+      assert.ok(box && box.height >= 44 && box.x >= 0 && box.x + box.width <= width, JSON.stringify(box));
+    }
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.getByText('旧记录未保留完整结果', { exact: false }).waitFor();
     assert.ok(!requests.some((request) => request.includes('world-result')));
     if (output) await page.screenshot({ path: path.join(output, `world-history-${width}.png`), fullPage: true });

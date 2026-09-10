@@ -1,21 +1,30 @@
 .world-history { min-width: 0; }
 .workbench-layout:has(.world-history) { overflow-y: auto; width: 100%; }
 .workbench-layout:has(.world-history) > * { flex-shrink: 0; }
-.world-history-list { margin-top: 20px; }
-.world-history-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 0; border-bottom: 1px solid var(--line); }
+.world-history-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); align-items: start; gap: 16px; margin-top: 20px; }
+.world-history-row { display: flex; flex-direction: column; align-items: stretch; gap: 16px; min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface-2); }
 .world-history-row > div { min-width: 0; }
 .world-history-info { flex: 1; }
-.world-history-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; flex: 0 0 auto; max-width: 240px; }
-.world-history-actions .btn { width: auto; min-height: 40px; }
-.world-history-progress { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); }
+.world-history-meta { display: flex; align-items: center; gap: 12px; color: var(--text-2); font-size: .8rem; }
+.world-history-meta > div { display: grid; gap: 4px; min-width: 0; }
+.world-history-meta time { font-size: .75rem; overflow-wrap: anywhere; }
+.world-history-type-icon { display: grid; place-items: center; width: 40px; height: 40px; flex: 0 0 40px; border-radius: 12px; background: var(--surface); color: var(--accent); }
+.world-history-type-icon svg { width: 22px; height: 22px; }
+.world-history-row .world-history-info h3 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 16px 0 10px; line-height: 1.5; }
+.world-history-actions .world-history-action-hint { width: 100%; margin: 0; font-size: .8rem; color: var(--text-2); }
+.world-history-actions { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.world-history-actions .btn { width: 100%; min-height: 44px; justify-content: center; }
+.world-history-progress { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--surface); }
 .world-history-progress strong { color: var(--text); font-weight: 500; }
 .world-history-failure { margin-top: 10px; }
-.world-history-failure summary { cursor: pointer; color: var(--danger); font-size: .85rem; padding-block: 8px; }
+.world-history-failure summary { cursor: pointer; color: var(--danger); font-size: .85rem; padding-block: 12px; }
 .world-history-failure .world-history-error { max-height: 180px; overflow: auto; white-space: pre-wrap; padding: 10px; background: var(--surface-2); border-radius: 10px; }
 .world-history-row h3, .world-history-result h3 { margin: 10px 0 6px; overflow-wrap: anywhere; }
 .world-history-row p { margin: 5px 0; font-size: .8rem; color: var(--text-2); overflow-wrap: anywhere; }
 .world-history-row > button { flex-shrink: 0; }
-.world-job-status { display: inline-block; font-size: .75rem; color: var(--text-2); }
+.world-job-status { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 8px; background: var(--surface); font-size: .75rem; line-height: 1.5; color: var(--text-2); }
+.world-job-status::before { content: ""; width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: currentColor; }
+.world-job-running, .world-job-pause_requested { color: var(--accent); }
 .world-job-succeeded { color: var(--accent-2); }
 .world-job-paused, .world-job-interrupted { color: var(--accent); }
 .world-job-failed, .world-history-row .world-history-error { color: var(--danger, #e77979); }
@@ -44,7 +53,7 @@
   .world-generation-progress { align-items: stretch; flex-direction: column; }
   .world-generation-progress .button-row { display: flex; gap: 12px; }
   .world-generation-progress .button-row > button { flex: 1; }
-  .world-history-row { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .world-history-row { padding: 16px; gap: 12px; }
   .world-history-info { width: 100%; }
   .world-history-actions { width: 100%; max-width: none; justify-content: flex-start; }
   .workbench-layout .creation-workspace-toolbar { flex-wrap: wrap; }

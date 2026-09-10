@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Web 生成记录布局 | Web 生产构建、Chrome 桌面与 390/320px 回归通过，覆盖卡片布局、44px 操作区、分页、暂停失败重试、结果读取与保存、深链和管理跳转；完成桌面与窄屏截图检查 | `test-world-history.mjs`，本地 API 模拟 |
 | Android 生成详情操作 | 9 项 ViewModel 测试及 Debug 应用、测试 APK 构建通过；Android 35 窄屏下 11 项详情测试通过，另通过短窗口长反馈与操作区滚动测试 | `GenerationTaskListViewModelTest`、`GenerationTaskDetailTest` |
 | Android 生成记录卡片 | Debug 应用与测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 11 项卡片与详情测试通过，覆盖长标题和错误、重试、查看已保存内容、整卡详情、取消菜单与忙碌状态；完成卡片截图检查 | `GenerationTaskCardTest`、`GenerationTaskDetailTest` |
 | Android 补全结果恢复 | 10 项模板 ViewModel 测试及 Debug 构建通过，覆盖读取失败、草稿保留、重复重试、后续任务观察、重进页面和旧读取结果隔离 | `TemplateEditViewModelTest` |
