@@ -38,17 +38,20 @@ try {
   });
   const page = await context.newPage();
   let failCreate = true;
+  let library = [{ id: 1, name: "沈照" }, { id: 2, name: "林汐" }];
   const bodies = [];
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await context.route('http://127.0.0.1:18001/api/**', async route => {
     const endpoint = new URL(route.request().url()).pathname.replace('/api', '');
     let data = [], status = 200;
-    if (endpoint === '/system/local-config') data = { default_narrator_enabled: true, default_choice_generation_enabled: true, default_anti_cheat_enabled: true };
+    if (endpoint === '/characters') data = library;
+    else if (endpoint === '/system/local-config') data = { default_narrator_enabled: true, default_choice_generation_enabled: true, default_anti_cheat_enabled: true };
     else if (endpoint === '/sessions' && route.request().method() === 'POST') {
       bodies.push(JSON.parse(route.request().postData()));
-      status = failCreate ? 503 : 200;
-      data = failCreate ? { detail: '开局保存失败' } : { id: 42, title: '新故事', message_count: 0, participant_count: 0 };
+      if (failCreate) library = library.filter(character => character.id === 1);
+      status = failCreate ? 409 : 200;
+      data = failCreate ? { detail: '部分参与角色已不存在，请刷新角色列表后重新选择' } : { id: 42, title: '新故事', message_count: 0, participant_count: 0 };
     } else if (endpoint === '/sessions/42') data = { id: 42, title: '新故事', world: {} };
     else if (endpoint === '/sessions/42/world') data = {};
     else if (endpoint === '/sessions/42/messages') data = { items: [], next_cursor: null };
@@ -56,6 +59,8 @@ try {
   });
   await page.goto(`http://127.0.0.1:${port}/chat`, { waitUntil: 'domcontentloaded' });
   await page.getByRole('button', { name: '新建对话', exact: true }).click();
+  await page.locator('.session-create-box').getByRole('button', { name: '沈照', exact: true }).click();
+  await page.locator('.session-create-box').getByRole('button', { name: '林汐', exact: true }).click();
   await page.getByText('对话设置', { exact: true }).click();
   for (const label of ['旁白', '剧情选项', '规则约束']) {
     const checkbox = page.getByRole('checkbox', { name: label, exact: true });
@@ -67,7 +72,7 @@ try {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.evaluate(() => window.dispatchEvent(new Event('open-mobile-sessions')));
   await page.getByRole('button', { name: '开始新对话', exact: true }).click({ timeout: 5000 });
-  await page.getByRole('alert').filter({ hasText: '开局保存失败' }).waitFor();
+  await page.getByRole('alert').filter({ hasText: '部分参与角色已不存在' }).waitFor();
   for (const label of ['旁白', '剧情选项', '规则约束']) {
     const checkbox = page.getByRole('checkbox', { name: label, exact: true });
     await checkbox.scrollIntoViewIfNeeded();
@@ -80,13 +85,19 @@ try {
   }
 
   if (output) { await mkdir(output, { recursive: true }); await page.screenshot({ path: path.join(output, 'opening-options-320.png') }); }
+  assert.deepEqual(bodies[0].initial_character_ids, [1, 2]);
+  await page.getByRole('button', { name: '刷新角色列表', exact: true }).click();
+  await page.getByText('已移除 1 个不可用的角色，请确认参与名单。', { exact: true }).waitFor();
+  assert.equal(await page.locator('.session-create-box').getByRole('button', { name: '林汐', exact: true }).count(), 0);
+  assert.equal(await page.locator('.session-create-box').getByRole('button', { name: '沈照', exact: true }).getAttribute('aria-pressed'), 'true');
   failCreate = false;
   await page.getByRole('button', { name: '开始新对话', exact: true }).click();
   await page.waitForURL('**/chat/42');
   assert.equal(bodies.length, 2);
+  assert.deepEqual(bodies[1].initial_character_ids, [1]);
   for (const body of bodies) for (const key of ['narrator_enabled', 'choice_generation_enabled', 'anti_cheat_enabled']) assert.equal(body[key], false);
   assert.deepEqual(errors, []);
-  console.log('PASS: opening defaults, explicit false payloads, failure retention, retry, and 320px submission. Mock APIs only.');
+  console.log('PASS: opening defaults, explicit false payloads, stale participant refresh, preserved selection, retry, and 320px submission. Mock APIs only.');
 } finally {
   await browser?.close();
   if (child.exitCode === null) { child.kill(); await once(child, 'exit'); }

@@ -31,6 +31,7 @@ export default function SessionSidebar() {
   const [encyclopediaId, setEncyclopediaId] = useState<number | null>(null);
   const [openingOverrides, setOpeningOverrides] = useState<Partial<Record<typeof OPENING_OPTIONS[number]['key'], boolean>>>({});
   const [selectedCharacterIds, setSelectedCharacterIds] = useState<Set<number>>(new Set());
+  const [characterSelectionNotice, setCharacterSelectionNotice] = useState<string | null>(null);
   const importArchiveInputRef = useRef<HTMLInputElement>(null);
   const createToggleButtonRef = useRef<HTMLButtonElement>(null);
   const createHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -110,6 +111,17 @@ export default function SessionSidebar() {
     templateDefaultInitializedRef.current = true;
   }, [showCreateForm, templatesQuery.data, localConfigQuery.data]);
 
+  useEffect(() => {
+    if (!charactersQuery.data) return;
+    const available = new Set(charactersQuery.data.map(character => character.id));
+    const retained = new Set([...selectedCharacterIds].filter(id => available.has(id)));
+    const removed = selectedCharacterIds.size - retained.size;
+    if (removed > 0) {
+      setSelectedCharacterIds(retained);
+      setCharacterSelectionNotice(`已移除 ${removed} 个不可用的角色，请确认参与名单。`);
+    }
+  }, [charactersQuery.data, selectedCharacterIds]);
+
   const createSession = useMutation({
     mutationFn: () => api.createSessionWithConfig({
       title: title.trim() || defaultSessionTitle(),
@@ -128,6 +140,7 @@ export default function SessionSidebar() {
       setTemplateId('custom');
       setEncyclopediaId(null);
       setOpeningOverrides({});
+      setCharacterSelectionNotice(null);
       setSelectedCharacterIds(new Set());
       characterDefaultsInitializedRef.current = false;
       templateDefaultInitializedRef.current = false;
@@ -156,6 +169,7 @@ export default function SessionSidebar() {
   });
 
   function toggleCharacter(characterId: number) {
+    setCharacterSelectionNotice(null);
     characterSelectionTouchedRef.current = true;
     setSelectedCharacterIds((previous) => {
       const next = new Set(previous);
@@ -268,7 +282,12 @@ export default function SessionSidebar() {
             <input id="new-session-title" value={title} onChange={(event) => setTitle(event.target.value)} />
           </div>
           <div className="form-group">
-            <label>参与角色（可稍后添加）</label>
+            <div className="session-character-heading">
+              <label>参与角色（可稍后添加）</label>
+              <button type="button" className="btn btn-sm btn-ghost" disabled={charactersQuery.isFetching || createSession.isPending}
+                onClick={() => { void charactersQuery.refetch().then(result => { if (!result.isError) createSession.reset(); }); }}>刷新角色列表</button>
+            </div>
+            {characterSelectionNotice && <small className="guide-inline" role="status">{characterSelectionNotice}</small>}
             <div className="session-character-picker">
               {charactersQuery.isLoading && <span className="hint">正在读取角色…</span>}
               {(charactersQuery.data ?? []).map((character) => (

@@ -129,6 +129,11 @@ def list_sessions(q: str = "", db: Session = Depends(get_db)):
 
 @router.post("", summary="创建新会话", response_model=SessionRead)
 def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
+    character_ids = list(dict.fromkeys(payload.initial_character_ids or []))
+    if character_ids:
+        existing_ids = set(db.scalars(select(CharacterModel.id).where(CharacterModel.id.in_(character_ids))))
+        if any(cid not in existing_ids for cid in character_ids):
+            raise HTTPException(status_code=409, detail="部分参与角色已不存在，请刷新角色列表后重新选择")
     runtime_config = get_local_config(db)
     final_template_id = payload.template_id or str(runtime_config.get("default_world_template_id") or "custom")
     def opening_flag(name: str) -> bool:
@@ -179,17 +184,7 @@ def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
             anti_cheat_prompt=inherited_anti_cheat,
             world_prompt=inherited_world_prompt)
     )
-    raw_ids = payload.initial_character_ids or []
-    seen: set[int] = set()
-    sort_order = 0
-    for cid in raw_ids:
-        cid = int(cid)
-        if cid in seen:
-            continue
-        seen.add(cid)
-        character = db.get(CharacterModel, cid)
-        if character is None:
-            continue
+    for sort_order, cid in enumerate(character_ids):
         db.add(
             SessionParticipantModel(
                 session_id=session.id,
@@ -198,7 +193,6 @@ def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
             )
         )
         ensure_session_character_state(db, session.id, cid)
-        sort_order += 1
     db.commit()
     db.refresh(session, attribute_names=["world"])
     return {
@@ -208,7 +202,7 @@ def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
         "created_at": session.created_at,
         "updated_at": session.updated_at,
         "message_count": 0,
-        "participant_count": 0,
+        "participant_count": len(character_ids),
         "think_max_enabled": bool(session.think_max_enabled),
         "last_message_preview": None,
         "world": session.world,
