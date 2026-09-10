@@ -289,6 +289,7 @@ export default function SessionSidebar() {
             </summary>
             <div className="form-group">
               <label htmlFor="new-session-template">世界模板</label>
+              <small className="guide-inline">提供故事开局、玩法与固定规则。</small>
               <select
                 id="new-session-template"
                 value={templateId}
@@ -303,7 +304,8 @@ export default function SessionSidebar() {
               </select>
             </div>
             <div className="form-group">
-              <label htmlFor="new-session-encyclopedia">世界百科</label>
+              <label htmlFor="new-session-encyclopedia">世界百科（可选）</label>
+              <small className="guide-inline">补充人物、地点与历史知识，可与世界模板组合。</small>
               <select
                 id="new-session-encyclopedia"
                 value={encyclopediaId ?? ''}

@@ -120,6 +120,7 @@ fun SessionListScreen(
     var encyclopedias by remember { mutableStateOf<List<EncyclopediaEntity>>(emptyList()) }
     var allBoundCharacters by remember { mutableStateOf<List<CharacterEntity>>(emptyList()) }
     var selectedCharacterIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var initializeCharacterSelection by remember { mutableStateOf(true) }
     var newSessionTitle by remember { mutableStateOf("") }
     var selectedTemplate by remember { mutableStateOf<WorldTemplateEntity?>(null) }
     var selectedEncId by remember { mutableStateOf<Long?>(null) }
@@ -179,6 +180,8 @@ fun SessionListScreen(
                 templates = emptyList()
                 encyclopedias = emptyList()
                 allBoundCharacters = emptyList()
+                selectedCharacterIds = emptySet()
+                initializeCharacterSelection = true
                 narratorOn = d.narratorEnabled
                 narratorName = "旁白"
                 choiceOn = d.choiceEnabled
@@ -194,6 +197,10 @@ fun SessionListScreen(
                 templates = data.templates
                 encyclopedias = data.encyclopedias
                 allBoundCharacters = data.boundCharacters
+                if (initializeCharacterSelection) {
+                    selectedCharacterIds = openingCharacterSelection(data.boundCharacters.map { it.id }.toSet(), null)
+                    initializeCharacterSelection = false
+                }
                 selectedTemplate = findRequestedWorldTemplate(data.templates, requestedTemplateId)
                     ?: if (requestedTemplateId == null) {
                         findDefaultWorldTemplate(data.templates, d.defaultWorldTemplateId)
@@ -546,6 +553,8 @@ fun SessionListScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text("世界模板", style = MaterialTheme.typography.labelMedium)
+                Text("提供故事开局、玩法与固定规则。", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
                 var tmplExpanded by remember { mutableStateOf(false) }
                 ExposedDropdownMenuBox(
                     expanded = tmplExpanded,
@@ -587,7 +596,9 @@ fun SessionListScreen(
                         }
                     }
                 }
-                Text("绑定百科", style = MaterialTheme.typography.labelMedium)
+                Text("世界百科（可选）", style = MaterialTheme.typography.labelMedium)
+                Text("补充人物、地点与历史知识，可与世界模板组合。", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
                 var encExpanded by remember { mutableStateOf(false) }
                 ExposedDropdownMenuBox(
                     expanded = encExpanded,
@@ -638,7 +649,7 @@ fun SessionListScreen(
                     }
                 }
                 LaunchedEffect(selectedEncId, allBoundCharacters) {
-                    selectedCharacterIds = selectableCharacters.map { it.id }.toSet()
+                    selectedCharacterIds = openingCharacterSelection(selectableCharacters.map { it.id }.toSet(), selectedCharacterIds)
                 }
 
                 Text("参与角色", style = MaterialTheme.typography.labelMedium)
@@ -689,7 +700,7 @@ fun SessionListScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         OutlinedTextField(
-                            value = "${selectedCharacterIds.size}/${selectableCharacters.size} 人参与",
+                            value = if (selectedCharacterIds.isEmpty()) "选择参与角色" else "${selectedCharacterIds.size}/${selectableCharacters.size} 人参与",
                             onValueChange = {},
                             readOnly = true,
                             label = { Text("参与角色") },

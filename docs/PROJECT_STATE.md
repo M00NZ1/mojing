@@ -35,6 +35,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
 | Web 消息操作状态 | Web 构建、桌面与 320px 消息操作回归通过；编辑、删除及上下文调整集成回归通过，覆盖生成中禁用、只读入口、结束后恢复和移动端分支操作 | `test-message-generation-actions.mjs`、`test-message-deletion.mjs`，本地 API 模拟 |
+| 开局角色选择 | Android 3 项选择策略与 8 项创建会话测试通过，Debug 与 Web 构建通过；多角色默认手选，百科切换保留兼容选择，两端补充模板和百科用途说明 | `OpeningCharacterSelectionTest`、`CreateSessionUseCaseTest` |
 | Android 消息阅读对比度 | Debug 与测试 APK 构建通过；Android 35 下八套主题、40 个正文与剧情文字样本的实际绘制检查通过；心声使用主题次级正文色 | `MessageReadingContrastTest` |
 | Web 消息阅读对比度 | 七套主题、两类气泡的正文、引用、链接、代码和表格样本检查通过，最低对比度 7.73；深浅主题截图检查、消息操作回归和生产构建通过 | `test-message-contrast.mjs`；`.codex-work/message-contrast-20260911/` |
 | 引用预览布局 | Web 与 Android Debug 构建通过；Chrome 320px 截图检查与消息操作回归通过；Android 35、320dp 下长名字和长原文取消操作测试通过 | `test-message-deletion.mjs`、`QuoteDraftPreviewTest`；`.codex-work/quote-preview-20260911/quote-draft-320.png` |
