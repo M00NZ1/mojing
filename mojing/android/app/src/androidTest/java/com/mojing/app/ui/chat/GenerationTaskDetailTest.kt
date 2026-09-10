@@ -8,6 +8,7 @@ import com.mojing.app.data.local.entity.GenerationTaskEntity
 import com.mojing.app.data.local.entity.GenerationTaskKinds
 import com.mojing.app.data.local.entity.GenerationTaskStatus
 import com.mojing.app.ui.generation.GenerationTaskDetailSheet
+import com.mojing.app.ui.generation.GenerationFeedbackText
 import com.mojing.app.ui.generation.GenerationTaskCancelConfirmation
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -97,6 +98,18 @@ class GenerationTaskDetailTest {
         rule.onNodeWithText("重试打开").assertIsDisplayed().performClick()
         rule.onNodeWithText("关闭").performClick()
         rule.runOnIdle { assertEquals(1, retries); assertEquals(1, closes) }
+    }
+
+    @Test fun feedbackExpandsAndResetsWhenContentChanges() {
+        val text = mutableStateOf("请求中断，请稍后继续。\n".repeat(100))
+        rule.setContent { MaterialTheme { GenerationFeedbackText(text.value) } }
+        rule.onNodeWithText("展开反馈").performClick()
+        rule.onNodeWithText("收起反馈").assertIsDisplayed()
+        rule.onNodeWithText("收起反馈").performClick()
+        rule.onNodeWithText("展开反馈").assertIsDisplayed()
+        rule.runOnIdle { text.value = "连接中断" }
+        rule.onNodeWithText("连接中断").assertIsDisplayed()
+        rule.onNodeWithText("展开反馈").assertDoesNotExist()
     }
 
     @Test fun taskWithoutSavedContentHasNoResultAction() {

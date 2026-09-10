@@ -249,14 +249,14 @@ internal fun GenerationTaskDetailSheet(
                     Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(12.dp)) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("生成反馈", style = MaterialTheme.typography.titleSmall)
-                            SelectionContainer { Text(task.errorMessage, style = MaterialTheme.typography.bodyMedium) }
+                            GenerationFeedbackText(task.errorMessage)
                         }
                     }
                 }
                 Spacer(Modifier.height(8.dp))
             }
             Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                openError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
+                openError?.let { GenerationFeedbackText(it) }
                 if (task.progressDone > 0 || task.status == GenerationTaskStatus.COMPLETED) {
                     Button(onClick = onOpen, enabled = canOpen && !opening, modifier = Modifier.fillMaxWidth()) {
                         Text(if (opening) "正在打开…" else if (openError != null) "重试打开" else "查看已生成内容")
@@ -264,6 +264,29 @@ internal fun GenerationTaskDetailSheet(
                 }
                 TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("关闭") }
             }
+        }
+    }
+}
+
+@Composable
+internal fun GenerationFeedbackText(text: String) {
+    var expanded by rememberSaveable(text) { mutableStateOf(false) }
+    var overflow by remember(text) { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (expanded) {
+            SelectionContainer {
+                Text(text, modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp)
+                    .verticalScroll(rememberScrollState()), style = MaterialTheme.typography.bodyMedium)
+            }
+        } else {
+            SelectionContainer {
+                Text(text, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium,
+                    onTextLayout = { overflow = it.hasVisualOverflow })
+            }
+        }
+        if (expanded || overflow) {
+            TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起反馈" else "展开反馈") }
         }
     }
 }

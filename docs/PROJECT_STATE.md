@@ -34,6 +34,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Android 生成反馈阅读 | Debug 应用与测试 APK 构建通过；Android 35、320dp 下 6 项界面测试通过，覆盖长反馈展开收起、内容更新复位、结果入口、关闭与取消重试 | `GenerationTaskDetailTest` |
 | Web 生成结果读取取消 | 生产构建与桌面、390px Chrome 模拟 API 回归通过；浏览器请求事件确认详情读取中返回、保存成功后取消过期读取均触发 `ABORTED`；重进、保存及重试流程通过 | `test-world-history.mjs` |
 | Web 生成结果保存状态 | 生产构建与桌面、390px Chrome 模拟 API 回归通过；覆盖保存失败后切页重进、保存中返回再打开、重复提交禁用，以及保存成功后旧详情响应返回 | `test-world-history.mjs` |
 | Web 生成结果长文阅读 | 生产构建与桌面、390px Chrome 模拟 API 回归通过；200 段正文覆盖预览、展开高度、键盘滚动、收起复位、复制失败重试与全文一致性；结果保存及重进流程通过 | `test-world-history.mjs`；`.codex-work/world-result-reader/` |
