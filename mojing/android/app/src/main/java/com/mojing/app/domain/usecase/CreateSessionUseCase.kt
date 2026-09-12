@@ -84,6 +84,7 @@ class CreateSessionUseCase @Inject constructor(
         allowNoParticipants: Boolean = false,
         worldPromptOverride: String? = null,
         initialMessages: List<MessageEntity> = emptyList(),
+        storyDraftId: String? = null,
     ): Result {
         val validIds = characterIds.distinct()
         if (validIds.isEmpty() && !allowNoParticipants) return Result.EmptyParticipants
@@ -127,6 +128,7 @@ class CreateSessionUseCase @Inject constructor(
             world,
             participants,
             initialMessages,
+            storyDraftId,
         )
         return Result.Created(sessionId)
     }

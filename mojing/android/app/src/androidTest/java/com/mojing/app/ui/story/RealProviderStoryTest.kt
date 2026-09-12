@@ -104,10 +104,12 @@ class RealProviderStoryTest {
             rule.activity.actionBar?.hide()
             vm = StorySimulationViewModel(StoryWritingUseCase(retry), storage,
                 database.worldTemplateDao(), database.encyclopediaDao(), database.characterDao(),
-                CreateSessionUseCase(SessionCreationTransaction(database), database.characterDao(), database.worldTemplateDao(), storage))
+                CreateSessionUseCase(SessionCreationTransaction(database), database.characterDao(), database.worldTemplateDao(), storage),
+                com.mojing.app.data.StoryOpeningDraftStore(database))
             store.put("provider-story", vm)
         }
         rule.setContent { MoJingTheme { StorySimulationScreen(rememberNavController(), { openedSession = it }, vm) } }
+        rule.waitUntil(10_000) { !vm.state.value.isRestoring }
     }
 
     private fun model(provider: String) = if (provider == "siliconflow") "Pro/deepseek-ai/DeepSeek-V3.2" else "deepseek-flash"

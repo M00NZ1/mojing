@@ -1,6 +1,6 @@
 # 墨境项目状态
 
-更新日期：2026-09-12
+更新日期：2026-09-13
 
 ## 工程
 
@@ -19,7 +19,7 @@
 
 Android 小说开篇采用流式正文预览，显示当前模型、已用时间、首字时间和正文长度。等待、接收、重试、校验与保存分别反馈；停止或失败保留输入和已接收预览，完整正文通过校验后写入会话。请求错误按平台状态、网络和输出完整性分类，日志记录请求阶段与耗时。
 
-Android 开篇将会话、世界配置、角色与全部章节放入同一 Room 事务。保存失败保留当前页面的完整正文和生成时的设定，可重试保存、复制全文或确认放弃；打开会话失败时复用已保存的会话。
+Android 开篇将会话、世界配置、角色与全部章节放入同一 Room 事务。完整正文和生成时的设定先保存为本地草稿，退出页面或重启应用后可继续保存、复制全文或确认放弃。草稿与会话通过同一事务交接，已保存结果复用原会话；恢复入口位于创作页顶部，提供正文预览与开始新作。
 
 通用记忆提示词明确对象、数组及字段类型；解析支持代码围栏、常见响应包装和文本字段的字符串/数组转换。开篇与记忆请求为已适配的 DeepSeek 模型启用 JSON 输出及非推理模式，记忆使用独立的 3,200 Token 输出预算。自动整理失败后短暂冷却，手动重建与清空可立即操作。记忆面板显示本次整理状态，后台结果按故事线隔离。
 
@@ -50,6 +50,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Android 开篇重启恢复 | 621 项 JVM 测试、Debug 应用及测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 13 项数据库和界面测试通过；两次独立 instrumentation 之间强制结束进程，重进创作页后完成长正文读取、复制与会话保存，两个阶段通过；完成恢复及已保存页面截图检查 | `StoryOpeningRecoveryInstrumentedTest`、`StoryRecoveryCardTest`、`StoryRecoveryProcessTest`；`.codex-work/story-recovery-20260912/` |
 | Android 开篇保存恢复 | 618 项 JVM 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 7 项数据库事务及创作卡片用例通过，覆盖章节写入失败回滚、完整保存、复制全文、重试保存与重新打开 | `SessionCreationTransactionInstrumentedTest`、`StorySimulationViewModelTest`、`StoryGenerationProgressCardTest`；`.codex-work/story-save-20260912/` |
 | Android 开篇与记忆请求 | 616 项 JVM 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 4 项创作卡片和记忆面板用例通过；两平台真实接口流程完成，字段兼容修正后两平台记忆专项复测通过 | `RealProviderStoryTest`、`StoryGenerationProgressCardTest`、`MemoryPanelPresentationTest`；`.codex-work/generation-20260912/` |
 | Web 消息操作状态 | Web 构建、桌面与 320px 消息操作回归通过；编辑、删除及上下文调整集成回归通过，覆盖生成中禁用、只读入口、结束后恢复和移动端分支操作 | `test-message-generation-actions.mjs`、`test-message-deletion.mjs`，本地 API 模拟 |

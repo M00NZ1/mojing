@@ -1,6 +1,7 @@
 package com.mojing.app.ui.story
 
 import com.mojing.app.data.SecureStorage
+import com.mojing.app.data.StoryOpeningDraftStore
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.MessageDao
@@ -14,6 +15,8 @@ import com.mojing.app.domain.story.StoryChapter
 import com.mojing.app.domain.story.StoryWritingResult
 import com.mojing.app.domain.story.StoryWritingProgress
 import com.mojing.app.domain.story.StoryWritingUseCase
+import com.mojing.app.domain.story.StoryOpeningDraft
+import com.mojing.app.domain.story.StoryOpeningRecord
 import com.mojing.app.domain.usecase.CreateSessionUseCase
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -191,7 +194,7 @@ class StorySimulationViewModelTest {
         val createSession = mockk<CreateSessionUseCase>()
         val messages = mutableListOf<MessageEntity>()
         coEvery {
-            createSession.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            createSession.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } answers { messages.addAll(arg<List<MessageEntity>>(14)); CreateSessionUseCase.Result.Created(42L) }
         val messageDao = mockk<MessageDao>()
         coEvery { messageDao.insert(capture(messages)) } returnsMany listOf(1L, 2L, 3L)
@@ -226,7 +229,7 @@ class StorySimulationViewModelTest {
                     worldPrompt?.contains("现代社会，主角十八岁觉醒系统") == true &&
                         worldPrompt.contains("其他人物知道")
                 },
-                any(),
+                any(), any(),
             )
         }
     }
@@ -283,7 +286,7 @@ class StorySimulationViewModelTest {
         assertNull(viewModel.state.value.error)
         assertEquals(0, createdCalls)
         coVerify(exactly = 0) {
-            createSession.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            createSession.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         }
         coVerify(exactly = 0) { messageDao.insert(any()) }
         coVerify(exactly = 0) { sessionDao.bumpUpdatedAt(any(), any()) }
@@ -456,14 +459,14 @@ class StorySimulationViewModelTest {
             every { publicApiKey } returns "key"; every { publicBaseUrl } returns "https://example.com"; every { publicModel } returns "model"
         }
         val create = mockk<CreateSessionUseCase>()
-        coEvery { create.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns CreateSessionUseCase.Result.Created(8)
+        coEvery { create.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns CreateSessionUseCase.Result.Created(8)
         val messages = mockk<MessageDao>(relaxed = true)
         every { writing.toMessageContent(any(), any()) } returns "complete"
         every { writing.toStructuredJson(any(), any()) } returns "{}"
         coEvery { writing.write(any(), any(), any(), any(), any()) } returns StoryWritingResult("完整", listOf(StoryChapter(1, "一", "正文")), listOf("继续", "离开"))
         val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), storyWriting = writing, secureStorage = storage, createSession = create, messageDao = messages)
         runCurrent(); vm.updatePremise("完整故事"); vm.createStory { }; runCurrent()
-        coVerify(exactly = 1) { create.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), match { it.size == 2 }) }
+        coVerify(exactly = 1) { create.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), match { it.size == 2 }, any()) }
         coVerify(exactly = 0) { messages.insert(any()) }
 
         val failed = mockk<StoryWritingUseCase>()
@@ -509,7 +512,7 @@ class StorySimulationViewModelTest {
         var attempts = 0
         val saveGate = CompletableDeferred<Unit>()
         val packets = mutableListOf<List<MessageEntity>>()
-        coEvery { create.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
+        coEvery { create.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
             packets += arg<List<MessageEntity>>(14)
             if (++attempts == 1) throw IllegalStateException("disk full")
             saveGate.await()
@@ -537,7 +540,7 @@ class StorySimulationViewModelTest {
         assertEquals(42L, vm.state.value.savedSessionId)
         assertEquals(packets[0].map { it.content }, packets[1].map { it.content })
         coVerify(exactly = 1) { writing.write(any(), any(), any(), any(), any()) }
-        coVerify(exactly = 2) { create.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 2) { create.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -549,7 +552,7 @@ class StorySimulationViewModelTest {
             every { publicApiKey } returns "key"; every { publicBaseUrl } returns "https://example.com"; every { publicModel } returns "model"
         }
         val create = mockk<CreateSessionUseCase>()
-        coEvery { create.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns CreateSessionUseCase.Result.Created(9L)
+        coEvery { create.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns CreateSessionUseCase.Result.Created(9L)
         val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), writing, storage, create)
         vm.updatePremise("故事")
         vm.createStory { throw IllegalStateException("navigation failed") }; runCurrent()
@@ -559,8 +562,66 @@ class StorySimulationViewModelTest {
         vm.createStory { reopened = it }
         assertEquals(9L, reopened)
         assertNull(vm.state.value.error)
-        coVerify(exactly = 1) { create.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 1) { create.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         coVerify(exactly = 1) { writing.write(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun restoredDraftSavesWithoutReadingModelCredentialsOrGeneratingAgain() = runTest(dispatcher) {
+        val draft = StoryOpeningDraft(premise = "雾港灯塔", direction = "调查", tone = "悬疑", template = null,
+            encyclopediaId = null, characterIds = emptyList(), worldPrompt = "灯塔规则",
+            result = StoryWritingResult("雾港", listOf(StoryChapter(1, "来信", "完整正文".repeat(4000))), listOf("去码头")), model = "原模型")
+        val store = mockk<StoryOpeningDraftStore>(relaxed = true) { coEvery { load() } returns StoryOpeningRecord.Pending(draft) }
+        val storage = mockk<SecureStorage>()
+        val writing = mockk<StoryWritingUseCase>(relaxed = true)
+        val create = mockk<CreateSessionUseCase>()
+        coEvery { create.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), draft.id) } returns CreateSessionUseCase.Result.Created(19L)
+        val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), writing, storage, create, draftStore = store)
+        runCurrent()
+        assertTrue(vm.state.value.recoveredStory)
+        assertTrue(vm.state.value.draftPersisted)
+        assertEquals("雾港灯塔", vm.state.value.premise)
+        assertTrue(vm.pendingStoryText().contains(draft.result.chapters.single().content))
+        var opened: Long? = null
+        vm.createStory { opened = it }; runCurrent()
+        assertEquals(19L, opened)
+        coVerify(exactly = 0) { writing.write(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { store.persist(draft) }
+    }
+
+    @Test
+    fun failedDraftPersistenceRetainsFullBodyAndDoesNotCreateSession() = runTest(dispatcher) {
+        val store = mockk<StoryOpeningDraftStore>(relaxed = true) {
+            coEvery { load() } returns null
+            coEvery { persist(any()) } throws IllegalStateException("disk unavailable")
+        }
+        val writing = mockk<StoryWritingUseCase>(relaxed = true)
+        coEvery { writing.write(any(), any(), any(), any(), any()) } returns StoryWritingResult("小说", listOf(StoryChapter(1, "第一章", "正文")), listOf("继续"))
+        val storage = mockk<SecureStorage>(relaxed = true) {
+            every { publicApiKey } returns "key"; every { publicBaseUrl } returns "https://example.com"; every { publicModel } returns "model"
+        }
+        val create = mockk<CreateSessionUseCase>()
+        val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), writing, storage, create, draftStore = store)
+        runCurrent(); vm.updatePremise("故事"); vm.createStory {}; runCurrent()
+        assertTrue(vm.state.value.hasPendingStory)
+        assertFalse(vm.state.value.draftPersisted)
+        assertTrue(vm.pendingStoryText().contains("正文"))
+        coVerify(exactly = 0) { create.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun savedReceiptOpensOriginalSessionAndNewStoryClearsOnlyReceipt() = runTest(dispatcher) {
+        val id = java.util.UUID.randomUUID().toString()
+        val store = mockk<StoryOpeningDraftStore>(relaxed = true) { coEvery { load() } returns StoryOpeningRecord.Saved(id, 18, "上次创作") }
+        val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), draftStore = store)
+        runCurrent()
+        var opened: Long? = null
+        vm.createStory { opened = it }
+        assertEquals(18L, opened)
+        vm.startNewStory(); runCurrent()
+        assertNull(vm.state.value.savedSessionId)
+        assertFalse(vm.state.value.isRestoring)
+        coVerify(exactly = 1) { store.clearSavedReceipt(id) }
     }
 
     private fun createViewModel(
@@ -572,6 +633,7 @@ class StorySimulationViewModelTest {
         createSession: CreateSessionUseCase = mockk(relaxed = true),
         sessionDao: SessionDao = mockk(relaxed = true),
         messageDao: MessageDao = mockk(relaxed = true),
+        draftStore: StoryOpeningDraftStore = mockk(relaxed = true) { coEvery { load() } returns null },
     ) = StorySimulationViewModel(
         storyWriting = storyWriting,
         secureStorage = secureStorage,
@@ -579,5 +641,6 @@ class StorySimulationViewModelTest {
         encyclopediaDao = encyclopediaDao,
         characterDao = characterDao,
         createSession = createSession,
+        draftStore = draftStore,
     )
 }

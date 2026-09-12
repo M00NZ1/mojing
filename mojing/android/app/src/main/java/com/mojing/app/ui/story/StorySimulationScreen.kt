@@ -1,5 +1,7 @@
 package com.mojing.app.ui.story
 
+import kotlinx.coroutines.launch
+
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingButton as Button
 
@@ -77,7 +79,8 @@ fun StorySimulationScreen(
     var pendingNavigation by remember { mutableStateOf<(() -> Unit)?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    val isBusy = state.isGenerating || state.isSaving || state.hasPendingStory || state.savedSessionId != null
+    var showDiscardUnreadableDialog by remember { mutableStateOf(false) }
+    val isBusy = state.isGenerating || state.isSaving || state.isRestoring || state.recoveryError != null || state.hasPendingStory || state.savedSessionId != null
 
     fun dismissStopDialog() {
         showStopAndLeaveDialog = false
@@ -87,7 +90,7 @@ fun StorySimulationScreen(
     fun requestNavigation(action: () -> Unit) {
         when {
             state.isSaving -> showSavingDialog = true
-            state.isGenerating || state.hasPendingStory -> {
+            state.isGenerating || (state.hasPendingStory && !state.draftPersisted) -> {
                 pendingNavigation = action
                 showStopAndLeaveDialog = true
             }
@@ -144,7 +147,17 @@ fun StorySimulationScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            StoryRecoveryCard(state,
+                onSaveOrOpen = { viewModel.createStory(onOpenSession) },
+                onCopy = { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(viewModel.pendingStoryText())) },
+                onDiscard = { pendingNavigation = {}; showStopAndLeaveDialog = true },
+                onNewStory = viewModel::startNewStory, onRetryRecovery = viewModel::retryRecovery,
+                onCopyRecovery = { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(viewModel.recoveryDataText())) },
+                onDiscardUnreadable = { showDiscardUnreadableDialog = true })
+            if (!state.hasPendingStory && state.savedSessionId == null && !state.isRestoring && state.recoveryError == null) {
             Text("写下大致故事背景和开篇走向，AI 会结合已选人物直接生成小说正文。完成后自动进入创作会话，可继续输入后续走向或连续续写。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            StoryGenerationProgressCard(state, onStop = { viewModel.stopGeneration() }, onCopy = clipboardManager::setText,
+                onRetry = { viewModel.createStory(onOpenSession) })
             OutlinedTextField(
                 value = state.premise,
                 onValueChange = viewModel::updatePremise,
@@ -309,9 +322,6 @@ fun StorySimulationScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            StoryGenerationProgressCard(state, onStop = { viewModel.stopGeneration() }, onCopy = clipboardManager::setText,
-                onRetry = { viewModel.createStory(onOpenSession) },
-                onCopyCompleted = { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(viewModel.pendingStoryText())) })
             when {
                 state.isGenerating -> Unit
                 state.isSaving -> Button(
@@ -338,11 +348,12 @@ fun StorySimulationScreen(
                     Text("生成小说并开始创作")
                 }
             }
+            }
             Spacer(Modifier.height(24.dp))
         }
     }
 
-    state.error?.takeIf { state.generationModel == null }?.let { message ->
+    state.error?.takeIf { state.generationModel == null && !state.hasPendingStory && state.savedSessionId == null }?.let { message ->
         AlertDialog(
             onDismissRequest = viewModel::clearError,
             title = { Text("操作未完成") },
@@ -355,7 +366,7 @@ fun StorySimulationScreen(
         AlertDialog(
             onDismissRequest = { dismissStopDialog() },
             title = { Text(if (state.hasPendingStory) "放弃尚未保存的正文？" else "停止生成并离开？") },
-            text = { Text(if (state.hasPendingStory) "完整正文仍保留在此页。可以返回重试保存或复制，放弃后将清除本次生成结果。" else "当前小说还在生成。停止后不会保存这次未完成的结果，你填写的故事设定会继续保留。") },
+            text = { Text(if (state.hasPendingStory) "放弃后将清除这篇待保存正文。可以先返回保存或复制全文。" else "当前小说还在生成。停止后不会保存这次未完成的结果，你填写的故事设定会继续保留。") },
             confirmButton = {
                 TextButton(onClick = {
                     if (state.isSaving) {
@@ -365,13 +376,25 @@ fun StorySimulationScreen(
                     }
                     val action = pendingNavigation
                     dismissStopDialog()
-                    if (if (state.hasPendingStory) viewModel.discardPendingStory() else viewModel.stopGeneration()) action?.invoke()
+                    scope.launch {
+                        if (if (state.hasPendingStory) viewModel.discardPendingStory() else viewModel.stopGeneration()) action?.invoke()
+                    }
                 }) { Text(if (state.hasPendingStory) "放弃正文" else "停止并离开") }
             },
             dismissButton = {
                 TextButton(onClick = { dismissStopDialog() }) { Text(if (state.hasPendingStory) "留在此页" else "继续生成") }
             },
         )
+    }
+
+    if (showDiscardUnreadableDialog) {
+        AlertDialog(onDismissRequest = { showDiscardUnreadableDialog = false },
+            title = { Text("清除无法读取的草稿？") },
+            text = { Text("清除后无法继续恢复这篇草稿。可以先返回复制恢复数据。") },
+            confirmButton = { TextButton(enabled = !state.isSaving, onClick = { scope.launch {
+                if (viewModel.discardUnreadableDraft()) showDiscardUnreadableDialog = false
+            } }) { Text("清除草稿") } },
+            dismissButton = { TextButton(onClick = { showDiscardUnreadableDialog = false }) { Text("保留草稿") } })
     }
 
     if (showSavingDialog) {

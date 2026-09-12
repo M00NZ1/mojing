@@ -3,6 +3,8 @@ package com.mojing.app.ui.story
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.SecureStorage
+import com.mojing.app.data.StoryOpeningDraftStore
+import com.mojing.app.data.UnreadableStoryDraft
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.WorldTemplateDao
@@ -14,6 +16,8 @@ import com.mojing.app.domain.story.StoryWritingRequest
 import com.mojing.app.domain.story.StoryWritingUseCase
 import com.mojing.app.domain.story.StoryWritingProgress
 import com.mojing.app.domain.story.StoryCanon
+import com.mojing.app.domain.story.StoryOpeningDraft
+import com.mojing.app.domain.story.StoryOpeningRecord
 import com.mojing.app.domain.usecase.CreateSessionUseCase
 import com.mojing.app.ui.util.UserFacingStrings
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -55,6 +59,13 @@ data class StorySimulationState(
     val isSaving: Boolean = false,
     val hasPendingStory: Boolean = false,
     val savedSessionId: Long? = null,
+    val savedSessionMissing: Boolean = false,
+    val isRestoring: Boolean = true,
+    val recoveryError: String? = null,
+    val canCopyRecoveryData: Boolean = false,
+    val recoveredStory: Boolean = false,
+    val storyTitle: String = "",
+    val draftPersisted: Boolean = false,
     val error: String? = null,
     val generationStage: String? = null,
     val generationModel: String? = null,
@@ -83,6 +94,7 @@ class StorySimulationViewModel @Inject constructor(
     private val encyclopediaDao: EncyclopediaDao,
     private val characterDao: CharacterDao,
     private val createSession: CreateSessionUseCase,
+    private val draftStore: StoryOpeningDraftStore,
 ) : ViewModel() {
     private val _state = MutableStateFlow(StorySimulationState())
     val state: StateFlow<StorySimulationState> = _state.asStateFlow()
@@ -90,15 +102,52 @@ class StorySimulationViewModel @Inject constructor(
     private var encyclopediaLoadJob: Job? = null
     private var characterLoadJob: Job? = null
     private val creationJob = AtomicReference<Job?>(null)
-    private data class PendingStory(val context: StoryCreationContext, val result: com.mojing.app.domain.story.StoryWritingResult)
-    private var pendingStory: PendingStory? = null
+    private var pendingStory: StoryOpeningDraft? = null
+    private var savedDraftId: String? = null
+    private var unreadableDraft: String? = null
+    private var restoreJob: Job? = null
     private var generationToken = 0L
     private var generationStartedAtNanos = 0L
 
     init {
+        retryRecovery()
         retryTemplates()
         retryEncyclopedias()
         retryCharacters()
+    }
+
+    fun retryRecovery() {
+        if (restoreJob?.isActive == true || creationJob.get() != null || pendingStory != null) return
+        restoreJob = viewModelScope.launch {
+            _state.update { it.copy(isRestoring = true, recoveryError = null) }
+            try {
+                val record = draftStore.load()
+                unreadableDraft = null
+                when (record) {
+                    null -> _state.update { it.copy(isRestoring = false, canCopyRecoveryData = false) }
+                    is StoryOpeningRecord.Pending -> {
+                        val draft = record.draft
+                        pendingStory = draft
+                        _state.update { it.copy(isRestoring = false, hasPendingStory = true, recoveredStory = true,
+                            draftPersisted = true, premise = draft.premise, direction = draft.direction, tone = draft.tone,
+                            chapterCount = draft.result.chapters.size, storyTitle = draft.result.title,
+                            generationModel = draft.model, generationStage = "待保存的小说", canCopyRecoveryData = false,
+                            preview = draft.result.chapters.joinToString("\n\n") { chapter -> chapter.content }.takeLast(MAX_PREVIEW_CHARS)) }
+                    }
+                    is StoryOpeningRecord.Saved -> {
+                        savedDraftId = record.id
+                        _state.update { it.copy(isRestoring = false, savedSessionId = record.sessionId,
+                            storyTitle = record.title, generationStage = "小说已保存", recoveredStory = true,
+                            savedSessionMissing = !record.sessionExists, canCopyRecoveryData = false) }
+                    }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                unreadableDraft = (error as? UnreadableStoryDraft)?.raw
+                _state.update { it.copy(isRestoring = false, recoveryError = "上次创作暂时无法读取，请重试。",
+                    canCopyRecoveryData = unreadableDraft != null) }
+            }
+        }
     }
 
     fun retryTemplates() {
@@ -176,7 +225,7 @@ class StorySimulationViewModel @Inject constructor(
     )
 
     private fun updateInput(transform: (StorySimulationState) -> StorySimulationState) {
-        _state.update { if (it.hasPendingStory || it.isSaving || it.savedSessionId != null) it else transform(it).copy(error = null) }
+        _state.update { if (it.isRestoring || it.recoveryError != null || it.hasPendingStory || it.isSaving || it.savedSessionId != null) it else transform(it).copy(error = null) }
     }
 
     fun updatePremise(value: String) = updateInput { it.copy(premise = value) }
@@ -203,7 +252,7 @@ class StorySimulationViewModel @Inject constructor(
     fun clearError() = _state.update { it.copy(error = null) }
 
     fun createStory(onCreated: (Long) -> Unit) {
-        if (creationJob.get() != null) return
+        if (creationJob.get() != null || _state.value.isRestoring || _state.value.recoveryError != null) return
         if (_state.value.savedSessionId != null) { openSavedStory(onCreated); return }
         if (pendingStory != null) {
             val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
@@ -295,8 +344,12 @@ class StorySimulationViewModel @Inject constructor(
                         _state.update { it.copy(isGenerating = false, generationStage = "已丢弃（输入已变化）", error = "输入或绑定已变化，请重新生成") }
                     return@launch
                 }
-                pendingStory = PendingStory(requestContext, result)
-                _state.update { it.copy(isGenerating = false, hasPendingStory = true) }
+                val worldContext = listOf(supplementalContext, characterContext).filter(String::isNotBlank).joinToString("\n")
+                pendingStory = StoryOpeningDraft(premise = requestContext.premise, direction = requestContext.direction,
+                    tone = requestContext.tone, template = requestContext.template, encyclopediaId = requestContext.encyclopedia?.id,
+                    characterIds = requestContext.characters.map { it.id }, worldPrompt = StoryCanon.persistentWorldPrompt(requestContext.premise, worldContext),
+                    result = result, model = model)
+                _state.update { it.copy(isGenerating = false, hasPendingStory = true, storyTitle = result.title, draftPersisted = false) }
                 savePendingStory(onCreated)
             } catch (_: CancellationException) {
                 _state.update { it.copy(isGenerating = false, generationStage = if (it.savedSessionId != null) "已保存" else "已停止") }
@@ -320,16 +373,19 @@ class StorySimulationViewModel @Inject constructor(
 
     private suspend fun savePendingStory(onCreated: (Long) -> Unit) {
         val pending = pendingStory ?: return
-        val context = pending.context
         val result = pending.result
         _state.update { it.copy(isGenerating = false, isSaving = true, generationStage = "保存到本地", error = null) }
         try {
             withContext(NonCancellable) {
+                if (!_state.value.draftPersisted) {
+                    draftStore.persist(pending)
+                    _state.update { it.copy(draftPersisted = true) }
+                }
                 val now = System.currentTimeMillis()
                 val setup = buildString {
-                    append("【故事背景】\n${context.premise.trim()}")
-                    context.direction.trim().takeIf(String::isNotEmpty)?.let { append("\n\n【接下来希望发生】\n$it") }
-                    context.tone.trim().takeIf(String::isNotEmpty)?.let { append("\n\n【文风与节奏】\n$it") }
+                    append("【故事背景】\n${pending.premise.trim()}")
+                    pending.direction.trim().takeIf(String::isNotEmpty)?.let { append("\n\n【接下来希望发生】\n$it") }
+                    pending.tone.trim().takeIf(String::isNotEmpty)?.let { append("\n\n【文风与节奏】\n$it") }
                 }
                 val messages = listOf(MessageEntity(sessionId = 0L, speakerType = "user", content = setup, createdAt = now)) +
                     result.chapters.mapIndexed { index, chapter ->
@@ -338,23 +394,18 @@ class StorySimulationViewModel @Inject constructor(
                             content = storyWriting.toMessageContent(chapter, choices),
                             structuredContentJson = storyWriting.toStructuredJson(chapter, choices), createdAt = now + index + 1)
                     }
-                val worldContext = buildString {
-                    context.template?.let { appendLine("世界模板：${it.label}\n${it.summary}\n${it.worldPrompt}") }
-                    context.encyclopedia?.let { appendLine("世界百科：${it.name}\n${it.description}\n${it.worldPrompt}") }
-                    context.characters.forEach { appendLine("${it.name}：${it.personaPrompt.take(1600)}") }
-                }.trim()
                 val created = createSession.create(
-                    title = "小说 · ${result.title.trim().ifBlank { context.premise.trim().take(24) }}",
-                    summary = context.premise.trim(), gameplayMode = "小说创作", template = context.template,
-                    encyclopediaId = context.encyclopedia?.id, narratorEnabled = true, narratorName = "小说作者",
+                    title = "小说 · ${result.title.trim().ifBlank { pending.premise.trim().take(24) }}",
+                    summary = pending.premise.trim(), gameplayMode = "小说创作", template = pending.template,
+                    encyclopediaId = pending.encyclopediaId, narratorEnabled = true, narratorName = "小说作者",
                     choiceEnabled = true, maxChoices = 3, antiCheatEnabled = true,
-                    characterIds = context.characters.map { it.id }, allowNoParticipants = true,
-                    worldPromptOverride = StoryCanon.persistentWorldPrompt(context.premise, worldContext),
-                    initialMessages = messages,
+                    characterIds = pending.characterIds, allowNoParticipants = true,
+                    worldPromptOverride = pending.worldPrompt, initialMessages = messages, storyDraftId = pending.id,
                 )
                 val id = (created as? CreateSessionUseCase.Result.Created)?.sessionId
                     ?: error("Story session could not be created")
                 pendingStory = null
+                savedDraftId = pending.id
                 _state.update { it.copy(hasPendingStory = false, savedSessionId = id, generationStage = "已保存", isSaving = false) }
             }
             currentCoroutineContext().ensureActive()
@@ -368,6 +419,7 @@ class StorySimulationViewModel @Inject constructor(
 
     private fun openSavedStory(onCreated: (Long) -> Unit) {
         val id = _state.value.savedSessionId ?: return
+        if (_state.value.savedSessionMissing) return
         _state.update { it.copy(error = null) }
         try { onCreated(id) }
         catch (cancelled: CancellationException) { throw cancelled }
@@ -383,11 +435,50 @@ class StorySimulationViewModel @Inject constructor(
         }
     }.orEmpty()
 
-    fun discardPendingStory(): Boolean {
+    suspend fun discardPendingStory(): Boolean {
         if (_state.value.isSaving || _state.value.isGenerating || pendingStory == null) return false
-        pendingStory = null
-        _state.update { it.copy(hasPendingStory = false, error = null, preview = "", generationStage = null, generationModel = null) }
-        return true
+        val pending = pendingStory ?: return false
+        _state.update { it.copy(isSaving = true) }
+        return try {
+            if (_state.value.draftPersisted) draftStore.discard(pending.id)
+            pendingStory = null
+            _state.update { it.copy(hasPendingStory = false, error = null, preview = "", generationStage = null,
+                generationModel = null, storyTitle = "", draftPersisted = false, recoveredStory = false) }
+            true
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { _state.update { it.copy(error = "正文未能放弃，请重试。") }; false }
+        finally { _state.update { it.copy(isSaving = false) } }
+    }
+
+    fun recoveryDataText(): String = unreadableDraft.orEmpty()
+
+    fun startNewStory() {
+        if (_state.value.isSaving || _state.value.isRestoring || creationJob.get() != null) return
+        val id = savedDraftId ?: return
+        viewModelScope.launch {
+            _state.update { it.copy(isSaving = true) }
+            try {
+                draftStore.clearSavedReceipt(id)
+                savedDraftId = null
+                _state.update { StorySimulationState(isRestoring = false, templates = it.templates, encyclopedias = it.encyclopedias, characters = it.characters) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { _state.update { it.copy(error = "暂时无法开始新作，请重试。") } }
+            finally { _state.update { it.copy(isSaving = false) } }
+        }
+    }
+
+    suspend fun discardUnreadableDraft(): Boolean {
+        val raw = unreadableDraft ?: return false
+        if (_state.value.isRestoring || _state.value.isSaving) return false
+        _state.update { it.copy(isSaving = true) }
+        return try {
+            draftStore.discardUnreadable(raw)
+            unreadableDraft = null
+            _state.update { it.copy(recoveryError = null, canCopyRecoveryData = false) }
+            true
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { _state.update { it.copy(recoveryError = "恢复内容未能清除，请重试。") }; false }
+        finally { _state.update { it.copy(isSaving = false) } }
     }
 
     fun stopGeneration(): Boolean {

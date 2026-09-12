@@ -136,7 +136,11 @@ JVM 测试位于 `app/src/test/`，Room 与 Compose 测试位于 `app/src/androi
 
 `CreateSessionUseCase.create(initialMessages)` 通过 `SessionCreationTransaction` 在同一 Room 事务中写入会话、世界配置、角色与开篇消息。任一写入失败均回滚；消息继续使用现有 DAO 更新检索字段。
 
-`StorySimulationViewModel` 在完整生成结果与本地保存之间保留待保存状态。保存失败后的重试只执行本地写入，并复用生成时的设定；保存成功先记录会话 ID，再执行导航。页面提供复制完整正文、重试保存与确认放弃。待保存结果保留在 ViewModel 内存中，进程重启恢复列入后续工作。
+`StoryOpeningDraftStore` 在现有 `app_config` 中使用独立键 `story_opening_draft_v1` 保存版本化开篇快照，包含正文、玩法、选定角色 ID 与完整 UUID。Room schema 保持 19；旧版本无此记录时正常进入创作表单。草稿随现有数据库备份恢复，不改变 Web 交换格式。
+
+`SessionCreationTransaction` 核对 UUID，在会话与全部章节提交时将 pending 草稿更新为 saved 回执。重复保存复用会话 ID；待保存正文和完成回执分别按状态清除，旧页面不能重新写入已交接的草稿。`StorySimulationViewModel` 重进后读取草稿或回执，提供复制全文、继续保存、打开会话和开始新作。数据库读写与恢复解析在后台执行。
+
+不支持的草稿版本或损坏内容保留原始记录，界面支持重新读取、复制恢复数据与确认清除。磁盘写入失败时保留页面内完整正文；章节或回执写入失败时整个会话事务回滚。恢复测试覆盖真实文件数据库关闭重开、故障注入、旧 UUID、回执清除，以及测试进程结束后的页面恢复。
 
 小说开篇通过 `LlmRetry.chatCompletionStreamingWithRetry` 消费流式正文，保留完成协议校验、取消传播与有界重试。请求总时限为 5 分钟，OpenAI 兼容线路读取空闲上限为 90 秒；收到正文后不自动重发。`StoryStreamingPreviewParser` 增量提取章节内容，界面保留最近 12,000 字符的预览。
 
