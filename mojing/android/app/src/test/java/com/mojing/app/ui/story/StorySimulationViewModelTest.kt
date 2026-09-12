@@ -624,6 +624,68 @@ class StorySimulationViewModelTest {
         coVerify(exactly = 1) { store.clearSavedReceipt(id) }
     }
 
+    @Test
+    fun refreshedReferenceDataDoesNotDiscardResultOrReplaceSubmittedWorld() = runTest(dispatcher) {
+        val templates = mockk<WorldTemplateDao>()
+        val characters = mockk<CharacterDao>()
+        var template = WorldTemplateEntity(id = 7, templateId = "harbor", label = "旧世界", worldPrompt = "旧规则")
+        var character = CharacterEntity(id = 8, name = "守塔人", personaPrompt = "旧人物设定")
+        coEvery { templates.getAll() } answers { listOf(template) }
+        coEvery { characters.getAll() } answers { listOf(character) }
+        val gate = CompletableDeferred<StoryWritingResult>()
+        val writing = mockk<StoryWritingUseCase>(relaxed = true)
+        coEvery { writing.write(any(), any(), any(), any(), any()) } coAnswers { gate.await() }
+        val storage = mockk<SecureStorage>(relaxed = true) {
+            every { publicApiKey } returns "key"; every { publicBaseUrl } returns "https://example.com"; every { publicModel } returns "model"
+        }
+        val create = mockk<CreateSessionUseCase>()
+        coEvery { create.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns CreateSessionUseCase.Result.Created(27)
+        val stored = slot<StoryOpeningDraft>()
+        val drafts = mockk<StoryOpeningDraftStore>(relaxed = true) {
+            coEvery { load() } returns null
+            coEvery { persist(capture(stored)) } returns Unit
+        }
+        val vm = createViewModel(templates, mockk(relaxed = true), characters, writing, storage, create, draftStore = drafts)
+        runCurrent(); vm.updatePremise("灯塔来信"); vm.selectTemplate(7); vm.toggleCharacter(8)
+        val revision = vm.state.value.inputRevision
+        var opened: Long? = null
+        vm.createStory { opened = it }; runCurrent()
+        template = template.copy(label = "新世界", worldPrompt = "新规则")
+        character = character.copy(personaPrompt = "新人物设定")
+        vm.retryTemplates(); vm.retryCharacters(); runCurrent()
+        vm.updatePremise("灯塔来信") // A no-op input callback is not an edit.
+        assertEquals(revision, vm.state.value.inputRevision)
+        gate.complete(StoryWritingResult("来信", listOf(StoryChapter(1, "第一章", "完整正文")), listOf("继续")))
+        runCurrent()
+        assertEquals(27L, opened)
+        assertTrue(stored.captured.worldPrompt.contains("旧规则"))
+        assertTrue(stored.captured.worldPrompt.contains("旧人物设定"))
+        assertFalse(stored.captured.worldPrompt.contains("新规则"))
+        assertEquals("旧世界", stored.captured.template?.label)
+        assertNull(vm.state.value.error)
+    }
+
+    @Test
+    fun referenceRefreshDoesNotHideRequestFailure() = runTest(dispatcher) {
+        val templates = mockk<WorldTemplateDao>()
+        var rows = listOf(WorldTemplateEntity(id = 7, templateId = "harbor", label = "世界"))
+        coEvery { templates.getAll() } answers { rows }
+        val gate = CompletableDeferred<StoryWritingResult>()
+        val writing = mockk<StoryWritingUseCase>()
+        coEvery { writing.write(any(), any(), any(), any(), any()) } coAnswers { gate.await() }
+        val storage = mockk<SecureStorage>(relaxed = true) {
+            every { publicApiKey } returns "key"; every { publicBaseUrl } returns "https://example.com"; every { publicModel } returns "model"
+        }
+        val vm = createViewModel(templates, mockk(relaxed = true), mockk(relaxed = true), writing, storage)
+        runCurrent(); vm.updatePremise("灯塔"); vm.selectTemplate(7); vm.createStory {}; runCurrent()
+        rows = emptyList(); vm.retryTemplates(); runCurrent()
+        assertNull(vm.state.value.selectedTemplateId)
+        gate.completeExceptionally(IllegalStateException("request failed")); runCurrent()
+        assertFalse(vm.state.value.isGenerating)
+        assertEquals("失败", vm.state.value.generationStage)
+        assertTrue(vm.state.value.error.orEmpty().isNotBlank())
+    }
+
     private fun createViewModel(
         templateDao: WorldTemplateDao,
         encyclopediaDao: EncyclopediaDao,

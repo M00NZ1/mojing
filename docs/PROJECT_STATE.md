@@ -21,6 +21,8 @@ Android 小说开篇采用流式正文预览，显示当前模型、已用时间
 
 Android 开篇将会话、世界配置、角色与全部章节放入同一 Room 事务。完整正文和生成时的设定先保存为本地草稿，退出页面或重启应用后可继续保存、复制全文或确认放弃。草稿与会话通过同一事务交接，已保存结果复用原会话；恢复入口位于创作页顶部，提供正文预览与开始新作。
 
+小说生成固定使用提交时的世界与角色设定；生成期间刷新资料不会丢弃已完成正文或隐藏请求错误。用户实际修改输入后，旧请求结果按输入修订隔离。
+
 通用记忆提示词明确对象、数组及字段类型；解析支持代码围栏、常见响应包装和文本字段的字符串/数组转换。开篇与记忆请求为已适配的 DeepSeek 模型启用 JSON 输出及非推理模式，记忆使用独立的 3,200 Token 输出预算。自动整理失败后短暂冷却，手动重建与清空可立即操作。记忆面板显示本次整理状态，后台结果按故事线隔离。
 
 Android 35 模拟器通过真实平台接口完成单章、双章、返回正文前后取消、无效模型修正后重试，以及记忆重建和清空。最近一轮开篇样本：DeepSeek `deepseek-flash` 单章 2,071 字 / 12.1 秒、双章 3,820 字 / 18.8 秒；硅基流动 `Pro/deepseek-ai/DeepSeek-V3.2` 单章 2,952 字 / 99.2 秒、双章 7,000 字 / 276.3 秒。相同故事记录的记忆重建分别为 4.8 秒和 123.1 秒。生成篇幅仍随模型变化，继续优化长度控制。
@@ -50,6 +52,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Android 创作输入归属 | 20 项 ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 4 项生成卡片用例通过，覆盖长预览、停止、失败重试和保存入口 | `StorySimulationViewModelTest`、`StoryGenerationProgressCardTest`；`.codex-work/story-input-owner-20260913/` |
 | Android 开篇重启恢复 | 621 项 JVM 测试、Debug 应用及测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 13 项数据库和界面测试通过；两次独立 instrumentation 之间强制结束进程，重进创作页后完成长正文读取、复制与会话保存，两个阶段通过；完成恢复及已保存页面截图检查 | `StoryOpeningRecoveryInstrumentedTest`、`StoryRecoveryCardTest`、`StoryRecoveryProcessTest`；`.codex-work/story-recovery-20260912/` |
 | Android 开篇保存恢复 | 618 项 JVM 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 7 项数据库事务及创作卡片用例通过，覆盖章节写入失败回滚、完整保存、复制全文、重试保存与重新打开 | `SessionCreationTransactionInstrumentedTest`、`StorySimulationViewModelTest`、`StoryGenerationProgressCardTest`；`.codex-work/story-save-20260912/` |
 | Android 开篇与记忆请求 | 616 项 JVM 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 4 项创作卡片和记忆面板用例通过；两平台真实接口流程完成，字段兼容修正后两平台记忆专项复测通过 | `RealProviderStoryTest`、`StoryGenerationProgressCardTest`、`MemoryPanelPresentationTest`；`.codex-work/generation-20260912/` |

@@ -58,6 +58,8 @@ internal fun StoryGenerationProgressCard(
                     TextButton(onClick = onStop) { Text("停止") }
                 }
             }
+            if (state.isGenerating) Text("本轮按开始生成时的设定创作", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (state.hasPendingStory && state.preview.isBlank() && onCopyCompleted != null) {
                 TextButton(onClick = onCopyCompleted) { Text("复制完整正文") }
             }

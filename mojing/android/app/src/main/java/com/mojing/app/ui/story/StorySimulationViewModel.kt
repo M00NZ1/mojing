@@ -74,6 +74,7 @@ data class StorySimulationState(
     val receivedChars: Int = 0,
     val preview: String = "",
     val requestToken: Long = 0L,
+    val inputRevision: Long = 0L,
 )
 
 private data class StoryCreationContext(
@@ -225,7 +226,17 @@ class StorySimulationViewModel @Inject constructor(
     )
 
     private fun updateInput(transform: (StorySimulationState) -> StorySimulationState) {
-        _state.update { if (it.isRestoring || it.recoveryError != null || it.hasPendingStory || it.isSaving || it.savedSessionId != null) it else transform(it).copy(error = null) }
+        _state.update { current ->
+            if (current.isRestoring || current.recoveryError != null || current.hasPendingStory || current.isSaving || current.savedSessionId != null) current
+            else {
+                val next = transform(current)
+                val changed = next.premise != current.premise || next.direction != current.direction ||
+                    next.tone != current.tone || next.chapterCount != current.chapterCount ||
+                    next.selectedTemplateId != current.selectedTemplateId || next.selectedEncyclopediaId != current.selectedEncyclopediaId ||
+                    next.selectedCharacterIds != current.selectedCharacterIds
+                next.copy(error = null, inputRevision = current.inputRevision + if (changed) 1 else 0)
+            }
+        }
     }
 
     fun updatePremise(value: String) = updateInput { it.copy(premise = value) }
@@ -331,7 +342,7 @@ class StorySimulationViewModel @Inject constructor(
                         "StoryWriting",
                         "chapters=${requestContext.chapterCount} stage=${if (formatError) "parse" else "request"} model=${safeModelMetadata(model)} elapsed=${_state.value.generationElapsedMs} firstContent=${_state.value.firstContentDelayMs ?: -1} received=${_state.value.receivedChars} diagnostics=${com.mojing.app.domain.engine.LlmFailureDiagnostics.summary(e)}",
                     )
-                    if (creationContext(_state.value) == requestContext) {
+                    if (_state.value.inputRevision == snapshot.inputRevision) {
                         val error = if (formatError) e.message ?: "小说返回格式不正确，请重试"
                             else UserFacingStrings.remoteRequestFailed(e)
                         _state.update { it.copy(error = error, generationStage = "失败") }
@@ -340,7 +351,7 @@ class StorySimulationViewModel @Inject constructor(
                 }
                 if (result == null) return@launch
                 ensureActive()
-                if (creationContext(_state.value) != requestContext) {
+                if (_state.value.inputRevision != snapshot.inputRevision) {
                         _state.update { it.copy(isGenerating = false, generationStage = "已丢弃（输入已变化）", error = "输入或绑定已变化，请重新生成") }
                     return@launch
                 }
