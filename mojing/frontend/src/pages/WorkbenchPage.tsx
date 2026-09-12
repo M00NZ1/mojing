@@ -326,8 +326,8 @@ export default function WorkbenchPage() {
       if (!payload) return;
       setGeneratedWorld(payload);
       await queryClient.invalidateQueries({ queryKey: ['jobs', 'world'] });
-      if (payload.saved_template) await queryClient.invalidateQueries({ queryKey: ['world-templates'] });
-      showToast(payload.saved_template ? '世界设定已生成并已保存到模板库' : '世界设定已生成，可在下方查看结果', 'success');
+      if (payload.saved_template) await Promise.all([queryClient.invalidateQueries({ queryKey: ['world-templates'] }), queryClient.invalidateQueries({ queryKey: ['world-library'] }), queryClient.invalidateQueries({ queryKey: ['encyclopedias'] })]);
+      showToast(payload.saved_template ? '世界已生成并保存' : '世界设定已生成，可在下方查看结果', 'success');
     },
     onError: generationError,
   });
@@ -352,8 +352,8 @@ export default function WorkbenchPage() {
       if (!payload) return;
       setImportedWorld(payload);
       await queryClient.invalidateQueries({ queryKey: ['jobs', 'world'] });
-      if (payload.saved_template) await queryClient.invalidateQueries({ queryKey: ['world-templates'] });
-      showToast(payload.saved_template ? '导入完成并已保存为模板' : '导入完成，可在下方查看结果', 'success');
+      if (payload.saved_template) await Promise.all([queryClient.invalidateQueries({ queryKey: ['world-templates'] }), queryClient.invalidateQueries({ queryKey: ['world-library'] }), queryClient.invalidateQueries({ queryKey: ['encyclopedias'] })]);
+      showToast(payload.saved_template ? '世界已导入并保存' : '导入完成，可在下方查看结果', 'success');
     },
     onError: generationError,
   });
@@ -374,8 +374,8 @@ export default function WorkbenchPage() {
       const savedResult = { ...variables.result, saved_template: savedTemplate };
       if (variables.kind === 'generated') setGeneratedWorld(savedResult);
       else setImportedWorld(savedResult);
-      await queryClient.invalidateQueries({ queryKey: ['world-templates'] });
-      showToast('世界设定和 Lore 已保存到模板库', 'success');
+      await Promise.all([queryClient.invalidateQueries({ queryKey: ['world-templates'] }), queryClient.invalidateQueries({ queryKey: ['world-library'] }), queryClient.invalidateQueries({ queryKey: ['encyclopedias'] })]);
+      showToast('世界与条目已保存', 'success');
     },
     onError: (e) => showToast(e instanceof Error ? e.message : '保存世界设定失败', 'error'),
   });
@@ -387,6 +387,7 @@ export default function WorkbenchPage() {
       return api.createSessionWithConfig({
         title: `${template.label} · 新故事`,
         template_id: template.template_id,
+        encyclopedia_id: template.encyclopedia_id ?? undefined,
         gameplay_mode: template.gameplay_mode,
         initial_character_ids: characterId ? [characterId] : undefined,
       });
@@ -415,7 +416,7 @@ export default function WorkbenchPage() {
           setTemplateBaseline(worldTemplateSnapshot(saved));
         }
       }
-      await queryClient.invalidateQueries({ queryKey: ['world-templates'] });
+      await Promise.all([queryClient.invalidateQueries({ queryKey: ['world-templates'] }), queryClient.invalidateQueries({ queryKey: ['world-library'] }), queryClient.invalidateQueries({ queryKey: ['encyclopedias'] })]);
       showToast('世界设定已保存', 'success');
     },
     onError: (e) => showToast(String(e), 'error'),
@@ -440,7 +441,7 @@ export default function WorkbenchPage() {
     mutationFn: (request: { id: string; revision: number }) => api.deleteWorldTemplate(request.id),
     onSuccess: async (_result, request) => {
       if (templateFormRevision.current === request.revision && templateEditing?.template_id === request.id) clearTemplateForm();
-      await queryClient.invalidateQueries({ queryKey: ['world-templates'] });
+      await Promise.all([queryClient.invalidateQueries({ queryKey: ['world-templates'] }), queryClient.invalidateQueries({ queryKey: ['world-library'] }), queryClient.invalidateQueries({ queryKey: ['encyclopedias'] })]);
       showToast('已删除该世界模板', 'success');
     },
     onError: (e) => showToast(String(e), 'error'),

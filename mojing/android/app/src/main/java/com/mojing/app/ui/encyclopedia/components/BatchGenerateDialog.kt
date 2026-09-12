@@ -26,6 +26,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -47,12 +49,17 @@ fun BatchGenerateDialog(
     /** `entries`：写入百科条目表；`timeline`：写入时间线事件表 */
     var outputMode by remember { mutableStateOf("entries") }
     var selectedType by remember { mutableStateOf("character") }
-    var count by remember { mutableIntStateOf(5) }
-    var minWords by remember { mutableIntStateOf(200) }
-    var maxWords by remember { mutableIntStateOf(800) }
+    var countText by remember { mutableStateOf("1") }
+    var minWordsText by remember { mutableStateOf("200") }
+    var maxWordsText by remember { mutableStateOf("800") }
     var contextPrompt by remember { mutableStateOf("") }
     var preGenNotes by remember { mutableStateOf("") }
     var runInBackground by remember { mutableStateOf(true) }
+    val countValue = countText.toIntOrNull()
+    val minWordsValue = minWordsText.toIntOrNull()
+    val maxWordsValue = maxWordsText.toIntOrNull()
+    val inputValid = countValue in 1..200 && minWordsValue != null && maxWordsValue != null &&
+        minWordsValue >= 1 && maxWordsValue >= minWordsValue
 
     val typeLabels = listOf(
         "world" to "世界",
@@ -107,27 +114,44 @@ fun BatchGenerateDialog(
                 }
 
                 OutlinedTextField(
-                    value = count.toString(),
-                    onValueChange = { it.toIntOrNull()?.let { v -> count = v.coerceIn(1, 200) } },
+                    value = countText,
+                    onValueChange = { countText = it.filter(Char::isDigit) },
                     label = { Text("生成数量") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
+                    isError = countText.isNotEmpty() && countValue !in 1..200,
+                    supportingText = if (countText.isNotEmpty() && countValue !in 1..200) {
+                        { Text("请输入 1–200 的整数") }
+                    } else null,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
-                        value = minWords.toString(),
-                        onValueChange = { it.toIntOrNull()?.let { v -> minWords = v } },
+                        value = minWordsText,
+                        onValueChange = { minWordsText = it.filter(Char::isDigit) },
                         label = { Text("最少字数") },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
+                        isError = minWordsText.isNotEmpty() && (minWordsValue == null || minWordsValue < 1),
+                        supportingText = if (minWordsText.isNotEmpty() && (minWordsValue == null || minWordsValue < 1)) {
+                            { Text("请输入正整数") }
+                        } else null,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     )
                     OutlinedTextField(
-                        value = maxWords.toString(),
-                        onValueChange = { it.toIntOrNull()?.let { v -> maxWords = v } },
+                        value = maxWordsText,
+                        onValueChange = { maxWordsText = it.filter(Char::isDigit) },
                         label = { Text("最多字数") },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
+                        isError = maxWordsText.isNotEmpty() && (maxWordsValue == null || (minWordsValue != null && maxWordsValue < minWordsValue)),
+                        supportingText = if (maxWordsText.isNotEmpty() && maxWordsValue != null && minWordsValue != null && maxWordsValue < minWordsValue) {
+                            { Text("最多字数不能小于最少字数") }
+                        } else if (maxWordsText.isNotEmpty() && maxWordsValue == null) {
+                            { Text("请输入正整数") }
+                        } else null,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     )
                 }
 
@@ -174,7 +198,11 @@ fun BatchGenerateDialog(
         },
         confirmButton = {
             Button(
+                enabled = inputValid,
                 onClick = {
+                    val count = countValue!!
+                    val minWords = minWordsValue!!
+                    val maxWords = maxWordsValue!!
                     val mode = outputMode.trim().lowercase()
                     val effectiveType = if (mode == "timeline") "event" else selectedType
                     onGenerate(

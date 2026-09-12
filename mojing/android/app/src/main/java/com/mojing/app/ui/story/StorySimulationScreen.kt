@@ -8,6 +8,7 @@ import com.mojing.app.ui.common.MoJingButton as Button
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -58,6 +59,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import com.mojing.app.ui.navigation.MainAppBottomNavigation
 import com.mojing.app.ui.navigation.returnToCreationHub
+
+private val storyTonePresets = listOf(
+    "温暖日常",
+    "悬疑紧凑",
+    "轻松幽默",
+    "细腻抒情",
+    "史诗冒险",
+    "冷峻克制",
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -163,7 +173,7 @@ fun StorySimulationScreen(
                 onValueChange = viewModel::updatePremise,
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("故事背景与大致设定 *") },
-                placeholder = { Text("例如：普通现代都市，只有主角知道自己觉醒了系统，其他人不得知情。再写清主角处境和系统规则。") },
+                placeholder = { Text("例如：海边小城每逢大雾就会收到来自未来的信。一名修钟师发现，信中提到的人正逐一失踪。") },
                 supportingText = { Text("否定设定和人物知情范围会作为持续规则，请尽量明确写出。") },
                 minLines = 5,
                 maxLines = 10,
@@ -174,7 +184,7 @@ fun StorySimulationScreen(
                 onValueChange = viewModel::updateDirection,
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("开篇剧情走向（可选）") },
-                placeholder = { Text("例如：先写觉醒当天，以及系统发布第一个任务") },
+                placeholder = { Text("例如：修钟师先找到第一封信，顺着收信日期调查失踪者。") },
                 minLines = 2,
                 maxLines = 5,
                 enabled = !isBusy,
@@ -184,65 +194,48 @@ fun StorySimulationScreen(
                 onValueChange = viewModel::updateTone,
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("风格与节奏") },
+                placeholder = { Text("例如：温暖克制，节奏舒缓，在关键处逐步加深悬念。") },
                 singleLine = true,
                 enabled = !isBusy,
             )
-
-            ExposedDropdownMenuBox(
-                expanded = templateExpanded,
-                onExpandedChange = { if (!isBusy) templateExpanded = it },
+            Text("常用风格", style = MaterialTheme.typography.labelLarge)
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                val selected = state.templates.items.firstOrNull { it.id == state.selectedTemplateId }
+                storyTonePresets.forEach { preset ->
+                    FilterChip(
+                        selected = state.tone == preset,
+                        onClick = { viewModel.updateTone(preset) },
+                        enabled = !isBusy,
+                        label = { Text(preset) },
+                    )
+                }
+            }
+
+            ExposedDropdownMenuBox(expanded = templateExpanded, onExpandedChange = { if (!isBusy) templateExpanded = it }) {
+                val selectedTemplate = state.templates.items.firstOrNull { it.id == state.selectedTemplateId }
+                val selectedWorld = state.encyclopedias.items.firstOrNull { it.id == state.selectedEncyclopediaId }
                 OutlinedTextField(
-                    value = selected?.label?.ifBlank { selected.templateId } ?: "不绑定世界模板",
-                    onValueChange = {}, readOnly = true, singleLine = true,
-                    label = { Text("开局玩法 · 来自设定工坊") },
-                    supportingText = { Text("选择叙事规则与世界模板，可留空") },
+                    value = listOfNotNull(selectedTemplate?.label, selectedWorld?.name).joinToString(" + ").ifBlank { "不绑定世界" },
+                    onValueChange = {}, readOnly = true, singleLine = true, enabled = !isBusy,
+                    label = { Text("世界") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(templateExpanded) },
                     modifier = Modifier.fillMaxWidth().menuAnchor(),
-                    enabled = !isBusy,
                 )
                 ExposedDropdownMenu(expanded = templateExpanded, onDismissRequest = { templateExpanded = false }) {
-                    DropdownMenuItem(text = { Text("不绑定") }, onClick = { viewModel.selectTemplate(null); templateExpanded = false })
-                    state.templates.items.forEach { template ->
-                        DropdownMenuItem(text = { Text(template.label.ifBlank { template.templateId }) }, onClick = { viewModel.selectTemplate(template.id); templateExpanded = false })
+                    DropdownMenuItem(text = { Text("不绑定世界") }, onClick = { viewModel.selectWorld(null, null); templateExpanded = false })
+                    state.encyclopedias.items.forEach { world ->
+                        DropdownMenuItem(text = { Text(world.name) }, onClick = { viewModel.selectWorld(null, world.id); templateExpanded = false })
+                    }
+                    state.templates.items.filter { it.id !in state.worldMappings && it.templateId != "custom" }.forEach { template ->
+                        DropdownMenuItem(text = { Text("${template.label} · 旧资料") }, onClick = { viewModel.selectWorld(template.id, null); templateExpanded = false })
                     }
                 }
             }
-            StoryOptionLoadStatus(
-                state = state.templates,
-                loadingText = "正在加载世界模板…",
-                emptyText = "暂无世界模板，可继续使用不绑定模式",
-                onRetry = viewModel::retryTemplates,
-            )
-
-            ExposedDropdownMenuBox(
-                expanded = encyclopediaExpanded,
-                onExpandedChange = { if (!isBusy) encyclopediaExpanded = it },
-            ) {
-                val selected = state.encyclopedias.items.firstOrNull { it.id == state.selectedEncyclopediaId }
-                OutlinedTextField(
-                    value = selected?.name?.ifBlank { "百科 ${selected.id}" } ?: "不绑定百科",
-                    onValueChange = {}, readOnly = true, singleLine = true,
-                    label = { Text("世界知识 · 来自百科") },
-                    supportingText = { Text("提供背景、地点与人物关系，可留空") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(encyclopediaExpanded) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(),
-                    enabled = !isBusy,
-                )
-                ExposedDropdownMenu(expanded = encyclopediaExpanded, onDismissRequest = { encyclopediaExpanded = false }) {
-                    DropdownMenuItem(text = { Text("不绑定") }, onClick = { viewModel.selectEncyclopedia(null); encyclopediaExpanded = false })
-                    state.encyclopedias.items.forEach { encyclopedia ->
-                        DropdownMenuItem(text = { Text(encyclopedia.name.ifBlank { "百科 ${encyclopedia.id}" }) }, onClick = { viewModel.selectEncyclopedia(encyclopedia.id); encyclopediaExpanded = false })
-                    }
-                }
-            }
-            StoryOptionLoadStatus(
-                state = state.encyclopedias,
-                loadingText = "正在加载百科…",
-                emptyText = "暂无百科，可继续使用不绑定模式",
-                onRetry = viewModel::retryEncyclopedias,
-            )
+            StoryOptionLoadStatus(state.templates, "正在加载旧资料…", "", viewModel::retryTemplates)
+            StoryOptionLoadStatus(state.encyclopedias, "正在加载世界…", "暂无世界，可直接开始创作", viewModel::retryEncyclopedias)
 
             val selectedTemplate = state.templates.items.firstOrNull { it.id == state.selectedTemplateId }
             val selectedEncyclopedia = state.encyclopedias.items.firstOrNull { it.id == state.selectedEncyclopediaId }

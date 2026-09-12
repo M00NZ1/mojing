@@ -40,4 +40,6 @@ interface WorldTemplateDao {
 
     @Query("DELETE FROM world_templates WHERE id = :id")
     suspend fun delete(id: Long)
+    @Query("SELECT worldTemplateId, encyclopediaId FROM legacy_world_mappings")
+    suspend fun getWorldMappings(): List<WorldTemplateEncyclopediaMapping>
 }

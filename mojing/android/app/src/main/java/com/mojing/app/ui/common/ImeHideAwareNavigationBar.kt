@@ -51,11 +51,11 @@ fun ImeHideAwareNavigationBar(
         )
     ) {
         Surface(
-            modifier = Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
-            shape = MaterialTheme.shapes.large,
+            modifier = Modifier.navigationBarsPadding().padding(horizontal = 24.dp, vertical = 8.dp),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(30.dp),
             color = MaterialTheme.colorScheme.surfaceContainerLowest,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
-            shadowElevation = 8.dp,
+            shadowElevation = 3.dp,
         ) {
             Row(Modifier.fillMaxWidth().selectableGroup().padding(4.dp), verticalAlignment = Alignment.CenterVertically, content = content)
         }

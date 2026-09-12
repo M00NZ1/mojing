@@ -5,7 +5,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.ReadOnlyComposable
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -96,9 +95,13 @@ val LocalChatDensityMetrics = compositionLocalOf { ChatDensityMode.Comfortable.t
 @Composable
 @ReadOnlyComposable
 fun ChatDensityMetrics.bodyTextStyle(): TextStyle =
-    MaterialTheme.typography.bodyLarge.copy(fontSize = bodyFontSp.sp)
+    MaterialTheme.typography.bodyLarge.copy(fontSize = bodyFontSp.sp, fontFamily = LocalChatReadingStyle.current.fontFamily)
 
 @Composable
 @ReadOnlyComposable
-fun ChatDensityMetrics.bodyMediumItalicStyle(): TextStyle =
-    MaterialTheme.typography.bodyMedium.copy(fontSize = (bodyFontSp - 1f).coerceAtLeast(12f).sp, fontStyle = FontStyle.Italic)
+fun ChatDensityMetrics.narrationTextStyle(): TextStyle =
+    MaterialTheme.typography.bodyMedium.copy(
+        fontSize = (bodyFontSp - 1f).coerceAtLeast(12f).sp,
+        fontFamily = LocalChatReadingStyle.current.fontFamily,
+        fontStyle = LocalChatReadingStyle.current.narratorFontStyle,
+    )

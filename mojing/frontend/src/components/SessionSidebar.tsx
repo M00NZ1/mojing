@@ -7,6 +7,7 @@ import InlineQueryError from './InlineQueryError';
 import { useUndoDelete } from './UndoToast';
 import { useToast } from '../hooks/useToast';
 import UiIcon from './UiIcon';
+import { buildWorldSelectorItems, resolveWorldSelectorValue, worldSelectorValue } from '../utils/worldSelector';
 
 const OPENING_OPTIONS = [
   { key: 'narrator_enabled', configKey: 'default_narrator_enabled', label: '旁白', description: '加入场景叙述与剧情推进', fallback: false },
@@ -70,10 +71,11 @@ export default function SessionSidebar() {
     () => templatesQuery.data?.find((item) => item.template_id === templateId),
     [templateId, templatesQuery.data],
   );
-  const encyclopedia = useMemo(
-    () => encyclopediasQuery.data?.find((item) => item.id === encyclopediaId),
-    [encyclopediaId, encyclopediasQuery.data],
+  const worldItems = useMemo(
+    () => buildWorldSelectorItems(templatesQuery.data ?? [], encyclopediasQuery.data ?? [], templateId, encyclopediaId),
+    [templatesQuery.data, encyclopediasQuery.data, templateId, encyclopediaId],
   );
+  const selectedWorldValue = worldSelectorValue(templateId, encyclopediaId, worldItems);
 
   useEffect(() => {
     window.addEventListener('create-session', openCreateForm);
@@ -107,6 +109,8 @@ export default function SessionSidebar() {
       || templatesQuery.data.some((item) => item.template_id === configuredTemplateId);
     if (!templateSelectionTouchedRef.current) {
       setTemplateId(templateAvailable ? configuredTemplateId : 'custom');
+      const configuredTemplate = templatesQuery.data.find((item) => item.template_id === configuredTemplateId);
+      setEncyclopediaId(configuredTemplate?.encyclopedia_id ?? null);
     }
     templateDefaultInitializedRef.current = true;
   }, [showCreateForm, templatesQuery.data, localConfigQuery.data]);
@@ -308,39 +312,22 @@ export default function SessionSidebar() {
           </div>
           <details className="session-create-options">
             <summary>
-              <span>世界与百科</span>
+              <span>世界</span>
               <small>
-                {template ? template.label : '不使用世界模板'}
-                {encyclopedia ? ` · ${encyclopedia.name}` : ''}
+                {worldItems.find((item) => item.value === selectedWorldValue)?.label ?? '不绑定世界'}
               </small>
             </summary>
             <div className="form-group">
-              <label htmlFor="new-session-template">世界模板</label>
-              <small className="guide-inline">提供故事开局、玩法与固定规则。</small>
-              <select
-                id="new-session-template"
-                value={templateId}
-                disabled={templatesQuery.isLoading || templatesQuery.isError}
-                onChange={(event) => {
-                  templateSelectionTouchedRef.current = true;
-                  setTemplateId(event.target.value);
-                }}
-              >
-                <option value="custom">不使用模板</option>
-                {templatesQuery.data?.map((item) => <option key={item.id} value={item.template_id}>{item.label}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label htmlFor="new-session-encyclopedia">世界百科（可选）</label>
-              <small className="guide-inline">补充人物、地点与历史知识，可与世界模板组合。</small>
-              <select
-                id="new-session-encyclopedia"
-                value={encyclopediaId ?? ''}
-                disabled={encyclopediasQuery.isLoading || encyclopediasQuery.isError}
-                onChange={(event) => setEncyclopediaId(event.target.value ? Number(event.target.value) : null)}
-              >
-                <option value="">不绑定百科</option>
-                {encyclopediasQuery.data?.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              <label htmlFor="new-session-world">世界</label>
+              <small className="guide-inline">世界背景、规则与资料统一选择。</small>
+              <select id="new-session-world" value={selectedWorldValue} disabled={templatesQuery.isLoading || templatesQuery.isError || encyclopediasQuery.isLoading || encyclopediasQuery.isError} onChange={(event) => {
+                templateSelectionTouchedRef.current = true;
+                const selected = resolveWorldSelectorValue(event.target.value, worldItems);
+                setTemplateId(selected.templateId);
+                setEncyclopediaId(selected.encyclopediaId);
+              }}>
+                <option value="">不绑定世界</option>
+                {worldItems.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
               </select>
             </div>
           </details>

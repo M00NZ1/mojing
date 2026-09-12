@@ -130,18 +130,18 @@ fun MainAppBottomNavigation(
 @Composable
 internal fun RowScope.MoJingNavItem(selected: Boolean, onClick: () -> Unit, icon: ImageVector, label: String) {
     val palette = MaterialTheme.colorScheme
-    val background by animateColorAsState(if (selected) palette.primaryContainer else androidx.compose.ui.graphics.Color.Transparent, label = "tabSurface")
-    val foreground by animateColorAsState(if (selected) palette.onPrimaryContainer else palette.onSurfaceVariant, label = "tabInk")
-    Column(
-        Modifier.weight(1f).padding(4.dp).clip(MaterialTheme.shapes.medium)
+    val background by animateColorAsState(if (selected) palette.primary else androidx.compose.ui.graphics.Color.Transparent, label = "tabSurface")
+    val foreground by animateColorAsState(if (selected) palette.onPrimary else palette.onSurfaceVariant, label = "tabInk")
+    Row(
+        Modifier.weight(1f).padding(3.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(24.dp))
             .background(background).selectable(selected, onClick = onClick, role = Role.Tab)
-            .padding(horizontal = 4.dp, vertical = 10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+            .heightIn(min = 48.dp).padding(horizontal = 6.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
     ) {
         Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(22.dp))
         Text(label, color = foreground, style = MaterialTheme.typography.labelMedium,
-            maxLines = 1, overflow = TextOverflow.Ellipsis)
+            modifier = Modifier.weight(1f, fill = false), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

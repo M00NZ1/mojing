@@ -5,6 +5,7 @@ import { findStoryLineDisplayLabel, storyLineDisplayLabel } from '../utils/story
 import InlineQueryError, { type RefreshableQuery } from './InlineQueryError';
 import { confirmModal } from './ConfirmModal';
 import UiIcon from './UiIcon';
+import { buildWorldSelectorItems, resolveWorldSelectorValue, worldSelectorValue } from '../utils/worldSelector';
 
 interface ChatRightPanelProps {
   sessionOptions?: ReactNode;
@@ -106,6 +107,7 @@ export default function ChatRightPanel({
   onUpdateTalkativeness, eventNodesQuery,
 }: ChatRightPanelProps) {
   const worldInputsDisabled = worldSaving || !worldReady;
+  const worldItems = buildWorldSelectorItems(worldTemplatesQuery.data ?? [], encyclopediasQuery.data ?? [], worldTemplateId, encyclopediaId);
   const [correctionDraft, setCorrectionDraft] = useState<CorrectionDraft | null>(null);
   const [correctionError, setCorrectionError] = useState<string | null>(null);
   const [savingCorrection, setSavingCorrection] = useState(false);
@@ -340,16 +342,16 @@ export default function ChatRightPanel({
             />
           )}
           <div className="form-grid compact-grid">
-            <label>世界模板
-              <select disabled={worldInputsDisabled} value={worldTemplateId} onChange={(event) => { onWorldTemplateIdChange(event.target.value); const t = worldTemplatesQuery.data?.find((item) => item.template_id === event.target.value); if (t) onGameplayModeChange(t.gameplay_mode); }}>
-                <option value="custom">自定义</option>
-                {worldTemplatesQuery.data?.map((t) => (<option value={t.template_id} key={t.id}>{t.label}</option>))}
-              </select>
-            </label>
-            <label>世界百科
-              <select disabled={worldInputsDisabled} value={encyclopediaId ?? ''} onChange={(event) => onEncyclopediaIdChange(event.target.value ? Number(event.target.value) : null)}>
-                <option value="">不绑定百科</option>
-                {encyclopediasQuery.data?.map((enc) => (<option value={enc.id} key={enc.id}>{enc.name} · {enc.entry_count} 条</option>))}
+            <label>世界
+              <select disabled={worldInputsDisabled} value={worldSelectorValue(worldTemplateId, encyclopediaId, worldItems)} onChange={(event) => {
+                const selected = resolveWorldSelectorValue(event.target.value, worldItems);
+                onWorldTemplateIdChange(selected.templateId);
+                onEncyclopediaIdChange(selected.encyclopediaId);
+                const template = worldTemplatesQuery.data?.find((item) => item.template_id === selected.templateId);
+                if (template) onGameplayModeChange(template.gameplay_mode);
+              }}>
+                <option value="">不绑定世界</option>
+                {worldItems.map((item) => (<option value={item.value} key={item.value}>{item.label}</option>))}
               </select>
             </label>
             <label>玩法模式<input disabled={worldInputsDisabled} value={gameplayMode} onChange={(e) => onGameplayModeChange(e.target.value)} /></label>

@@ -152,6 +152,7 @@ class EncyclopediaListViewModel @Inject constructor(
     private val imageRepository: ImageRepository,
     private val uiPreferencesRepository: UiPreferencesRepository,
     private val generationTaskDao: GenerationTaskDao,
+    private val deleteWorld: com.mojing.app.domain.usecase.DeleteWorldUseCase,
 ) : ViewModel() {
     private val coverGenerationOwner = KeyedOperationOwner<Long>()
     val coverGeneratingEncyclopediaIds: StateFlow<Set<Long>> = coverGenerationOwner.activeKeys
@@ -200,12 +201,14 @@ class EncyclopediaListViewModel @Inject constructor(
         catch (_: Exception) { "名称保存失败，请重试" }
     }
 
-    fun delete(id: Long) {
-        viewModelScope.launch {
-            characterDao.deleteByEncyclopediaId(id)
-            encyclopediaDao.delete(id)
-            _encyclopedias.value = encyclopediaDao.getAll()
-        }
+    suspend fun delete(id: Long): String? = try {
+        val error = deleteWorld(id)
+        if (error == null) _encyclopedias.value = encyclopediaDao.getAll()
+        error
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        "世界删除失败，请重试"
     }
 
     fun setEncyclopediaPinned(id: Long, pinned: Boolean) {

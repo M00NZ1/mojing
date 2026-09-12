@@ -17,6 +17,7 @@ object Routes {
     const val CHARACTER_EDIT = "characters/edit/{characterId}"
     const val ENCYCLOPEDIA_LIST = "encyclopedias"
     const val ENCYCLOPEDIA_DETAIL = "encyclopedias/{encId}"
+    const val WORLD_SETTINGS = "worlds/{worldId}/settings"
     const val ENTRY_EDIT = "encyclopedias/{encId}/entries/{entryId}"
     const val WORKBENCH = "workbench"
     const val TEMPLATE_EDIT = "workbench/edit/{templateId}"
@@ -29,6 +30,7 @@ object Routes {
         "chat/$sessionId?sourceMessageId=$messageId&sourceBranchId=${android.net.Uri.encode(branchId)}"
     fun characterEdit(id: Long) = "characters/edit/$id"
     fun encyclopediaDetail(encId: Long) = "encyclopedias/$encId"
+    fun worldSettings(worldId: Long) = "worlds/$worldId/settings"
     fun entryEdit(encId: Long, entryId: Long) = "encyclopedias/$encId/entries/$entryId"
     fun templateEdit(templateId: Long) = "workbench/edit/$templateId"
 }

@@ -21,11 +21,15 @@ class CreateSessionUseCaseTest {
     private val characterDao = mockk<CharacterDao>(relaxed = true)
     private val worldTemplateDao = mockk<WorldTemplateDao>(relaxed = true)
     private val secureStorage = mockk<SecureStorage>(relaxed = true)
+    private val mappingDao = mockk<com.mojing.app.data.local.dao.LegacyWorldMappingDao> { coEvery { getByTemplateId(any()) } returns null }
+    private val encyclopediaDao = mockk<com.mojing.app.data.local.dao.EncyclopediaDao> { coEvery { getById(any()) } returns null }
     private val useCase = CreateSessionUseCase(
-        transaction,
-        characterDao,
-        worldTemplateDao,
-        secureStorage,
+        worldMappingDao = mappingDao,
+        encyclopediaDao = encyclopediaDao,
+        transaction = transaction,
+        characterDao = characterDao,
+        worldTemplateDao = worldTemplateDao,
+        secureStorage = secureStorage,
     )
 
     @Test
@@ -197,5 +201,22 @@ class CreateSessionUseCaseTest {
                 match { it.isEmpty() },
             )
         }
+    }
+    @Test
+    fun mappedWorldOpeningUsesCanonicalBackgroundWithoutLegacyLore() = runTest {
+        val template = WorldTemplateEntity(id = 3, templateId = "old-world", worldPrompt = "旧背景")
+        coEvery { mappingDao.getByTemplateId(3) } returns com.mojing.app.data.local.entity.LegacyWorldMappingEntity(3, 5, "source")
+        coEvery { encyclopediaDao.getById(5) } returns com.mojing.app.data.local.entity.EncyclopediaEntity(id = 5, name = "统一世界", worldPrompt = "当前背景")
+        useCase.createBlank(template = template)
+        coVerify { transaction(any(), match { it.encyclopediaId == 5L && it.templateId == "custom" && it.worldPrompt == "当前背景" }, any()) }
+    }
+
+    @Test
+    fun restoredStoryKeepsItsSubmittedBackground() = runTest {
+        val template = WorldTemplateEntity(id = 3, templateId = "old-world", worldPrompt = "旧背景")
+        coEvery { mappingDao.getByTemplateId(3) } returns com.mojing.app.data.local.entity.LegacyWorldMappingEntity(3, 5, "source")
+        coEvery { encyclopediaDao.getById(5) } returns com.mojing.app.data.local.entity.EncyclopediaEntity(id = 5, worldPrompt = "后来修改")
+        useCase.create(template = template, allowNoParticipants = true, worldPromptOverride = "提交时的背景")
+        coVerify { transaction(any(), match { it.worldPrompt == "提交时的背景" }, any(), any(), any()) }
     }
 }

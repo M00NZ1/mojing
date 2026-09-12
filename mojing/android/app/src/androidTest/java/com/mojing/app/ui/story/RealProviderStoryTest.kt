@@ -104,7 +104,7 @@ class RealProviderStoryTest {
             rule.activity.actionBar?.hide()
             vm = StorySimulationViewModel(StoryWritingUseCase(retry), storage,
                 database.worldTemplateDao(), database.encyclopediaDao(), database.characterDao(),
-                CreateSessionUseCase(SessionCreationTransaction(database), database.characterDao(), database.worldTemplateDao(), storage),
+                CreateSessionUseCase(SessionCreationTransaction(database), database.characterDao(), database.worldTemplateDao(), storage, database.legacyWorldMappingDao(), database.encyclopediaDao()),
                 com.mojing.app.data.StoryOpeningDraftStore(database))
             store.put("provider-story", vm)
         }
@@ -184,7 +184,7 @@ class RealProviderStoryTest {
         prepare(provider)
         runBlocking {
             val database = checkNotNull(db)
-            val creator = CreateSessionUseCase(SessionCreationTransaction(database), database.characterDao(), database.worldTemplateDao(), storage)
+            val creator = CreateSessionUseCase(SessionCreationTransaction(database), database.characterDao(), database.worldTemplateDao(), storage, database.legacyWorldMappingDao(), database.encyclopediaDao())
             val id = (creator.createBlank(title = "记忆回归 · 雾港") as CreateSessionUseCase.Result.Created).sessionId
             val text = InstrumentationRegistry.getInstrumentation().context.assets.open("provider-story-context.json").bufferedReader().use { it.readText() }
             val rows = org.json.JSONArray(text)

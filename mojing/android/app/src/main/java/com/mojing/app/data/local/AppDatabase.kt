@@ -21,8 +21,9 @@ import com.mojing.app.data.local.entity.*
         GenerationTaskEntity::class, MessageSearchFtsEntity::class,
         MessageSearchIndexStateEntity::class, BranchVisibilitySegmentEntity::class,
         SessionMemoryCorrectionEntity::class, BranchSwipeSelectionEntity::class,
+        LegacyWorldMappingEntity::class, LegacyLoreMappingEntity::class,
     ],
-    version = 19,
+    version = 20,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -55,4 +56,5 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun costRecordDao(): CostRecordDao
     abstract fun generationTaskDao(): GenerationTaskDao
     abstract fun sessionMemoryCorrectionDao(): SessionMemoryCorrectionDao
+    abstract fun legacyWorldMappingDao(): LegacyWorldMappingDao
 }

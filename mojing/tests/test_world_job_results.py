@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, delete, event, select
 from sqlalchemy.orm import Session
 
 from backend.app.database import Base, get_db
-from backend.app.models import JobRunModel, WorldTemplateModel
+from backend.app.models import JobRunModel, WorldTemplateModel, WorldEncyclopediaModel, EncyclopediaEntryModel, LegacyWorldMappingModel
 from backend.app.routes import worlds, jobs
 from backend.app.schemas import WorldGenerationRequest, WorldGenerationResponse, WorldImportRequest
 from backend.app.services.job_service import list_job_runs
@@ -74,6 +74,9 @@ def test_simultaneous_saves_are_idempotent_and_do_not_overwrite_existing_world(e
     assert ids[0] == ids[1]
     with Session(engine) as db:
         assert len(list(db.scalars(select(WorldTemplateModel)))) == 2
+        assert len(list(db.scalars(select(WorldEncyclopediaModel)))) == 1
+        assert len(list(db.scalars(select(EncyclopediaEntryModel)))) == 1
+        assert len(list(db.scalars(select(LegacyWorldMappingModel)))) == 1
         assert db.scalar(select(WorldTemplateModel).where(WorldTemplateModel.template_id == "test")).world_prompt == "不能覆盖"
 
 
@@ -88,6 +91,9 @@ def test_save_commit_failure_preserves_result_and_can_retry(engine, monkeypatch)
         event.remove(db, 'before_commit', fail)
     with Session(engine) as db:
         assert db.scalar(select(WorldTemplateModel)) is None
+        assert db.scalar(select(WorldEncyclopediaModel)) is None
+        assert db.scalar(select(EncyclopediaEntryModel)) is None
+        assert db.scalar(select(LegacyWorldMappingModel)) is None
         assert read_world_job_result(db, job_id)[1].saved_template is None
         db.rollback()
         assert save_world_job_result(db, job_id).saved_template
@@ -109,7 +115,7 @@ def test_manage_uses_current_saved_world_without_replacing_original_result(engin
     job_id = create_result(engine, monkeypatch)
     with Session(engine) as db:
         saved = save_world_job_result(db, job_id).saved_template
-        db.get(WorldTemplateModel, saved.id).world_prompt = "玩家后续修改"
+        db.get(WorldEncyclopediaModel, saved.encyclopedia_id).world_prompt = "玩家后续修改"
         db.commit()
     with Session(engine) as db:
         result = read_world_job_result(db, job_id)[1]

@@ -26,7 +26,7 @@ class SaveWorldTemplatePackageUseCaseInstrumentedTest {
             ApplicationProvider.getApplicationContext(),
             AppDatabase::class.java,
         ).allowMainThreadQueries().build()
-        savePackage = SaveWorldTemplatePackageUseCase(database)
+        savePackage = SaveWorldTemplatePackageUseCase(database, com.mojing.app.domain.usecase.PromoteWorldTemplateUseCase(database))
     }
 
     @After

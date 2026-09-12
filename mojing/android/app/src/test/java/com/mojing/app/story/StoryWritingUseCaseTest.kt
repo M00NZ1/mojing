@@ -4,6 +4,9 @@ import com.mojing.app.domain.engine.LlmRetry
 import com.mojing.app.domain.story.StoryWritingException
 import com.mojing.app.domain.story.StoryWritingUseCase
 import com.mojing.app.domain.story.StoryCanon
+import com.mojing.app.data.remote.ChatMessage
+import io.mockk.coEvery
+import io.mockk.slot
 import com.google.gson.JsonParser
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
@@ -11,7 +14,31 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StoryWritingUseCaseTest {
-    private val useCase = StoryWritingUseCase(mockk<LlmRetry>())
+    private val llmRetry = mockk<LlmRetry>()
+    private val useCase = StoryWritingUseCase(llmRetry)
+
+    @Test
+    fun writeIncludesSavedUserProfileInStoryRequest() = kotlinx.coroutines.runBlocking {
+        val messages = slot<List<ChatMessage>>()
+        coEvery {
+            llmRetry.chatCompletionStreamingWithRetry(
+                apiKey = any(), baseUrl = any(), model = any(), messages = capture(messages),
+                temperature = any(), maxTokens = any(), onDelta = any(), onRetry = any(), onAttempt = any(),
+            )
+        } returns """{"title":"故事","chapters":[{"title":"第一章","content":"正文"}],"next_choices":["向东","向西"]}"""
+
+        useCase.write(
+            "key", "https://api.example.com", "model",
+            com.mojing.app.domain.story.StoryWritingRequest(
+                premise = "雾港来信", chapterCount = 1, personaName = "沈砚",
+                userDescription = "喜欢慢节奏推理",
+            ),
+        )
+
+        val prompt = messages.captured.joinToString("\n") { it.content }
+        assertTrue(prompt.contains("姓名：沈砚"))
+        assertTrue(prompt.contains("喜欢慢节奏推理"))
+    }
 
     @Test
     fun singleChapterObjectIsAcceptedWithoutLosingItsBody() {

@@ -24,6 +24,8 @@ class UiPreferencesRepository @Inject constructor(
     private val encyclopediaListLayoutKey = stringPreferencesKey("encyclopedia_list_layout")
     private val workbenchListLayoutKey = stringPreferencesKey("workbench_list_layout")
     private val chatDensityKey = stringPreferencesKey("chat_density")
+    private val chatFontKey = stringPreferencesKey("chat_font")
+    private val narratorItalicKey = booleanPreferencesKey("narrator_italic")
     private val quickStartGuideDismissedKey = booleanPreferencesKey("quick_start_guide_dismissed")
 
     /** `"list"` | `"grid"` */
@@ -84,6 +86,20 @@ class UiPreferencesRepository @Inject constructor(
                 else -> "comfortable"
             }
         }
+    }
+
+    val chatFont: Flow<String> = dataStore.data.map { prefs ->
+        prefs[chatFontKey]?.takeIf { it in setOf("sans", "serif", "mono") } ?: "system"
+    }
+
+    suspend fun setChatFont(font: String) {
+        dataStore.edit { it[chatFontKey] = font.takeIf { value -> value in setOf("sans", "serif", "mono") } ?: "system" }
+    }
+
+    val narratorItalic: Flow<Boolean> = dataStore.data.map { it[narratorItalicKey] ?: false }
+
+    suspend fun setNarratorItalic(enabled: Boolean) {
+        dataStore.edit { it[narratorItalicKey] = enabled }
     }
 
     /** 与 Web `GuidePanel` 对应：主对话 Tab 空列表时是否不再自动弹出「三步上手」 */

@@ -1,6 +1,7 @@
 import type { FormEvent } from 'react';
 import InlineQueryError, { type RefreshableQuery } from './InlineQueryError';
 import type { Character, WorldEncyclopedia, WorldTemplate } from '../types';
+import { buildWorldSelectorItems, resolveWorldSelectorValue, worldSelectorValue } from '../utils/worldSelector';
 
 export type StorySimulationFormValues = {
   premise: string;
@@ -28,6 +29,7 @@ export default function StorySimulationForm({ values, charactersQuery, templates
   const characters = charactersQuery.data ?? [];
   const templates = templatesQuery.data ?? [];
   const encyclopedias = encyclopediasQuery.data ?? [];
+  const worldItems = buildWorldSelectorItems(templates, encyclopedias, values.template_id || 'custom', values.encyclopedia_id ? Number(values.encyclopedia_id) : null);
   const toggleCharacter = (id: number) => onChange({ character_ids: values.character_ids.includes(id) ? values.character_ids.filter((item) => item !== id) : [...values.character_ids, id] });
 
   return (
@@ -49,19 +51,12 @@ export default function StorySimulationForm({ values, charactersQuery, templates
           </select>
         </label>
         <div className="story-simulation-field">
-          <label htmlFor="story-simulation-template">世界模板（可选）</label>
+          <label htmlFor="story-simulation-world">世界（可选）</label>
           {templatesQuery.isError && <InlineQueryError message="世界模板加载失败" error={templatesQuery.error} retrying={templatesQuery.isFetching} onRetry={() => { void templatesQuery.refetch(); }} />}
-          {templatesQuery.isLoading ? <p className="story-simulation-muted">正在加载世界模板…</p> : !templatesQuery.isError && templates.length === 0 ? <p className="story-simulation-muted">暂无可绑定世界模板</p> : null}
-          <select id="story-simulation-template" value={values.template_id} onChange={(event) => onChange({ template_id: event.target.value })} disabled={loading || templatesQuery.isLoading}>
-            <option value="">不绑定模板</option>{templates.map((item) => <option value={item.template_id} key={item.template_id}>{item.label}</option>)}
-          </select>
-        </div>
-        <div className="story-simulation-field">
-          <label htmlFor="story-simulation-encyclopedia">百科库（可选）</label>
-          {encyclopediasQuery.isError && <InlineQueryError message="百科列表加载失败" error={encyclopediasQuery.error} retrying={encyclopediasQuery.isFetching} onRetry={() => { void encyclopediasQuery.refetch(); }} />}
-          {encyclopediasQuery.isLoading ? <p className="story-simulation-muted">正在加载百科库…</p> : !encyclopediasQuery.isError && encyclopedias.length === 0 ? <p className="story-simulation-muted">暂无可绑定百科库</p> : null}
-          <select id="story-simulation-encyclopedia" value={values.encyclopedia_id} onChange={(event) => onChange({ encyclopedia_id: event.target.value })} disabled={loading || encyclopediasQuery.isLoading}>
-            <option value="">不绑定百科</option>{encyclopedias.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
+          {encyclopediasQuery.isError && <InlineQueryError message="世界列表加载失败" error={encyclopediasQuery.error} retrying={encyclopediasQuery.isFetching} onRetry={() => { void encyclopediasQuery.refetch(); }} />}
+          {(templatesQuery.isLoading || encyclopediasQuery.isLoading) ? <p className="story-simulation-muted">正在加载世界…</p> : !worldItems.length ? <p className="story-simulation-muted">暂无可绑定世界</p> : null}
+          <select id="story-simulation-world" value={worldSelectorValue(values.template_id, values.encyclopedia_id ? Number(values.encyclopedia_id) : null, worldItems)} onChange={(event) => { const selected = resolveWorldSelectorValue(event.target.value, worldItems); onChange({ template_id: selected.templateId === 'custom' ? '' : selected.templateId, encyclopedia_id: selected.encyclopediaId == null ? '' : String(selected.encyclopediaId) }); }} disabled={loading || templatesQuery.isLoading || encyclopediasQuery.isLoading}>
+            <option value="">不绑定世界</option>{worldItems.map((item) => <option value={item.value} key={item.value}>{item.label}</option>)}
           </select>
         </div>
       </div>

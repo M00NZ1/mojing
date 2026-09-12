@@ -40,6 +40,7 @@ object AppModule {
                 Migrations.MIGRATION_16_17,
                 Migrations.MIGRATION_17_18,
                 Migrations.MIGRATION_18_19,
+                Migrations.MIGRATION_19_20,
             )
             .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
             .build()
@@ -73,6 +74,7 @@ object AppModule {
     @Provides fun provideCostRecordDao(db: AppDatabase): CostRecordDao = db.costRecordDao()
     @Provides fun provideGenerationTaskDao(db: AppDatabase): GenerationTaskDao = db.generationTaskDao()
     @Provides fun provideSessionMemoryCorrectionDao(db: AppDatabase): SessionMemoryCorrectionDao = db.sessionMemoryCorrectionDao()
+    @Provides fun provideLegacyWorldMappingDao(db: AppDatabase): LegacyWorldMappingDao = db.legacyWorldMappingDao()
 
     @Provides @Singleton
     fun provideSecureStorage(@ApplicationContext context: Context): SecureStorage {

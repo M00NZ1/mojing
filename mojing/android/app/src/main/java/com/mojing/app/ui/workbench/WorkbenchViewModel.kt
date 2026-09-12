@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.local.dao.WorldTemplateDao
+import com.mojing.app.data.local.dao.LegacyWorldMappingDao
 import com.mojing.app.data.local.entity.WorldLoreEntryEntity
 import com.mojing.app.data.local.entity.WorldTemplateEntity
 import com.mojing.app.data.remote.BackendWorldsApi
@@ -11,6 +12,7 @@ import com.mojing.app.data.remote.ChatMessage
 import com.mojing.app.data.repository.ImageRepository
 import com.mojing.app.domain.engine.LlmRetry
 import com.mojing.app.domain.usecase.SaveWorldTemplatePackageUseCase
+import com.mojing.app.domain.usecase.PromoteWorldTemplateUseCase
 import com.mojing.app.domain.usecase.SmartImportUseCase
 import com.mojing.app.data.prefs.UiPreferencesRepository
 import com.mojing.app.ui.util.UserFacingStrings
@@ -34,6 +36,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -45,6 +48,8 @@ import javax.inject.Inject
 @HiltViewModel
 class WorkbenchViewModel @Inject constructor(
     private val templateDao: WorldTemplateDao,
+    private val legacyWorldMappingDao: LegacyWorldMappingDao,
+    private val promoteWorldTemplate: PromoteWorldTemplateUseCase,
     private val smartImportUseCase: SmartImportUseCase,
     private val secureStorage: SecureStorage,
     private val backendWorldsApi: Lazy<BackendWorldsApi>,
@@ -58,6 +63,21 @@ class WorkbenchViewModel @Inject constructor(
 
     private val _templates = MutableStateFlow<List<WorldTemplateEntity>>(emptyList())
     val templates: StateFlow<List<WorldTemplateEntity>> = _templates.asStateFlow()
+    val promotedTemplateIds: StateFlow<Map<Long, Long>> = legacyWorldMappingDao.observeAll().map { rows -> rows.associate { it.worldTemplateId to it.encyclopediaId } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    fun promoteTemplate(id: Long, onResult: (Long?, String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val encyclopedia = promoteWorldTemplate(id)
+                onResult(encyclopedia.id, "已归入世界「${encyclopedia.name}」")
+            } catch (e: Exception) {
+                onResult(null, e.message ?: "归入世界失败，请重试")
+            }
+        }
+    }
+
+    suspend fun canonicalIdForTemplate(id: Long): Long? = legacyWorldMappingDao.getByTemplateId(id)?.encyclopediaId
 
     val workbenchListLayout = uiPreferencesRepository.workbenchListLayout
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "list")
@@ -83,7 +103,11 @@ class WorkbenchViewModel @Inject constructor(
     fun refresh() { viewModelScope.launch { _templates.value = templateDao.getAll() } }
 
     fun deleteTemplate(id: Long) {
-        viewModelScope.launch { templateDao.delete(id); _templates.value = templateDao.getAll() }
+        viewModelScope.launch {
+            if (legacyWorldMappingDao.getByTemplateId(id) != null) return@launch
+            templateDao.delete(id)
+            _templates.value = templateDao.getAll()
+        }
     }
 
     fun setTemplatePinned(id: Long, pinned: Boolean) {
@@ -390,6 +414,10 @@ class WorkbenchViewModel @Inject constructor(
         backendWorldsApi.get().worldTemplateExportFileUrl(templateIdStr)
 
     suspend fun updateTemplateCover(id: Long, localPath: String): String = withContext(NonCancellable) {
+        if (legacyWorldMappingDao.getByTemplateId(id) != null) {
+            runCatching { File(localPath).delete() }
+            return@withContext "已归入世界，封面请在世界百科中维护"
+        }
         val path = localPath.trim()
         if (path.isBlank()) return@withContext UserFacingStrings.localSaveFailed("封面")
         try {

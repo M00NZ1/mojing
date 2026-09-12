@@ -38,6 +38,7 @@ from ..services.world_package_service import (
     write_world_template_package_file)
 from ..services.world_request_control import run_world_request
 from ..services.world_job_service import complete_world_job, save_world_job_result
+from ..services.unified_world_service import promote_legacy_world
 from ..services.world_building_service import generate_world_package, import_world_package, review_world_package
 
 
@@ -95,20 +96,8 @@ def promote_world_template(template_id: str, payload: dict, db: Session = Depend
 
 
 def _serialize_world_template(row: WorldTemplateModel, db: Session) -> WorldTemplateRead:
-    mapping = db.get(LegacyWorldMappingModel, row.id)
-    return WorldTemplateRead(
-        id=row.id,
-        encyclopedia_id=mapping.encyclopedia_id if mapping else None,
-        template_id=row.template_id,
-        label=row.label,
-        category=row.category,
-        summary=row.summary,
-        gameplay_mode=row.gameplay_mode,
-        world_prompt=row.world_prompt,
-        cover_image_path=row.cover_image_path,
-        suggested_choices=list(row.suggested_choices_json or []),
-        anti_cheat_prompt=row.anti_cheat_prompt,
-        is_builtin=row.is_builtin)
+    from ..services.unified_world_service import world_template_read
+    return world_template_read(db, row)
 
 
 @router.get("/templates", summary="获取模板列表", response_model=list[WorldTemplateRead])
@@ -239,6 +228,7 @@ def import_world_template_archive(payload: WorldTemplatePackageImportRequest, db
             override_existing=payload.override_existing,
             new_template_id=payload.new_template_id,
             new_label=payload.new_label, commit=False)
+        promote_legacy_world(db, row)
         mark_job_succeeded(
             db,
             job.id,
@@ -274,6 +264,8 @@ def import_world_template_bundle_archive(payload: WorldTemplateBundleImportReque
             bundle_json=payload.bundle_json,
             override_existing=payload.override_existing,
             replace_all_custom_templates=payload.replace_all_custom_templates, commit=False)
+        for row in rows:
+            promote_legacy_world(db, row)
         mark_job_succeeded(
             db,
             job.id,

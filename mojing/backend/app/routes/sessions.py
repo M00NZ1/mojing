@@ -152,9 +152,13 @@ def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
         world_template = db.scalar(select(WorldTemplateModel).where(WorldTemplateModel.template_id == final_template_id))
         if world_template is None:
             raise HTTPException(status_code=404, detail="选中的世界模板不存在")
-    if payload.encyclopedia_id is not None:
+    from ..services.unified_world_service import mapped_world_id
+    selected_encyclopedia_id = payload.encyclopedia_id
+    if selected_encyclopedia_id is None and world_template is not None:
+        selected_encyclopedia_id = mapped_world_id(db, world_template.template_id)
+    if selected_encyclopedia_id is not None:
         encyclopedia = db.execute(
-            select(WorldEncyclopediaModel).where(WorldEncyclopediaModel.id == payload.encyclopedia_id)
+            select(WorldEncyclopediaModel).where(WorldEncyclopediaModel.id == selected_encyclopedia_id)
         ).scalar_one_or_none()
         if encyclopedia is None:
             raise HTTPException(status_code=404, detail="选中的世界百科库不存在")
@@ -172,7 +176,7 @@ def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
     db.add(
         SessionWorldModel(
             session_id=session.id,
-            encyclopedia_id=payload.encyclopedia_id,
+            encyclopedia_id=selected_encyclopedia_id,
             template_id=final_template_id,
             gameplay_mode=inherited_gameplay,
             narrator_enabled=final_narrator_enabled,

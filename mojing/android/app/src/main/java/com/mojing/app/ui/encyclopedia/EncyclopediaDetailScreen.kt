@@ -254,6 +254,12 @@ fun EncyclopediaDetailScreen(
                             )
                         }
                     }
+                    TextButton(
+                        onClick = viewModel::beginRename,
+                        enabled = state.encyclopedia != null && !state.renameSaving,
+                    ) {
+                        Text("重命名")
+                    }
                     Box {
                         IconButton(
                             onClick = { showEncyclopediaMenu = true },

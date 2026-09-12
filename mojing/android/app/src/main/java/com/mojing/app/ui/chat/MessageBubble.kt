@@ -678,7 +678,7 @@ fun CharacterMessageBubble(
                             Text(
                                 text = "🎭 $body",
                                 modifier = Modifier.padding(d.bubbleInnerPadding),
-                                style = d.bodyMediumItalicStyle(),
+                                style = d.narrationTextStyle(),
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
                             )
                         }
@@ -830,7 +830,7 @@ fun NarratorMessageBubble(
             if (body.isNotBlank()) {
                 Text(
                     text = "🎭 $body",
-                    style = d.bodyMediumItalicStyle(),
+                    style = d.narrationTextStyle(),
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
                 )
             }

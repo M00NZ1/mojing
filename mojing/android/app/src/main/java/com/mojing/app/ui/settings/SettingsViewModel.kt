@@ -56,6 +56,11 @@ class SettingsViewModel @Inject constructor(
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = "comfortable",
     )
+    val chatFont = uiPreferencesRepository.chatFont.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "system")
+    val narratorItalic = uiPreferencesRepository.narratorItalic.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun setChatFont(font: String) { viewModelScope.launch { uiPreferencesRepository.setChatFont(font) } }
+    fun setNarratorItalic(enabled: Boolean) { viewModelScope.launch { uiPreferencesRepository.setNarratorItalic(enabled) } }
 
     fun updateApiKey(value: String) { _apiKey.value = value; secureStorage.publicApiKey = value }
     fun updateBaseUrl(value: String) { _baseUrl.value = value; secureStorage.publicBaseUrl = value }

@@ -52,6 +52,7 @@ class TemplateEditViewModelTest {
         val queue = mockk<GenerationQueueProcessor>(relaxed = true)
         every { queue.observeActiveForTemplate(any()) } returns activeTasks
         return TemplateEditViewModel(
+            worldMappingDao = io.mockk.mockk { io.mockk.coEvery { getByTemplateId(any()) } returns null },
             templateDao = templateDao,
             loreEntryDao = mockk<WorldLoreEntryDao>(relaxed = true),
             backendWorldsApi = mockk<Lazy<BackendWorldsApi>>(relaxed = true),

@@ -98,6 +98,7 @@ private fun TemplateEditState.withPersistedDraft(entity: WorldTemplateEntity) = 
 @HiltViewModel
 class TemplateEditViewModel @Inject constructor(
     private val templateDao: WorldTemplateDao,
+    private val worldMappingDao: com.mojing.app.data.local.dao.LegacyWorldMappingDao,
     private val loreEntryDao: WorldLoreEntryDao,
     private val backendWorldsApi: Lazy<BackendWorldsApi>,
     private val backendAssetsApi: BackendAssetsApi,
@@ -212,6 +213,7 @@ class TemplateEditViewModel @Inject constructor(
         _state.value = _state.value.copy(isLoaded = false, loadError = null)
         viewModelScope.launch {
             try {
+                check(effectiveId <= 0 || worldMappingDao.getByTemplateId(effectiveId) == null) { "这份资料已归入世界，请从世界页面编辑" }
                 val entity = if (effectiveId > 0) templateDao.getById(effectiveId) else null
                 currentEntity = entity
                 val loaded = when {
@@ -474,6 +476,7 @@ class TemplateEditViewModel @Inject constructor(
         _state.value = s.copy(isSaving = true)
         viewModelScope.launch {
             try {
+                check(currentEntity == null || worldMappingDao.getByTemplateId(currentEntity!!.id) == null) { "这份资料已归入世界，请从世界页面编辑" }
                 val toSave = (currentEntity ?: WorldTemplateEntity()).copy(
                     templateId = s.templateId.trim(),
                     label = s.label.trim(),

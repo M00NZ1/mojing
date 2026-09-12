@@ -14,6 +14,12 @@ try {
     <div class="btn-group"><button class="btn btn-primary" id="primary">开始新对话</button>
     <button class="btn btn-ghost">返回</button><button class="btn btn-danger">删除</button>
     <button class="btn btn-primary" id="disabled" disabled>正在保存</button></div></main>`);
+  const fieldStyle = await page.getByRole('textbox', { name: '故事名称' }).evaluate(field => {
+    const style = getComputedStyle(field);
+    return { radius: style.borderRadius, border: style.borderTopColor };
+  });
+  assert.equal(fieldStyle.radius, '16px', 'filled field radius must override generic element rules');
+  assert.equal(fieldStyle.border, 'rgba(0, 0, 0, 0)', 'resting field uses a filled surface');
   for (const theme of ['dark', 'light', 'paper', 'ink', 'forest', 'studio', 'midnight']) {
     await page.evaluate(theme => document.documentElement.dataset.theme = theme, theme);
     const primary = page.locator('#primary');

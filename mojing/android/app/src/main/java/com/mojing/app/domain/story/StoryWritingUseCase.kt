@@ -15,6 +15,8 @@ data class StoryWritingRequest(
     val worldContext: String = "",
     val characterContext: String = "",
     val chapterCount: Int = 2,
+    val personaName: String = "玩家",
+    val userDescription: String = "",
 )
 
 data class StoryChapter(
@@ -71,6 +73,9 @@ class StoryWritingUseCase @Inject constructor(
             request.tone.trim().takeIf(String::isNotEmpty)?.let { appendLine("文风与节奏：$it") }
             request.worldContext.trim().takeIf(String::isNotEmpty)?.let { appendLine("世界设定：\n$it") }
             request.characterContext.trim().takeIf(String::isNotEmpty)?.let { appendLine("已有角色：\n$it") }
+            request.userDescription.trim().takeIf(String::isNotBlank)?.let {
+                appendLine("用户资料：\n姓名：${request.personaName.ifBlank { "玩家" }}\n自我描述：$it")
+            } ?: appendLine("用户姓名：${request.personaName.ifBlank { "玩家" }}")
             appendLine("提交前检查：恰好 $chapterCount 章，每章不超过 1800 字。使用 JSON 字符串转义换行和双引号，返回完整对象。")
         }
         val startedAt = System.nanoTime()

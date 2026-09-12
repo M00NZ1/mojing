@@ -13,6 +13,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.mojing.app.ui.theme.SystemBarAppearance
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.mojing.app.data.prefs.UiPreferencesRepository
+import com.mojing.app.ui.chat.ChatReadingStyle
+import com.mojing.app.ui.chat.LocalChatReadingStyle
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,6 +39,7 @@ import javax.inject.Inject
 class MainActivity : ComponentActivity() {
 
     @Inject lateinit var secureStorage: SecureStorage
+    @Inject lateinit var uiPreferencesRepository: UiPreferencesRepository
 
     private var externalNavigationRequest by mutableStateOf<ExternalNavigationRequest?>(null)
     private var nextExternalNavigationRequestId = 0L
@@ -48,30 +54,34 @@ class MainActivity : ComponentActivity() {
         val initialFontScale = secureStorage.uiFontScale
 
         setContent {
+            val chatFont by uiPreferencesRepository.chatFont.collectAsStateWithLifecycle(initialValue = "system")
+            val narratorItalic by uiPreferencesRepository.narratorItalic.collectAsStateWithLifecycle(initialValue = false)
             var currentTheme by remember { mutableStateOf(themeMode) }
             var currentFontScale by remember { mutableFloatStateOf(initialFontScale) }
             var showInkSplash by rememberSaveable { mutableStateOf(true) }
             BackHandler(enabled = showInkSplash) {
                 showInkSplash = false
             }
-            MoJingTheme(themeMode = currentTheme, contentFontScale = currentFontScale) {
-                SystemBarAppearance(window, MaterialTheme.colorScheme.background, showInkSplash)
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    Box(Modifier.fillMaxSize()) {
-                        NavGraph(
-                            externalNavigationRequest = externalNavigationRequest,
-                            onExternalNavigationConsumed = ::consumeExternalNavigationRequest,
-                            onThemeChanged = { newTheme ->
-                                val n = AppThemes.normalize(newTheme)
-                                secureStorage.themeMode = n
-                                currentTheme = n
-                            },
-                            onFontScaleChanged = { scale ->
-                                currentFontScale = scale
-                            },
-                        )
-                        if (showInkSplash) {
-                            InkBrandSplashOverlay(onDismiss = { showInkSplash = false })
+            CompositionLocalProvider(LocalChatReadingStyle provides ChatReadingStyle(chatFont, narratorItalic)) {
+                MoJingTheme(themeMode = currentTheme, contentFontScale = currentFontScale) {
+                    SystemBarAppearance(window, MaterialTheme.colorScheme.background, showInkSplash)
+                    Surface(modifier = Modifier.fillMaxSize()) {
+                        Box(Modifier.fillMaxSize()) {
+                            NavGraph(
+                                externalNavigationRequest = externalNavigationRequest,
+                                onExternalNavigationConsumed = ::consumeExternalNavigationRequest,
+                                onThemeChanged = { newTheme ->
+                                    val n = AppThemes.normalize(newTheme)
+                                    secureStorage.themeMode = n
+                                    currentTheme = n
+                                },
+                                onFontScaleChanged = { scale ->
+                                    currentFontScale = scale
+                                },
+                            )
+                            if (showInkSplash) {
+                                InkBrandSplashOverlay(onDismiss = { showInkSplash = false })
+                            }
                         }
                     }
                 }

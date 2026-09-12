@@ -165,11 +165,11 @@ fun InputBar(
             )
         }
         Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
         ) {
-            Column(Modifier.padding(6.dp)) {
+            Column(Modifier.padding(8.dp)) {
                 TextField(
                     value = value,
                     onValueChange = onValueChange,

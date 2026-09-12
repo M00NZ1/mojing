@@ -23,6 +23,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
@@ -31,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mojing.app.ui.theme.AppThemes
+import com.mojing.app.ui.chat.ChatReadingStyle
 
 /**
  * 外观设置独立页：对齐系统「设置」常见模式——**分组卡片**、**主标题 + 辅助说明**、**当前值可见**，
@@ -46,6 +48,8 @@ fun AppearanceTab(
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val uiFontScale by viewModel.uiFontScale.collectAsStateWithLifecycle()
     val chatDensity by viewModel.chatDensity.collectAsStateWithLifecycle()
+    val chatFont by viewModel.chatFont.collectAsStateWithLifecycle()
+    val narratorItalic by viewModel.narratorItalic.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -54,6 +58,27 @@ fun AppearanceTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("对话字体", style = MaterialTheme.typography.titleMedium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf("system" to "跟随系统", "sans" to "无衬线", "serif" to "衬线", "mono" to "等宽").forEach { (id, label) ->
+                        FilterChip(selected = chatFont == id, onClick = { viewModel.setChatFont(id) }, label = { Text(label) })
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("旁白使用斜体", Modifier.weight(1f))
+                    Switch(checked = narratorItalic, onCheckedChange = viewModel::setNarratorItalic)
+                }
+                val readingStyle = ChatReadingStyle(chatFont, narratorItalic)
+                Text("夜色落在书页上，远处传来潮声。", style = MaterialTheme.typography.bodyLarge.copy(
+                    fontFamily = readingStyle.fontFamily, fontStyle = readingStyle.narratorFontStyle,
+                ))
+            }
+        }
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),

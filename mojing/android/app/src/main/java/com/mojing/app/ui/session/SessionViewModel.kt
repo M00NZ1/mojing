@@ -141,12 +141,14 @@ class SessionViewModel @Inject constructor(
         val templates: List<WorldTemplateEntity>,
         val encyclopedias: List<EncyclopediaEntity>,
         val boundCharacters: List<CharacterEntity>,
+        val worldMappings: Map<Long, Long> = emptyMap(),
     )
 
     suspend fun loadNewSessionDialogData(): NewSessionDialogData = NewSessionDialogData(
         templates = worldTemplateDao.getAll(),
         encyclopedias = encyclopediaDao.getAll(),
         boundCharacters = characterDao.getAll(),
+        worldMappings = worldTemplateDao.getWorldMappings().associate { it.worldTemplateId to it.encyclopediaId },
     )
 
     fun createSessionWithOptions(

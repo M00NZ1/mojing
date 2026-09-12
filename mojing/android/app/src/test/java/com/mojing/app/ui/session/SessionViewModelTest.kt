@@ -54,6 +54,8 @@ class SessionViewModelTest {
     private val encyclopediaDao = mockk<EncyclopediaDao>(relaxed = true)
     private val characterDao = mockk<CharacterDao>(relaxed = true)
     private val createSession = CreateSessionUseCase(
+        worldMappingDao = io.mockk.mockk { coEvery { getByTemplateId(any()) } returns null },
+        encyclopediaDao = io.mockk.mockk { coEvery { getById(any()) } returns null },
         transaction = transaction,
         characterDao = characterDao,
         worldTemplateDao = worldTemplateDao,

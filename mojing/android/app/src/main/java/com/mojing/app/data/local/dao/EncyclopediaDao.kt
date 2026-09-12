@@ -30,4 +30,6 @@ interface EncyclopediaDao {
 
     @Query("DELETE FROM world_encyclopedias WHERE id = :id")
     suspend fun delete(id: Long)
+    @Query("UPDATE world_encyclopedias SET name = :name, description = :description, worldPrompt = :prompt, gameplayMode = :gameplay, antiCheatPrompt = :antiCheat, updatedAt = :now WHERE id = :id AND updatedAt = :expectedUpdatedAt")
+    suspend fun updateWorldSettings(id: Long, expectedUpdatedAt: Long, name: String, description: String, prompt: String, gameplay: String, antiCheat: String, now: Long): Int
 }

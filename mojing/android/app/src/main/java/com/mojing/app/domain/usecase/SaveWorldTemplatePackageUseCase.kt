@@ -16,6 +16,7 @@ data class SavedWorldTemplatePackage(
 @Singleton
 class SaveWorldTemplatePackageUseCase @Inject constructor(
     private val database: AppDatabase,
+    private val promoteWorld: PromoteWorldTemplateUseCase,
 ) {
     suspend operator fun invoke(
         template: WorldTemplateEntity,
@@ -34,6 +35,9 @@ class SaveWorldTemplatePackageUseCase @Inject constructor(
         }
 
         val existing = templateDao.getByTemplateId(templateId)
+        require(existing == null || database.legacyWorldMappingDao().getByTemplateId(existing.id) == null) {
+            "这个世界已归入世界资料，请使用新的世界标识保存"
+        }
         val toSave = template.copy(
             id = existing?.id ?: 0L,
             templateId = templateId,
@@ -56,6 +60,7 @@ class SaveWorldTemplatePackageUseCase @Inject constructor(
                 ),
             )
         }
+        promoteWorld(effectiveId)
         SavedWorldTemplatePackage(saved, loreEntries.size)
     }
 }

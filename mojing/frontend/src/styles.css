@@ -23,7 +23,9 @@
   --shadow-sm: 0 4px 20px rgba(0, 0, 0, 0.2);
   --radius: 16px;
   --radius-sm: 12px;
-  --radius-lg: 22px;
+  --radius-lg: 26px;
+  --control-surface: color-mix(in srgb, var(--surface) 88%, var(--text) 5%);
+  --motion-settle: cubic-bezier(.2, .8, .2, 1);
   --radius-full: 9999px;
   --text-3: rgba(166, 208, 205, 0.25);
   --input-bg: rgba(27, 38, 32, 0.85);
@@ -436,8 +438,10 @@ button, input, select, textarea {
 
 button { cursor: pointer; }
 textarea, input, select { padding: 12px 14px; }
-:where(input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]), textarea, select) {
-  border-radius: 12px;
+:is(input, textarea, select):where(:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"])) {
+  border-radius: 16px;
+  background: var(--control-surface);
+  border-color: transparent;
   transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
 }
 :where(input, textarea, select)::placeholder { color: var(--muted); opacity: 1; }
@@ -2673,17 +2677,26 @@ html[data-theme="paper"] .chat-bubble-text hr {
   align-items: center;
   justify-content: center;
   background: rgba(0,0,0,0.5);
-  backdrop-filter: blur(2px);
+  backdrop-filter: blur(8px);
+  transition: opacity 180ms ease;
 }
 
 .confirm-dialog {
   background: var(--surface-elevated, var(--surface));
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 26px;
   padding: 24px;
+  transition: opacity 180ms ease, translate 240ms var(--motion-settle);
   min-width: 320px;
   max-width: 440px;
   box-shadow: 0 12px 40px rgba(0,0,0,0.3);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @starting-style {
+    .confirm-overlay { opacity: 0; }
+    .confirm-dialog { opacity: 0; translate: 0 12px; }
+  }
 }
 
 .confirm-dialog h3 {
@@ -3382,15 +3395,15 @@ html[data-theme="paper"] .chat-bubble-text hr {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 8px 16px;
-  border-radius: var(--radius-sm);
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: 24px;
   font-size: 0.85rem;
   font-weight: 500;
   border: 1px solid var(--line);
   background: var(--surface-3);
   color: var(--text);
-  transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+  transition: background-color 180ms, border-color 180ms, box-shadow 180ms, transform 220ms var(--motion-settle), border-radius 220ms var(--motion-settle);
   min-width: 0;
   max-width: 100%;
   white-space: normal;
@@ -3445,6 +3458,7 @@ html[data-theme="paper"] .chat-bubble-text hr {
 }
 
 .btn:enabled:active {
+  border-radius: 12px;
   transform: scale(0.975);
   box-shadow: none;
 }

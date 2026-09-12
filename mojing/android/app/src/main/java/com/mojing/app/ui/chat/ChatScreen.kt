@@ -637,17 +637,14 @@ fun ChatScreen(
                 Column(Modifier.fillMaxWidth()) {
                     TopAppBar(
                         title = {
-                            Column(Modifier.clickable(role = androidx.compose.ui.semantics.Role.Button) {
-                                dismissKeyboard(); showModelPicker = true
-                            }.heightIn(min = 48.dp).padding(vertical = 4.dp)) {
-                                Text(stableSessionTitle.ifBlank {
+                            ChatModelTitle(
+                                title = stableSessionTitle.ifBlank {
                                     state.messages.firstOrNull()?.content?.take(20) ?: "对话"
-                                }, style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text((if (state.isGenerating) "下次发送：" else "") + "$modelLabel ▾", style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary, maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
-                            }
+                                },
+                                model = modelLabel,
+                                generating = state.isGenerating,
+                                onClick = { dismissKeyboard(); showModelPicker = true },
+                            )
                         },
                         navigationIcon = {
                             IconButton(onClick = {

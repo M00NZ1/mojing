@@ -1,5 +1,8 @@
 package com.mojing.app.ui.session
 
+import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Person
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingButton as Button
 import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
@@ -116,6 +119,7 @@ fun SessionListScreen(
     var resetDialogFormOnNextLoad by rememberSaveable { mutableStateOf(true) }
     var isLoadingDialogData by remember { mutableStateOf(false) }
     var dialogLoadError by remember { mutableStateOf<String?>(null) }
+    var worldMappings by remember { mutableStateOf<Map<Long, Long>>(emptyMap()) }
     var templates by remember { mutableStateOf<List<WorldTemplateEntity>>(emptyList()) }
     var encyclopedias by remember { mutableStateOf<List<EncyclopediaEntity>>(emptyList()) }
     var allBoundCharacters by remember { mutableStateOf<List<CharacterEntity>>(emptyList()) }
@@ -195,6 +199,7 @@ fun SessionListScreen(
             try {
                 val data = viewModel.loadNewSessionDialogData()
                 templates = data.templates
+                worldMappings = data.worldMappings
                 encyclopedias = data.encyclopedias
                 allBoundCharacters = data.boundCharacters
                 if (initializeCharacterSelection) {
@@ -217,6 +222,9 @@ fun SessionListScreen(
                 ) {
                     Toast.makeText(context, "默认世界模板已不存在，本次不使用模板", Toast.LENGTH_SHORT).show()
                 }
+                selectedTemplate?.let { template ->
+                    data.worldMappings[template.id]?.let { selectedEncId = it; selectedTemplate = null }
+                }
                 pendingTemplateId = null
                 isLoadingDialogData = false
             } catch (cancelled: CancellationException) {
@@ -231,7 +239,10 @@ fun SessionListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.app_name)) },
+                title = { Column {
+                    Text("墨境", style = MaterialTheme.typography.titleLarge)
+                    Text("你的故事空间", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } },
                 actions = {
                     BadgedBox(
                         badge = {
@@ -249,7 +260,7 @@ fun SessionListScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = MaterialTheme.colorScheme.background
                 )
             )
         },
@@ -370,31 +381,26 @@ fun SessionListScreen(
                         )
                     }
                     if (guideDismissed == false) {
-                        ElevatedCard(
-                            modifier = Modifier.fillMaxWidth(),
-                            elevation = CardDefaults.elevatedCardElevation(defaultElevation = 3.dp),
-                        ) {
-                            Column(
-                                Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                Text(
-                                    "快速开始",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                                Text("让故事从这里开始", style = MaterialTheme.typography.headlineSmall)
-                                QuickStartGuideSteps(
-                                    onCharacters = onCharactersClick,
-                                    onCreateSession = { openNewSessionDialog() },
-                                    onEncyclopedia = onEncyclopediaClick,
-                                )
-                                TextButton(onClick = { viewModel.dismissQuickStartGuide() }) {
-                                    Text("不再显示此卡片", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
+                        com.mojing.app.ui.common.StoryFeatureCard(
+                            eyebrow = "以墨为界，入境如梦。",
+                            title = "写下你的下一幕",
+                            description = "遇见角色，走进属于你的故事。",
+                            action = "开始新对话",
+                            onClick = { openNewSessionDialog() },
+                        )
+                        com.mojing.app.ui.common.WorkspaceSectionHeading(
+                            "准备开场", "先认识角色，也可以从一片空白开始。",
+                            Modifier.fillMaxWidth().padding(top = 4.dp),
+                        )
+                        com.mojing.app.ui.common.WorkspaceResourceCard(
+                            "角色", "创建或导入人物，自由开启对话", "01", Icons.Default.Person, onCharactersClick)
+                        com.mojing.app.ui.common.WorkspaceResourceCard(
+                            "世界百科", "补充背景、地点与人物关系", "02", Icons.Default.Public, onEncyclopediaClick)
+                        TextButton(onClick = { viewModel.dismissQuickStartGuide() }) {
+                            Text("不再显示此卡片", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
+
                     if (guideDismissed == true) {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
@@ -442,8 +448,13 @@ fun SessionListScreen(
                         .fillMaxWidth(),
                     contentPadding = PaddingValues(bottom = 96.dp),
                 ) {
+                    item(key = "story-library-heading") {
+                        com.mojing.app.ui.common.WorkspaceSectionHeading("故事集", "继续上一幕，或开启新的旅程。",
+                            Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
+                    }
                     itemsIndexed(filteredSessions, key = { _, r -> r.session.id }) { index, row ->
-                        Column(Modifier.fillMaxWidth()) {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
+                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(22.dp))) {
                             SwipeRevealListRow(
                                 swipeEnabled = true,
                                 isPinned = row.session.pinnedAt > 0,
@@ -552,92 +563,23 @@ fun SessionListScreen(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Text("世界模板", style = MaterialTheme.typography.labelMedium)
-                Text("提供故事开局、玩法与固定规则。", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                var tmplExpanded by remember { mutableStateOf(false) }
-                ExposedDropdownMenuBox(
-                    expanded = tmplExpanded,
-                    onExpandedChange = { tmplExpanded = it },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
+                var worldExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(expanded = worldExpanded, onExpandedChange = { worldExpanded = it }) {
                     OutlinedTextField(
-                        value = selectedTemplate?.let { t ->
-                            t.label.trim().ifBlank { t.templateId }
-                        } ?: "无（会话内用默认模板）",
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("世界模板") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = tmplExpanded) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor(),
-                        singleLine = true,
+                        value = encyclopedias.firstOrNull { it.id == selectedEncId }?.name
+                            ?: selectedTemplate?.label ?: "不绑定世界",
+                        onValueChange = {}, readOnly = true, singleLine = true,
+                        label = { Text("世界") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(worldExpanded) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(),
                     )
-                    ExposedDropdownMenu(
-                        expanded = tmplExpanded,
-                        onDismissRequest = { tmplExpanded = false },
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("无") },
-                            onClick = {
-                                selectedTemplate = null
-                                tmplExpanded = false
-                            },
-                        )
-                        templates.forEach { t ->
-                            DropdownMenuItem(
-                                text = { Text(t.label.ifBlank { t.templateId }) },
-                                onClick = {
-                                    selectedTemplate = t
-                                    tmplExpanded = false
-                                },
-                            )
-                        }
-                    }
-                }
-                Text("世界百科（可选）", style = MaterialTheme.typography.labelMedium)
-                Text("补充人物、地点与历史知识，可与世界模板组合。", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                var encExpanded by remember { mutableStateOf(false) }
-                ExposedDropdownMenuBox(
-                    expanded = encExpanded,
-                    onExpandedChange = { encExpanded = it },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    OutlinedTextField(
-                        value = when (val id = selectedEncId) {
-                            null -> "不绑定"
-                            else -> encyclopedias.find { it.id == id }?.name?.ifBlank { null } ?: "百科 $id"
-                        },
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("百科") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = encExpanded) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor(),
-                        singleLine = true,
-                    )
-                    ExposedDropdownMenu(
-                        expanded = encExpanded,
-                        onDismissRequest = { encExpanded = false },
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("不绑定") },
-                            onClick = {
-                                selectedEncId = null
-                                encExpanded = false
-                            },
-                        )
+                    ExposedDropdownMenu(expanded = worldExpanded, onDismissRequest = { worldExpanded = false }) {
+                        DropdownMenuItem(text = { Text("不绑定世界") }, onClick = { selectedTemplate = null; selectedEncId = null; worldExpanded = false })
                         encyclopedias.forEach { enc ->
-                            DropdownMenuItem(
-                                text = { Text(enc.name.ifBlank { "百科 ${enc.id}" }) },
-                                onClick = {
-                                    selectedEncId = enc.id
-                                    encExpanded = false
-                                },
-                            )
+                            DropdownMenuItem(text = { Text(enc.name) }, onClick = { selectedTemplate = null; selectedEncId = enc.id; worldExpanded = false })
+                        }
+                        templates.filter { it.id !in worldMappings && it.templateId != "custom" }.forEach { template ->
+                            DropdownMenuItem(text = { Text("${template.label} · 旧资料") }, onClick = { selectedTemplate = template; selectedEncId = null; worldExpanded = false })
                         }
                     }
                 }
@@ -886,7 +828,8 @@ fun SessionListScreen(
 
     if (showQuickStartReplay) {
         ModalBottomSheet(onDismissRequest = { showQuickStartReplay = false }) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).padding(bottom = 28.dp)) {
+            Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 8.dp).padding(bottom = 28.dp)) {
                 Text("开始创作", style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(8.dp))
                 QuickStartGuideSteps(
@@ -909,37 +852,20 @@ fun SessionListScreen(
 }
 
 @Composable
-private fun GuideActionRow(title: String, description: String, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(title, style = MaterialTheme.typography.titleSmall)
-                Text(description, style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Icon(Icons.Default.ChevronRight, contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun QuickStartGuideSteps(onCharacters: () -> Unit, onCreateSession: () -> Unit, onEncyclopedia: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("遇见角色，写下属于你的下一幕。", style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Button(onClick = onCreateSession, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Default.Add, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("开始新对话")
         }
+        com.mojing.app.ui.common.WorkspaceResourceCard(
+            "角色", "创建或导入人物，自由开启对话", "01", Icons.Default.Person, onCharacters)
+        com.mojing.app.ui.common.WorkspaceResourceCard(
+            "世界百科", "补充背景、地点与人物关系", "02", Icons.Default.Public, onEncyclopedia)
     }
-}
-
-@Composable
-private fun QuickStartGuideSteps(
-    onCharacters: () -> Unit,
-    onCreateSession: () -> Unit,
-    onEncyclopedia: () -> Unit,
-) {
-    Text("遇见角色，写下属于你的下一幕。", style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant)
-    Button(onClick = onCreateSession, modifier = Modifier.fillMaxWidth()) {
-        Icon(Icons.Default.Add, contentDescription = null)
-        Spacer(Modifier.width(8.dp))
-        Text("开始新对话")
-    }
-    GuideActionRow("角色", "创建或导入角色，自由开启对话", onCharacters)
-    GuideActionRow("世界百科", "为故事补充背景、人物与地点", onEncyclopedia)
 }
 
 @Composable
@@ -952,68 +878,27 @@ fun SessionListRowInner(row: SessionWithListMeta) {
         maxChars = 72,
     )
     val meta = "${row.messageCount} 条 · ${row.participantCount} 角色"
-    ListItem(
-        modifier = Modifier.fillMaxWidth(),
-        colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
-        leadingContent = {
-            Surface(
-                modifier = Modifier.size(MoJingListTokens.avatar),
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.primaryContainer,
-            ) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        session.title.take(1).ifBlank { "谈" },
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 18.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.Top) {
+        Surface(Modifier.size(48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.primaryContainer) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(session.title.take(1).ifBlank { "墨" }, style = MaterialTheme.typography.titleLarge)
             }
-        },
-        headlineContent = {
-            Text(
-                session.title.ifBlank { "未命名对话" },
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        },
-        supportingContent = {
-            Column {
-                if (preview.isNotEmpty()) {
-                    Text(
-                        preview,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Text(
-                    meta,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
-                )
-            }
-        },
-        trailingContent = {
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    dateTimeFormat.format(Date(session.updatedAt)),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(session.title.ifBlank { "未命名对话" }, Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (session.pinnedAt > 0) {
-                    Icon(
-                        Icons.Default.PushPin,
-                        contentDescription = "已置顶",
-                        modifier = Modifier
-                            .padding(top = 4.dp)
-                            .size(16.dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
+                    Icon(Icons.Default.PushPin, "已置顶", Modifier.padding(start = 6.dp).size(16.dp),
+                        tint = MaterialTheme.colorScheme.primary)
                 }
             }
-        },
-    )
+            if (preview.isNotEmpty()) Text(preview, style = MaterialTheme.typography.bodyMedium,
+                maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("$meta · ${dateTimeFormat.format(Date(session.updatedAt))}",
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }

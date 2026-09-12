@@ -10,13 +10,8 @@ from .world_package_service import import_world_template_package
 
 
 def _template_read(row, db):
-    from .unified_world_service import mapped_world_id
-    return WorldTemplateRead(
-        encyclopedia_id=mapped_world_id(db, row.template_id),
-        **{field: getattr(row, field) for field in (
-            "id", "template_id", "label", "category", "summary", "gameplay_mode",
-            "world_prompt", "cover_image_path", "anti_cheat_prompt", "is_builtin")},
-        suggested_choices=list(row.suggested_choices_json or []))
+    from .unified_world_service import world_template_read
+    return world_template_read(db, row)
 
 
 def complete_world_job(db: Session, job_id: int, result):
@@ -91,6 +86,8 @@ def save_world_job_result(db: Session, job_id: int):
             "format_version": 1, "template": result.template.model_dump(),
             "lore_entries": [entry.model_dump() for entry in result.lore_entries],
         }, new_template_id=template_id, commit=False)
+        from .unified_world_service import promote_legacy_world
+        promote_legacy_world(db, row)
         result.saved_template = _template_read(row, db)
         job.output_json = {**job.output_json, "world_result": result.model_dump(mode="json")}
         db.commit()

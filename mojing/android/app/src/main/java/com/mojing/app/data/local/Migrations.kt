@@ -424,4 +424,37 @@ object Migrations {
             )
         }
     }
+
+    val MIGRATION_19_20 = object : Migration(19, 20) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `legacy_world_mappings` (
+                    `worldTemplateId` INTEGER NOT NULL,
+                    `encyclopediaId` INTEGER NOT NULL,
+                    `sourceHash` TEXT NOT NULL,
+                    `migrationVersion` INTEGER NOT NULL,
+                    PRIMARY KEY(`worldTemplateId`),
+                    FOREIGN KEY(`worldTemplateId`) REFERENCES `world_templates`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION,
+                    FOREIGN KEY(`encyclopediaId`) REFERENCES `world_encyclopedias`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_legacy_world_mappings_encyclopediaId` ON `legacy_world_mappings` (`encyclopediaId`)")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `legacy_lore_mappings` (
+                    `loreEntryId` INTEGER NOT NULL,
+                    `encyclopediaEntryId` INTEGER,
+                    `sourceHash` TEXT NOT NULL,
+                    `migrationVersion` INTEGER NOT NULL,
+                    PRIMARY KEY(`loreEntryId`),
+                    FOREIGN KEY(`loreEntryId`) REFERENCES `world_lore_entries`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION,
+                    FOREIGN KEY(`encyclopediaEntryId`) REFERENCES `encyclopedia_entries`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_legacy_lore_mappings_encyclopediaEntryId` ON `legacy_lore_mappings` (`encyclopediaEntryId`)")
+        }
+    }
 }

@@ -55,7 +55,7 @@ class StorySimulationViewModelTest {
 
     @Test
     fun oneOptionFailureDoesNotBlockOthersAndRetryKeepsDraft() = runTest(dispatcher) {
-        val templateDao = mockk<WorldTemplateDao>()
+        val templateDao = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
         val encyclopediaDao = mockk<EncyclopediaDao>()
         val characterDao = mockk<CharacterDao>()
         var failTemplates = true
@@ -94,7 +94,7 @@ class StorySimulationViewModelTest {
 
     @Test
     fun loadedEmptyIsNotReportedAsFailure() = runTest(dispatcher) {
-        val templateDao = mockk<WorldTemplateDao>()
+        val templateDao = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
         val encyclopediaDao = mockk<EncyclopediaDao>()
         val characterDao = mockk<CharacterDao>()
         coEvery { templateDao.getAll() } returns emptyList()
@@ -117,7 +117,7 @@ class StorySimulationViewModelTest {
 
     @Test
     fun characterRetryDropsSelectionsThatAreNoLongerAvailable() = runTest(dispatcher) {
-        val templateDao = mockk<WorldTemplateDao>()
+        val templateDao = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
         val encyclopediaDao = mockk<EncyclopediaDao>()
         val characterDao = mockk<CharacterDao>()
         var characters = listOf(CharacterEntity(id = 9, name = "林岚", boundEncyclopediaId = 7))
@@ -141,7 +141,7 @@ class StorySimulationViewModelTest {
 
     @Test
     fun repeatedRetryWhileLoadingKeepsOneDaoRequest() = runTest(dispatcher) {
-        val templateDao = mockk<WorldTemplateDao>()
+        val templateDao = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
         val encyclopediaDao = mockk<EncyclopediaDao>()
         val characterDao = mockk<CharacterDao>()
         val releaseLoad = CompletableDeferred<Unit>()
@@ -164,7 +164,7 @@ class StorySimulationViewModelTest {
 
     @Test
     fun createStoryWritesChaptersAndOpensSessionWithoutCandidateStep() = runTest(dispatcher) {
-        val templateDao = mockk<WorldTemplateDao>()
+        val templateDao = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
         val encyclopediaDao = mockk<EncyclopediaDao>()
         val characterDao = mockk<CharacterDao>()
         coEvery { templateDao.getAll() } returns emptyList()
@@ -236,7 +236,7 @@ class StorySimulationViewModelTest {
 
     @Test
     fun stoppingRemoteGenerationKeepsDraftAndDoesNotPersist() = runTest(dispatcher) {
-        val templateDao = mockk<WorldTemplateDao>()
+        val templateDao = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
         val encyclopediaDao = mockk<EncyclopediaDao>()
         val characterDao = mockk<CharacterDao>()
         coEvery { templateDao.getAll() } returns emptyList()
@@ -294,7 +294,7 @@ class StorySimulationViewModelTest {
 
     @Test
     fun repeatedCreateStoryUsesOneCreationJob() = runTest(dispatcher) {
-        val templateDao = mockk<WorldTemplateDao>()
+        val templateDao = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
         val encyclopediaDao = mockk<EncyclopediaDao>()
         val characterDao = mockk<CharacterDao>()
         coEvery { templateDao.getAll() } returns emptyList()
@@ -328,7 +328,7 @@ class StorySimulationViewModelTest {
 
     @Test
     fun generationResultIsDiscardedWhenInputChangesWhileWaiting() = runTest(dispatcher) {
-        val templateDao = mockk<WorldTemplateDao>()
+        val templateDao = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
         val encyclopediaDao = mockk<EncyclopediaDao>()
         val characterDao = mockk<CharacterDao>()
         coEvery { templateDao.getAll() } returns emptyList()
@@ -368,7 +368,7 @@ class StorySimulationViewModelTest {
 
     @Test
     fun staleGenerationFailureDoesNotOverwriteChangedDraft() = runTest(dispatcher) {
-        val templateDao = mockk<WorldTemplateDao>()
+        val templateDao = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
         val encyclopediaDao = mockk<EncyclopediaDao>()
         val characterDao = mockk<CharacterDao>()
         coEvery { templateDao.getAll() } returns emptyList()
@@ -626,7 +626,7 @@ class StorySimulationViewModelTest {
 
     @Test
     fun refreshedReferenceDataDoesNotDiscardResultOrReplaceSubmittedWorld() = runTest(dispatcher) {
-        val templates = mockk<WorldTemplateDao>()
+        val templates = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
         val characters = mockk<CharacterDao>()
         var template = WorldTemplateEntity(id = 7, templateId = "harbor", label = "旧世界", worldPrompt = "旧规则")
         var character = CharacterEntity(id = 8, name = "守塔人", personaPrompt = "旧人物设定")
@@ -667,7 +667,7 @@ class StorySimulationViewModelTest {
 
     @Test
     fun referenceRefreshDoesNotHideRequestFailure() = runTest(dispatcher) {
-        val templates = mockk<WorldTemplateDao>()
+        val templates = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
         var rows = listOf(WorldTemplateEntity(id = 7, templateId = "harbor", label = "世界"))
         coEvery { templates.getAll() } answers { rows }
         val gate = CompletableDeferred<StoryWritingResult>()

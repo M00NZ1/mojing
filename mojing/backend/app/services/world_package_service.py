@@ -319,6 +319,14 @@ def preview_world_template_bundle_import(
             )
             continue
 
+        if db.get(LegacyWorldMappingModel, existing.id) is not None:
+            blocked_count += 1
+            preview_items.append(WorldTemplateBundlePreviewItemRead(
+                template_id=template_id, label=label, category=category, lore_entry_count=lore_entry_count,
+                action="阻止", conflict_reason="这份资料已归入世界，请使用新标识导入", existing_label=existing.label,
+                existing_is_builtin=bool(existing.is_builtin)))
+            continue
+
         if existing.is_builtin:
             blocked_count += 1
             preview_items.append(

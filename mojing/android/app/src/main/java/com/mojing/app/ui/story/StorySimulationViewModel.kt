@@ -52,6 +52,7 @@ data class StorySimulationState(
     val templates: StoryOptionLoadState<WorldTemplateEntity> = StoryOptionLoadState(),
     val encyclopedias: StoryOptionLoadState<EncyclopediaEntity> = StoryOptionLoadState(),
     val characters: StoryOptionLoadState<CharacterEntity> = StoryOptionLoadState(),
+    val worldMappings: Map<Long, Long> = emptyMap(),
     val selectedTemplateId: Long? = null,
     val selectedEncyclopediaId: Long? = null,
     val selectedCharacterIds: Set<Long> = emptySet(),
@@ -157,9 +158,11 @@ class StorySimulationViewModel @Inject constructor(
             _state.update { it.copy(templates = it.templates.copy(isLoading = true, error = null)) }
             try {
                 val items = templateDao.getAll()
+                val mappings = templateDao.getWorldMappings().associate { it.worldTemplateId to it.encyclopediaId }
                 _state.update { current ->
                     current.copy(
                         templates = StoryOptionLoadState(items = items, isLoading = false),
+                        worldMappings = mappings,
                         selectedTemplateId = current.selectedTemplateId?.takeIf { selected -> items.any { it.id == selected } },
                     )
                 }
@@ -243,6 +246,15 @@ class StorySimulationViewModel @Inject constructor(
     fun updateDirection(value: String) = updateInput { it.copy(direction = value) }
     fun updateTone(value: String) = updateInput { it.copy(tone = value) }
     fun updateChapterCount(value: Int) = updateInput { it.copy(chapterCount = value.coerceIn(1, 3)) }
+    fun selectWorld(templateId: Long?, encyclopediaId: Long?) = updateInput { current ->
+        current.copy(selectedTemplateId = templateId, selectedEncyclopediaId = encyclopediaId,
+            selectedCharacterIds = current.selectedCharacterIds.filterTo(mutableSetOf()) { id ->
+                encyclopediaId == null || current.characters.items.firstOrNull { it.id == id }?.let {
+                    it.boundEncyclopediaId <= 0L || it.boundEncyclopediaId == encyclopediaId
+                } == true
+            })
+    }
+
     fun selectTemplate(id: Long?) = updateInput { it.copy(selectedTemplateId = id) }
 
     fun selectEncyclopedia(id: Long?) = updateInput { current ->
@@ -331,6 +343,8 @@ class StorySimulationViewModel @Inject constructor(
                             chapterCount = requestContext.chapterCount,
                             worldContext = supplementalContext,
                             characterContext = characterContext,
+                            personaName = secureStorage.userName,
+                            userDescription = secureStorage.userDescription,
                         ),
                         onProgress = { progress -> updateGenerationProgress(progress, token) },
                     )

@@ -14,7 +14,6 @@ import androidx.compose.material.icons.filled.TheaterComedy
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
 
 @Composable
@@ -28,7 +27,7 @@ fun NarratorBubble(narration: String) {
             Icon(Icons.Default.TheaterComedy, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
             Text(
                 text = " $narration",
-                style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
+                style = LocalChatDensityMetrics.current.narrationTextStyle(),
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
             )
         }

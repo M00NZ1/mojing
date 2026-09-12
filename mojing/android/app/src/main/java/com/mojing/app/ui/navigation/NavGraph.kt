@@ -34,6 +34,7 @@ import com.mojing.app.ui.settings.SettingsScreen
 import com.mojing.app.ui.story.StorySimulationScreen
 import com.mojing.app.ui.workbench.TemplateEditScreen
 import com.mojing.app.ui.workbench.WorkbenchScreen
+import com.mojing.app.ui.world.WorldSettingsScreen
 
 @Composable
 private fun InvalidRouteRedirect(
@@ -177,6 +178,7 @@ internal fun NavGraph(
             EncyclopediaScreen(
                 navController = navController,
                 onDetail = { navController.navigateSingleTop(Routes.encyclopediaDetail(it)) },
+                onWorldSettings = { navController.navigateSingleTop(Routes.worldSettings(it)) },
                 onSettingsClick = { navController.navigateToModelSettings() },
                 onGenerationTasksClick = { navController.navigateSingleTop(Routes.GENERATION_TASKS) },
             )
@@ -233,6 +235,7 @@ internal fun NavGraph(
             WorkbenchScreen(
                 navController = navController,
                 onEditTemplate = { navController.navigateSingleTop(Routes.templateEdit(it)) },
+                onOpenCanonical = { navController.navigateSingleTop(Routes.encyclopediaDetail(it)) },
                 onStartChat = { templateId ->
                     requestedWorldTemplateId = templateId
                     navController.navigateToMainTab(Routes.SESSION_LIST)
@@ -258,6 +261,15 @@ internal fun NavGraph(
                 onBack = { navController.popBackStack() },
                 onOpenSettings = { navController.navigateToModelSettings() },
             )
+        }
+
+        composable(
+            Routes.WORLD_SETTINGS,
+            arguments = listOf(navArgument("worldId") { type = NavType.LongType }),
+        ) { entry ->
+            val worldId = validatedRouteId(entry.arguments?.getLong("worldId"))
+            if (worldId == null) InvalidRouteRedirect(navController, Routes.ENCYCLOPEDIA_LIST)
+            else WorldSettingsScreen(worldId = worldId, onBack = { navController.popBackStack() })
         }
 
         composable(Routes.SETTINGS) { entry ->

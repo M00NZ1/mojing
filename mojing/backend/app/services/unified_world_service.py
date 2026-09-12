@@ -213,3 +213,23 @@ def mapped_world_id(db: Session, template_id: str) -> int | None:
 def list_unified_worlds(db: Session) -> list[WorldEncyclopediaModel]:
     return list(db.scalars(select(WorldEncyclopediaModel).join(UnifiedWorldProfileModel)
                            .order_by(WorldEncyclopediaModel.name)).all())
+
+
+def world_template_read(db: Session, row: WorldTemplateModel):
+    """Compatibility view: shared editable fields always come from the world."""
+    from ..schemas import WorldTemplateRead
+    mapping = db.get(LegacyWorldMappingModel, row.id)
+    world = db.get(WorldEncyclopediaModel, mapping.encyclopedia_id) if mapping else None
+    profile = db.get(UnifiedWorldProfileModel, world.id) if world else None
+    return WorldTemplateRead(
+        id=row.id, template_id=row.template_id, encyclopedia_id=world.id if world else None,
+        label=world.name if world else row.label,
+        summary=world.description if world else row.summary,
+        category=profile.category if profile else row.category,
+        gameplay_mode=world.gameplay_mode if world else row.gameplay_mode,
+        world_prompt=world.world_prompt if world else row.world_prompt,
+        cover_image_path=world.cover_image_path if world else row.cover_image_path,
+        anti_cheat_prompt=world.anti_cheat_prompt if world else row.anti_cheat_prompt,
+        suggested_choices=list((profile.suggested_choices_json if profile else row.suggested_choices_json) or []),
+        is_builtin=world.is_official if world else row.is_builtin,
+    )

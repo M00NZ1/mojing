@@ -175,6 +175,11 @@ class WorkbenchViewModelWorldGenerationTest {
             every { publicModel } returns "test-model"
         }
         return WorkbenchViewModel(
+            legacyWorldMappingDao = io.mockk.mockk {
+                io.mockk.every { observeAll() } returns kotlinx.coroutines.flow.flowOf(emptyList())
+                io.mockk.coEvery { getByTemplateId(any()) } returns null
+            },
+            promoteWorldTemplate = io.mockk.mockk(relaxed = true),
             templateDao = templateDao,
             smartImportUseCase = mockk<SmartImportUseCase>(relaxed = true),
             secureStorage = secureStorage,

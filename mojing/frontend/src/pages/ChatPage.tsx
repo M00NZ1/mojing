@@ -1878,9 +1878,9 @@ export default function ChatPage() {
         onTabChange={setRightPanelTab}
         participantsQuery={participantsQuery}
         worldTemplateId={worldTemplateId}
-        onWorldTemplateIdChange={(id) => { setWorldTemplateId(id); const t = worldTemplatesQuery.data?.find((item) => item.template_id === id); if (t) setGameplayMode(t.gameplay_mode); }}
+        onWorldTemplateIdChange={(id) => { setWorldTemplateId(id); const t = worldTemplatesQuery.data?.find((item) => item.template_id === id); setWorldPrompt(t?.world_prompt ?? ""); setAntiCheatPrompt(t?.anti_cheat_prompt ?? ""); setGameplayMode(t?.gameplay_mode ?? "自由剧情"); }}
         encyclopediaId={encyclopediaId}
-        onEncyclopediaIdChange={setEncyclopediaId}
+        onEncyclopediaIdChange={(id) => { setEncyclopediaId(id); const world = encyclopediasQuery.data?.find((item) => item.id === id); if (world) { setWorldPrompt(world.world_prompt ?? ""); setGameplayMode(world.gameplay_mode ?? "自由剧情"); setAntiCheatPrompt(world.anti_cheat_prompt ?? ""); } }}
         worldTemplatesQuery={worldTemplatesQuery}
         encyclopediasQuery={encyclopediasQuery}
         gameplayMode={gameplayMode}

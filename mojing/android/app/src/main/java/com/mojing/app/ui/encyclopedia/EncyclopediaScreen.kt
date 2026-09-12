@@ -61,6 +61,7 @@ import java.io.File
 fun EncyclopediaScreen(
     navController: NavHostController,
     onDetail: (Long) -> Unit,
+    onWorldSettings: (Long) -> Unit = {},
     onSettingsClick: () -> Unit,
     onGenerationTasksClick: () -> Unit,
     viewModel: EncyclopediaListViewModel = hiltViewModel()
@@ -91,6 +92,7 @@ fun EncyclopediaScreen(
     var coverCropBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var coverPendingEncId by remember { mutableStateOf<Long?>(null) }
     var isCoverTaskBusy by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -210,13 +212,14 @@ fun EncyclopediaScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("世界百科") },
+                title = { Text("世界") },
                 navigationIcon = {
                     IconButton(onClick = { navController.returnToCreationHub() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回创作中心")
                     }
                 },
                 actions = {
+                    TextButton(onClick = { navController.navigate(com.mojing.app.ui.navigation.Routes.WORKBENCH) }) { Text("工坊") }
                     IconButton(onClick = onGenerationTasksClick) {
                         BadgedBox(
                             badge = {
@@ -357,6 +360,7 @@ fun EncyclopediaScreen(
                             onDelete = { deleteTarget = enc },
                             onClick = { onDetail(enc.id) },
                             menuExtras = {
+                                DropdownMenuItem(text = { Text("世界设置") }, onClick = { onWorldSettings(enc.id) })
                                 DropdownMenuItem(text = { Text("重命名") }, onClick = {
                                     renameTarget = enc; renameDraft = enc.name; renameError = null
                                 })
@@ -391,6 +395,7 @@ fun EncyclopediaScreen(
                                 onDelete = { deleteTarget = enc },
                                 onClick = { onDetail(enc.id) },
                                 menuExtras = {
+                                    DropdownMenuItem(text = { Text("世界设置") }, onClick = { onWorldSettings(enc.id) })
                                 DropdownMenuItem(text = { Text("重命名") }, onClick = {
                                     renameTarget = enc; renameDraft = enc.name; renameError = null
                                 })
@@ -478,8 +483,19 @@ fun EncyclopediaScreen(
                         "这会同时删除该百科下的条目、时间线、关系，以及已绑定的角色。此操作不可撤销。",
                 )
             },
-            confirmButton = { TextButton(onClick = { val deletedName = enc.name; viewModel.delete(enc.id); deleteTarget = null; Toast.makeText(context, UserFacingStrings.itemDeleted(deletedName.ifBlank { "未命名百科库" }), Toast.LENGTH_SHORT).show() }) { Text("删除", color = MaterialTheme.colorScheme.error) } },
-            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } }
+            confirmButton = { TextButton(enabled = !deleting, onClick = {
+                deleting = true
+                scope.launch {
+                    try {
+                        val error = viewModel.delete(enc.id)
+                        if (error == null) {
+                            deleteTarget = null
+                            Toast.makeText(context, UserFacingStrings.itemDeleted(enc.name.ifBlank { "未命名百科库" }), Toast.LENGTH_SHORT).show()
+                        } else Toast.makeText(context, error, Toast.LENGTH_LONG).show()
+                    } finally { deleting = false }
+                }
+            }) { Text(if (deleting) "删除中…" else "删除", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(enabled = !deleting, onClick = { deleteTarget = null }) { Text("取消") } }
         )
     }
 }

@@ -78,6 +78,7 @@ fun WorkbenchScreen(
     navController: NavHostController,
     onEditTemplate: (Long) -> Unit,
     onStartChat: (Long) -> Unit,
+    onOpenCanonical: (Long) -> Unit = {},
     onSettingsClick: () -> Unit,
     viewModel: WorkbenchViewModel = hiltViewModel()
 ) {
@@ -87,6 +88,7 @@ fun WorkbenchScreen(
     val generateBusy by viewModel.generateBusy.collectAsStateWithLifecycle()
     val generateSaving by viewModel.generateSaving.collectAsStateWithLifecycle()
     val coverGeneratingTemplateIds by viewModel.coverGeneratingTemplateIds.collectAsStateWithLifecycle()
+    val promotedTemplateIds by viewModel.promotedTemplateIds.collectAsStateWithLifecycle()
     var deleteTarget by remember { mutableStateOf<WorldTemplateEntity?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var isImportingDocument by remember { mutableStateOf(false) }
@@ -169,8 +171,8 @@ fun WorkbenchScreen(
     fun GenerateCoverMenuItem(template: WorldTemplateEntity) {
         val isGenerating = template.id in coverGeneratingTemplateIds
         DropdownMenuItem(
-            text = { Text(if (isGenerating) "生成中…" else "生成封面") },
-            enabled = !isGenerating && !isCoverTaskBusy,
+            text = { Text(if (template.id in promotedTemplateIds) "封面请在世界百科维护" else if (isGenerating) "生成中…" else "生成封面") },
+            enabled = template.id !in promotedTemplateIds && !isGenerating && !isCoverTaskBusy,
             onClick = { requestCoverGeneration(template) },
         )
     }
@@ -447,9 +449,20 @@ fun WorkbenchScreen(
                                         swipeEnabled = false,
                                         isPinned = template.pinnedAt > 0,
                                         onPinToggle = { viewModel.setTemplatePinned(template.id, template.pinnedAt == 0L) },
-                                        onDelete = { deleteTarget = template },
-                                        onClick = { onEditTemplate(template.id) },
+                                        onDelete = { if (template.id !in promotedTemplateIds) deleteTarget = template },
+                                        onClick = { promotedTemplateIds[template.id]?.let(onOpenCanonical) ?: onEditTemplate(template.id) },
                                         menuExtras = {
+                                            DropdownMenuItem(
+                                                text = { Text(if (promotedTemplateIds[template.id] != null) "已归入世界，打开百科" else "归入世界") },
+                                                onClick = {
+                                                    val canonicalId = promotedTemplateIds[template.id]
+                                                    if (canonicalId != null) onOpenCanonical(canonicalId) else viewModel.promoteTemplate(template.id) { id, message ->
+                                                        scope.launch { snackbarHostState.showSnackbar(message) }
+                                                        if (id != null) onOpenCanonical(id)
+                                                    }
+                                                },
+                                            )
+                                            if (template.id !in promotedTemplateIds) {
                                             DropdownMenuItem(
                                                 text = { Text(if (isCoverTaskBusy) "正在处理封面…" else "从相册设置封面") },
                                                 enabled = !isCoverTaskBusy && template.id !in coverGeneratingTemplateIds,
@@ -458,6 +471,7 @@ fun WorkbenchScreen(
                                                     coverPickLauncher.launch("image/*")
                                                 },
                                             )
+                                            }
                                             GenerateCoverMenuItem(template)
                                             if (viewModel.isCompanionBackendConfigured()) {
                                                 DropdownMenuItem(
@@ -492,9 +506,20 @@ fun WorkbenchScreen(
                                             swipeEnabled = true,
                                             isPinned = template.pinnedAt > 0,
                                             onPinToggle = { viewModel.setTemplatePinned(template.id, template.pinnedAt == 0L) },
-                                            onDelete = { deleteTarget = template },
-                                            onClick = { onEditTemplate(template.id) },
+                                            onDelete = { if (template.id !in promotedTemplateIds) deleteTarget = template },
+                                            onClick = { promotedTemplateIds[template.id]?.let(onOpenCanonical) ?: onEditTemplate(template.id) },
                                             menuExtras = {
+                                                DropdownMenuItem(
+                                                    text = { Text(if (promotedTemplateIds[template.id] != null) "已归入世界，打开百科" else "归入世界") },
+                                                    onClick = {
+                                                        val canonicalId = promotedTemplateIds[template.id]
+                                                        if (canonicalId != null) onOpenCanonical(canonicalId) else viewModel.promoteTemplate(template.id) { id, message ->
+                                                            scope.launch { snackbarHostState.showSnackbar(message) }
+                                                            if (id != null) onOpenCanonical(id)
+                                                        }
+                                                    },
+                                                )
+                                                if (template.id !in promotedTemplateIds) {
                                                 DropdownMenuItem(
                                                     text = { Text(if (isCoverTaskBusy) "正在处理封面…" else "从相册设置封面") },
                                                     enabled = !isCoverTaskBusy && template.id !in coverGeneratingTemplateIds,
@@ -503,6 +528,7 @@ fun WorkbenchScreen(
                                                         coverPickLauncher.launch("image/*")
                                                     },
                                                 )
+                                                }
                                                 GenerateCoverMenuItem(template)
                                                 if (viewModel.isCompanionBackendConfigured()) {
                                                     DropdownMenuItem(

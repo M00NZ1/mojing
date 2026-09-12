@@ -166,3 +166,22 @@ def test_old_write_paths_are_closed_and_entry_delete_keeps_source_identity(local
         db.add(EncyclopediaEntryModel(id=old_entry_id, encyclopedia_id=world_id, title='新条目', content='其他内容'))
         db.commit()
         assert db.get(LegacyLoreMappingModel, source_id).encyclopedia_entry_id is None
+
+
+def test_import_saves_canonical_and_old_reads_follow_world_edits(local_app):
+    client, factory = local_app
+    with factory() as db:
+        package = build_world_template_package(db, "mist").model_dump(mode="json")
+    result = client.post('/api/worlds/templates/import-package', json={"package_json": package, "new_template_id": "imported"})
+    assert result.status_code == 200, result.text
+    world_id = result.json()['encyclopedia_id']
+    assert world_id is not None
+    with factory() as db:
+        world = db.get(WorldEncyclopediaModel, world_id)
+        world.name = '新的统一名称'
+        world.world_prompt = '新的世界背景'
+        db.commit()
+    saved = next(row for row in client.get('/api/worlds/templates').json() if row['template_id'] == 'imported')
+    assert saved['label'] == '新的统一名称'
+    assert saved['world_prompt'] == '新的世界背景'
+    assert len(client.get('/api/worlds/library').json()['worlds']) == 1

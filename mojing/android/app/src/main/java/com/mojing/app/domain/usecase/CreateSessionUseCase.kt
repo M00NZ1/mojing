@@ -15,6 +15,8 @@ class CreateSessionUseCase @Inject constructor(
     private val characterDao: CharacterDao,
     private val worldTemplateDao: WorldTemplateDao,
     private val secureStorage: SecureStorage,
+    private val worldMappingDao: com.mojing.app.data.local.dao.LegacyWorldMappingDao,
+    private val encyclopediaDao: com.mojing.app.data.local.dao.EncyclopediaDao,
 ) {
     sealed interface Result {
         data class Created(val sessionId: Long) : Result
@@ -33,13 +35,13 @@ class CreateSessionUseCase @Inject constructor(
         narratorEnabled: Boolean = secureStorage.defaultNarratorEnabled,
         narratorName: String = "旁白",
     ): Result {
-        val effectiveTemplate = template ?: loadDefaultTemplate()
+        val (effectiveTemplate, effectiveEncyclopediaId) = resolveWorld(template ?: if (encyclopediaId == null) loadDefaultTemplate() else null, encyclopediaId)
         val antiCheatEnabled = secureStorage.defaultAntiCheatEnabled
         val sessionId = transaction(
             SessionEntity(title = title, summary = summary),
             SessionWorldEntity(
                 sessionId = 0L,
-                encyclopediaId = encyclopediaId,
+                encyclopediaId = effectiveEncyclopediaId,
                 templateId = effectiveTemplate?.templateId?.trim().orEmpty().ifBlank { "custom" },
                 gameplayMode = effectiveTemplate?.gameplayMode?.trim().orEmpty().ifBlank { gameplayMode },
                 worldPrompt = effectiveTemplate?.worldPrompt.orEmpty(),
@@ -86,9 +88,10 @@ class CreateSessionUseCase @Inject constructor(
         initialMessages: List<MessageEntity> = emptyList(),
         storyDraftId: String? = null,
     ): Result {
+        val (effectiveTemplate, effectiveEncyclopediaId) = resolveWorld(template, encyclopediaId)
         val validIds = characterIds.distinct()
         if (validIds.isEmpty() && !allowNoParticipants) return Result.EmptyParticipants
-        val encId = encyclopediaId?.takeIf { it > 0L }
+        val encId = effectiveEncyclopediaId?.takeIf { it > 0L }
         val characters = validIds.map { characterDao.getById(it) ?: return Result.CharacterNotFound }
         if (encId != null && characters.any { it.boundEncyclopediaId > 0L && it.boundEncyclopediaId != encId }) {
             return Result.EncyclopediaMismatch
@@ -99,22 +102,22 @@ class CreateSessionUseCase @Inject constructor(
             summary = summary.trim(),
             displayContextTokenLimit = displayContextTokenLimit.coerceIn(1_000, 10_000_000),
         )
-        val templateId = template?.templateId?.trim().orEmpty().ifBlank { "custom" }
+        val templateId = effectiveTemplate?.templateId?.trim().orEmpty().ifBlank { "custom" }
         val world = SessionWorldEntity(
             sessionId = 0L,
-            encyclopediaId = encyclopediaId,
+            encyclopediaId = effectiveEncyclopediaId,
             templateId = templateId,
             gameplayMode = gameplayMode?.trim()?.ifBlank { null }
-                ?: template?.gameplayMode?.ifBlank { "自由剧情" }
+                ?: effectiveTemplate?.gameplayMode?.ifBlank { "自由剧情" }
                 ?: "自由剧情",
-            worldPrompt = worldPromptOverride ?: template?.worldPrompt.orEmpty(),
+            worldPrompt = worldPromptOverride ?: effectiveTemplate?.worldPrompt.orEmpty(),
             narratorEnabled = narratorEnabled,
             narratorName = narratorName.trim().ifBlank { "旁白" },
             choiceGenerationEnabled = choiceEnabled,
             maxChoiceCount = maxChoices.coerceIn(1, 8),
-            suggestedChoicesJson = template?.suggestedChoicesJson?.ifBlank { "[]" } ?: "[]",
+            suggestedChoicesJson = effectiveTemplate?.suggestedChoicesJson?.ifBlank { "[]" } ?: "[]",
             antiCheatEnabled = antiCheatEnabled,
-            antiCheatPrompt = if (antiCheatEnabled) (template?.antiCheatPrompt ?: "") else "",
+            antiCheatPrompt = if (antiCheatEnabled) (effectiveTemplate?.antiCheatPrompt ?: "") else "",
         )
         val participants = validIds.mapIndexed { index, characterId ->
             SessionParticipantEntity(
@@ -131,6 +134,19 @@ class CreateSessionUseCase @Inject constructor(
             storyDraftId,
         )
         return Result.Created(sessionId)
+    }
+
+    private suspend fun resolveWorld(template: WorldTemplateEntity?, encyclopediaId: Long?): Pair<WorldTemplateEntity?, Long?> {
+        val mapping = template?.let { worldMappingDao.getByTemplateId(it.id) }
+        val selectedId = encyclopediaId ?: mapping?.encyclopediaId
+        val canonical = selectedId?.let { encyclopediaDao.getById(it) }
+        if (canonical == null || (template != null && mapping?.encyclopediaId != selectedId)) return template to selectedId
+        // New sessions snapshot the current world. Existing sessions and recovery overrides are unchanged.
+        return (template ?: WorldTemplateEntity()).copy(
+            templateId = "custom", label = canonical.name, summary = canonical.description,
+            worldPrompt = canonical.worldPrompt, gameplayMode = canonical.gameplayMode,
+            antiCheatPrompt = canonical.antiCheatPrompt, coverImagePath = canonical.coverImagePath,
+        ) to selectedId
     }
 
     private suspend fun loadDefaultTemplate(): WorldTemplateEntity? {

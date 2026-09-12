@@ -74,7 +74,7 @@ class StoryRecoveryProcessTest {
             rule.runOnUiThread {
                 vm = StorySimulationViewModel(StoryWritingUseCase(LlmRetry(LlmApiService(), CostRecorder(database.costRecordDao()))),
                     storage, database.worldTemplateDao(), database.encyclopediaDao(), database.characterDao(),
-                    CreateSessionUseCase(SessionCreationTransaction(database), database.characterDao(), database.worldTemplateDao(), storage),
+                    CreateSessionUseCase(SessionCreationTransaction(database), database.characterDao(), database.worldTemplateDao(), storage, database.legacyWorldMappingDao(), database.encyclopediaDao()),
                     StoryOpeningDraftStore(database))
                 models.put("recovery", vm)
             }

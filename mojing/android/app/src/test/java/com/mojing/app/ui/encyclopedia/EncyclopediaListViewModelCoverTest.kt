@@ -61,6 +61,7 @@ class EncyclopediaListViewModelCoverTest {
             every { observeActiveCount() } returns flowOf(0)
         }
         return EncyclopediaListViewModel(
+            deleteWorld = io.mockk.mockk(relaxed = true),
             encyclopediaDao = encyclopediaDao,
             entryDao = mockk<EncyclopediaEntryDao>(relaxed = true),
             characterDao = mockk<CharacterDao>(relaxed = true),
