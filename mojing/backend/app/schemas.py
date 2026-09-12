@@ -445,6 +445,7 @@ class WorldTemplateRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    encyclopedia_id: int | None = None
     template_id: str
     label: str
     category: str

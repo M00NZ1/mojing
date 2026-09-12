@@ -9,8 +9,10 @@ from .job_service import mark_job_succeeded
 from .world_package_service import import_world_template_package
 
 
-def _template_read(row):
+def _template_read(row, db):
+    from .unified_world_service import mapped_world_id
     return WorldTemplateRead(
+        encyclopedia_id=mapped_world_id(db, row.template_id),
         **{field: getattr(row, field) for field in (
             "id", "template_id", "label", "category", "summary", "gameplay_mode",
             "world_prompt", "cover_image_path", "anti_cheat_prompt", "is_builtin")},
@@ -69,7 +71,7 @@ def read_world_job_result(db: Session, job_id: int):
         if saved is None or saved.template_id != result.saved_template.template_id:
             result.saved_template = None
         else:
-            result.saved_template = _template_read(saved)
+            result.saved_template = _template_read(saved, db)
     return job, result
 
 
@@ -89,7 +91,7 @@ def save_world_job_result(db: Session, job_id: int):
             "format_version": 1, "template": result.template.model_dump(),
             "lore_entries": [entry.model_dump() for entry in result.lore_entries],
         }, new_template_id=template_id, commit=False)
-        result.saved_template = _template_read(row)
+        result.saved_template = _template_read(row, db)
         job.output_json = {**job.output_json, "world_result": result.model_dump(mode="json")}
         db.commit()
         return result

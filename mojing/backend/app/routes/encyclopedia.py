@@ -2,7 +2,7 @@
 世界百科路由 — Wiki 级条目、关系图谱、时间线、版本系统。
 """
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -11,6 +11,8 @@ from ..models import (
     EntryRelationModel,
     EntryVersionModel,
     TimelineEventModel,
+    LegacyWorldMappingModel,
+    LegacyLoreMappingModel,
     WorldEncyclopediaModel)
 from ..schemas import (
     CharacterCardImageGenBody,
@@ -174,6 +176,9 @@ def save_encyclopedia(payload: dict, db: Session = Depends(get_db)):
         "is_official",
     )
     encyclopedia_id = payload.get("id")
+    same_name = db.scalar(select(WorldEncyclopediaModel).where(WorldEncyclopediaModel.name == payload["name"]))
+    if same_name is not None and (not encyclopedia_id or same_name.id != int(encyclopedia_id)):
+        raise HTTPException(status_code=409, detail="已有同名世界，请使用其他名称，或打开已有世界编辑")
     if encyclopedia_id:
         existing = db.get(WorldEncyclopediaModel, int(encyclopedia_id))
         if not existing:
@@ -185,14 +190,6 @@ def save_encyclopedia(payload: dict, db: Session = Depends(get_db)):
         db.refresh(existing)
         return existing
 
-    existing = db.scalar(select(WorldEncyclopediaModel).where(WorldEncyclopediaModel.name == payload["name"]))
-    if existing:
-        for field in editable_fields:
-            if field in payload:
-                setattr(existing, field, payload.get(field) or "" if field != "is_official" else bool(payload.get(field)))
-        db.commit()
-        db.refresh(existing)
-        return existing
     obj = WorldEncyclopediaModel(
         name=payload["name"],
         description=payload.get("description", ""),
@@ -210,9 +207,15 @@ def save_encyclopedia(payload: dict, db: Session = Depends(get_db)):
 
 @router.delete("/{encyclopedia_id}", summary="删除百科")
 def delete_encyclopedia(encyclopedia_id: int, db: Session = Depends(get_db)):
+    from ..services.world_reference_service import encyclopedia_is_referenced
     obj = db.get(WorldEncyclopediaModel, encyclopedia_id)
     if not obj:
         raise HTTPException(status_code=404, detail="百科库不存在")
+    if encyclopedia_is_referenced(db, encyclopedia_id):
+        raise HTTPException(status_code=409, detail="这个世界仍被会话使用，请先更换会话关联的世界")
+    if db.scalar(select(LegacyWorldMappingModel.world_template_id).where(
+        LegacyWorldMappingModel.encyclopedia_id == encyclopedia_id).limit(1)) is not None:
+        raise HTTPException(status_code=409, detail="这个世界保留了旧工坊资料关联，暂不支持删除；可以继续编辑世界与条目")
     db.delete(obj)
     db.commit()
     return {"ok": True}
@@ -500,6 +503,9 @@ def delete_entry(entry_id: int, db: Session = Depends(get_db)):
     if not entry:
         raise HTTPException(status_code=404, detail="条目不存在")
     _snapshot_entry(db, entry, f"删除: {entry.title}")
+    # Keep the imported source identity even when SQLite FK enforcement is off.
+    db.execute(update(LegacyLoreMappingModel).where(
+        LegacyLoreMappingModel.encyclopedia_entry_id == entry_id).values(encyclopedia_entry_id=None))
     db.delete(entry)
     db.commit()
     return {"ok": True}

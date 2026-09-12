@@ -549,6 +549,10 @@ export default function WorkbenchPage() {
   async function openTemplateForm(template: WorldTemplate) {
     if (templateEditing?.template_id === template.template_id) return;
     if (!await confirmTemplateReplacement()) return;
+    if (template.encyclopedia_id) {
+      navigate(`/encyclopedia?encId=${template.encyclopedia_id}`);
+      return;
+    }
     fillTemplateForm(template);
   }
 
@@ -579,6 +583,10 @@ export default function WorkbenchPage() {
     const template = result.saved_template;
     if (!template) return;
     if (!await confirmTemplateReplacement()) return;
+    if (template.encyclopedia_id) {
+      navigate(`/encyclopedia?encId=${template.encyclopedia_id}`);
+      return;
+    }
     fillTemplateForm(template);
     setWorldTemplateSearch('');
     setActiveTab('manage');
@@ -823,9 +831,9 @@ export default function WorkbenchPage() {
                     <p>{template.summary || '尚未填写简介'}</p>
                   </div>
                   <div className="card-actions">
-                    <button type="button" className="btn btn-primary btn-sm" onClick={() => { void openTemplateForm(template); }}><UiIcon name="edit" />编辑</button>
+                    <button type="button" className="btn btn-primary btn-sm" onClick={() => { void openTemplateForm(template); }}><UiIcon name="edit" />{template.encyclopedia_id ? '打开世界资料' : '编辑'}</button>
                     <button type="button" className="btn btn-ghost btn-sm" onClick={() => void handleExportTemplate(template.template_id)} disabled={exportingTemplateId === template.template_id}><UiIcon name="archive" />导出</button>
-                    {!template.is_builtin && (
+                    {!template.is_builtin && !template.encyclopedia_id && (
                       <button type="button" className="btn btn-ghost btn-sm btn-danger" onClick={() => { const revision = templateFormRevision.current; triggerDelete(template.label, () => deleteTemplateMutation.mutate({ id: template.template_id, revision }), () => {}); }}><UiIcon name="delete" />删除</button>
                     )}
                   </div>

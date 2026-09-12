@@ -131,6 +131,9 @@ AI 驱动的角色扮演对话平台，**本地优先**设计，完整开源。
     with SessionLocal() as db:
         bootstrap_legacy_data(db, Path(__file__).resolve().parents[2])
         install_starter_catalog(db)
+        from .services.unified_world_service import backfill_world_profiles
+        backfill_world_profiles(db)
+        db.commit()
         from .services.world_checkpoint_service import recover_world_jobs
         recover_world_jobs(db)
 

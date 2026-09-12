@@ -17,10 +17,11 @@ const EncyclopediaPage = lazy(() => import('./pages/EncyclopediaPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const StorySimulationPage = lazy(() => import('./pages/StorySimulationPage'));
 const WorkbenchPage = lazy(() => import('./pages/WorkbenchPage'));
+const WorldLibraryPage = lazy(() => import('./pages/WorldLibraryPage'));
 
 const primaryNavigation = [
   { to: '/chat', icon: 'chat', label: '对话', paths: ['/chat'] },
-  { to: '/create', icon: 'sparkles', label: '创作', paths: ['/create', '/characters', '/encyclopedia', '/workbench', '/story-simulation'] },
+  { to: '/create', icon: 'sparkles', label: '创作', paths: ['/create', '/characters', '/worlds', '/encyclopedia', '/workbench', '/story-simulation'] },
   { to: '/settings', icon: 'settings', label: '设置', paths: ['/settings'] },
 ] as const;
 
@@ -247,6 +248,7 @@ function AppLayout() {
             <Route path="/chat/:sessionId" element={<ValidChatRoute />} />
             <Route path="/create" element={<CreationHubPage />} />
             <Route path="/characters/*" element={<CharactersPage />} />
+            <Route path="/worlds" element={<WorldLibraryPage />} />
             <Route path="/encyclopedia/*" element={<EncyclopediaPage />} />
             <Route path="/workbench/*" element={<WorkbenchPage />} />
             <Route path="/story-simulation" element={<StorySimulationPage />} />

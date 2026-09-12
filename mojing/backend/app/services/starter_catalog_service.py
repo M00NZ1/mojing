@@ -50,7 +50,7 @@ def _signature(row, exclude=()):
 
 def _referenced(db, model, row_id, ignored=()):
     for table in Base.metadata.tables.values():
-        if table.name in ignored:
+        if table.name in ignored or table.name == "unified_world_profiles":
             continue
         for column in table.columns:
             if any(fk.column.table.name == model.__tablename__ for fk in column.foreign_keys):

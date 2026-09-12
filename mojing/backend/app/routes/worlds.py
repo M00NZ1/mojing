@@ -4,11 +4,11 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import WorldLoreEntryModel, WorldTemplateModel
+from ..models import WorldLoreEntryModel, WorldTemplateModel, WorldEncyclopediaModel, LegacyWorldMappingModel, UnifiedWorldProfileModel
 from ..schemas import (
     WorldGenerationRequest,
     WorldGenerationResponse,
@@ -45,9 +45,60 @@ from ..services.world_building_service import generate_world_package, import_wor
 router = APIRouter(prefix="/worlds", tags=["世界库"])
 
 
-def _serialize_world_template(row: WorldTemplateModel) -> WorldTemplateRead:
+def _require_legacy_editable(db: Session, world_template_id: int):
+    if db.get(LegacyWorldMappingModel, world_template_id) is not None:
+        raise HTTPException(status_code=409, detail="这份资料已归入世界，请在世界资料中编辑")
+
+
+@router.get("/library", summary="获取世界与待整理的旧工坊资料")
+def world_library(db: Session = Depends(get_db)):
+    from ..services.starter_catalog_service import hidden_catalog_ids
+    from ..services.unified_world_service import legacy_world_revision
+    worlds = db.scalars(select(WorldEncyclopediaModel).where(
+        WorldEncyclopediaModel.id.not_in(hidden_catalog_ids(db, "encyclopedias"))
+    ).order_by(WorldEncyclopediaModel.updated_at.desc(), WorldEncyclopediaModel.id.desc())).all()
+    legacy = db.scalars(select(WorldTemplateModel).where(
+        WorldTemplateModel.id.not_in(select(LegacyWorldMappingModel.world_template_id)),
+        WorldTemplateModel.id.not_in(hidden_catalog_ids(db, "worlds")),
+    ).order_by(WorldTemplateModel.updated_at.desc(), WorldTemplateModel.id.desc())).all()
+    profiles = {row.encyclopedia_id: row for row in db.scalars(select(UnifiedWorldProfileModel))}
+    if any(row.id not in profiles for row in worlds):
+        raise HTTPException(status_code=503, detail="世界资料升级尚未完成，请重新打开应用后重试")
+    return {
+        "worlds": [{"id": row.id, "name": row.name, "description": row.description,
+                    "gameplay_mode": row.gameplay_mode, "cover_image_path": row.cover_image_path,
+                    "world_key": profiles[row.id].world_key, "version": profiles[row.id].version}
+                   for row in worlds],
+        "legacy_templates": [{"template_id": row.template_id, "name": row.label,
+                              "description": row.summary, "updated_at": row.updated_at.isoformat(),
+                              "source_hash": legacy_world_revision(db, row)}
+                             for row in legacy],
+    }
+
+
+@router.post("/templates/{template_id}/promote", summary="将旧工坊资料移入世界")
+def promote_world_template(template_id: str, payload: dict, db: Session = Depends(get_db)):
+    from ..services.unified_world_service import promote_legacy_world, legacy_world_revision
+    db.execute(text("BEGIN IMMEDIATE"))
+    row = db.scalar(select(WorldTemplateModel).where(WorldTemplateModel.template_id == template_id))
+    if row is None:
+        raise HTTPException(status_code=404, detail="世界资料不存在")
+    if payload.get("updated_at") != row.updated_at.isoformat() or payload.get("source_hash") != legacy_world_revision(db, row):
+        raise HTTPException(status_code=409, detail="世界资料已更新，请刷新后重新整理")
+    try:
+        canonical = promote_legacy_world(db, row)
+        db.commit()
+        return {"encyclopedia_id": canonical.id, "name": canonical.name}
+    except Exception:
+        db.rollback()
+        raise
+
+
+def _serialize_world_template(row: WorldTemplateModel, db: Session) -> WorldTemplateRead:
+    mapping = db.get(LegacyWorldMappingModel, row.id)
     return WorldTemplateRead(
         id=row.id,
+        encyclopedia_id=mapping.encyclopedia_id if mapping else None,
         template_id=row.template_id,
         label=row.label,
         category=row.category,
@@ -76,7 +127,7 @@ def list_world_templates(q: str = "", db: Session = Depends(get_db)):
         )
     stmt = stmt.order_by(WorldTemplateModel.is_builtin.desc(), WorldTemplateModel.updated_at.desc())
     rows = list(db.scalars(stmt))
-    return [_serialize_world_template(item) for item in rows]
+    return [_serialize_world_template(item, db) for item in rows]
 
 
 @router.post("/templates", summary="创建模板", response_model=WorldTemplateRead)
@@ -98,7 +149,7 @@ def create_world_template(payload: WorldTemplateCreate, db: Session = Depends(ge
     db.add(row)
     db.commit()
     db.refresh(row)
-    return _serialize_world_template(row)
+    return _serialize_world_template(row, db)
 
 
 @router.put("/templates/{template_id}", summary="更新模板", response_model=WorldTemplateRead)
@@ -106,6 +157,7 @@ def update_world_template(template_id: str, payload: WorldTemplateUpdate, db: Se
     row = db.scalar(select(WorldTemplateModel).where(WorldTemplateModel.template_id == template_id))
     if row is None:
         raise HTTPException(status_code=404, detail="世界模板不存在")
+    _require_legacy_editable(db, row.id)
     if row.is_builtin:
         raise HTTPException(status_code=400, detail="内置模板不能直接修改，请复制后再编辑")
     row.label = payload.label
@@ -118,14 +170,18 @@ def update_world_template(template_id: str, payload: WorldTemplateUpdate, db: Se
     row.anti_cheat_prompt = payload.anti_cheat_prompt
     db.commit()
     db.refresh(row)
-    return _serialize_world_template(row)
+    return _serialize_world_template(row, db)
 
 
 @router.delete("/templates/{template_id}", summary="删除模板")
 def delete_world_template(template_id: str, db: Session = Depends(get_db)):
+    from ..services.world_reference_service import template_is_referenced
     row = db.scalar(select(WorldTemplateModel).where(WorldTemplateModel.template_id == template_id))
     if row is None:
         raise HTTPException(status_code=404, detail="世界模板不存在")
+    _require_legacy_editable(db, row.id)
+    if template_is_referenced(db, template_id):
+        raise HTTPException(status_code=409, detail="这个世界仍被会话或默认开局使用，请先更换关联世界")
     if row.is_builtin:
         raise HTTPException(status_code=400, detail="内置模板不能删除")
     db.delete(row)
@@ -190,7 +246,7 @@ def import_world_template_archive(payload: WorldTemplatePackageImportRequest, db
                 "template_id": row.template_id,
                 "label": row.label,
             })
-        return _serialize_world_template(row)
+        return _serialize_world_template(row, db)
     except ValueError as exc:
         db.rollback()
         mark_job_failed(db, job.id, str(exc))
@@ -225,7 +281,7 @@ def import_world_template_bundle_archive(payload: WorldTemplateBundleImportReque
                 "template_count": len(rows),
                 "template_ids": [row.template_id for row in rows],
             })
-        return [_serialize_world_template(row) for row in rows]
+        return [_serialize_world_template(row, db) for row in rows]
     except ValueError as exc:
         db.rollback()
         mark_job_failed(db, job.id, str(exc))
@@ -267,6 +323,7 @@ def create_world_lore_entry(template_id: str, payload: WorldLoreEntryCreate, db:
     world = db.scalar(select(WorldTemplateModel).where(WorldTemplateModel.template_id == template_id))
     if world is None:
         raise HTTPException(status_code=404, detail="世界模板不存在")
+    _require_legacy_editable(db, world.id)
     row = WorldLoreEntryModel(
         world_template_id=world.id,
         title=payload.title,
@@ -286,6 +343,7 @@ def update_world_lore_entry(entry_id: int, payload: WorldLoreEntryUpdate, db: Se
     row = db.get(WorldLoreEntryModel, entry_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Lore 条目不存在")
+    _require_legacy_editable(db, row.world_template_id)
     row.title = payload.title
     row.entry_type = payload.entry_type
     row.keywords_json = payload.keywords_json
@@ -302,6 +360,7 @@ def delete_world_lore_entry(entry_id: int, db: Session = Depends(get_db)):
     row = db.get(WorldLoreEntryModel, entry_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Lore 条目不存在")
+    _require_legacy_editable(db, row.world_template_id)
     db.delete(row)
     db.commit()
     return {"ok": True}

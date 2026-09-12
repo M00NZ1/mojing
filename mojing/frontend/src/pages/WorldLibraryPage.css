@@ -1,0 +1,21 @@
+.world-library-page { overflow-y: auto; padding-bottom: calc(7rem + env(safe-area-inset-bottom)); }
+.world-library-header { display: flex; justify-content: space-between; align-items: start; gap: 1rem; }
+.world-library-header h1 { margin: .2rem 0; }
+.world-library-header > div { min-width: 0; }
+.world-library-header .creation-home-link { flex: none; width: auto; min-width: 0; white-space: nowrap; padding: .6rem; }
+.world-library-tools { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem; margin: 1rem 0; }
+.world-library-tools .btn { width: auto; min-height: 44px; padding: .5rem; text-align: center; }
+.world-library-search { display: grid; gap: .5rem; margin: 1.25rem 0; }
+.world-library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr)); gap: 1rem; }
+.world-library-card { display: flex; flex-direction: column; color: var(--text-1); text-decoration: none; min-width: 0; }
+.world-library-card h2, .world-library-legacy-row strong { overflow-wrap: anywhere; }
+.world-library-card p { color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.world-library-open { margin-top: auto; padding-top: 1rem; }
+.world-library-legacy { margin-top: 1.5rem; }
+.world-library-legacy summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; }
+.world-library-legacy-row { display: flex; gap: 1rem; justify-content: space-between; align-items: center; padding: .8rem 0; border-top: 1px solid var(--border); }
+.world-library-legacy-row > div { min-width: 0; }
+.world-library-legacy-row p { margin: .3rem 0; color: var(--text-2); overflow-wrap: anywhere; max-height: 4.5em; overflow: auto; }
+.world-library-legacy-row button { flex-shrink: 0; min-height: 44px; }
+@media (max-width: 640px) { .world-library-tools { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .world-library-legacy-row { flex-direction: column; align-items: stretch; } }

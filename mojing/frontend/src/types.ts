@@ -283,6 +283,7 @@ export type SpeakerPlan = {
 
 export type WorldTemplate = {
   id: number;
+  encyclopedia_id?: number | null;
   label: string;
   template_id: string;
   category: string;
@@ -311,6 +312,11 @@ export type WorldEncyclopedia = {
   entry_count: number;
   created_at: string;
   updated_at: string;
+};
+
+export type WorldLibrary = {
+  worlds: Array<{ id: number; name: string; description: string; gameplay_mode: string; cover_image_path: string }>;
+  legacy_templates: Array<{ template_id: string; name: string; description: string; updated_at: string; source_hash: string }>;
 };
 
 export type WorldEncyclopediaSavePayload = {

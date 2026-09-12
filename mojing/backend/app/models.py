@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from uuid import uuid4
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, event
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -539,6 +540,47 @@ class WorldEncyclopediaModel(Base):
     genre_tags: Mapped[str] = mapped_column(String(500), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc, onupdate=now_utc)
+
+
+class UnifiedWorldProfileModel(Base):
+    """统一世界侧表；百科库是未来世界的唯一 owner。"""
+
+    __tablename__ = "unified_world_profiles"
+
+    encyclopedia_id: Mapped[int] = mapped_column(ForeignKey("world_encyclopedias.id", ondelete="CASCADE"), primary_key=True)
+    world_key: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    category: Mapped[str] = mapped_column(String(80), default="通用")
+    suggested_choices_json: Mapped[list] = mapped_column(JSON, default=list)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
+@event.listens_for(WorldEncyclopediaModel, "after_insert")
+def _create_world_identity(_mapper, connection, target):
+    # Every ORM creation path (manual, seed, import) shares the same identity write.
+    connection.execute(UnifiedWorldProfileModel.__table__.insert().values(
+        encyclopedia_id=target.id, world_key=str(uuid4()), category="通用", suggested_choices_json=[], version=1))
+
+
+class LegacyWorldMappingModel(Base):
+    """旧世界模板到 canonical 百科的映射。"""
+
+    __tablename__ = "legacy_world_mappings"
+
+    world_template_id: Mapped[int] = mapped_column(ForeignKey("world_templates.id"), primary_key=True)
+    encyclopedia_id: Mapped[int] = mapped_column(ForeignKey("world_encyclopedias.id"), index=True)
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    migration_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
+class LegacyLoreMappingModel(Base):
+    """旧 Lore 条目到 canonical 百科条目的映射。"""
+
+    __tablename__ = "legacy_lore_mappings"
+
+    lore_entry_id: Mapped[int] = mapped_column(ForeignKey("world_lore_entries.id"), primary_key=True)
+    encyclopedia_entry_id: Mapped[int | None] = mapped_column(ForeignKey("encyclopedia_entries.id", ondelete="SET NULL"), nullable=True, index=True)
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    migration_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
 
 class EncyclopediaEntryModel(Base):

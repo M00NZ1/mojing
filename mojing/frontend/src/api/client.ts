@@ -41,6 +41,7 @@ import type {
   VoiceClip,
   VoiceProfile,
   WorldEncyclopedia,
+  WorldLibrary,
   WorldEncyclopediaSavePayload,
   WorldImportResult,
   WorldTemplateBundle,
@@ -161,6 +162,12 @@ async function downloadFile(path: string, fallbackFilename: string, options?: Re
 }
 
 export const api = {
+  getWorldLibrary() { return request<WorldLibrary>('/worlds/library'); },
+  promoteWorld(templateId: string, updatedAt: string, sourceHash: string) {
+    return request<{ encyclopedia_id: number; name: string }>(`/worlds/templates/${encodeURIComponent(templateId)}/promote`, {
+      method: 'POST', body: JSON.stringify({ updated_at: updatedAt, source_hash: sourceHash }),
+    });
+  },
   getStarterCatalog() {
     return request<{ available: boolean; title?: string; summary?: string; template_id?: string; encyclopedia_id?: number; characters?: { id: number; name: string }[]; retired: Record<string, string[]> }>('/system/starter-catalog');
   },

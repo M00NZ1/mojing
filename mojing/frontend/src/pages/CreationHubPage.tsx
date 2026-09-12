@@ -15,16 +15,10 @@ const creationResources: ReadonlyArray<{
     description: '管理人设、形象、角色卡与对话参数。',
   },
   {
-    to: '/encyclopedia',
-    icon: 'book',
-    title: '百科',
-    description: '整理世界观、势力、地点、事件与关系。',
-  },
-  {
-    to: '/workbench',
+    to: '/worlds',
     icon: 'world',
-    title: '设定工坊',
-    description: '生成或导入世界设定，并管理可复用模板。',
+    title: '世界',
+    description: '管理背景与百科资料，生成、导入并完善世界。',
   },
 ] as const;
 

@@ -75,7 +75,8 @@ def get_token_usage_stats(db: Session, session_id: int, branch_id: str = "main")
 
     # 4. 世界 Lore（被触发的条目）
     lore_text = ""
-    if world and world.template_id and world.template_id != "custom":
+    from .world_context_source import uses_canonical_world
+    if world and world.template_id and world.template_id != "custom" and not uses_canonical_world(db, world.template_id, world.encyclopedia_id):
         template = db.query(WorldTemplateModel).filter(WorldTemplateModel.template_id == world.template_id).first()
         if template:
             lore_entries = (

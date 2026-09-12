@@ -144,12 +144,15 @@ def _load_context(
     encyclopedia_id: int | None,
     character_ids: list[int],
 ) -> str:
+    from .world_context_source import uses_canonical_world
+
     context: list[str] = []
     if template_id:
         template = db.scalar(select(WorldTemplateModel).where(WorldTemplateModel.template_id == template_id))
         if template is None:
             raise HTTPException(status_code=404, detail="选中的世界模板不存在")
-        context.append(f"世界模板：{template.label}\n{template.world_prompt}")
+        if not uses_canonical_world(db, template_id, encyclopedia_id):
+            context.append(f"世界模板：{template.label}\n{template.world_prompt}")
     if encyclopedia_id is not None:
         encyclopedia = db.get(WorldEncyclopediaModel, encyclopedia_id)
         if encyclopedia is None:

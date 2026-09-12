@@ -8,7 +8,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, load_only
 
 from ..config import STORAGE_DIR
-from ..models import WorldLoreEntryModel, WorldTemplateModel
+from ..models import WorldLoreEntryModel, WorldTemplateModel, LegacyWorldMappingModel
 from ..schemas import (
     WorldTemplateBundlePreviewItemRead,
     WorldTemplateBundlePreviewRead,
@@ -149,6 +149,8 @@ def _validated_bundle(bundle_json: dict) -> list[dict]:
 def _apply_world_template_package(db: Session, package: dict, *, override_existing: bool) -> WorldTemplateModel:
     template = package["template"]
     row = db.scalar(select(WorldTemplateModel).where(WorldTemplateModel.template_id == template["template_id"]))
+    if row is not None and db.get(LegacyWorldMappingModel, row.id) is not None:
+        raise ValueError("这份资料已归入世界，请使用新标识导入，或在世界资料中编辑")
     if row is not None and row.is_builtin:
         raise ValueError("不能覆盖内置世界模板，请改用新的模板 ID 导入")
     if row is not None and not override_existing:
@@ -208,10 +210,17 @@ def import_world_template_bundle(
         if preview.blocked_count:
             raise ValueError("合集存在无法导入的模板，请先处理预览中的冲突。")
         if replace_all_custom_templates:
+            from .world_reference_service import template_is_referenced
             # Keep IDs for matching templates instead of deleting and recreating
             # them. Only templates absent from the incoming bundle are removed.
             removed = select(WorldTemplateModel.id).where(
                 WorldTemplateModel.is_builtin.is_(False), WorldTemplateModel.template_id.not_in(ids))
+            for removed_template_id in db.scalars(select(WorldTemplateModel.template_id).where(WorldTemplateModel.id.in_(removed))):
+                if template_is_referenced(db, removed_template_id):
+                    raise ValueError("合集替换包含会话或默认开局使用的世界，请关闭替换后重新导入")
+            if db.scalar(select(LegacyWorldMappingModel.world_template_id).where(
+                LegacyWorldMappingModel.world_template_id.in_(removed)).limit(1)) is not None:
+                raise ValueError("合集替换包含已归入世界的旧资料，请关闭替换后重新导入")
             db.execute(delete(WorldLoreEntryModel).where(WorldLoreEntryModel.world_template_id.in_(removed)))
             db.execute(delete(WorldTemplateModel).where(
                 WorldTemplateModel.is_builtin.is_(False), WorldTemplateModel.template_id.not_in(ids)))

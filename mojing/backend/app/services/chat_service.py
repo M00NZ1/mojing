@@ -1083,6 +1083,10 @@ def _get_lore_hits(db: Session, world: SessionWorldModel | None, query_text: str
     if template is None:
         return [], None
 
+    from .world_context_source import uses_canonical_world
+    if uses_canonical_world(db, template.template_id, world.encyclopedia_id if world else None):
+        return [], template
+
     entries = list(
         db.scalars(
             select(WorldLoreEntryModel)
@@ -1092,6 +1096,12 @@ def _get_lore_hits(db: Session, world: SessionWorldModel | None, query_text: str
     )
     if not entries:
         return [], template
+
+    return _select_lore_hits(entries, query_text, token_budget), template
+
+
+def _select_lore_hits(entries, query_text: str, token_budget: int) -> list[dict]:
+    """Shared trigger policy for old Lore and its editable world-entry copies."""
 
     scan_text_lower = query_text.lower() if query_text else ""
     triggered: list[dict] = []
@@ -1153,7 +1163,7 @@ def _get_lore_hits(db: Session, world: SessionWorldModel | None, query_text: str
         }
         for hit in triggered
     ]
-    return debug_hits, template
+    return debug_hits
 
 
 def _get_encyclopedia_hits(
@@ -1180,6 +1190,15 @@ def _get_encyclopedia_hits(
     if not entries:
         return [], encyclopedia
 
+    from types import SimpleNamespace
+    migrated = [entry for entry in entries if (entry.meta_json or {}).get("source") == "legacy_world_lore"]
+    migrated_hits = _select_lore_hits([
+        SimpleNamespace(title=entry.title, entry_type=entry.entry_type, content=entry.content,
+                        keywords_json=(entry.meta_json or {}).get("trigger_keywords", []), is_core=bool(entry.is_featured))
+        for entry in sorted(migrated, key=lambda entry: (entry.sort_order, entry.id))
+    ], query_text, min(token_budget, 1200))
+    entries = [entry for entry in entries if (entry.meta_json or {}).get("source") != "legacy_world_lore"]
+
     query_tokens = _tokenize_for_match(query_text)
     scored: list[tuple[float, EncyclopediaEntryModel]] = []
     for entry in entries:
@@ -1200,8 +1219,8 @@ def _get_encyclopedia_hits(
             scored.append((score, entry))
     scored.sort(key=lambda item: item[0], reverse=True)
 
-    hits: list[dict] = []
-    used_tokens = 0
+    hits: list[dict] = list(migrated_hits)
+    used_tokens = sum(_count_tokens(hit["text"]) for hit in migrated_hits)
     for score, entry in scored:
         content = (entry.content or "").strip()
         if not content:
@@ -1341,7 +1360,10 @@ def _get_world_template(db: Session, world: SessionWorldModel | None) -> WorldTe
 def _get_effective_world_prompt(db: Session, world: SessionWorldModel | None) -> str:
     template = _get_world_template(db, world)
     parts: list[str] = []
-    if template and template.world_prompt.strip():
+    # Keep old session snapshots, including distinct supplemental settings.
+    # An identical template background is already represented by the snapshot.
+    snapshot = world.world_prompt.strip() if world else ""
+    if template and template.world_prompt.strip() and template.world_prompt.strip() != snapshot:
         parts.append(template.world_prompt.strip())
     if world and world.world_prompt.strip():
         parts.append(f"【当前会话补充设定】\n{world.world_prompt.strip()}")

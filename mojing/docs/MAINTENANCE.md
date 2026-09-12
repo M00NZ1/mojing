@@ -34,6 +34,10 @@ npx tsc --noEmit
 
 ### 浏览器回归
 
+`node scripts/test-world-library.mjs` 检查世界集中入口、旧资料整理确认、失败重试、刷新恢复、搜索及桌面/320px 布局。使用独立浏览器与模拟 API；`SMOKE_OUTPUT` 可输出页面截图。
+
+世界资料的数据层回归使用 `tests/test_unified_world_migration.py`、`tests/test_unified_world_context.py` 和 `tests/test_world_library_api.py`，覆盖身份回填、重复迁移、同名保护、事务回滚、条目触发与引用保护。测试数据库与正式存储隔离。
+
 `node scripts/test-story-result-recovery.mjs` 检查结果读取重试、长正文滚动与全文复制、刷新恢复、继续保存、原会话打开和确认放弃。使用独立浏览器与模拟 API。
 
 `node scripts/test-story-request-retry.mjs` 使用模拟 API 检查响应丢失、刷新后继续、引用资料保留和修改设定后的新请求。
