@@ -18,8 +18,29 @@ object UserFacingStrings {
 
     /** 只用于已经确认发生在远程 API 调用阶段的失败。 */
     fun remoteRequestFailed(e: Throwable?): String {
-        val detail = streamErrorDetail(e?.message)
-        return if (detail.startsWith("请求失败")) detail else "请求失败：$detail"
+        val message = when (e) {
+            is com.mojing.app.data.remote.LlmHttpException -> when (e.status) {
+                400, 422 -> "模型或请求参数不受支持，请检查模型配置。"
+                401 -> "API Key 无效、过期或未授权，请检查平台配置。"
+                402 -> "平台额度不足，请检查可用余额。"
+                403 -> "平台拒绝访问，请检查 Key 权限。"
+                404 -> "找不到指定的模型或接口，请检查模型名称和地址。"
+                429 -> "平台限流或额度已用尽，请稍后重试。"
+                in 500..599 -> "平台暂时不可用，请稍后重试。"
+                else -> "平台请求失败（HTTP ${e.status}），请检查模型配置。"
+            }
+            is com.mojing.app.data.remote.LlmProtocolException -> when (e.reason) {
+                "output_limit" -> "模型输出达到上限，返回内容尚未完成。请缩短本次生成内容后重试。"
+                "unsupported_stream" -> "当前接口不支持流式输出，请更换支持流式输出的模型或平台。"
+                else -> "模型未返回完整内容，请重试。"
+            }
+            is java.net.SocketTimeoutException -> "等待模型响应超时，请重试。"
+            is java.net.UnknownHostException -> "无法解析平台地址，请检查网络与接口地址。"
+            is java.net.SocketException, is java.io.EOFException -> "网络连接中断，请检查网络后重试。"
+            is java.io.IOException -> "网络请求未完成，请检查连接后重试。"
+            else -> streamErrorDetail(e?.message)
+        }
+        return if (message.startsWith("请求失败")) message else "请求失败：$message"
     }
 
     fun localLoadFailed(subject: String): String = "${subject}未能从本机读取，请重试。"
@@ -62,9 +83,11 @@ object UserFacingStrings {
         val raw = msg?.trim().takeUnless { it.isNullOrEmpty() } ?: return "请求失败，请稍后再试。"
         val l = raw.lowercase()
         val hint = when {
+            "unknownhostexception" in l || "unresolved address" in l -> "无法解析服务器地址。请检查网络或填写的服务根地址是否正确。"
+            "connectexception" in l || "socketexception" in l || "eofexception" in l -> "网络连接中断。请检查网络后重试。"
             "401" in raw || "unauthorized" in l -> "API Key 无效、过期或未授权。请到「设置」或角色资料中检查 Key。"
-            "403" in raw && "forbidden" in l -> "接口拒绝访问（403）。请检查 Key 权限或账号策略。"
-            "404" in raw && ("model" in l || "not found" in l) -> "找不到指定的模型或资源。请在设置或角色中核对模型名称。"
+            "403" in raw && ("forbidden" in l || "http" in l) -> "接口拒绝访问（403）。请检查 Key 权限或账号策略。"
+            "404" in raw && ("model" in l || "not found" in l || "http" in l) -> "找不到指定的模型或资源。请在设置或角色中核对模型名称。"
             "429" in raw || "rate limit" in l || "too many requests" in l -> "请求过于频繁，请稍等几秒再试。"
             "timeout" in l || (raw.contains("timed", ignoreCase = true) && raw.contains("out", ignoreCase = true)) ->
                 "连接或读取超时。请检查网络或稍后再试。"
@@ -72,6 +95,8 @@ object UserFacingStrings {
             "connection refused" in l -> "连接被拒绝。请确认服务已启动且地址与端口正确。"
             "failed to connect" in l || "connect failed" in l -> "无法连上服务器。请检查网络、VPN 或防火墙。"
             "ssl" in l || "certificate" in l -> "SSL / 证书验证失败。请检查 HTTPS 地址或系统证书。"
+            "connection abort" in l || "connection reset" in l || "ended before completion" in l -> "网络连接中断，请重试。"
+            Regex("http\\s+5[0-9]{2}", RegexOption.IGNORE_CASE).containsMatchIn(raw) -> "平台暂时不可用，请稍后重试。"
             "socket" in l && "closed" in l -> "网络连接中断。请重试。"
             else -> null
         }

@@ -14,6 +14,7 @@ import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.local.entity.WorldTemplateEntity
 import com.mojing.app.domain.story.StoryWritingRequest
 import com.mojing.app.domain.story.StoryWritingUseCase
+import com.mojing.app.domain.story.StoryWritingProgress
 import com.mojing.app.domain.story.StoryCanon
 import com.mojing.app.domain.usecase.CreateSessionUseCase
 import com.mojing.app.ui.util.UserFacingStrings
@@ -31,6 +32,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import java.util.concurrent.atomic.AtomicReference
 
 data class StoryOptionLoadState<T>(
@@ -53,6 +56,13 @@ data class StorySimulationState(
     val isGenerating: Boolean = false,
     val isSaving: Boolean = false,
     val error: String? = null,
+    val generationStage: String? = null,
+    val generationModel: String? = null,
+    val generationElapsedMs: Long = 0L,
+    val firstContentDelayMs: Long? = null,
+    val receivedChars: Int = 0,
+    val preview: String = "",
+    val requestToken: Long = 0L,
 )
 
 private data class StoryCreationContext(
@@ -82,6 +92,8 @@ class StorySimulationViewModel @Inject constructor(
     private var encyclopediaLoadJob: Job? = null
     private var characterLoadJob: Job? = null
     private val creationJob = AtomicReference<Job?>(null)
+    private var generationToken = 0L
+    private var generationStartedAtNanos = 0L
 
     init {
         retryTemplates()
@@ -211,7 +223,15 @@ class StorySimulationViewModel @Inject constructor(
         val requestContext = creationContext(snapshot)
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
-                _state.update { it.copy(isGenerating = true, isSaving = false, error = null) }
+                val token = ++generationToken
+                generationStartedAtNanos = System.nanoTime()
+                _state.update { it.copy(isGenerating = true, isSaving = false, error = null, generationStage = "等待模型响应", generationModel = model, generationElapsedMs = 0L, firstContentDelayMs = null, receivedChars = 0, preview = "", requestToken = token) }
+                launch(kotlinx.coroutines.Dispatchers.Default) {
+                    while (isActive && _state.value.requestToken == token && _state.value.isGenerating) {
+                        _state.update { current -> if (current.requestToken == token && current.isGenerating) current.copy(generationElapsedMs = maxOf(current.generationElapsedMs, elapsedMs())) else current }
+                        delay(250L)
+                    }
+                }
                 val supplementalContext = buildString {
                     requestContext.template?.let {
                         appendLine("世界模板：${it.label}")
@@ -240,6 +260,7 @@ class StorySimulationViewModel @Inject constructor(
                             worldContext = supplementalContext,
                             characterContext = characterContext,
                         ),
+                        onProgress = { progress -> updateGenerationProgress(progress, token) },
                     )
                 } catch (e: CancellationException) {
                     throw e
@@ -247,22 +268,22 @@ class StorySimulationViewModel @Inject constructor(
                     val formatError = e is com.mojing.app.domain.story.StoryWritingException
                     com.mojing.app.util.UsbSessionLog.w(
                         "StoryWriting",
-                        "chapters=${requestContext.chapterCount} stage=${if (formatError) "parse" else "request"} exception=${e.javaClass.simpleName}",
+                        "chapters=${requestContext.chapterCount} stage=${if (formatError) "parse" else "request"} model=${safeModelMetadata(model)} elapsed=${_state.value.generationElapsedMs} firstContent=${_state.value.firstContentDelayMs ?: -1} received=${_state.value.receivedChars} diagnostics=${com.mojing.app.domain.engine.LlmFailureDiagnostics.summary(e)}",
                     )
                     if (creationContext(_state.value) == requestContext) {
                         val error = if (formatError) e.message ?: "小说返回格式不正确，请重试"
                             else UserFacingStrings.remoteRequestFailed(e)
-                        _state.update { it.copy(error = error) }
+                        _state.update { it.copy(error = error, generationStage = "失败") }
                     }
                     null
                 }
                 if (result == null) return@launch
                 ensureActive()
                 if (creationContext(_state.value) != requestContext) {
-                    _state.update { it.copy(isGenerating = false, error = "输入或绑定已变化，请重新生成") }
+                        _state.update { it.copy(isGenerating = false, generationStage = "已丢弃（输入已变化）", error = "输入或绑定已变化，请重新生成") }
                     return@launch
                 }
-                _state.update { it.copy(isGenerating = false, isSaving = true) }
+                _state.update { it.copy(isGenerating = false, generationStage = "保存到本地", isSaving = true) }
                 val sessionId = withContext(NonCancellable) {
                     val created = createSession.create(
                         title = "小说 · ${result.title.trim().ifBlank { requestContext.premise.trim().take(24) }}",
@@ -309,11 +330,12 @@ class StorySimulationViewModel @Inject constructor(
                     savedSessionId
                 }
                 ensureActive()
+                _state.update { it.copy(generationStage = "已保存", isSaving = false) }
                 onCreated(sessionId)
             } catch (_: CancellationException) {
-                // Stopping remote generation is a normal user action.
+                _state.update { it.copy(isGenerating = false, generationStage = "已停止") }
             } catch (_: Exception) {
-                _state.update { it.copy(error = "小说已生成，但保存到本机会话失败，请重试") }
+                _state.update { it.copy(error = "小说已生成，但保存到本机会话失败，请重试", generationStage = "保存失败") }
             } finally {
                 val currentJob = currentCoroutineContext()[Job]
                 if (creationJob.compareAndSet(currentJob, null)) {
@@ -333,4 +355,23 @@ class StorySimulationViewModel @Inject constructor(
         job.cancel()
         return true
     }
+
+    private fun updateGenerationProgress(progress: StoryWritingProgress, token: Long) {
+        _state.update {
+            if (it.requestToken != token || !it.isGenerating) it else it.copy(
+                generationStage = progress.stage,
+                generationModel = progress.model,
+                generationElapsedMs = maxOf(it.generationElapsedMs, progress.elapsedMs),
+                firstContentDelayMs = progress.firstContentDelayMs,
+                receivedChars = progress.receivedChars,
+                preview = progress.preview.takeLast(MAX_PREVIEW_CHARS),
+            )
+        }
+    }
+
+    private fun elapsedMs() = (System.nanoTime() - generationStartedAtNanos) / 1_000_000L
+    private fun safeModelMetadata(value: String): String = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray()).take(6).joinToString("") { "%02x".format(it) }
+
+    private companion object { const val MAX_PREVIEW_CHARS = 12_000 }
 }

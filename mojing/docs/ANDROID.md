@@ -131,3 +131,13 @@ JVM 测试位于 `app/src/test/`，Room 与 Compose 测试位于 `app/src/androi
 ### 引用草稿
 
 `ChatDraftStore` 在 v1 草稿中保存可选的 `quotedMessageId`，旧草稿缺省为空。会话初始化按消息 ID 与会话 ID 读取原文，原文不存在时移除引用并保留输入。发送交接标记已提交时同时清除文字与引用；恢复读取和发送完成使用引用修订号保护期间的新选择。此扩展不修改 Room schema，旧版本可忽略新增字段读取其他草稿内容。
+
+## 小说开篇与记忆请求
+
+小说开篇通过 `LlmRetry.chatCompletionStreamingWithRetry` 消费流式正文，保留完成协议校验、取消传播与有界重试。请求总时限为 5 分钟，OpenAI 兼容线路读取空闲上限为 90 秒；收到正文后不自动重发。`StoryStreamingPreviewParser` 增量提取章节内容，界面保留最近 12,000 字符的预览。
+
+通用记忆使用明确的对象和数组结构，解析时校验嵌套字段类型。文本字段收到字符串数组时逐项换行保留，事实列表收到单个字符串时转换为单项列表；对象、数字和空值不作为文本事实接收。自动失败按会话、故事线和请求线路短暂冷却；重建与清空会重置冷却，过期修订不推进来源位置。
+
+开篇和通用记忆为独立的结构化输出任务。已适配的 DeepSeek 混合模型使用 `response_format: json_object`，官方接口附加 `thinking.type: disabled`，硅基流动附加 `enable_thinking: false`；普通聊天沿用原有模型参数。记忆输出预算为 3,200 Token，提示词按字段压缩和去重；接口返回 `finish_reason: length` 时按输出不完整处理。参数定义见 [DeepSeek](https://api-docs.deepseek.com/guides/thinking_mode/) 与[硅基流动](https://docs.siliconflow.cn/docs/api/chat-completions-post)。
+
+`RealProviderStoryTest` 提供显式启用的真实平台验收，使用独立 Room 数据库与偏好存储。临时 Key 从测试应用私有文件读取，测试参数仅传入 `realProviders=true`；正常测试和 CI 不会调用付费接口。覆盖单章、双章、记忆重建与清空、生成前后取消、无效模型修正后重试。测试完成后删除临时 Key；`captureProviderResponses` 仅用于保存该测试的中性故事请求与响应，不保存认证头。

@@ -1,12 +1,23 @@
 package com.mojing.app.domain.engine
 
+import com.mojing.app.data.remote.ChatMessage
+import com.mojing.app.data.remote.ChatRequest
 import com.mojing.app.data.remote.LlmApiService
+import com.mojing.app.data.remote.LlmHttpException
+import com.mojing.app.data.remote.LlmProtocolException
 import com.mojing.app.domain.billing.CostRecorder
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import java.net.SocketTimeoutException
+import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.min
-import kotlin.math.pow
 
 @Singleton
 class LlmRetry @Inject constructor(
@@ -17,75 +28,129 @@ class LlmRetry @Inject constructor(
         apiKey: String,
         baseUrl: String,
         model: String,
-        messages: List<com.mojing.app.data.remote.ChatMessage>,
+        messages: List<ChatMessage>,
         temperature: Float = 0.8f,
         maxTokens: Int = 4000,
         maxRetries: Int = 3,
+        jsonOutput: Boolean = false,
     ): String {
-        var lastError: Exception? = null
-        val promptFallback = messages.joinToString("\n") { it.content }
-        val wallStart = System.currentTimeMillis()
-
-        for (attempt in 0 until maxRetries) {
+        val prompt = messages.joinToString("\n") { it.content }
+        val started = System.currentTimeMillis()
+        var last: Exception? = null
+        repeat(maxRetries.coerceAtLeast(1)) { attempt ->
             try {
-                val t0 = System.currentTimeMillis()
-                val request = com.mojing.app.data.remote.ChatRequest(
-                    model = model,
-                    messages = messages,
-                    temperature = temperature,
-                    max_tokens = maxTokens,
+                val result = llmApi.chatCompletion(
+                    apiKey, baseUrl, ChatRequest(model, messages, temperature, maxTokens, jsonOutput = jsonOutput),
                 )
-                val res = llmApi.chatCompletion(apiKey, baseUrl, request)
-                val elapsed = (System.currentTimeMillis() - t0).toInt()
-                costRecorder.recordLlm(
-                    sessionId = null,
-                    characterId = null,
-                    modelName = model,
-                    provider = "llm_json",
-                    promptTokens = res.promptTokens,
-                    completionTokens = res.completionTokens,
-                    durationMs = elapsed,
-                    success = true,
-                    promptTextFallback = promptFallback,
-                    completionTextFallback = res.content,
-                )
-                return res.content
-            } catch (e: Exception) {
-                lastError = e
-                val msg = e.message ?: ""
-                if (msg.contains("429") || msg.contains("rate_limit") || msg.contains("请稍后重试")) {
-                    val waitMs = min(1000L * 2.0.pow(attempt).toLong(), 30000L)
-                    delay(waitMs)
-                } else {
+                if (result.finishReason == "length") throw LlmProtocolException("output_limit")
+                recordSafely {
                     costRecorder.recordLlm(
-                        sessionId = null,
-                        characterId = null,
-                        modelName = model,
-                        provider = "llm_json",
-                        promptTokens = 0,
-                        completionTokens = 0,
-                        durationMs = (System.currentTimeMillis() - wallStart).toInt(),
-                        success = false,
-                        promptTextFallback = promptFallback,
-                        completionTextFallback = null,
+                        null, null, model, "llm_json", result.promptTokens,
+                        result.completionTokens, elapsed(started), true, prompt, result.content,
                     )
+                }
+                return result.content
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                last = e
+                if (!shouldRetry(e, attempt, maxRetries.coerceAtLeast(1))) {
+                    recordFailureSafely(model, prompt, started)
                     throw e
                 }
+                delay(retryDelay(e, attempt))
             }
         }
+        recordFailureSafely(model, prompt, started)
+        throw last ?: IOException("LLM request failed")
+    }
 
-        costRecorder.recordLlm(
-            sessionId = null,
-            characterId = null,
-            modelName = model,
-            provider = "llm_json",
-            promptTokens = 0,
-            completionTokens = 0,
-            durationMs = (System.currentTimeMillis() - wallStart).toInt(),
-            success = false,
-            promptTextFallback = promptFallback,
-            completionTextFallback = null,
-        )
-        throw lastError ?: Exception("Retry exhausted")
+    suspend fun chatCompletionStreamingWithRetry(
+        apiKey: String,
+        baseUrl: String,
+        model: String,
+        messages: List<ChatMessage>,
+        temperature: Float = 0.8f,
+        maxTokens: Int = 4000,
+        maxRetries: Int = 3,
+        onDelta: (String) -> Unit = {},
+        onRetry: (nextAttempt: Int, delayMs: Long) -> Unit = { _, _ -> },
+        onAttempt: (Int) -> Unit = {},
+    ): String = try {
+      withTimeout(STORY_TIMEOUT_MS) {
+        val prompt = messages.joinToString("\n") { it.content }
+        val started = System.currentTimeMillis()
+        val attempts = maxRetries.coerceAtLeast(1)
+        var last: Exception? = null
+        repeat(attempts) { attempt ->
+            onAttempt(attempt + 1)
+            val output = StringBuilder()
+            try {
+                llmApi.streamStoryCompletion(
+                    apiKey, baseUrl,
+                    ChatRequest(model, messages, temperature, maxTokens, stream = true, jsonOutput = true),
+                ).collect { chunk ->
+                    output.append(chunk)
+                    onDelta(chunk)
+                }
+                recordSafely {
+                    costRecorder.recordLlm(
+                        null, null, model, "llm_stream", 0, 0, elapsed(started), true,
+                        prompt, output.toString(),
+                    )
+                }
+                return@withTimeout output.toString()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                last = e
+                if (output.isNotEmpty() || !shouldRetry(e, attempt, attempts)) {
+                    recordFailureSafely(model, prompt, started)
+                    throw e
+                }
+                val wait = retryDelay(e, attempt)
+                onRetry(attempt + 2, wait)
+                delay(wait)
+            }
+        }
+        recordFailureSafely(model, prompt, started)
+        throw last ?: IOException("LLM streaming request failed")
+      }
+    } catch (timeout: TimeoutCancellationException) {
+        currentCoroutineContext().ensureActive()
+        throw SocketTimeoutException("Story generation timed out")
+    }
+
+    private fun shouldRetry(error: Throwable, attempt: Int, attempts: Int): Boolean {
+        if (attempt + 1 >= attempts) return false
+        return when (error) {
+            is LlmHttpException -> error.status == 429 || error.status in 500..599
+            is IOException -> true
+            else -> false
+        }
+    }
+
+    private fun retryDelay(error: Throwable, attempt: Int): Long =
+        (error as? LlmHttpException)?.retryAfterMs?.coerceIn(0L, 30_000L)
+            ?: min(1000L * (1L shl attempt.coerceAtMost(4)), 30_000L)
+
+    private suspend fun recordFailureSafely(model: String, prompt: String, started: Long) {
+        recordSafely {
+            costRecorder.recordLlm(
+                null, null, model, "llm_json", 0, 0, elapsed(started), false, prompt, null,
+            )
+        }
+    }
+
+    private suspend fun recordSafely(block: suspend () -> Unit) {
+        try { block() } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { /* Accounting cannot discard a completed response. */ }
+    }
+
+    private fun elapsed(started: Long): Int = (System.currentTimeMillis() - started)
+        .coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
+
+    companion object {
+        private const val STORY_TIMEOUT_MS = 5 * 60 * 1000L
     }
 }

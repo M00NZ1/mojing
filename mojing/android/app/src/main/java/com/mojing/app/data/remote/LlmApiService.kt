@@ -6,6 +6,10 @@ import com.google.gson.JsonObject
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.channels.trySendBlocking
 import okhttp3.Call
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Callback
@@ -17,6 +21,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSource
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.math.min
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -58,7 +63,7 @@ class LlmApiService @Inject constructor() {
                 } else header("Authorization", OpenAiCompatibleRouting.bearerAuth(apiKey))
             }.get().build()
             val page = discoveryClient.executeCancellable(request) { response ->
-                check(response.isSuccessful) { "获取模型失败（HTTP ${response.code}），可手动填写模型名" }
+                if (!response.isSuccessful) throw response.toLlmHttpException()
                 gson.fromJson(response.body?.string().orEmpty(), JsonObject::class.java)
             }
             page.getAsJsonArray("data")?.forEach { item ->
@@ -102,9 +107,7 @@ class LlmApiService @Inject constructor() {
         val httpRequest = buildChatCompletionRequest(apiKey, baseUrl, request)
         return client.executeCancellable(httpRequest) { response ->
             if (!response.isSuccessful) {
-                val code = response.code
-                val body = response.body?.string().orEmpty()
-                throw IllegalStateException(if (body.isBlank()) "HTTP $code" else body)
+                throw response.toLlmHttpException()
             }
             val body = response.body?.string().orEmpty()
             val parsed = gson.fromJson(body, Map::class.java)
@@ -121,6 +124,7 @@ class LlmApiService @Inject constructor() {
                 promptTokens = promptTokens,
                 completionTokens = completionTokens,
                 totalTokens = totalTokens,
+                finishReason = (choices?.firstOrNull() as? Map<*, *>)?.get("finish_reason") as? String,
             )
         }
     }
@@ -130,13 +134,34 @@ class LlmApiService @Inject constructor() {
      * OkHttp performs the blocking read on its dispatcher thread, and closing
      * the collecting flow explicitly cancels the underlying Call.
      */
-    fun streamChatCompletion(
-        apiKey: String,
-        baseUrl: String,
-        request: ChatRequest,
+    fun streamChatCompletion(apiKey: String, baseUrl: String, request: ChatRequest): Flow<String> =
+        streamCompletion(apiKey, baseUrl, request, strict = false)
+
+    /** 完整结构化生成要求明确的结束标记，并单独限制无数据等待时间。 */
+    fun streamStoryCompletion(apiKey: String, baseUrl: String, request: ChatRequest): Flow<String> =
+        streamCompletion(apiKey, baseUrl, request, strict = true)
+
+    private fun streamCompletion(
+        apiKey: String, baseUrl: String, request: ChatRequest, strict: Boolean,
+    ): Flow<String> = flow {
+        val requestClient = if (strict) client.newBuilder().readTimeout(90, TimeUnit.SECONDS).build() else client
+        if (baseUrl.toHttpUrl().host == "api.anthropic.com") {
+            emitAll(com.mojing.app.domain.engine.AnthropicAdapter(requestClient).streamChat(
+                apiKey, baseUrl, request.model,
+                request.messages.filter { it.role == "system" }.joinToString("\n\n") { it.content },
+                request.messages, request.temperature, request.max_tokens, strictErrors = strict,
+            ))
+        } else {
+            emitAll(streamOpenAiCompletion(requestClient, apiKey, baseUrl, request, strict))
+        }
+    }
+
+    private fun streamOpenAiCompletion(
+        requestClient: OkHttpClient, apiKey: String, baseUrl: String,
+        request: ChatRequest, strict: Boolean,
     ): Flow<String> = callbackFlow {
         val httpRequest = buildChatCompletionRequest(apiKey, baseUrl, request.copy(stream = true))
-        val call = client.newCall(httpRequest)
+        val call = requestClient.newCall(httpRequest)
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 if (call.isCanceled()) close() else close(e)
@@ -145,15 +170,13 @@ class LlmApiService @Inject constructor() {
             override fun onResponse(call: Call, response: Response) {
                 response.use {
                     try {
-                        if (!response.isSuccessful) {
-                            val code = response.code
-                            val body = response.body?.string().orEmpty()
-                            throw IllegalStateException(if (body.isBlank()) "HTTP $code" else body)
+                        if (!response.isSuccessful) throw response.toLlmHttpException()
+                        if (strict && response.header("Content-Type")?.contains("text/event-stream", ignoreCase = true) != true) {
+                            throw LlmProtocolException("unsupported_stream")
                         }
-
-                        val source = response.body?.source()
-                            ?: throw IllegalStateException("Empty streaming response body")
-                        readSseResponse(source) { chunk -> trySend(chunk) }
+                        val source = response.body?.source() ?: throw LlmProtocolException("empty_response")
+                        val completed = readSseResponse(source, strict) { chunk -> trySendBlocking(chunk).getOrThrow() }
+                        if (strict && !completed) throw IOException("Streaming response ended before completion")
                         close()
                     } catch (e: Throwable) {
                         if (call.isCanceled()) close() else close(e)
@@ -250,57 +273,88 @@ class LlmApiService @Inject constructor() {
             .url(url)
             .header("Authorization", OpenAiCompatibleRouting.bearerAuth(apiKey))
             .header("Content-Type", "application/json")
-            .post(gson.toJson(request).toRequestBody(JSON))
+            .post(chatPayload(baseUrl, request).toString().toRequestBody(JSON))
             .build()
     }
 
+    internal fun chatPayload(baseUrl: String, request: ChatRequest): JsonObject =
+        gson.toJsonTree(request).asJsonObject.apply {
+            if (request.jsonOutput) {
+                val host = baseUrl.toHttpUrl().host
+                val model = request.model.lowercase()
+                val deepseek = host == "api.deepseek.com" && model in setOf("deepseek-chat", "deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro")
+                val siliconflow = host in setOf("api.siliconflow.cn", "api.siliconflow.com") &&
+                    (model.startsWith("deepseek-ai/deepseek-v3") || model.startsWith("pro/deepseek-ai/deepseek-v3") ||
+                        model.startsWith("deepseek-ai/deepseek-v4") || model.startsWith("pro/deepseek-ai/deepseek-v4"))
+                if (deepseek || siliconflow) {
+                    add("response_format", JsonObject().apply { addProperty("type", "json_object") })
+                    // These hybrid models support non-thinking structured output. Ordinary chat keeps provider defaults.
+                    if (deepseek) add("thinking", JsonObject().apply { addProperty("type", "disabled") })
+                    else addProperty("enable_thinking", false)
+                }
+            }
+        }
+
     private fun readSseResponse(
         source: BufferedSource,
+        strict: Boolean,
         emitChunk: (String) -> Unit,
-    ) {
+    ): Boolean {
         val dataLines = mutableListOf<String>()
         var done = false
         while (!done && !source.exhausted()) {
             val line = source.readUtf8Line() ?: break
             when {
-                line.isEmpty() -> done = emitSseEvent(dataLines, emitChunk)
+                line.isEmpty() -> done = emitSseEvent(dataLines, strict, emitChunk)
                 line.startsWith(":") -> Unit
                 line.startsWith("data:") -> dataLines += line.removePrefix("data:").removePrefix(" ")
             }
         }
-        if (!done && dataLines.isNotEmpty()) emitSseEvent(dataLines, emitChunk)
+        if (!done && dataLines.isNotEmpty()) done = emitSseEvent(dataLines, strict, emitChunk)
+        return done
     }
 
     private fun emitSseEvent(
-        dataLines: MutableList<String>,
-        emitChunk: (String) -> Unit,
+        dataLines: MutableList<String>, strict: Boolean, emitChunk: (String) -> Unit,
     ): Boolean {
         if (dataLines.isEmpty()) return false
         val data = dataLines.joinToString("\n")
         dataLines.clear()
         if (data.trim() == "[DONE]") return true
-
-        val chunk = runCatching {
-            val root = gson.fromJson(data, JsonObject::class.java)
-            val choices = root.getAsJsonArray("choices") ?: return@runCatching ""
-            val choice = choices.firstOrNull()?.asJsonObject ?: return@runCatching ""
-            val delta = choice.getAsJsonObject("delta")
-                ?: choice.getAsJsonObject("message")
-                ?: return@runCatching ""
-            val content = delta.get("content") ?: return@runCatching ""
-            when {
-                content.isJsonPrimitive -> content.asString
-                content.isJsonArray -> content.asJsonArray.joinToString("") { part ->
-                    if (part.isJsonObject) {
-                        part.asJsonObject.get("text")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
-                    } else {
-                        ""
-                    }
-                }
-                else -> ""
+        val root = runCatching { gson.fromJson(data, JsonObject::class.java) }.getOrNull()
+            ?: if (strict) throw LlmProtocolException("invalid_stream") else return false
+        if (root.has("error")) throw LlmProtocolException("provider_stream_error")
+        val choice = root.get("choices")?.takeIf { it.isJsonArray }?.asJsonArray
+            ?.firstOrNull()?.takeIf { it.isJsonObject }?.asJsonObject ?: return false
+        val finish = choice.get("finish_reason")?.takeIf { it.isJsonPrimitive }?.asString
+        val delta = (choice.get("delta") ?: choice.get("message"))?.takeIf { it.isJsonObject }?.asJsonObject
+        val content = delta?.get("content")
+        val chunk = when {
+            content?.isJsonPrimitive == true && content.asJsonPrimitive.isString -> content.asString
+            content?.isJsonArray == true -> content.asJsonArray.joinToString("") { part ->
+                part.takeIf { it.isJsonObject }?.asJsonObject?.get("text")
+                    ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString.orEmpty()
             }
-        }.getOrElse { "" }
+            else -> ""
+        }
         if (chunk.isNotEmpty()) emitChunk(chunk)
-        return false
+        if (strict && finish != null && finish != "stop") {
+            throw LlmProtocolException(if (finish == "length") "output_limit" else "incomplete_output")
+        }
+        return strict && finish == "stop"
+    }
+
+    private fun Response.toLlmHttpException(): LlmHttpException {
+        val payload = runCatching { peekBody(4096L).string() }.getOrDefault("")
+        val root = runCatching { gson.fromJson(payload, JsonObject::class.java) }.getOrNull()
+        val error = root?.get("error")?.takeIf { it.isJsonObject }?.asJsonObject
+        val candidate = (error?.get("code") ?: error?.get("type"))
+            ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
+        return LlmHttpException(
+            status = code,
+            requestId = header("x-request-id") ?: header("request-id") ?: header("x-siliconcloud-trace-id"),
+            errorCode = candidate,
+            retryAfterMs = parseRetryAfterMs(header("Retry-After")),
+        )
     }
 }

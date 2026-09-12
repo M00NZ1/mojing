@@ -2,7 +2,6 @@ package com.mojing.app.ui.story
 
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingButton as Button
-import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
@@ -50,13 +49,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import com.mojing.app.ui.navigation.MainAppBottomNavigation
 import com.mojing.app.ui.navigation.returnToCreationHub
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -68,6 +67,7 @@ fun StorySimulationScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val clipboardManager = LocalClipboardManager.current
     val isImeOpen = com.mojing.app.ui.common.isImeKeyboardOpen()
     var templateExpanded by remember { mutableStateOf(false) }
     var encyclopediaExpanded by remember { mutableStateOf(false) }
@@ -309,27 +309,9 @@ fun StorySimulationScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            StoryGenerationProgressCard(state, onStop = { viewModel.stopGeneration() }, onCopy = clipboardManager::setText, onRetry = { viewModel.clearError(); viewModel.createStory(onOpenSession) })
             when {
-                state.isGenerating -> Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Button(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.width(20.dp).height(20.dp),
-                            strokeWidth = 2.dp,
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text("正在创作 ${state.chapterCount} 章…")
-                    }
-                    OutlinedButton(onClick = {
-                        if (viewModel.stopGeneration()) {
-                            scope.launch { snackbarHostState.showSnackbar("已停止生成，填写的内容仍保留") }
-                        }
-                    }) {
-                        Text("停止")
-                    }
-                }
+                state.isGenerating -> Unit
                 state.isSaving -> Button(
                     onClick = {},
                     enabled = false,
@@ -356,7 +338,7 @@ fun StorySimulationScreen(
         }
     }
 
-    state.error?.let { message ->
+    state.error?.takeIf { state.generationModel == null }?.let { message ->
         AlertDialog(
             onDismissRequest = viewModel::clearError,
             title = { Text("操作未完成") },

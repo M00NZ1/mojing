@@ -19,5 +19,9 @@ class UniversalContextMemoryPromptTest {
         assertTrue(prompt.contains("characterStates"))
         assertTrue(prompt.contains("relationshipStates"))
         assertTrue(prompt.contains("continuityRules"))
+        assertTrue(prompt.contains("所有字段必须存在"))
+        assertTrue(prompt.contains("禁止使用 null"))
+        assertTrue(prompt.contains("userState 为含 identity/currentGoal"))
+        assertTrue(prompt.contains("recentCompressedTimeline 为对象数组"))
     }
 }

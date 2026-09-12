@@ -57,7 +57,6 @@ import com.mojing.app.domain.engine.NarratorEngine
 import com.mojing.app.domain.engine.SpeakerScheduler
 import com.mojing.app.domain.engine.OutputProcessor
 import com.mojing.app.domain.engine.UniversalContextMemoryManager
-import com.mojing.app.domain.engine.UniversalContextMemoryUpdateResult
 import com.mojing.app.domain.story.StoryCanon
 import com.mojing.app.domain.chat.MainBranchChatExportWriter
 import com.mojing.app.domain.chat.TavernChatImportParser
@@ -1382,6 +1381,7 @@ class ChatViewModel @Inject constructor(
             branchSourcePreviews = sourcePreviews,
             currentBranchId = branchId,
             contextMemoryText = contextMemoryText,
+            contextMemoryStatus = if (current.currentBranchId == branchId) current.contextMemoryStatus else ContextMemoryStatus.IDLE,
             encyclopediaFoundation = encyclopediaFoundation,
             memorySegments = memorySegments,
             memoryCorrections = if (current.currentBranchId != branchId || correctionRefreshRevision.get() == correctionRevision)
@@ -2265,9 +2265,8 @@ class ChatViewModel @Inject constructor(
                                 worldText = world?.worldPrompt.orEmpty(),
                                 activeCharacterNames = _state.value.characterNames.values.toList(),
                             )
-                            reportFullMemoryRebuildIfNeeded(memoryResult)
                             val updatedMemory = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
-                            _state.update { if (it.currentBranchId == branchId) it.copy(contextMemoryText = updatedMemory) else it }
+                            _state.update { it.withContextMemoryResult(branchId, memoryResult, updatedMemory) }
                             memoryV2Manager.extractEventNodes(
                                 sessionId = sessionId,
                                 branchId = branchId,
@@ -2555,9 +2554,8 @@ class ChatViewModel @Inject constructor(
                                             worldText = world.worldPrompt,
                                             activeCharacterNames = _state.value.characterNames.values.toList(),
                                         )
-                                        reportFullMemoryRebuildIfNeeded(memoryResult)
                                         val updatedMemory = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
-                                        _state.update { if (it.currentBranchId == branchId) it.copy(contextMemoryText = updatedMemory) else it }
+                                        _state.update { it.withContextMemoryResult(branchId, memoryResult, updatedMemory) }
                                         val recentMessages = getContextMessagesForBranch(branchId).takeLast(20)
                                         memoryV2Manager.extractEventNodes(sessionId, branchId, null, recentMessages, apiKey, nb, model)
                                         refreshEventNodesForBranch(branchId)
@@ -3427,20 +3425,16 @@ class ChatViewModel @Inject constructor(
                 activeCharacterNames = _state.value.characterNames.values.toList(),
             )
             val memory = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
-            _state.update { if (it.currentBranchId == branchId) it.copy(contextMemoryText = memory) else it }
+            _state.update {
+                if (it.currentBranchId == branchId) it.copy(
+                    contextMemoryText = memory,
+                    contextMemoryStatus = if (ok) ContextMemoryStatus.UPDATED else ContextMemoryStatus.FAILED,
+                ) else it
+            }
             onDone(if (ok) "已重建当前会话记忆" else "重建失败，现有记忆未被清空")
           } catch (cancelled: CancellationException) { throw cancelled }
           catch (_: Exception) { onDone("重建失败，请重试") }
           finally { _state.update { it.copy(memoryOperationRunning = false) } }
-        }
-    }
-
-    private fun reportFullMemoryRebuildIfNeeded(result: UniversalContextMemoryUpdateResult) {
-        if (result != UniversalContextMemoryUpdateResult.REQUIRES_FULL_REBUILD) return
-        _state.update { current ->
-            if (!current.error.isNullOrBlank()) current else current.copy(
-                error = "待整理剧情较多，请在记忆抽屉中选择“重建记忆”。原始对话仍完整保留。",
-            )
         }
     }
 
@@ -3451,7 +3445,7 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 universalContextMemoryManager.clear(sessionId, branchId)
-                _state.update { if (it.currentBranchId == branchId) it.copy(contextMemoryText = "") else it }
+                _state.update { if (it.currentBranchId == branchId) it.copy(contextMemoryText = "", contextMemoryStatus = ContextMemoryStatus.IDLE) else it }
                 onDone("已清空长期记忆；后续对话会重新整理")
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { onDone("清空失败，请重试") }

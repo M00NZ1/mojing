@@ -95,6 +95,7 @@ object ChatContract {
         val world: SessionWorldEntity? = null,
         val encyclopediaFoundation: String = "",
         val contextMemoryText: String = "",
+        val contextMemoryStatus: ContextMemoryStatus = ContextMemoryStatus.IDLE,
         val memoryOperationRunning: Boolean = false,
         val memorySegments: List<SessionMemorySegmentEntity> = emptyList(),
         val memoryCorrections: List<SessionMemoryCorrectionEntity> = emptyList(),

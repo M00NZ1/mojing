@@ -11,4 +11,5 @@ data class ChatRequest(
     val temperature: Float,
     val max_tokens: Int,
     val stream: Boolean = false,
+    @Transient val jsonOutput: Boolean = false,
 )

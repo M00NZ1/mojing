@@ -12,17 +12,19 @@ import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.local.entity.WorldTemplateEntity
 import com.mojing.app.domain.story.StoryChapter
 import com.mojing.app.domain.story.StoryWritingResult
+import com.mojing.app.domain.story.StoryWritingProgress
 import com.mojing.app.domain.story.StoryWritingUseCase
 import com.mojing.app.domain.usecase.CreateSessionUseCase
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -64,7 +66,7 @@ class StorySimulationViewModelTest {
         )
 
         val viewModel = createViewModel(templateDao, encyclopediaDao, characterDao)
-        advanceUntilIdle()
+        runCurrent()
 
         assertTrue(viewModel.state.value.templates.error?.contains("世界模板加载失败") == true)
         assertEquals(1, viewModel.state.value.encyclopedias.items.size)
@@ -75,7 +77,7 @@ class StorySimulationViewModelTest {
 
         failTemplates = false
         viewModel.retryTemplates()
-        advanceUntilIdle()
+        runCurrent()
 
         assertNull(viewModel.state.value.templates.error)
         assertEquals("宫廷", viewModel.state.value.templates.items.single().label)
@@ -97,7 +99,7 @@ class StorySimulationViewModelTest {
         coEvery { characterDao.getAll() } returns emptyList()
 
         val viewModel = createViewModel(templateDao, encyclopediaDao, characterDao)
-        advanceUntilIdle()
+        runCurrent()
 
         listOf(
             viewModel.state.value.templates,
@@ -121,14 +123,14 @@ class StorySimulationViewModelTest {
         coEvery { characterDao.getAll() } answers { characters }
 
         val viewModel = createViewModel(templateDao, encyclopediaDao, characterDao)
-        advanceUntilIdle()
+        runCurrent()
         viewModel.selectEncyclopedia(7)
         viewModel.toggleCharacter(9)
         assertEquals(setOf(9L), viewModel.state.value.selectedCharacterIds)
 
         characters = emptyList()
         viewModel.retryCharacters()
-        advanceUntilIdle()
+        runCurrent()
 
         assertTrue(viewModel.state.value.selectedCharacterIds.isEmpty())
         assertTrue(viewModel.state.value.characters.items.isEmpty())
@@ -151,7 +153,7 @@ class StorySimulationViewModelTest {
         viewModel.retryTemplates()
         viewModel.retryTemplates()
         releaseLoad.complete(Unit)
-        advanceUntilIdle()
+        runCurrent()
 
         coVerify(exactly = 1) { templateDao.getAll() }
         assertFalse(viewModel.state.value.templates.isLoading)
@@ -166,7 +168,7 @@ class StorySimulationViewModelTest {
         coEvery { encyclopediaDao.getAll() } returns emptyList()
         coEvery { characterDao.getAll() } returns emptyList()
         val storyWriting = mockk<StoryWritingUseCase>()
-        coEvery { storyWriting.write(any(), any(), any(), any()) } returns StoryWritingResult(
+        coEvery { storyWriting.write(any(), any(), any(), any(), any()) } returns StoryWritingResult(
             title = "十八岁系统",
             chapters = listOf(
                 StoryChapter(1, "觉醒", "第一章正文"),
@@ -204,12 +206,12 @@ class StorySimulationViewModelTest {
             sessionDao = sessionDao,
             messageDao = messageDao,
         )
-        advanceUntilIdle()
+        runCurrent()
         viewModel.updatePremise("现代社会，主角十八岁觉醒系统")
         var openedSessionId: Long? = null
 
         viewModel.createStory { openedSessionId = it }
-        advanceUntilIdle()
+        runCurrent()
 
         assertEquals(42L, openedSessionId)
         assertEquals(listOf("user", "narrator", "narrator"), messages.map { it.speakerType })
@@ -237,7 +239,7 @@ class StorySimulationViewModelTest {
         coEvery { characterDao.getAll() } returns emptyList()
         val resultGate = CompletableDeferred<StoryWritingResult>()
         val storyWriting = mockk<StoryWritingUseCase>()
-        coEvery { storyWriting.write(any(), any(), any(), any()) } coAnswers { resultGate.await() }
+        coEvery { storyWriting.write(any(), any(), any(), any(), any()) } coAnswers { resultGate.await() }
         val secureStorage = mockk<SecureStorage>(relaxed = true) {
             every { publicApiKey } returns "key"
             every { publicBaseUrl } returns "https://example.com"
@@ -256,19 +258,19 @@ class StorySimulationViewModelTest {
             sessionDao = sessionDao,
             messageDao = messageDao,
         )
-        advanceUntilIdle()
+        runCurrent()
         viewModel.updatePremise("保留的故事背景")
         viewModel.updateDirection("保留的走向")
         viewModel.updateTone("保留的文风")
         viewModel.updateChapterCount(3)
         var createdCalls = 0
         viewModel.createStory { createdCalls++ }
-        advanceUntilIdle()
+        runCurrent()
 
         assertTrue(viewModel.state.value.isGenerating)
         assertFalse(viewModel.state.value.isSaving)
         assertTrue(viewModel.stopGeneration())
-        advanceUntilIdle()
+        runCurrent()
 
         assertFalse(viewModel.state.value.isGenerating)
         assertFalse(viewModel.state.value.isSaving)
@@ -295,7 +297,7 @@ class StorySimulationViewModelTest {
         coEvery { characterDao.getAll() } returns emptyList()
         val resultGate = CompletableDeferred<StoryWritingResult>()
         val storyWriting = mockk<StoryWritingUseCase>()
-        coEvery { storyWriting.write(any(), any(), any(), any()) } coAnswers { resultGate.await() }
+        coEvery { storyWriting.write(any(), any(), any(), any(), any()) } coAnswers { resultGate.await() }
         val secureStorage = mockk<SecureStorage>(relaxed = true) {
             every { publicApiKey } returns "key"
             every { publicBaseUrl } returns "https://example.com"
@@ -308,15 +310,15 @@ class StorySimulationViewModelTest {
             storyWriting = storyWriting,
             secureStorage = secureStorage,
         )
-        advanceUntilIdle()
+        runCurrent()
         viewModel.updatePremise("单飞故事")
         viewModel.createStory { }
         viewModel.createStory { }
-        advanceUntilIdle()
+        runCurrent()
 
-        coVerify(exactly = 1) { storyWriting.write(any(), any(), any(), any()) }
+        coVerify(exactly = 1) { storyWriting.write(any(), any(), any(), any(), any()) }
         assertTrue(viewModel.stopGeneration())
-        advanceUntilIdle()
+        runCurrent()
     }
 
     @Test
@@ -329,7 +331,7 @@ class StorySimulationViewModelTest {
         coEvery { characterDao.getAll() } returns emptyList()
         val resultGate = CompletableDeferred<StoryWritingResult>()
         val storyWriting = mockk<StoryWritingUseCase>()
-        coEvery { storyWriting.write(any(), any(), any(), any()) } coAnswers { resultGate.await() }
+        coEvery { storyWriting.write(any(), any(), any(), any(), any()) } coAnswers { resultGate.await() }
         val secureStorage = mockk<SecureStorage>(relaxed = true) {
             every { publicApiKey } returns "key"
             every { publicBaseUrl } returns "https://example.com"
@@ -342,7 +344,7 @@ class StorySimulationViewModelTest {
             storyWriting = storyWriting,
             secureStorage = secureStorage,
         )
-        advanceUntilIdle()
+        runCurrent()
         viewModel.updatePremise("旧梗概")
         viewModel.createStory { }
         viewModel.updatePremise("新梗概")
@@ -354,7 +356,7 @@ class StorySimulationViewModelTest {
                 nextChoices = listOf("继续", "转折"),
             ),
         )
-        advanceUntilIdle()
+        runCurrent()
 
         assertEquals("输入或绑定已变化，请重新生成", viewModel.state.value.error)
     }
@@ -369,7 +371,7 @@ class StorySimulationViewModelTest {
         coEvery { characterDao.getAll() } returns emptyList()
         val resultGate = CompletableDeferred<StoryWritingResult>()
         val storyWriting = mockk<StoryWritingUseCase>()
-        coEvery { storyWriting.write(any(), any(), any(), any()) } coAnswers { resultGate.await() }
+        coEvery { storyWriting.write(any(), any(), any(), any(), any()) } coAnswers { resultGate.await() }
         val secureStorage = mockk<SecureStorage>(relaxed = true) {
             every { publicApiKey } returns "key"
             every { publicBaseUrl } returns "https://example.com"
@@ -382,13 +384,13 @@ class StorySimulationViewModelTest {
             storyWriting = storyWriting,
             secureStorage = secureStorage,
         )
-        advanceUntilIdle()
+        runCurrent()
         viewModel.updatePremise("旧梗概")
         viewModel.createStory { }
         viewModel.updatePremise("新梗概")
 
         resultGate.completeExceptionally(IllegalStateException("旧请求失败"))
-        advanceUntilIdle()
+        runCurrent()
 
         assertEquals("新梗概", viewModel.state.value.premise)
         assertNull(viewModel.state.value.error)
@@ -399,7 +401,7 @@ class StorySimulationViewModelTest {
     fun singleChapterFormatFailureKeepsInputAndCanRetryWithoutWritingMessages() = runTest(dispatcher) {
         val writing = mockk<StoryWritingUseCase>()
         val error = "模型返回的章节格式不正确，请重试"
-        coEvery { writing.write(any(), any(), any(), any()) } throws
+        coEvery { writing.write(any(), any(), any(), any(), any()) } throws
             com.mojing.app.domain.story.StoryWritingException(error)
         val storage = mockk<SecureStorage>(relaxed = true) {
             every { publicApiKey } returns "test-key"
@@ -409,20 +411,84 @@ class StorySimulationViewModelTest {
         val messages = mockk<MessageDao>(relaxed = true)
         val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true),
             storyWriting = writing, secureStorage = storage, messageDao = messages)
-        advanceUntilIdle()
+        runCurrent()
         vm.updatePremise("雾港的一封来信")
         vm.updateChapterCount(1)
         repeat(2) {
             vm.createStory { throw AssertionError("Failed generation must not navigate") }
-            advanceUntilIdle()
+            runCurrent()
             assertEquals(error, vm.state.value.error)
             assertEquals("雾港的一封来信", vm.state.value.premise)
             assertEquals(1, vm.state.value.chapterCount)
             assertFalse(vm.state.value.isGenerating)
             assertFalse(vm.state.value.isSaving)
         }
-        coVerify(exactly = 2) { writing.write(any(), any(), any(), match { it.chapterCount == 1 }) }
+        coVerify(exactly = 2) { writing.write(any(), any(), any(), match { it.chapterCount == 1 }, any()) }
         coVerify(exactly = 0) { messages.insert(any()) }
+    }
+
+    @Test
+    fun stoppingAfterPreviewKeepsPreviewAndLateCallbackCannotMutateIt() = runTest(dispatcher) {
+        val callback = slot<(StoryWritingProgress) -> Unit>()
+        val writing = mockk<StoryWritingUseCase>()
+        val gate = CompletableDeferred<StoryWritingResult>()
+        coEvery { writing.write(any(), any(), any(), any(), capture(callback)) } coAnswers { gate.await() }
+        val storage = mockk<SecureStorage>(relaxed = true) {
+            every { publicApiKey } returns "key"; every { publicBaseUrl } returns "https://example.com"; every { publicModel } returns "model"
+        }
+        val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), storyWriting = writing, secureStorage = storage)
+        runCurrent(); vm.updatePremise("保留预览")
+        vm.createStory { }; runCurrent()
+        callback.captured(StoryWritingProgress("接收正文", "model", 120, 40, 4, "已收到"))
+        assertEquals("已收到", vm.state.value.preview)
+        assertTrue(vm.stopGeneration()); runCurrent()
+        callback.captured(StoryWritingProgress("接收正文", "model", 999, 40, 99, "迟到回调"))
+        assertEquals("已收到", vm.state.value.preview)
+        assertEquals("已停止", vm.state.value.generationStage)
+    }
+
+    @Test
+    fun completeResultOnlyThenPersistsAndFailureDoesNotPersist() = runTest(dispatcher) {
+        val writing = mockk<StoryWritingUseCase>()
+        val storage = mockk<SecureStorage>(relaxed = true) {
+            every { publicApiKey } returns "key"; every { publicBaseUrl } returns "https://example.com"; every { publicModel } returns "model"
+        }
+        val create = mockk<CreateSessionUseCase>()
+        coEvery { create.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns CreateSessionUseCase.Result.Created(8)
+        val messages = mockk<MessageDao>(relaxed = true)
+        every { writing.toMessageContent(any(), any()) } returns "complete"
+        every { writing.toStructuredJson(any(), any()) } returns "{}"
+        coEvery { writing.write(any(), any(), any(), any(), any()) } returns StoryWritingResult("完整", listOf(StoryChapter(1, "一", "正文")), listOf("继续", "离开"))
+        val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), storyWriting = writing, secureStorage = storage, createSession = create, messageDao = messages)
+        runCurrent(); vm.updatePremise("完整故事"); vm.createStory { }; runCurrent()
+        coVerify(exactly = 2) { messages.insert(any()) }
+
+        val failed = mockk<StoryWritingUseCase>()
+        coEvery { failed.write(any(), any(), any(), any(), any()) } throws IllegalStateException("failed")
+        val failedMessages = mockk<MessageDao>(relaxed = true)
+        val vmFailed = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), storyWriting = failed, secureStorage = storage, messageDao = failedMessages)
+        runCurrent(); vmFailed.updatePremise("失败故事"); vmFailed.createStory { }; runCurrent()
+        coVerify(exactly = 0) { failedMessages.insert(any()) }
+        assertEquals("失败", vmFailed.state.value.generationStage)
+    }
+
+    @Test
+    fun attemptProgressIsShownWhileWaiting() = runTest(dispatcher) {
+        val callback = slot<(StoryWritingProgress) -> Unit>()
+        val gate = CompletableDeferred<StoryWritingResult>()
+        val writing = mockk<StoryWritingUseCase>()
+        coEvery { writing.write(any(), any(), any(), any(), capture(callback)) } coAnswers {
+            callback.captured(StoryWritingProgress("等待模型响应（第 2 次）", "model", 1_234, null, 0, "", 2, 500))
+            gate.await()
+        }
+        val storage = mockk<SecureStorage>(relaxed = true) {
+            every { publicApiKey } returns "key"; every { publicBaseUrl } returns "https://example.com"; every { publicModel } returns "model"
+        }
+        val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), storyWriting = writing, secureStorage = storage)
+        runCurrent(); vm.updatePremise("等待故事"); vm.createStory { }; runCurrent()
+        assertEquals("等待模型响应（第 2 次）", vm.state.value.generationStage)
+        assertEquals(1_234L, vm.state.value.generationElapsedMs)
+        vm.stopGeneration(); runCurrent()
     }
 
     private fun createViewModel(

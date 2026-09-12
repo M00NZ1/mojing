@@ -29,6 +29,17 @@ data class StoryWritingResult(
     val nextChoices: List<String>,
 )
 
+data class StoryWritingProgress(
+    val stage: String,
+    val model: String,
+    val elapsedMs: Long,
+    val firstContentDelayMs: Long? = null,
+    val receivedChars: Int = 0,
+    val preview: String = "",
+    val attempt: Int = 1,
+    val retryDelayMs: Long? = null,
+)
+
 class StoryWritingException(message: String) : IllegalStateException(message)
 
 /** 只负责生成小说正文；会话、角色绑定和导航仍由已有会话领域负责。 */
@@ -41,6 +52,7 @@ class StoryWritingUseCase @Inject constructor(
         baseUrl: String,
         model: String,
         request: StoryWritingRequest,
+        onProgress: (StoryWritingProgress) -> Unit = {},
     ): StoryWritingResult {
         val premise = request.premise.trim()
         if (premise.isBlank()) throw StoryWritingException("请先填写故事背景")
@@ -50,7 +62,7 @@ class StoryWritingUseCase @Inject constructor(
             appendLine("只返回合法 JSON，不要 Markdown 或解释。")
             appendLine("JSON 格式：{\"title\":\"小说名\",\"chapters\":[{\"title\":\"第一章标题\",\"content\":\"完整小说正文\"}],\"next_choices\":[\"后续走向一\",\"后续走向二\"]}。")
             appendLine("即使只生成 1 章，chapters 也必须是只含一个章节对象的数组；next_choices 始终是字符串数组。")
-            appendLine("要求：这是小说正文，不是大纲、分析或候选方案；每章约 900～1800 个中文字符，包含场景、动作、人物对话、心理与因果推进，章节连续。")
+            appendLine("要求：这是小说正文，不是大纲、分析或候选方案；每章以 1200 个中文字符为目标，在 900～1800 字内收束，包含场景、动作、人物对话、心理与因果推进，章节连续。")
             appendLine("最后一章停在可继续的位置；next_choices 根据刚写出的情节动态生成 2～4 个不同后续走向。")
             appendLine(StoryCanon.promptRules)
             StoryCanon.modelInstruction(model).takeIf(String::isNotEmpty)?.let { appendLine(it) }
@@ -59,19 +71,54 @@ class StoryWritingUseCase @Inject constructor(
             request.tone.trim().takeIf(String::isNotEmpty)?.let { appendLine("文风与节奏：$it") }
             request.worldContext.trim().takeIf(String::isNotEmpty)?.let { appendLine("世界设定：\n$it") }
             request.characterContext.trim().takeIf(String::isNotEmpty)?.let { appendLine("已有角色：\n$it") }
+            appendLine("提交前检查：恰好 $chapterCount 章，每章不超过 1800 字。使用 JSON 字符串转义换行和双引号，返回完整对象。")
         }
-        val raw = llmRetry.chatCompletionWithRetry(
-            apiKey = apiKey,
-            baseUrl = baseUrl,
-            model = model,
-            messages = listOf(
-                ChatMessage("system", "你是长篇小说作者。直接写连续小说正文，并严格遵守 JSON 输出协议。"),
-                ChatMessage("user", prompt),
-            ),
-            temperature = StoryCanon.temperatureFor(model),
-            maxTokens = 8_000,
-        )
-        return parse(raw, chapterCount, premise)
+        val startedAt = System.nanoTime()
+        fun elapsed() = (System.nanoTime() - startedAt) / 1_000_000L
+        val requestId = java.util.UUID.randomUUID().toString().take(8)
+        val host = runCatching { java.net.URI(baseUrl).host }.getOrNull().orEmpty()
+        val modelTag = java.security.MessageDigest.getInstance("SHA-256").digest(model.toByteArray())
+            .take(6).joinToString("") { "%02x".format(it) }
+        fun log(message: String) = com.mojing.app.util.UsbSessionLog.i("StoryWriting", "request=$requestId $message")
+        log("start host=$host modelTag=$modelTag chapters=$chapterCount promptChars=${prompt.length}")
+        var firstContentMs: Long? = null
+        var lastPublishedMs = -100L
+        var attempt = 1
+        val previewParser = StoryStreamingPreviewParser()
+        fun publish(stage: String, retryDelay: Long? = null) {
+            lastPublishedMs = elapsed()
+            onProgress(StoryWritingProgress(stage, model, lastPublishedMs, firstContentMs,
+                previewParser.receivedChars, previewParser.previewText(), attempt, retryDelay))
+        }
+        val raw = try {
+            llmRetry.chatCompletionStreamingWithRetry(
+                apiKey = apiKey, baseUrl = baseUrl, model = model,
+                messages = listOf(
+                    ChatMessage("system", "你是长篇小说作者。直接写连续小说正文，并严格遵守 JSON 输出协议。"),
+                    ChatMessage("user", prompt),
+                ),
+                temperature = StoryCanon.temperatureFor(model),
+                maxTokens = (chapterCount * 2_600 + 2_000).coerceAtMost(10_000),
+                onDelta = { delta ->
+                    previewParser.append(delta)
+                    if (previewParser.receivedChars > 0 && firstContentMs == null) {
+                        firstContentMs = elapsed()
+                        log("firstContent elapsedMs=$firstContentMs")
+                        publish("接收正文")
+                    } else if (elapsed() - lastPublishedMs >= 100L) publish("接收正文")
+                },
+                onRetry = { nextAttempt, delayMs -> attempt = nextAttempt; log("retry attempt=$attempt delayMs=$delayMs elapsedMs=${elapsed()}"); publish("等待第 $nextAttempt 次请求", delayMs) },
+                onAttempt = { current -> attempt = current; publish("等待模型响应") },
+            )
+        } catch (error: Exception) {
+            publish(if (error is kotlinx.coroutines.CancellationException) "已停止" else "失败")
+            log("ended elapsedMs=${elapsed()} receivedChars=${previewParser.receivedChars} ${com.mojing.app.domain.engine.LlmFailureDiagnostics.summary(error)}")
+            throw error
+        }
+        publish("校验完整正文")
+        return parse(raw, chapterCount, premise).also {
+            log("complete elapsedMs=${elapsed()} firstContentMs=${firstContentMs ?: -1} receivedChars=${previewParser.receivedChars}")
+        }
     }
 
     internal fun parse(raw: String, expectedChapterCount: Int, premise: String = ""): StoryWritingResult {

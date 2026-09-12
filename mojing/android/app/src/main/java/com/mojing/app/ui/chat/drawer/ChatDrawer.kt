@@ -29,6 +29,7 @@ import com.mojing.app.data.local.entity.SessionWorldEntity
 import com.mojing.app.data.local.entity.MessageBookmarkEntity
 import com.mojing.app.data.local.entity.SessionMemoryCorrectionEntity
 import com.mojing.app.ui.chat.MemoryCorrectionPromptTrace
+import com.mojing.app.ui.chat.ContextMemoryStatus
 import com.google.gson.Gson
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -38,6 +39,7 @@ fun ChatDrawer(
     world: SessionWorldEntity? = null,
     encyclopediaFoundation: String = "",
     contextMemoryText: String = "",
+    contextMemoryStatus: ContextMemoryStatus = ContextMemoryStatus.IDLE,
     memoryOperationRunning: Boolean = false,
     memorySegments: List<SessionMemorySegmentEntity> = emptyList(),
     memoryCorrections: List<SessionMemoryCorrectionEntity> = emptyList(),
@@ -135,6 +137,7 @@ fun ChatDrawer(
                 onDeleteMemoryCorrection,
                 contextMemoryText,
                 memoryOperationRunning,
+                contextMemoryStatus,
             )
             3 -> TimelineTab(
                 eventNodes,
@@ -645,6 +648,7 @@ fun MemoryTab(
     onDeleteCorrection: (SessionMemoryCorrectionEntity) -> Unit,
     contextMemoryText: String = "",
     memoryOperationRunning: Boolean = false,
+    contextMemoryStatus: ContextMemoryStatus = ContextMemoryStatus.IDLE,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -676,6 +680,14 @@ fun MemoryTab(
                 Column(Modifier.fillMaxWidth().padding(12.dp)) {
                     Text("长期记忆", style = MaterialTheme.typography.titleMedium)
                     if (memoryOperationRunning) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                    if (contextMemoryStatus.message.isNotEmpty() && !memoryOperationRunning) {
+                        Text(
+                            text = contextMemoryStatus.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 8.dp),
+                        )
+                    }
                     ExpandableMemoryText(contextMemoryText.ifBlank { "暂无长期记忆，可从当前故事线重建。" }, collapsedLines = 6)
                 }
             }

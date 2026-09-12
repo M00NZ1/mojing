@@ -2,6 +2,10 @@ package com.mojing.app.domain.engine
 
 import com.mojing.app.data.remote.ChatMessage
 import com.mojing.app.data.remote.ChatCompletionResult
+import com.mojing.app.data.remote.LlmHttpException
+import com.mojing.app.data.remote.LlmProtocolException
+import com.mojing.app.data.remote.parseRetryAfterMs
+import kotlinx.coroutines.channels.trySendBlocking
 import com.mojing.app.data.remote.executeCancellable
 import com.google.gson.Gson
 import com.google.gson.JsonObject
@@ -37,6 +41,7 @@ class AnthropicAdapter @Inject constructor(
         messages: List<ChatMessage>,
         temperature: Float,
         maxTokens: Int,
+        strictErrors: Boolean = false,
     ): Flow<String> = callbackFlow {
         val url = buildMessagesUrl(baseUrl)
         val key = apiKey.trim().removePrefix("Bearer ").trim()
@@ -66,6 +71,7 @@ class AnthropicAdapter @Inject constructor(
             .build()
 
         val listener = object : EventSourceListener() {
+            private var completed = false
             override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
                 when (type) {
                     "content_block_delta" -> {
@@ -74,11 +80,18 @@ class AnthropicAdapter @Inject constructor(
                             val delta = json.optJSONObject("delta")
                             if (delta != null && delta.optString("type") == "text_delta") {
                                 val text = delta.optString("text", "")
-                                if (text.isNotEmpty()) trySend(text)
+                                if (text.isNotEmpty()) trySendBlocking(text).getOrThrow()
                             }
-                        } catch (_: Exception) {}
+                        } catch (_: Exception) { if (strictErrors) close(LlmProtocolException("invalid_stream")) }
                     }
-                    "message_stop" -> close()
+                    "message_delta" -> if (strictErrors) {
+                        val reason = runCatching { JSONObject(data).optJSONObject("delta")?.optString("stop_reason") }.getOrNull()
+                        if (!reason.isNullOrEmpty() && reason !in setOf("end_turn", "stop_sequence", "null")) {
+                            close(LlmProtocolException(if (reason == "max_tokens") "output_limit" else "incomplete_output"))
+                        }
+                    }
+                    "error" -> if (strictErrors) close(LlmProtocolException("provider_stream_error"))
+                    "message_stop" -> { completed = true; close() }
                 }
             }
 
@@ -88,18 +101,23 @@ class AnthropicAdapter @Inject constructor(
                 response: okhttp3.Response?
             ) {
                 val code = response?.code ?: 0
-                val errorMsg = when (code) {
-                    401 -> "Anthropic API Key \u65e0\u6548"
-                    429 -> "\u8bf7\u6c42\u8fc7\u4e8e\u9891\u7e41\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5"
-                    404 -> "\u6a21\u578b\u540d\u79f0\u9519\u8bef\u6216\u63a5\u53e3\u8def\u5f84\u4e0d\u5bf9"
-                    in 500..599 -> "\u670d\u52a1\u7aef\u6682\u65f6\u4e0d\u53ef\u7528($code)"
-                    else -> t?.message ?: "\u8bf7\u6c42\u5931\u8d25"
+                val requestId = response?.header("request-id") ?: response?.header("x-request-id")
+                val failure = if (response != null && code > 0) LlmHttpException(
+                    status = code,
+                    requestId = requestId,
+                    retryAfterMs = parseRetryAfterMs(response.header("Retry-After")),
+                ) else t ?: java.io.IOException("Streaming request failed")
+                if (strictErrors) close(failure) else {
+                    trySend("__ERROR__${if (code > 0) "HTTP $code" else "请求失败"}")
+                    close()
                 }
-                trySend("__ERROR__$errorMsg")
-                close()
             }
 
-            override fun onClosed(eventSource: EventSource) { close() }
+            override fun onClosed(eventSource: EventSource) {
+                if (completed) close() else if (strictErrors) {
+                    close(java.io.IOException("Streaming response ended before completion"))
+                } else close()
+            }
         }
 
         val eventSource = EventSources.createFactory(client)
@@ -128,7 +146,11 @@ class AnthropicAdapter @Inject constructor(
             .header("anthropic-version", API_VERSION)
             .post(gson.toJson(body).toRequestBody("application/json".toMediaType())).build()
         return client.executeCancellable(request) { response ->
-            check(response.isSuccessful) { "Anthropic 请求失败（HTTP ${response.code}）" }
+            if (!response.isSuccessful) throw LlmHttpException(
+                status = response.code,
+                requestId = response.header("request-id") ?: response.header("x-request-id"),
+                retryAfterMs = parseRetryAfterMs(response.header("Retry-After")),
+            )
             val json = gson.fromJson(response.body?.string().orEmpty(), JsonObject::class.java)
             val content = json.getAsJsonArray("content")?.joinToString("") {
                 val block = it.asJsonObject
@@ -137,7 +159,8 @@ class AnthropicAdapter @Inject constructor(
             val usage = json.getAsJsonObject("usage")
             val input = usage?.get("input_tokens")?.asInt ?: 0
             val output = usage?.get("output_tokens")?.asInt ?: 0
-            ChatCompletionResult(content, input, output, input + output)
+            ChatCompletionResult(content, input, output, input + output,
+                finishReason = if (json.get("stop_reason")?.asString == "max_tokens") "length" else null)
         }
     }
 
@@ -146,4 +169,5 @@ class AnthropicAdapter @Inject constructor(
         return if (b.endsWith("/v1/messages") || b.endsWith("/messages")) b
         else if (b.endsWith("/v1")) "$b/messages" else "$b/v1/messages"
     }
+
 }

@@ -3,6 +3,7 @@ package com.mojing.app.remote
 import com.mojing.app.data.remote.ChatMessage
 import com.mojing.app.data.remote.ChatRequest
 import com.mojing.app.data.remote.LlmApiService
+import com.mojing.app.data.remote.LlmHttpException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
@@ -24,6 +25,47 @@ import java.util.concurrent.TimeUnit
 class LlmApiServiceTest {
 
     private val api = LlmApiService()
+
+    @Test
+    fun structuredOutputUsesProviderSpecificModesWithoutChangingNormalChat() {
+        val request = testRequest().copy(model = "deepseek-flash", jsonOutput = true)
+        val deepseek = api.chatPayload("https://api.deepseek.com", request)
+        assertEquals("disabled", deepseek.getAsJsonObject("thinking").get("type").asString)
+        assertEquals("json_object", deepseek.getAsJsonObject("response_format").get("type").asString)
+        assertTrue(!deepseek.has("jsonOutput"))
+        val siliconflow = api.chatPayload("https://api.siliconflow.cn/v1", request.copy(model = "Pro/deepseek-ai/DeepSeek-V3.2"))
+        assertEquals(false, siliconflow.get("enable_thinking").asBoolean)
+        assertEquals("json_object", siliconflow.getAsJsonObject("response_format").get("type").asString)
+        for ((url, req) in listOf(
+            "https://api.deepseek.com" to request.copy(jsonOutput = false),
+            "https://custom.test" to request,
+            "https://api.deepseek.com" to request.copy(model = "deepseek-reasoner"),
+        )) {
+            val payload = api.chatPayload(url, req)
+            assertTrue(!payload.has("thinking") && !payload.has("enable_thinking") && !payload.has("response_format"))
+        }
+    }
+
+    @Test
+    fun httpFailuresExposeStatusAndBoundedSafeMetadata() = runBlocking {
+        listOf(400, 401, 429).forEach { status ->
+            val server = RawHttpServer { socket ->
+                readRequest(socket)
+                socket.getOutputStream().use { output ->
+                    val body = "{\"error\":{\"code\":\"secret-provider-body\"}}"
+                    output.write("HTTP/1.1 $status Error\r\nContent-Type: application/json\r\nX-Request-Id: safe-id\r\nContent-Length: ${body.length}\r\n\r\n$body".toByteArray())
+                }
+            }
+            server.start()
+            try {
+                val error = runCatching { api.chatCompletion("key-not-for-logs", server.baseUrl, testRequest()) }.exceptionOrNull()
+                assertTrue(error is LlmHttpException)
+                assertEquals(status, (error as LlmHttpException).status)
+                assertEquals("safe-id", error.requestId)
+                assertTrue(error.message.orEmpty().contains("secret-provider-body").not())
+            } finally { server.close() }
+        }
+    }
 
     @Test
     fun normalizeOpenAiCompatibleBaseKeepsV1Path() {
