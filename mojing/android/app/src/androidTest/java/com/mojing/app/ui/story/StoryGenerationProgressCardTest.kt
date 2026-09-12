@@ -48,4 +48,40 @@ class StoryGenerationProgressCardTest {
         rule.onNodeWithText("重试").assertExists().performClick()
         assertEquals(true, retried)
     }
+
+    @Test fun failedSaveOffersFullCopyAndLocalRetryOnNarrowScreen() {
+        var copied = false
+        var retried = false
+        rule.setContent {
+            MaterialTheme {
+                Box(Modifier.width(320.dp)) {
+                    StoryGenerationProgressCard(
+                        StorySimulationState(hasPendingStory = true, generationStage = "保存失败", error = "正文已生成，保存未完成。可重试保存或复制完整正文。"),
+                        onStop = {}, onCopy = {}, onRetry = { retried = true },
+                        onCopyCompleted = { copied = true },
+                    )
+                }
+            }
+        }
+        rule.onNodeWithText("复制完整正文").assertExists().performClick()
+        rule.onNodeWithText("重试保存").assertExists().performClick()
+        assertEquals(true, copied)
+        assertEquals(true, retried)
+    }
+
+    @Test fun navigationFailureOffersExistingSession() {
+        var opened = false
+        rule.setContent {
+            MaterialTheme {
+                Box(Modifier.width(320.dp)) {
+                    StoryGenerationProgressCard(
+                        StorySimulationState(savedSessionId = 42L, generationStage = "已保存", error = "小说已保存，请重新打开会话。"),
+                        onStop = {}, onCopy = {}, onRetry = { opened = true },
+                    )
+                }
+            }
+        }
+        rule.onNodeWithText("打开已保存的会话").assertExists().performClick()
+        assertEquals(true, opened)
+    }
 }

@@ -5,8 +5,6 @@ import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
-import com.mojing.app.data.local.dao.MessageDao
-import com.mojing.app.data.local.dao.SessionDao
 import com.mojing.app.data.local.dao.WorldTemplateDao
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.EncyclopediaEntity
@@ -55,6 +53,8 @@ data class StorySimulationState(
     val selectedCharacterIds: Set<Long> = emptySet(),
     val isGenerating: Boolean = false,
     val isSaving: Boolean = false,
+    val hasPendingStory: Boolean = false,
+    val savedSessionId: Long? = null,
     val error: String? = null,
     val generationStage: String? = null,
     val generationModel: String? = null,
@@ -83,8 +83,6 @@ class StorySimulationViewModel @Inject constructor(
     private val encyclopediaDao: EncyclopediaDao,
     private val characterDao: CharacterDao,
     private val createSession: CreateSessionUseCase,
-    private val sessionDao: SessionDao,
-    private val messageDao: MessageDao,
 ) : ViewModel() {
     private val _state = MutableStateFlow(StorySimulationState())
     val state: StateFlow<StorySimulationState> = _state.asStateFlow()
@@ -92,6 +90,8 @@ class StorySimulationViewModel @Inject constructor(
     private var encyclopediaLoadJob: Job? = null
     private var characterLoadJob: Job? = null
     private val creationJob = AtomicReference<Job?>(null)
+    private data class PendingStory(val context: StoryCreationContext, val result: com.mojing.app.domain.story.StoryWritingResult)
+    private var pendingStory: PendingStory? = null
     private var generationToken = 0L
     private var generationStartedAtNanos = 0L
 
@@ -176,7 +176,7 @@ class StorySimulationViewModel @Inject constructor(
     )
 
     private fun updateInput(transform: (StorySimulationState) -> StorySimulationState) {
-        _state.update { transform(it).copy(error = null) }
+        _state.update { if (it.hasPendingStory || it.isSaving || it.savedSessionId != null) it else transform(it).copy(error = null) }
     }
 
     fun updatePremise(value: String) = updateInput { it.copy(premise = value) }
@@ -204,6 +204,18 @@ class StorySimulationViewModel @Inject constructor(
 
     fun createStory(onCreated: (Long) -> Unit) {
         if (creationJob.get() != null) return
+        if (_state.value.savedSessionId != null) { openSavedStory(onCreated); return }
+        if (pendingStory != null) {
+            val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+                try { savePendingStory(onCreated) }
+                finally { releaseCreationJob() }
+            }
+            if (!creationJob.compareAndSet(null, job)) return
+            if (!job.start() && creationJob.compareAndSet(job, null)) {
+                _state.update { it.copy(isSaving = false) }
+            }
+            return
+        }
         val snapshot = _state.value
         if (snapshot.premise.isBlank()) {
             _state.update { it.copy(error = "请先填写故事背景") }
@@ -283,70 +295,99 @@ class StorySimulationViewModel @Inject constructor(
                         _state.update { it.copy(isGenerating = false, generationStage = "已丢弃（输入已变化）", error = "输入或绑定已变化，请重新生成") }
                     return@launch
                 }
-                _state.update { it.copy(isGenerating = false, generationStage = "保存到本地", isSaving = true) }
-                val sessionId = withContext(NonCancellable) {
-                    val created = createSession.create(
-                        title = "小说 · ${result.title.trim().ifBlank { requestContext.premise.trim().take(24) }}",
-                        summary = requestContext.premise.trim(),
-                        gameplayMode = "小说创作",
-                        template = requestContext.template,
-                        encyclopediaId = requestContext.encyclopedia?.id,
-                        narratorEnabled = true,
-                        narratorName = "小说作者",
-                        choiceEnabled = true,
-                        maxChoices = 3,
-                        antiCheatEnabled = true,
-                        characterIds = requestContext.characters.map { it.id },
-                        allowNoParticipants = true,
-                        worldPromptOverride = StoryCanon.persistentWorldPrompt(
-                            requestContext.premise,
-                            listOf(supplementalContext, characterContext)
-                                .filter(String::isNotBlank)
-                                .joinToString("\n\n"),
-                        ),
-                    )
-                    val savedSessionId = (created as? CreateSessionUseCase.Result.Created)?.sessionId
-                        ?: throw IllegalStateException("无法创建小说会话")
-                    val now = System.currentTimeMillis()
-                    val setup = buildString {
-                        append("【故事背景】\n${requestContext.premise.trim()}")
-                        requestContext.direction.trim().takeIf(String::isNotEmpty)?.let { append("\n\n【接下来希望发生】\n$it") }
-                        requestContext.tone.trim().takeIf(String::isNotEmpty)?.let { append("\n\n【文风与节奏】\n$it") }
-                    }
-                    messageDao.insert(MessageEntity(sessionId = savedSessionId, speakerType = "user", content = setup, createdAt = now))
-                    result.chapters.forEachIndexed { index, chapter ->
-                        val choices = if (index == result.chapters.lastIndex) result.nextChoices else emptyList()
-                        messageDao.insert(
-                            MessageEntity(
-                                sessionId = savedSessionId,
-                                speakerType = "narrator",
-                                content = storyWriting.toMessageContent(chapter, choices),
-                                structuredContentJson = storyWriting.toStructuredJson(chapter, choices),
-                                createdAt = now + index + 1,
-                            ),
-                        )
-                    }
-                    sessionDao.bumpUpdatedAt(savedSessionId)
-                    savedSessionId
-                }
-                ensureActive()
-                _state.update { it.copy(generationStage = "已保存", isSaving = false) }
-                onCreated(sessionId)
+                pendingStory = PendingStory(requestContext, result)
+                _state.update { it.copy(isGenerating = false, hasPendingStory = true) }
+                savePendingStory(onCreated)
             } catch (_: CancellationException) {
-                _state.update { it.copy(isGenerating = false, generationStage = "已停止") }
+                _state.update { it.copy(isGenerating = false, generationStage = if (it.savedSessionId != null) "已保存" else "已停止") }
             } catch (_: Exception) {
-                _state.update { it.copy(error = "小说已生成，但保存到本机会话失败，请重试", generationStage = "保存失败") }
+                _state.update { it.copy(error = "创作未能完成，请重试", generationStage = "失败") }
             } finally {
-                val currentJob = currentCoroutineContext()[Job]
-                if (creationJob.compareAndSet(currentJob, null)) {
-                    _state.update { it.copy(isGenerating = false, isSaving = false) }
-                }
+                releaseCreationJob()
             }
         }
         if (!creationJob.compareAndSet(null, job)) return
         if (!job.start() && creationJob.compareAndSet(job, null)) {
             _state.update { it.copy(isGenerating = false, isSaving = false) }
         }
+    }
+
+    private suspend fun releaseCreationJob() {
+        if (creationJob.compareAndSet(currentCoroutineContext()[Job], null)) {
+            _state.update { it.copy(isGenerating = false, isSaving = false) }
+        }
+    }
+
+    private suspend fun savePendingStory(onCreated: (Long) -> Unit) {
+        val pending = pendingStory ?: return
+        val context = pending.context
+        val result = pending.result
+        _state.update { it.copy(isGenerating = false, isSaving = true, generationStage = "保存到本地", error = null) }
+        try {
+            withContext(NonCancellable) {
+                val now = System.currentTimeMillis()
+                val setup = buildString {
+                    append("【故事背景】\n${context.premise.trim()}")
+                    context.direction.trim().takeIf(String::isNotEmpty)?.let { append("\n\n【接下来希望发生】\n$it") }
+                    context.tone.trim().takeIf(String::isNotEmpty)?.let { append("\n\n【文风与节奏】\n$it") }
+                }
+                val messages = listOf(MessageEntity(sessionId = 0L, speakerType = "user", content = setup, createdAt = now)) +
+                    result.chapters.mapIndexed { index, chapter ->
+                        val choices = if (index == result.chapters.lastIndex) result.nextChoices else emptyList()
+                        MessageEntity(sessionId = 0L, speakerType = "narrator",
+                            content = storyWriting.toMessageContent(chapter, choices),
+                            structuredContentJson = storyWriting.toStructuredJson(chapter, choices), createdAt = now + index + 1)
+                    }
+                val worldContext = buildString {
+                    context.template?.let { appendLine("世界模板：${it.label}\n${it.summary}\n${it.worldPrompt}") }
+                    context.encyclopedia?.let { appendLine("世界百科：${it.name}\n${it.description}\n${it.worldPrompt}") }
+                    context.characters.forEach { appendLine("${it.name}：${it.personaPrompt.take(1600)}") }
+                }.trim()
+                val created = createSession.create(
+                    title = "小说 · ${result.title.trim().ifBlank { context.premise.trim().take(24) }}",
+                    summary = context.premise.trim(), gameplayMode = "小说创作", template = context.template,
+                    encyclopediaId = context.encyclopedia?.id, narratorEnabled = true, narratorName = "小说作者",
+                    choiceEnabled = true, maxChoices = 3, antiCheatEnabled = true,
+                    characterIds = context.characters.map { it.id }, allowNoParticipants = true,
+                    worldPromptOverride = StoryCanon.persistentWorldPrompt(context.premise, worldContext),
+                    initialMessages = messages,
+                )
+                val id = (created as? CreateSessionUseCase.Result.Created)?.sessionId
+                    ?: error("Story session could not be created")
+                pendingStory = null
+                _state.update { it.copy(hasPendingStory = false, savedSessionId = id, generationStage = "已保存", isSaving = false) }
+            }
+            currentCoroutineContext().ensureActive()
+            openSavedStory(onCreated)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            _state.update { it.copy(isSaving = false, generationStage = "保存失败", error = "正文已生成，保存未完成。可重试保存或复制完整正文。") }
+        }
+    }
+
+    private fun openSavedStory(onCreated: (Long) -> Unit) {
+        val id = _state.value.savedSessionId ?: return
+        _state.update { it.copy(error = null) }
+        try { onCreated(id) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { _state.update { it.copy(error = "小说已保存，请重新打开会话。", generationStage = "已保存") } }
+    }
+
+    fun pendingStoryText(): String = pendingStory?.result?.let { result ->
+        buildString {
+            appendLine(result.title)
+            result.chapters.forEach { append("\n${it.title}\n\n${it.content}\n") }
+            append("\n后续走向\n")
+            append(result.nextChoices.joinToString("\n"))
+        }
+    }.orEmpty()
+
+    fun discardPendingStory(): Boolean {
+        if (_state.value.isSaving || _state.value.isGenerating || pendingStory == null) return false
+        pendingStory = null
+        _state.update { it.copy(hasPendingStory = false, error = null, preview = "", generationStage = null, generationModel = null) }
+        return true
     }
 
     fun stopGeneration(): Boolean {

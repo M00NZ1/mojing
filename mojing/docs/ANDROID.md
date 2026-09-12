@@ -134,6 +134,10 @@ JVM 测试位于 `app/src/test/`，Room 与 Compose 测试位于 `app/src/androi
 
 ## 小说开篇与记忆请求
 
+`CreateSessionUseCase.create(initialMessages)` 通过 `SessionCreationTransaction` 在同一 Room 事务中写入会话、世界配置、角色与开篇消息。任一写入失败均回滚；消息继续使用现有 DAO 更新检索字段。
+
+`StorySimulationViewModel` 在完整生成结果与本地保存之间保留待保存状态。保存失败后的重试只执行本地写入，并复用生成时的设定；保存成功先记录会话 ID，再执行导航。页面提供复制完整正文、重试保存与确认放弃。待保存结果保留在 ViewModel 内存中，进程重启恢复列入后续工作。
+
 小说开篇通过 `LlmRetry.chatCompletionStreamingWithRetry` 消费流式正文，保留完成协议校验、取消传播与有界重试。请求总时限为 5 分钟，OpenAI 兼容线路读取空闲上限为 90 秒；收到正文后不自动重发。`StoryStreamingPreviewParser` 增量提取章节内容，界面保留最近 12,000 字符的预览。
 
 通用记忆使用明确的对象和数组结构，解析时校验嵌套字段类型。文本字段收到字符串数组时逐项换行保留，事实列表收到单个字符串时转换为单项列表；对象、数字和空值不作为文本事实接收。自动失败按会话、故事线和请求线路短暂冷却；重建与清空会重置冷却，过期修订不推进来源位置。

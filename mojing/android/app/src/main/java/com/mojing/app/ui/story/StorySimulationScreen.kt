@@ -77,7 +77,7 @@ fun StorySimulationScreen(
     var pendingNavigation by remember { mutableStateOf<(() -> Unit)?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    val isBusy = state.isGenerating || state.isSaving
+    val isBusy = state.isGenerating || state.isSaving || state.hasPendingStory || state.savedSessionId != null
 
     fun dismissStopDialog() {
         showStopAndLeaveDialog = false
@@ -87,7 +87,7 @@ fun StorySimulationScreen(
     fun requestNavigation(action: () -> Unit) {
         when {
             state.isSaving -> showSavingDialog = true
-            state.isGenerating -> {
+            state.isGenerating || state.hasPendingStory -> {
                 pendingNavigation = action
                 showStopAndLeaveDialog = true
             }
@@ -95,8 +95,8 @@ fun StorySimulationScreen(
         }
     }
 
-    LaunchedEffect(state.isGenerating, state.isSaving) {
-        if (!state.isGenerating && !state.isSaving) {
+    LaunchedEffect(state.isGenerating, state.isSaving, state.hasPendingStory) {
+        if (!state.isGenerating && !state.isSaving && !state.hasPendingStory) {
             dismissStopDialog()
             showSavingDialog = false
         }
@@ -309,7 +309,9 @@ fun StorySimulationScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            StoryGenerationProgressCard(state, onStop = { viewModel.stopGeneration() }, onCopy = clipboardManager::setText, onRetry = { viewModel.clearError(); viewModel.createStory(onOpenSession) })
+            StoryGenerationProgressCard(state, onStop = { viewModel.stopGeneration() }, onCopy = clipboardManager::setText,
+                onRetry = { viewModel.createStory(onOpenSession) },
+                onCopyCompleted = { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(viewModel.pendingStoryText())) })
             when {
                 state.isGenerating -> Unit
                 state.isSaving -> Button(
@@ -324,6 +326,8 @@ fun StorySimulationScreen(
                     Spacer(Modifier.width(8.dp))
                     Text("正在保存到本地…")
                 }
+                state.hasPendingStory -> TextButton(onClick = { requestNavigation {} }) { Text("放弃本次正文") }
+                state.savedSessionId != null -> Unit
                 else -> Button(
                     onClick = { focusManager.clearFocus(); viewModel.createStory(onOpenSession) },
                     enabled = state.premise.isNotBlank(),
@@ -350,8 +354,8 @@ fun StorySimulationScreen(
     if (showStopAndLeaveDialog) {
         AlertDialog(
             onDismissRequest = { dismissStopDialog() },
-            title = { Text("停止生成并离开？") },
-            text = { Text("当前小说还在生成。停止后不会保存这次未完成的结果，你填写的故事设定会继续保留。") },
+            title = { Text(if (state.hasPendingStory) "放弃尚未保存的正文？" else "停止生成并离开？") },
+            text = { Text(if (state.hasPendingStory) "完整正文仍保留在此页。可以返回重试保存或复制，放弃后将清除本次生成结果。" else "当前小说还在生成。停止后不会保存这次未完成的结果，你填写的故事设定会继续保留。") },
             confirmButton = {
                 TextButton(onClick = {
                     if (state.isSaving) {
@@ -361,11 +365,11 @@ fun StorySimulationScreen(
                     }
                     val action = pendingNavigation
                     dismissStopDialog()
-                    if (viewModel.stopGeneration()) action?.invoke()
-                }) { Text("停止并离开") }
+                    if (if (state.hasPendingStory) viewModel.discardPendingStory() else viewModel.stopGeneration()) action?.invoke()
+                }) { Text(if (state.hasPendingStory) "放弃正文" else "停止并离开") }
             },
             dismissButton = {
-                TextButton(onClick = { dismissStopDialog() }) { Text("继续生成") }
+                TextButton(onClick = { dismissStopDialog() }) { Text(if (state.hasPendingStory) "留在此页" else "继续生成") }
             },
         )
     }

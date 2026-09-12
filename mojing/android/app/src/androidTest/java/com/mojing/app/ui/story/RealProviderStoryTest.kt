@@ -104,8 +104,7 @@ class RealProviderStoryTest {
             rule.activity.actionBar?.hide()
             vm = StorySimulationViewModel(StoryWritingUseCase(retry), storage,
                 database.worldTemplateDao(), database.encyclopediaDao(), database.characterDao(),
-                CreateSessionUseCase(SessionCreationTransaction(database), database.characterDao(), database.worldTemplateDao(), storage),
-                database.sessionDao(), database.messageDao())
+                CreateSessionUseCase(SessionCreationTransaction(database), database.characterDao(), database.worldTemplateDao(), storage))
             store.put("provider-story", vm)
         }
         rule.setContent { MoJingTheme { StorySimulationScreen(rememberNavController(), { openedSession = it }, vm) } }

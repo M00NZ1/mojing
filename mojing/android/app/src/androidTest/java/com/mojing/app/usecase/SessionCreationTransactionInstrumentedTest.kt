@@ -8,6 +8,7 @@ import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.SessionEntity
 import com.mojing.app.data.local.entity.SessionParticipantEntity
 import com.mojing.app.data.local.entity.SessionWorldEntity
+import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.domain.usecase.SessionCreationTransaction
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -98,5 +99,30 @@ class SessionCreationTransactionInstrumentedTest {
                 cursor.moveToFirst()
                 cursor.getInt(0)
             }
+    }
+
+    @Test
+    fun failedSecondChapterRollsBackEntireStoryAndRetryWritesOnePackage() = runBlocking {
+        database.openHelper.writableDatabase.execSQL("""
+            CREATE TRIGGER fail_second_chapter BEFORE INSERT ON messages
+            WHEN NEW.content = '第二章正文' BEGIN SELECT RAISE(ABORT, 'injected write failure'); END
+        """.trimIndent())
+        val messages = listOf(
+            MessageEntity(sessionId = 999, speakerType = "user", content = "故事背景"),
+            MessageEntity(sessionId = 999, speakerType = "narrator", content = "第一章正文"),
+            MessageEntity(sessionId = 999, speakerType = "narrator", content = "第二章正文"),
+        )
+        suspend fun write() = createPackage(SessionEntity(title = "完整小说"),
+            SessionWorldEntity(sessionId = 0L), emptyList(), messages)
+        assertNotNull(runCatching { write() }.exceptionOrNull())
+        assertEquals(0, countRows("sessions"))
+        assertEquals(0, countRows("session_worlds"))
+        assertEquals(0, countRows("messages"))
+        database.openHelper.writableDatabase.execSQL("DROP TRIGGER fail_second_chapter")
+        val id = write()
+        assertEquals(1, countRows("sessions"))
+        assertEquals(1, countRows("session_worlds"))
+        val saved = database.messageDao().getNextStoryContextBatch(id, "main", 0L, 10)
+        assertEquals(messages.map { it.content }, saved.map { it.content })
     }
 }

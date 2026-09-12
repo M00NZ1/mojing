@@ -1,6 +1,6 @@
 # 墨境项目状态
 
-更新日期：2026-09-11
+更新日期：2026-09-12
 
 ## 工程
 
@@ -18,6 +18,8 @@
 ## 故事生成与记忆整理
 
 Android 小说开篇采用流式正文预览，显示当前模型、已用时间、首字时间和正文长度。等待、接收、重试、校验与保存分别反馈；停止或失败保留输入和已接收预览，完整正文通过校验后写入会话。请求错误按平台状态、网络和输出完整性分类，日志记录请求阶段与耗时。
+
+Android 开篇将会话、世界配置、角色与全部章节放入同一 Room 事务。保存失败保留当前页面的完整正文和生成时的设定，可重试保存、复制全文或确认放弃；打开会话失败时复用已保存的会话。
 
 通用记忆提示词明确对象、数组及字段类型；解析支持代码围栏、常见响应包装和文本字段的字符串/数组转换。开篇与记忆请求为已适配的 DeepSeek 模型启用 JSON 输出及非推理模式，记忆使用独立的 3,200 Token 输出预算。自动整理失败后短暂冷却，手动重建与清空可立即操作。记忆面板显示本次整理状态，后台结果按故事线隔离。
 
@@ -48,6 +50,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 | 范围 | 源码与结果 | 入口或证据 |
 |---|---|---|
+| Android 开篇保存恢复 | 618 项 JVM 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 7 项数据库事务及创作卡片用例通过，覆盖章节写入失败回滚、完整保存、复制全文、重试保存与重新打开 | `SessionCreationTransactionInstrumentedTest`、`StorySimulationViewModelTest`、`StoryGenerationProgressCardTest`；`.codex-work/story-save-20260912/` |
 | Android 开篇与记忆请求 | 616 项 JVM 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 4 项创作卡片和记忆面板用例通过；两平台真实接口流程完成，字段兼容修正后两平台记忆专项复测通过 | `RealProviderStoryTest`、`StoryGenerationProgressCardTest`、`MemoryPanelPresentationTest`；`.codex-work/generation-20260912/` |
 | Web 消息操作状态 | Web 构建、桌面与 320px 消息操作回归通过；编辑、删除及上下文调整集成回归通过，覆盖生成中禁用、只读入口、结束后恢复和移动端分支操作 | `test-message-generation-actions.mjs`、`test-message-deletion.mjs`，本地 API 模拟 |
 | Web 开局角色校验 | 8 项后端定向测试、Chrome 开局回归与 Web 构建通过，覆盖失效角色零会话写入、角色顺序与去重、人数返回、刷新后保留有效选择并重试 | `test_session_opening_flags.py`、`test-opening-options.mjs` |

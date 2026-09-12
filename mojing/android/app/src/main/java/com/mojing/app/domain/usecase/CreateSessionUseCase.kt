@@ -4,6 +4,7 @@ import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.WorldTemplateDao
 import com.mojing.app.data.local.entity.SessionEntity
+import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.local.entity.SessionParticipantEntity
 import com.mojing.app.data.local.entity.SessionWorldEntity
 import com.mojing.app.data.local.entity.WorldTemplateEntity
@@ -82,6 +83,7 @@ class CreateSessionUseCase @Inject constructor(
         characterIds: List<Long> = emptyList(),
         allowNoParticipants: Boolean = false,
         worldPromptOverride: String? = null,
+        initialMessages: List<MessageEntity> = emptyList(),
     ): Result {
         val validIds = characterIds.distinct()
         if (validIds.isEmpty() && !allowNoParticipants) return Result.EmptyParticipants
@@ -124,6 +126,7 @@ class CreateSessionUseCase @Inject constructor(
             session,
             world,
             participants,
+            initialMessages,
         )
         return Result.Created(sessionId)
     }
