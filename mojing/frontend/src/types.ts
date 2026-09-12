@@ -40,6 +40,15 @@ export type StoryWritingResult = {
   status: 'created';
 };
 
+export type StoryRequestState = {
+  status: 'missing' | 'draft' | 'saved';
+  request_id: string;
+  title?: string;
+  text?: string;
+  chapter_count?: number;
+  session_id?: number;
+};
+
 export type SessionBranch = {
   branch_id: string;
   label: string;

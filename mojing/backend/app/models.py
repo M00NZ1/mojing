@@ -48,6 +48,20 @@ class StoryRequestReceiptModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
 
 
+class StoryGenerationDraftModel(Base):
+    """完整故事正文暂存；仅用于带 request_id 的可恢复请求。"""
+
+    __tablename__ = "story_generation_drafts"
+
+    request_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    draft_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    context_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    draft_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
+
+
 class LlmCostRecordModel(Base):
     """LLM 调用成本记录。"""
 

@@ -43,6 +43,7 @@ async function newContext({ width = 390, draft = null } = {}) {
     if (url.hostname !== '127.0.0.1' || ![String(port), String(apiPort)].includes(url.port)) return route.abort();
     if (url.port === String(port)) return route.continue();
     const endpoint = url.pathname.replace('/api', '');
+    if (endpoint.startsWith('/story-simulations/requests/')) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status: 'missing', request_id: endpoint.split('/').at(-1) }) });
     if (route.request().method() === 'GET' && endpoint === '/characters') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
     }

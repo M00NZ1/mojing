@@ -215,7 +215,7 @@ def test_commit_failure_rolls_back_all_rows_and_create_all_is_repeatable(local_a
         db.execute(text("CREATE TRIGGER reject_story_receipt BEFORE INSERT ON story_request_receipts BEGIN SELECT RAISE(ABORT, 'fixture failure'); END"))
         db.commit()
     with TestClient(app, raise_server_exceptions=False) as client:
-        assert client.post("/api/story-simulations", json=request).status_code == 500
+        assert client.post("/api/story-simulations", json=request).status_code == 503
         with Session() as db:
             assert db.scalar(select(ChatSessionModel)) is None
             assert db.scalar(select(MessageModel)) is None

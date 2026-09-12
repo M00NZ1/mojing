@@ -910,6 +910,15 @@ class StoryWritingResult(BaseModel):
     status: Literal["created"] = "created"
 
 
+class StoryGenerationRequestStatus(BaseModel):
+    status: Literal["missing", "draft", "saved"]
+    request_id: str
+    title: str | None = None
+    text: str | None = None
+    chapter_count: int | None = None
+    session_id: int | None = None
+
+
 class LocalConfigUpdate(BaseModel):
     default_world_template_id: str | None = None
     default_narrator_enabled: bool | None = None

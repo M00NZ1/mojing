@@ -53,6 +53,7 @@ import type {
   WorldTemplate,
   StoryWritingPayload,
   StoryWritingResult,
+  StoryRequestState,
 } from '../types';
 
 import { friendlyFetchError } from '../utils/userFacingError';
@@ -344,6 +345,12 @@ export const api = {
       body: JSON.stringify(payload),
       signal,
     });
+  },
+  getStoryRequestState(requestId: string, signal?: AbortSignal) {
+    return request<StoryRequestState>(`/story-simulations/requests/${encodeURIComponent(requestId)}`, { signal });
+  },
+  discardStoryDraft(requestId: string) {
+    return request<{ deleted: boolean }>(`/story-simulations/requests/${encodeURIComponent(requestId)}/draft`, { method: 'DELETE' });
   },
   getSession(sessionId: number) {
     return request<SessionItem>(`/sessions/${sessionId}`);

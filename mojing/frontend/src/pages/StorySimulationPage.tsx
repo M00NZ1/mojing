@@ -6,6 +6,8 @@ import { useBeforeUnload, useBlocker, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { confirmModal } from '../components/ConfirmModal';
 import CreationHomeLink from '../components/CreationHomeLink';
+import InlineQueryError from '../components/InlineQueryError';
+import WorldResultText from '../components/WorldResultText';
 import StorySimulationForm, { type StorySimulationFormValues } from '../components/StorySimulationForm';
 import type { StoryWritingPayload } from '../types';
 import { shouldBlockStoryGenerationNavigation } from '../utils/storyGenerationNavigation';
@@ -139,6 +141,30 @@ export default function StorySimulationPage() {
     },
   });
 
+  const requestStateQuery = useQuery({
+    queryKey: ['story-request', values.request_id],
+    queryFn: ({ signal }) => api.getStoryRequestState(values.request_id!, signal),
+    enabled: Boolean(values.request_id) && !preparing && !createMutation.isPending && completedSessionId === null,
+    retry: false,
+  });
+  const recovered = requestStateQuery.data;
+  const discardMutation = useMutation({
+    mutationFn: api.discardStoryDraft,
+    onSuccess: (_, requestId) => {
+      setValues((current) => current.request_id === requestId ? { ...current, request_id: undefined } : current);
+      setError('');
+      setNotice('已放弃生成正文，原输入仍然保留。');
+    },
+    onError: (reason) => setError(reason instanceof Error ? reason.message : '放弃正文失败，请重试'),
+  });
+  const discardRecoveredDraft = async () => {
+    const requestId = valuesRef.current.request_id;
+    if (!requestId || discardMutation.isPending || createMutation.isPending) return;
+    if (await confirmModal('放弃生成正文', '这次生成的正文将被删除，原输入会保留。是否继续？', 'warning')) {
+      if (mountedRef.current && valuesRef.current.request_id === requestId) discardMutation.mutate(requestId);
+    }
+  };
+
   const generationNavigationBlocker = useBlocker(({ currentLocation, nextLocation }) => (
     shouldBlockStoryGenerationNavigation(
       createMutation.isPending,
@@ -202,9 +228,9 @@ export default function StorySimulationPage() {
     event.returnValue = '';
   }, [createMutation.isPending]));
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (submissionLockedRef.current || createMutation.isPending) return;
+  const handleSubmit = (event?: FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
+    if (submissionLockedRef.current || createMutation.isPending || discardMutation.isPending) return;
     submissionLockedRef.current = true;
     setPreparing(true);
     const submittedValues = { ...valuesRef.current, request_id: valuesRef.current.request_id ?? newStoryRequestId() };
@@ -243,6 +269,23 @@ export default function StorySimulationPage() {
         </div>
         <CreationHomeLink />
       </header>
+      {values.request_id && !createMutation.isPending && requestStateQuery.isFetching && <p role="status">正在读取本次创作…</p>}
+      {values.request_id && !createMutation.isPending && requestStateQuery.isError && <InlineQueryError
+        message="本次创作结果读取失败" error={requestStateQuery.error} retrying={requestStateQuery.isFetching}
+        onRetry={() => { void requestStateQuery.refetch(); }} />}
+      {recovered?.status === 'draft' && <section className="page-card" aria-label="待保存的小说正文">
+        <div className="card-header"><h2>{recovered.title || '小说正文已就绪'}</h2><span>{recovered.chapter_count} 章</span></div>
+        <p>正文已保留，继续保存会直接创建会话。</p>
+        <WorldResultText key={recovered.request_id} text={recovered.text || ''} label="小说正文" />
+        <div className="world-result-text-actions">
+          <button type="button" className="btn btn-primary" disabled={preparing || createMutation.isPending || discardMutation.isPending} onClick={() => { handleSubmit(); }}>继续保存并打开</button>
+          <button type="button" className="btn btn-ghost" disabled={preparing || createMutation.isPending || discardMutation.isPending} onClick={() => { void discardRecoveredDraft(); }}>放弃正文</button>
+        </div>
+      </section>}
+      {recovered?.status === 'saved' && recovered.session_id && <section className="page-card" aria-label="已保存的创作会话">
+        <h2>{recovered.title || '本次创作已保存'}</h2>
+        <button type="button" className="btn btn-primary" disabled={preparing || createMutation.isPending} onClick={() => { handleSubmit(); }}>打开已保存会话</button>
+      </section>}
       {['unavailable', 'conflict', 'unreadable'].includes(draftStatus) && (
         <section className="page-card" role="status" aria-label="草稿保存状态">
           <p>{draftStatus === 'unavailable' ? '草稿尚未保存，本页输入仍然保留。' : draftStatus === 'conflict' ? '其他页面已更新草稿，本页输入尚未覆盖已保存内容。' : '已保存的草稿暂时无法读取，本页输入仍然保留。'}</p>
@@ -253,7 +296,7 @@ export default function StorySimulationPage() {
           </div>
         </section>
       )}
-      <StorySimulationForm
+      {(!values.request_id || recovered?.status === 'missing' || recovered?.status === 'saved') && <StorySimulationForm
         values={values}
         onChange={(patch) => { setValues((current) => ({ ...current, ...patch, request_id: undefined })); setError(''); setNotice(''); }}
         onSubmit={handleSubmit}
@@ -262,7 +305,7 @@ export default function StorySimulationPage() {
         charactersQuery={charactersQuery}
         templatesQuery={templatesQuery}
         encyclopediasQuery={encyclopediasQuery}
-      />
+      />}
       {error && <div className="story-simulation-error" role="alert">{error}</div>}
       {notice && <div className="story-simulation-notice" role="status">{notice}</div>}
       {createMutation.isPending && (

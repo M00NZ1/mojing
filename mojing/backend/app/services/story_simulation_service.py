@@ -8,13 +8,14 @@ from typing import Awaitable, Callable
 
 from fastapi import HTTPException
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..models import (
     CharacterModel,
     ChatSessionModel,
     MessageModel,
+    StoryGenerationDraftModel,
     SessionParticipantModel,
     SessionWorldModel,
     StoryRequestReceiptModel,
@@ -32,6 +33,7 @@ from .story_rules import (
     story_temperature,
 )
 from .story_request_receipt import RECEIPT_VERSION, claim_request, find_receipt, payload_hash, release_request
+from .story_generation_draft import load_generation_draft, save_generation_draft
 
 
 @dataclass(frozen=True)
@@ -161,6 +163,18 @@ def _load_context(
     return "\n\n".join(context)
 
 
+def _filter_recovered_references(db: Session, payload: StoryWritingRequest) -> StoryWritingRequest:
+    """保留原请求 hash，避免暂存重放引用已删除的本地资料。"""
+    template_id = payload.template_id
+    if template_id and db.scalar(select(WorldTemplateModel).where(WorldTemplateModel.template_id == template_id)) is None:
+        template_id = None
+    encyclopedia_id = payload.encyclopedia_id
+    if encyclopedia_id is not None and db.get(WorldEncyclopediaModel, encyclopedia_id) is None:
+        encyclopedia_id = None
+    character_ids = [character_id for character_id in dict.fromkeys(payload.character_ids) if db.get(CharacterModel, character_id) is not None]
+    return payload.model_copy(update={"template_id": template_id, "encyclopedia_id": encyclopedia_id, "character_ids": character_ids})
+
+
 def _build_writing_prompt(payload: StoryWritingRequest, context: str, model: str = "") -> str:
     return f"""请把用户提供的故事背景直接写成长篇小说开篇，共 {payload.chapter_count} 章。
 只返回合法 JSON，不要 Markdown 或解释：
@@ -195,28 +209,50 @@ async def _create_story_session_impl(
     is_disconnected: DisconnectCheck | None = None,
     request_id: str | None = None,
     request_payload_hash: str | None = None,
+    stored_draft: StoryDraft | None = None,
+    stored_context: str | None = None,
 ) -> StoryWritingResult:
     client = None
+    recovery_available = stored_draft is not None
     try:
-        context = _load_context(db, payload.template_id, payload.encyclopedia_id, payload.character_ids)
-        client, model = build_public_async_text_client(db)
-        raw = await _cancelable_story_call(
-            client,
-            model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "你是长篇小说作者。直接写有连续性的小说正文，并严格遵守 JSON 输出协议。",
-                },
-                {"role": "user", "content": _build_writing_prompt(payload, context, model)},
-            ],
-            temperature=story_temperature(model),
-            max_tokens=8000,
-            is_disconnected=is_disconnected,
-        )
-        draft = parse_story_draft(raw, payload.chapter_count, payload.premise)
-        await client.close()
-        client = None
+        context = stored_context if stored_context is not None else _load_context(db, payload.template_id, payload.encyclopedia_id, payload.character_ids)
+        if stored_draft is not None:
+            draft = stored_draft
+        else:
+            client, model = build_public_async_text_client(db)
+            raw = await _cancelable_story_call(
+                client,
+                model=model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你是长篇小说作者。直接写有连续性的小说正文，并严格遵守 JSON 输出协议。",
+                    },
+                    {"role": "user", "content": _build_writing_prompt(payload, context, model)},
+                ],
+                temperature=story_temperature(model),
+                max_tokens=8000,
+                is_disconnected=is_disconnected,
+            )
+            draft = parse_story_draft(raw, payload.chapter_count, payload.premise)
+            if request_id is not None and request_payload_hash is not None:
+                stored_row = save_generation_draft(
+                    db,
+                    request_id=request_id,
+                    payload=payload,
+                    payload_hash=request_payload_hash,
+                    context_text=context,
+                    draft_json={
+                        "title": draft.title,
+                        "chapters": [chapter.model_dump(mode="json") for chapter in draft.chapters],
+                        "next_choices": draft.next_choices,
+                    },
+                )
+                draft = parse_story_draft(json.dumps(stored_row.draft_json, ensure_ascii=False), payload.chapter_count, payload.premise)
+                context = stored_row.context_text
+            recovery_available = request_id is not None
+            await client.close()
+            client = None
         if is_disconnected is not None and await is_disconnected():
             raise StoryGenerationCancelled("小说生成已停止")
 
@@ -285,6 +321,9 @@ async def _create_story_session_impl(
                 session_created_at=session.created_at,
                 result_json=result.model_dump(mode="json"),
             ))
+            draft_row = db.get(StoryGenerationDraftModel, request_id)
+            if draft_row is not None:
+                db.delete(draft_row)
         db.commit()
         return result
     except IntegrityError:
@@ -293,6 +332,13 @@ async def _create_story_session_impl(
             recovered = find_receipt(db, request_id, request_payload_hash)
             if recovered is not None:
                 return recovered
+            if recovery_available:
+                raise HTTPException(status_code=503, detail="正文已完整暂存，但会话保存失败，请稍后重试")
+        raise
+    except SQLAlchemyError as exc:
+        db.rollback()
+        if recovery_available:
+            raise HTTPException(status_code=503, detail="正文已完整暂存，但会话保存失败，请稍后重试") from exc
         raise
     except (HTTPException, StoryGenerationCancelled):
         db.rollback()
@@ -329,6 +375,22 @@ async def create_story_session(
         if cached is not None:
             return cached
         db.rollback()
+        stored = load_generation_draft(db, request_id, expected_hash)
+        if stored is not None:
+            stored_payload = _filter_recovered_references(
+                db,
+                StoryWritingRequest.model_validate({**stored.payload_json, "request_id": request_id}),
+            )
+            stored_story = parse_story_draft(json.dumps(stored.draft_json, ensure_ascii=False), stored_payload.chapter_count, stored_payload.premise)
+            return await _create_story_session_impl(
+                db,
+                stored_payload,
+                is_disconnected=is_disconnected,
+                request_id=request_id,
+                request_payload_hash=expected_hash,
+                stored_draft=stored_story,
+                stored_context=stored.context_text,
+            )
         return await _create_story_session_impl(
             db,
             payload,

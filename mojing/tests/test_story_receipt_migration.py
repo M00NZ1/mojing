@@ -29,3 +29,26 @@ def test_story_receipt_upgrade_repeat_and_code_rollback_preserve_data(tmp_path):
         assert inspect(connection).get_pk_constraint('story_request_receipts')['constrained_columns'] == ['request_id']
         assert any(i['column_names'] == ['session_id'] for i in inspect(connection).get_indexes('story_request_receipts'))
     engine.dispose()
+
+
+def test_generated_story_draft_migration_preserves_content_on_repeat_and_rollback(tmp_path):
+    path = Path(__file__).resolve().parents[1] / "backend/alembic/versions/20260913_0014_story_generation_drafts.py"
+    spec = spec_from_file_location("story_generation_draft_migration", path)
+    migration = module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    engine = create_engine(f"sqlite:///{tmp_path / 'draft-upgrade.db'}")
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE original_messages (id INTEGER PRIMARY KEY, content TEXT)"))
+        connection.execute(text("INSERT INTO original_messages VALUES (1, '旧对话')"))
+        migration.op = Operations(MigrationContext.configure(connection))
+        migration.upgrade()
+        connection.execute(text("""INSERT INTO story_generation_drafts
+            (request_id, draft_version, payload_hash, payload_json, context_text, draft_json, created_at)
+            VALUES ('request-1', 1, 'hash', '{}', '世界背景', :body, '2026-09-13')"""), {'body': '{"text":"完整正文"}'})
+        migration.upgrade()
+        migration.downgrade()
+        migration.upgrade()
+        assert connection.scalar(text("SELECT content FROM original_messages")) == '旧对话'
+        assert connection.scalar(text("SELECT draft_json FROM story_generation_drafts")) == '{"text":"完整正文"}'
+        assert connection.scalar(text("PRAGMA integrity_check")) == 'ok'
+    engine.dispose()
