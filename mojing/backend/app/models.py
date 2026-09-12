@@ -34,6 +34,19 @@ class ChatSessionModel(Base):
     memory_corrections: Mapped[list["SessionMemoryCorrectionModel"]] = relationship(back_populates="session", cascade="all, delete-orphan")
 
 
+class StoryRequestReceiptModel(Base):
+    """故事生成完成回执；不绑定外键，以便已删除会话可返回 410。"""
+
+    __tablename__ = "story_request_receipts"
+
+    request_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    receipt_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    session_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    session_created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    result_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
+
 
 class LlmCostRecordModel(Base):
     """LLM 调用成本记录。"""

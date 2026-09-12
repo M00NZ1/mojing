@@ -10,7 +10,7 @@ import StorySimulationForm, { type StorySimulationFormValues } from '../componen
 import type { StoryWritingPayload } from '../types';
 import { shouldBlockStoryGenerationNavigation } from '../utils/storyGenerationNavigation';
 import { isAbortError } from '../utils/userFacingError';
-import { clearSubmittedStoryDraft, initialStoryValues as initialValues, readStoryDraft, saveStoryDraft, type StoryDraftStatus } from '../utils/storyDraftStorage';
+import { clearSubmittedStoryDraft, initialStoryValues as initialValues, newStoryRequestId, readStoryDraft, saveStoryDraft, type StoryDraftStatus } from '../utils/storyDraftStorage';
 
 export default function StorySimulationPage() {
   const navigate = useNavigate();
@@ -67,29 +67,30 @@ export default function StorySimulationPage() {
   }, [values, queueDraftSave]);
 
   useEffect(() => {
-    if (!charactersQuery.data) return;
+    if (!charactersQuery.data || values.request_id) return;
     const availableIds = new Set(charactersQuery.data.map((item) => item.id));
     setValues((current) => {
       const characterIds = current.character_ids.filter((id) => availableIds.has(id));
-      return characterIds.length === current.character_ids.length ? current : { ...current, character_ids: characterIds };
+      return characterIds.length === current.character_ids.length ? current : { ...current, character_ids: characterIds, request_id: undefined };
     });
-  }, [charactersQuery.data]);
+  }, [charactersQuery.data, values.request_id]);
 
   useEffect(() => {
-    if (!templatesQuery.data || !values.template_id) return;
+    if (!templatesQuery.data || !values.template_id || values.request_id) return;
     if (!templatesQuery.data.some((item) => item.template_id === values.template_id)) {
-      setValues((current) => ({ ...current, template_id: '' }));
+      setValues((current) => ({ ...current, template_id: '', request_id: undefined }));
     }
-  }, [templatesQuery.data, values.template_id]);
+  }, [templatesQuery.data, values.template_id, values.request_id]);
 
   useEffect(() => {
-    if (!encyclopediasQuery.data || !values.encyclopedia_id) return;
+    if (!encyclopediasQuery.data || !values.encyclopedia_id || values.request_id) return;
     if (!encyclopediasQuery.data.some((item) => String(item.id) === values.encyclopedia_id)) {
-      setValues((current) => ({ ...current, encyclopedia_id: '' }));
+      setValues((current) => ({ ...current, encyclopedia_id: '', request_id: undefined }));
     }
-  }, [encyclopediasQuery.data, values.encyclopedia_id]);
+  }, [encyclopediasQuery.data, values.encyclopedia_id, values.request_id]);
 
   const payload = (values: StorySimulationFormValues): StoryWritingPayload => ({
+    request_id: values.request_id,
     premise: values.premise.trim(),
     direction: values.direction.trim(),
     tone: values.tone.trim(),
@@ -206,9 +207,17 @@ export default function StorySimulationPage() {
     if (submissionLockedRef.current || createMutation.isPending) return;
     submissionLockedRef.current = true;
     setPreparing(true);
-    const submittedValues = valuesRef.current;
+    const submittedValues = { ...valuesRef.current, request_id: valuesRef.current.request_id ?? newStoryRequestId() };
+    valuesRef.current = submittedValues;
+    lastQueuedValuesRef.current = JSON.stringify(submittedValues);
+    setValues(submittedValues);
     void queueDraftSave(submittedValues).then((submittedRaw) => {
       if (!mountedRef.current) { submissionLockedRef.current = false; return; }
+      if (submittedRaw === undefined) {
+        submissionLockedRef.current = false;
+        setNotice('草稿未能保存，请先重试保存或处理草稿冲突，再继续创作。');
+        return;
+      }
       createMutation.mutate({ requestPayload: payload(submittedValues), submittedRaw });
     }).finally(() => { if (mountedRef.current) setPreparing(false); });
   };
@@ -246,7 +255,7 @@ export default function StorySimulationPage() {
       )}
       <StorySimulationForm
         values={values}
-        onChange={(patch) => { setValues((current) => ({ ...current, ...patch })); setError(''); setNotice(''); }}
+        onChange={(patch) => { setValues((current) => ({ ...current, ...patch, request_id: undefined })); setError(''); setNotice(''); }}
         onSubmit={handleSubmit}
         loading={createMutation.isPending || preparing}
         draftStatusText={draftStatus === 'saved' ? '草稿已保存' : draftStatus === 'saving' ? '正在保存草稿…' : '草稿尚未保存'}

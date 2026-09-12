@@ -22,6 +22,7 @@ export type SessionItem = {
 };
 
 export type StoryWritingPayload = {
+  request_id?: string;
   premise: string;
   direction: string;
   tone: string;

@@ -8,6 +8,7 @@ from typing import Awaitable, Callable
 
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -16,6 +17,7 @@ from ..models import (
     MessageModel,
     SessionParticipantModel,
     SessionWorldModel,
+    StoryRequestReceiptModel,
     WorldEncyclopediaModel,
     WorldTemplateModel,
 )
@@ -29,6 +31,7 @@ from .story_rules import (
     filter_story_choices,
     story_temperature,
 )
+from .story_request_receipt import RECEIPT_VERSION, claim_request, find_receipt, payload_hash, release_request
 
 
 @dataclass(frozen=True)
@@ -185,11 +188,13 @@ def _build_writing_prompt(payload: StoryWritingRequest, context: str, model: str
 {context or '无额外资料，以用户输入为准。'}"""
 
 
-async def create_story_session(
+async def _create_story_session_impl(
     db: Session,
     payload: StoryWritingRequest,
     *,
     is_disconnected: DisconnectCheck | None = None,
+    request_id: str | None = None,
+    request_payload_hash: str | None = None,
 ) -> StoryWritingResult:
     client = None
     try:
@@ -266,12 +271,29 @@ async def create_story_session(
                     },
                 )
             )
-        db.commit()
-        return StoryWritingResult(
+        result = StoryWritingResult(
             session_id=session.id,
             title=draft.title,
             chapter_count=len(draft.chapters),
         )
+        if request_id is not None:
+            db.add(StoryRequestReceiptModel(
+                request_id=request_id,
+                receipt_version=RECEIPT_VERSION,
+                payload_hash=request_payload_hash or "",
+                session_id=session.id,
+                session_created_at=session.created_at,
+                result_json=result.model_dump(mode="json"),
+            ))
+        db.commit()
+        return result
+    except IntegrityError:
+        db.rollback()
+        if request_id is not None and request_payload_hash is not None:
+            recovered = find_receipt(db, request_id, request_payload_hash)
+            if recovered is not None:
+                return recovered
+        raise
     except (HTTPException, StoryGenerationCancelled):
         db.rollback()
         raise
@@ -284,3 +306,35 @@ async def create_story_session(
     finally:
         if client is not None:
             await client.close()
+
+
+async def create_story_session(
+    db: Session,
+    payload: StoryWritingRequest,
+    *,
+    is_disconnected: DisconnectCheck | None = None,
+) -> StoryWritingResult:
+    """Generate once per request_id while keeping model wait outside a write transaction."""
+    request_id = payload.request_id
+    if request_id is None:
+        return await _create_story_session_impl(db, payload, is_disconnected=is_disconnected)
+    expected_hash = payload_hash(payload)
+    cached = find_receipt(db, request_id, expected_hash)
+    if cached is not None:
+        return cached
+    db.rollback()
+    await claim_request(request_id)
+    try:
+        cached = find_receipt(db, request_id, expected_hash)
+        if cached is not None:
+            return cached
+        db.rollback()
+        return await _create_story_session_impl(
+            db,
+            payload,
+            is_disconnected=is_disconnected,
+            request_id=request_id,
+            request_payload_hash=expected_hash,
+        )
+    finally:
+        await release_request(request_id)

@@ -7,6 +7,13 @@ export const initialStoryValues: StorySimulationFormValues = {
 };
 export type StoryDraftStatus = 'saved' | 'unavailable' | 'conflict' | 'unreadable';
 
+export function newStoryRequestId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (letter) => {
+    const value = Math.floor(Math.random() * 16);
+    return (letter === 'x' ? value : (value & 3) | 8).toString(16);
+  });
+}
+
 export function readStoryDraft(): { values: StorySimulationFormValues; raw: string | null | undefined; status: StoryDraftStatus } {
   let raw: string | null | undefined;
   try {
@@ -21,6 +28,7 @@ export function readStoryDraft(): { values: StorySimulationFormValues; raw: stri
       template_id: typeof saved.template_id === 'string' ? saved.template_id : '',
       encyclopedia_id: typeof saved.encyclopedia_id === 'string' ? saved.encyclopedia_id : '',
       character_ids: Array.isArray(saved.character_ids) ? saved.character_ids.filter((id: unknown) => Number.isSafeInteger(id) && Number(id) > 0) : [],
+      ...(typeof saved.request_id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(saved.request_id) ? { request_id: saved.request_id } : {}),
     } };
   } catch {
     return { values: initialStoryValues, raw, status: raw === undefined ? 'unavailable' : 'unreadable' };

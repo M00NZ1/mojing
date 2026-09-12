@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
@@ -885,6 +886,14 @@ class StoryWritingRequest(BaseModel):
     template_id: str | None = None
     encyclopedia_id: int | None = None
     character_ids: list[int] = Field(default_factory=list)
+    request_id: str | None = Field(default=None, max_length=128)
+
+    @field_validator("request_id")
+    @classmethod
+    def request_id_must_be_safe(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9._:-]+", value):
+            raise ValueError("request_id 格式不正确")
+        return value
 
 
 class StoryWritingChapter(BaseModel):

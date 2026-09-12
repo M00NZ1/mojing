@@ -34,6 +34,8 @@ npx tsc --noEmit
 
 ### 浏览器回归
 
+`node scripts/test-story-request-retry.mjs` 使用模拟 API 检查响应丢失、刷新后继续、引用资料保留和修改设定后的新请求。
+
 `node scripts/test-story-draft-recovery.mjs` 检查旧创作草稿恢复、保存失败重试、跨页面修订保护、生成成功清理及窄屏按钮点击。使用隔离浏览器与模拟 API。
 
 `node scripts/test-confirm-dialog.mjs` 检查桌面与 320 × 480 小屏的长说明滚动、底部操作和输入法 Escape；只连接独立 Vite 端口。
@@ -149,6 +151,8 @@ Set-Location .\mojing
 ```
 
 该脚本调用 `alembic upgrade head`。数据库迁移实现应包含旧格式读取、重复执行和失败回滚处理。
+
+Web 迁移 `20260913_0013` 新增 `story_request_receipts`，保存版本 1 完成回执、输入摘要与原会话标识；不修改已有消息。升级支持重复执行，回退代码保留回执表，旧版本忽略该表。升级失败可重试，或按升级前备份恢复。当前单进程服务拒绝同编号的并发生成；会话与回执在同一事务提交，并以编号唯一约束阻止重复落库。旧客户端未提供编号时沿用原创建方式。
 
 Android 使用 Room migration，schema 位于 [app/schemas/](../android/app/schemas/)，迁移实现位于 [AppDatabase.kt](../android/app/src/main/java/com/mojing/app/data/local/AppDatabase.kt)。
 

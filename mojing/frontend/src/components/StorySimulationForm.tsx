@@ -10,6 +10,7 @@ export type StorySimulationFormValues = {
   template_id: string;
   encyclopedia_id: string;
   character_ids: number[];
+  request_id?: string;
 };
 
 type Props = {
@@ -72,7 +73,8 @@ export default function StorySimulationForm({ values, charactersQuery, templates
       </fieldset>
       <p className="story-simulation-draft-note">草稿保存在当前浏览器中。保存完成后，刷新或离开仍可继续。</p>
       <p className="story-simulation-muted">生成后会直接进入创作会话。之后可继续输入剧情走向，或让小说作者连续续写。</p>
-      <button className="btn btn-primary story-simulation-submit" type="submit" disabled={loading || !values.premise.trim()}>{loading ? '正在创作小说开篇…' : '生成小说并开始创作'}</button>
+      {values.request_id && <p className="story-simulation-muted">继续时会先查找本次已保存的会话；尚未完成时重新生成。修改设定将开始一次新的创作。</p>}
+      <button className="btn btn-primary story-simulation-submit" type="submit" disabled={loading || !values.premise.trim()}>{loading ? '正在创作小说开篇…' : values.request_id ? '继续本次创作' : '生成小说并开始创作'}</button>
     </form>
   );
 }
