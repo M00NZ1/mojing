@@ -34,6 +34,8 @@ npx tsc --noEmit
 
 ### 浏览器回归
 
+`node scripts/test-story-draft-recovery.mjs` 检查旧创作草稿恢复、保存失败重试、跨页面修订保护、生成成功清理及窄屏按钮点击。使用隔离浏览器与模拟 API。
+
 `node scripts/test-confirm-dialog.mjs` 检查桌面与 320 × 480 小屏的长说明滚动、底部操作和输入法 Escape；只连接独立 Vite 端口。
 
 `node scripts/test-control-states.mjs` 在隔离 Chrome 页面中加载正式样式，检查七套主题的主按钮对比度、禁用悬停和键盘焦点；设置 `SMOKE_OUTPUT` 可保存控件截图。

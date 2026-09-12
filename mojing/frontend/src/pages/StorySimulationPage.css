@@ -1,0 +1,12 @@
+.story-simulation-page {
+  flex-shrink: 0;
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+@media (max-width: 768px) {
+  .story-simulation-page {
+    padding-bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+  }
+}

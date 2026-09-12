@@ -1,4 +1,5 @@
 import type { FormEvent } from 'react';
+import './StorySimulationPage.css';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useBeforeUnload, useBlocker, useNavigate } from 'react-router-dom';
@@ -9,42 +10,43 @@ import StorySimulationForm, { type StorySimulationFormValues } from '../componen
 import type { StoryWritingPayload } from '../types';
 import { shouldBlockStoryGenerationNavigation } from '../utils/storyGenerationNavigation';
 import { isAbortError } from '../utils/userFacingError';
-
-const initialValues: StorySimulationFormValues = {
-  premise: '',
-  direction: '',
-  tone: '有画面感、人物动机清楚、适合连续长篇创作',
-  chapter_count: 2,
-  template_id: '',
-  encyclopedia_id: '',
-  character_ids: [],
-};
-const STORY_DRAFT_STORAGE_KEY = 'mojing:story-simulation-draft:v1';
-
-function loadStoryDraft(): StorySimulationFormValues {
-  if (typeof window === 'undefined') return initialValues;
-  try {
-    const saved = JSON.parse(window.localStorage.getItem(STORY_DRAFT_STORAGE_KEY) ?? '{}') as Partial<StorySimulationFormValues>;
-    const chapterCount = Number(saved.chapter_count);
-    return {
-      premise: typeof saved.premise === 'string' ? saved.premise : initialValues.premise,
-      direction: typeof saved.direction === 'string' ? saved.direction : initialValues.direction,
-      tone: typeof saved.tone === 'string' ? saved.tone : initialValues.tone,
-      chapter_count: [1, 2, 3].includes(chapterCount) ? chapterCount : initialValues.chapter_count,
-      template_id: typeof saved.template_id === 'string' ? saved.template_id : initialValues.template_id,
-      encyclopedia_id: typeof saved.encyclopedia_id === 'string' ? saved.encyclopedia_id : initialValues.encyclopedia_id,
-      character_ids: Array.isArray(saved.character_ids)
-        ? saved.character_ids.filter((id): id is number => Number.isInteger(id) && id > 0)
-        : initialValues.character_ids,
-    };
-  } catch {
-    return initialValues;
-  }
-}
+import { clearSubmittedStoryDraft, initialStoryValues as initialValues, readStoryDraft, saveStoryDraft, type StoryDraftStatus } from '../utils/storyDraftStorage';
 
 export default function StorySimulationPage() {
   const navigate = useNavigate();
-  const [values, setValues] = useState(loadStoryDraft);
+  const [loadedDraft] = useState(readStoryDraft);
+  const [values, setValues] = useState(loadedDraft.values);
+  const [draftStatus, setDraftStatus] = useState<StoryDraftStatus | 'saving'>(loadedDraft.status);
+  const [preparing, setPreparing] = useState(false);
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
+  const ownedRawRef = useRef(loadedDraft.raw);
+  const draftStatusRef = useRef<StoryDraftStatus>(loadedDraft.status);
+  const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+  const lastQueuedValuesRef = useRef<string | null>(null);
+  const saveSequenceRef = useRef(0);
+  const mountedRef = useRef(true);
+  const completedRef = useRef(false);
+  const submissionLockedRef = useRef(false);
+
+  const queueDraftSave = useCallback((next: StorySimulationFormValues, replacement?: { expectedRaw: string | null | undefined }) => {
+    const sequence = ++saveSequenceRef.current;
+    const task = saveQueueRef.current.then(async () => {
+      if (completedRef.current) return undefined;
+      if (!replacement && ['conflict', 'unreadable'].includes(draftStatusRef.current)) {
+        if (mountedRef.current && sequence === saveSequenceRef.current) setDraftStatus(draftStatusRef.current);
+        return undefined;
+      }
+      if (mountedRef.current) setDraftStatus('saving');
+      const result = await saveStoryDraft(next, replacement ? replacement.expectedRaw : ownedRawRef.current);
+      draftStatusRef.current = result.status;
+      if (result.status === 'saved') ownedRawRef.current = result.raw;
+      if (mountedRef.current && sequence === saveSequenceRef.current) setDraftStatus(result.status);
+      return result.status === 'saved' && typeof result.raw === 'string' ? result.raw : undefined;
+    });
+    saveQueueRef.current = task;
+    return task;
+  }, []);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [stopping, setStopping] = useState(false);
@@ -58,12 +60,11 @@ export default function StorySimulationPage() {
   const encyclopediasQuery = useQuery({ queryKey: ['encyclopedias'], queryFn: api.listEncyclopedias });
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(STORY_DRAFT_STORAGE_KEY, JSON.stringify(values));
-    } catch {
-      // 浏览器禁用本机存储时仍允许继续创作，本轮只失去刷新恢复能力。
-    }
-  }, [values]);
+    const serialized = JSON.stringify(values);
+    if (lastQueuedValuesRef.current === serialized || completedRef.current) return;
+    lastQueuedValuesRef.current = serialized;
+    void queueDraftSave(values);
+  }, [values, queueDraftSave]);
 
   useEffect(() => {
     if (!charactersQuery.data) return;
@@ -88,7 +89,7 @@ export default function StorySimulationPage() {
     }
   }, [encyclopediasQuery.data, values.encyclopedia_id]);
 
-  const payload = (): StoryWritingPayload => ({
+  const payload = (values: StorySimulationFormValues): StoryWritingPayload => ({
     premise: values.premise.trim(),
     direction: values.direction.trim(),
     tone: values.tone.trim(),
@@ -98,15 +99,18 @@ export default function StorySimulationPage() {
     character_ids: values.character_ids,
   });
 
-  useEffect(() => () => requestControllerRef.current?.abort(), []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; requestControllerRef.current?.abort(); };
+  }, []);
 
   const createMutation = useMutation({
-    mutationFn: (requestPayload: StoryWritingPayload) => {
+    mutationFn: ({ requestPayload }: { requestPayload: StoryWritingPayload; submittedRaw?: string }) => {
       const controller = new AbortController();
       requestControllerRef.current = controller;
       return api.createStorySession(requestPayload, controller.signal);
     },
-    onMutate: (requestPayload) => {
+    onMutate: ({ requestPayload }) => {
       allowNavigationRef.current = false;
       setCompletedSessionId(null);
       setError('');
@@ -121,15 +125,14 @@ export default function StorySimulationPage() {
       }
       setError(reason instanceof Error ? reason.message : '小说开篇生成失败，请重试');
     },
-    onSuccess: (result) => {
-      try {
-        window.localStorage.removeItem(STORY_DRAFT_STORAGE_KEY);
-      } catch {
-        // 存储不可用不影响已创建会话。
-      }
-      setCompletedSessionId(result.session_id);
+    onSuccess: async (result, request) => {
+      completedRef.current = true;
+      await saveQueueRef.current;
+      await clearSubmittedStoryDraft(request.submittedRaw);
+      if (mountedRef.current) setCompletedSessionId(result.session_id);
     },
     onSettled: () => {
+      submissionLockedRef.current = false;
       requestControllerRef.current = null;
       setStopping(false);
     },
@@ -200,7 +203,20 @@ export default function StorySimulationPage() {
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!createMutation.isPending) createMutation.mutate(payload());
+    if (submissionLockedRef.current || createMutation.isPending) return;
+    submissionLockedRef.current = true;
+    setPreparing(true);
+    const submittedValues = valuesRef.current;
+    void queueDraftSave(submittedValues).then((submittedRaw) => {
+      if (!mountedRef.current) { submissionLockedRef.current = false; return; }
+      createMutation.mutate({ requestPayload: payload(submittedValues), submittedRaw });
+    }).finally(() => { if (mountedRef.current) setPreparing(false); });
+  };
+
+  const replaceDraft = async () => {
+    const observed = readStoryDraft();
+    if (!await confirmModal('保存当前输入', '将用本页内容替换已保存的创作草稿，是否继续？', 'warning')) return;
+    if (mountedRef.current) await queueDraftSave(valuesRef.current, { expectedRaw: observed.raw });
   };
 
   const stopGeneration = () => {
@@ -218,11 +234,22 @@ export default function StorySimulationPage() {
         </div>
         <CreationHomeLink />
       </header>
+      {['unavailable', 'conflict', 'unreadable'].includes(draftStatus) && (
+        <section className="page-card" role="status" aria-label="草稿保存状态">
+          <p>{draftStatus === 'unavailable' ? '草稿尚未保存，本页输入仍然保留。' : draftStatus === 'conflict' ? '其他页面已更新草稿，本页输入尚未覆盖已保存内容。' : '已保存的草稿暂时无法读取，本页输入仍然保留。'}</p>
+          <div className="form-actions">
+            {draftStatus === 'unavailable'
+              ? <button type="button" className="btn btn-secondary" disabled={preparing || createMutation.isPending} onClick={() => { void queueDraftSave(valuesRef.current); }}>重试保存</button>
+              : <button type="button" className="btn btn-secondary" disabled={preparing || createMutation.isPending} onClick={() => { void replaceDraft(); }}>保存当前输入</button>}
+          </div>
+        </section>
+      )}
       <StorySimulationForm
         values={values}
         onChange={(patch) => { setValues((current) => ({ ...current, ...patch })); setError(''); setNotice(''); }}
         onSubmit={handleSubmit}
-        loading={createMutation.isPending}
+        loading={createMutation.isPending || preparing}
+        draftStatusText={draftStatus === 'saved' ? '草稿已保存' : draftStatus === 'saving' ? '正在保存草稿…' : '草稿尚未保存'}
         charactersQuery={charactersQuery}
         templatesQuery={templatesQuery}
         encyclopediasQuery={encyclopediasQuery}

@@ -18,11 +18,12 @@ type Props = {
   templatesQuery: RefreshableQuery<WorldTemplate[]>;
   encyclopediasQuery: RefreshableQuery<WorldEncyclopedia[]>;
   loading: boolean;
+  draftStatusText?: string;
   onChange: (patch: Partial<StorySimulationFormValues>) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 };
 
-export default function StorySimulationForm({ values, charactersQuery, templatesQuery, encyclopediasQuery, loading, onChange, onSubmit }: Props) {
+export default function StorySimulationForm({ values, charactersQuery, templatesQuery, encyclopediasQuery, loading, draftStatusText = '草稿自动保存', onChange, onSubmit }: Props) {
   const characters = charactersQuery.data ?? [];
   const templates = templatesQuery.data ?? [];
   const encyclopedias = encyclopediasQuery.data ?? [];
@@ -30,7 +31,7 @@ export default function StorySimulationForm({ values, charactersQuery, templates
 
   return (
     <form className="page-card story-simulation-form" onSubmit={onSubmit} aria-busy={loading}>
-      <div className="card-header"><h2>从一个故事背景开始</h2><span className="story-simulation-step">草稿自动保存</span></div>
+      <div className="card-header"><h2>从一个故事背景开始</h2><span className="story-simulation-step" role="status">{draftStatusText}</span></div>
       <div className="story-simulation-fields">
         <label className="story-simulation-field story-simulation-field-wide">故事背景与大致设定
           <textarea required minLength={2} value={values.premise} onChange={(event) => onChange({ premise: event.target.value })} placeholder="例如：现代社会，主角十八岁意外觉醒系统。写清主角处境、系统规则和你已有的关键设定即可。" rows={6} disabled={loading} />
@@ -69,7 +70,7 @@ export default function StorySimulationForm({ values, charactersQuery, templates
         {charactersQuery.isLoading ? <p className="story-simulation-muted">正在加载角色…</p> : !charactersQuery.isError && characters.length === 0 ? <p className="story-simulation-muted">暂无可绑定角色</p> : null}
         {characters.length > 0 && <div className="story-simulation-character-list">{characters.map((character) => <label key={character.id} className="story-simulation-character"><input type="checkbox" checked={values.character_ids.includes(character.id)} onChange={() => toggleCharacter(character.id)} disabled={loading} /> <span>{character.name}</span></label>)}</div>}
       </fieldset>
-      <p className="story-simulation-draft-note">当前内容会保存在这台设备上，刷新或离开后仍可继续。</p>
+      <p className="story-simulation-draft-note">草稿保存在当前浏览器中。保存完成后，刷新或离开仍可继续。</p>
       <p className="story-simulation-muted">生成后会直接进入创作会话。之后可继续输入剧情走向，或让小说作者连续续写。</p>
       <button className="btn btn-primary story-simulation-submit" type="submit" disabled={loading || !values.premise.trim()}>{loading ? '正在创作小说开篇…' : '生成小说并开始创作'}</button>
     </form>
