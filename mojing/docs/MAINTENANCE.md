@@ -189,3 +189,9 @@ node mojing/frontend/scripts/generate-brand-assets.mjs
 ### Web 引用草稿
 
 `chatDraftStorage.ts` 保留原有 v1 文字草稿键，引用使用独立的 `mojing:chat-quote:v1:<sessionId>` 记录，保存消息 ID、发言者和最多 120 字符的已选原文首行。引用不保存完整长消息或附件。读取时校验会话与字段，损坏的引用记录不影响文字草稿；发送确认通过引用修订号保护期间的新选择。
+
+### 世界资料回归
+
+`tests/test_android_unified_world_schema.py` 使用独立 SQLite 检查 Room 19→20 的新增表、重复执行、原表结构、外键与完整性。`PromoteWorldTemplateUseCaseInstrumentedTest` 覆盖本地归入、条目复制与重复操作；设备运行应使用隔离应用数据。
+
+GitHub Actions 的优化测试包命名为 `mojing-ci-test-not-for-upgrade`。正式交付 APK 使用本机签名配置构建，构建完成后检查包内版本和签名。

@@ -19,7 +19,9 @@
 | targetSdk | 35 |
 | compileSdk | 36 |
 | JDK | 17 |
-| Room schema | 19 |
+| Room schema | 20 |
+
+界面组件使用 Compose BOM 2025.10.01（UI / Foundation 1.9.4、Material 3 1.4.0）。`StoryWorkspace.kt` 提供故事主卡、资料入口与分组标题；`MoJingControls.kt` 统一填充输入框及按钮状态，`ChatModelTitle.kt` 展示聊天模型选择入口。
 
 版本与构建设置位于 [app/build.gradle.kts](../android/app/build.gradle.kts)。
 
@@ -151,3 +153,15 @@ JVM 测试位于 `app/src/test/`，Room 与 Compose 测试位于 `app/src/androi
 开篇和通用记忆为独立的结构化输出任务。已适配的 DeepSeek 混合模型使用 `response_format: json_object`，官方接口附加 `thinking.type: disabled`，硅基流动附加 `enable_thinking: false`；普通聊天沿用原有模型参数。记忆输出预算为 3,200 Token，提示词按字段压缩和去重；接口返回 `finish_reason: length` 时按输出不完整处理。参数定义见 [DeepSeek](https://api-docs.deepseek.com/guides/thinking_mode/) 与[硅基流动](https://docs.siliconflow.cn/docs/api/chat-completions-post)。
 
 `RealProviderStoryTest` 提供显式启用的真实平台验收，使用独立 Room 数据库与偏好存储。临时 Key 从测试应用私有文件读取，测试参数仅传入 `realProviders=true`；正常测试和 CI 不会调用付费接口。覆盖单章、双章、记忆重建与清空、生成前后取消、无效模型修正后重试。测试完成后删除临时 Key；`captureProviderResponses` 仅用于保存该测试的中性故事请求与响应，不保存认证头。
+
+### 对话与创作设置
+
+个性化姓名与自我描述参与聊天、旁白和小说创作上下文。外观设置提供对话字体、旁白斜体与预览，偏好保存在本机。小说创作支持风格预设和自由输入；百科详情支持直接重命名，批量生成数量默认 1。
+
+## 统一世界资料
+
+`PromoteWorldTemplateUseCase` 在 Room 事务中复制旧工坊背景与 Lore，写入 `legacy_world_mappings`、`legacy_lore_mappings`。重复操作返回原世界；旧原文保持不变。同名资料分别保留，条目记录旧类型、关键词、核心标记与来源。
+
+创作页集中角色与世界入口，新对话和小说创作统一世界选择。世界设置通过修订条件更新名称、简介、背景、玩法与规则；生成整包保存与归入同属一个事务。已有会话和恢复草稿保留其原始设定。
+
+`MIGRATION_19_20` 仅增加映射表与索引，保留原数据库。旧模板、旧条目及关联世界受到外键保护；删除百科条目会清空对应映射目标，保留来源记录。

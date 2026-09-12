@@ -36,7 +36,7 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug
 
-      - name: Build release APK
+      - name: Build optimized CI test APK
         if: github.event_name != 'pull_request'
         run: ./gradlew assembleRelease
 
@@ -46,9 +46,9 @@ jobs:
           name: mojing-debug
           path: mojing/android/app/build/outputs/apk/debug/*.apk
 
-      - name: Upload release APK
+      - name: Upload optimized CI test APK
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: mojing-release
+          name: mojing-ci-test-not-for-upgrade
           path: mojing/android/app/build/outputs/apk/release/*.apk
