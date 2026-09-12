@@ -1789,6 +1789,56 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun longStreamsCompleteAndInterruptedStreamsKeepLatestBodyForBothSpeakers() = runTest(testDispatcher) {
+        for (narrator in listOf(false, true)) for (interrupted in listOf(false, true)) {
+            val messages = mockk<MessageDao>(relaxed = true)
+            val stored = mutableListOf<MessageEntity>()
+            coEvery { messages.insert(any()) } answers {
+                val message = firstArg<MessageEntity>().copy(id = stored.size.toLong() + 1)
+                stored.add(message)
+                message.id
+            }
+            coEvery { messages.getMainMessagesTail(42L, any()) } answers { stored.reversed() }
+            val world = mockk<SessionWorldDao>(relaxed = true)
+            coEvery { world.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L)
+            val characters = mockk<CharacterDao>(relaxed = true)
+            coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "角色")
+            val participants = mockk<ParticipantDao>(relaxed = true)
+            coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 3L))
+            val storage = validSecureStorage()
+            every { storage.speakerTurnMode } returns "manual"
+            val engine = mockk<ChatEngine>(relaxed = true)
+            val stream = kotlinx.coroutines.flow.flow<StreamState> {
+                emit(StreamState.Generating("第一段"))
+                kotlinx.coroutines.delay(70_000)
+                emit(StreamState.Generating("第一段第二段"))
+                kotlinx.coroutines.delay(70_000)
+                // Immediate final update must survive UI throttling too.
+                emit(StreamState.Generating("第一段第二段尾字"))
+                emit(if (interrupted) StreamState.Error("connection reset") else StreamState.Done("第一段第二段尾字"))
+            }
+            every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns stream
+            every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns stream
+            val vm = createViewModel(messageDao = messages, sessionWorldDao = world, characterDao = characters,
+                participantDao = participants, secureStorage = storage, chatEngine = engine, llmApiService = validLlmApiService())
+            advanceUntilIdle()
+            if (narrator) assertTrue(vm.requestNarrator()) else {
+                vm.setManualReplyCharacterId(3L)
+                vm.updateInput("继续")
+                vm.sendMessage()
+            }
+            advanceUntilIdle()
+            val replies = stored.filter { it.speakerType == if (narrator) "narrator" else "character" }
+            assertEquals("narrator=$narrator interrupted=$interrupted", 1, replies.size)
+            assertEquals("第一段第二段尾字", replies.single().content)
+            assertEquals("main", replies.single().branchId)
+            assertFalse(vm.state.value.isGenerating)
+            if (interrupted) assertTrue(vm.state.value.error.orEmpty().contains("已保留"))
+            else assertEquals(null, vm.state.value.error)
+        }
+    }
+
+    @Test
     fun committedNarratorReplyReportsRefreshFailureInsteadOfGenerationFailure() = runTest(testDispatcher) {
         val messageDao = mockk<MessageDao>(relaxed = true)
         val worldDao = mockk<SessionWorldDao>(relaxed = true)

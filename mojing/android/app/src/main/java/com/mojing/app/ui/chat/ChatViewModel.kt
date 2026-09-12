@@ -80,9 +80,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import java.io.OutputStream
@@ -2168,8 +2166,8 @@ class ChatViewModel @Inject constructor(
         var llmHookBase = preStreamBase
         var sawDone = false
         var streamErrorMessage: String? = null
-        try {
-            withTimeout(120_000L) {
+        var receivedText = ""
+        run {
         for ((idx, streamBase) in streamBases.withIndex()) {
             streamErrorMessage = null
             if (idx > 0) {
@@ -2188,7 +2186,8 @@ class ChatViewModel @Inject constructor(
                 is StreamState.Generating -> {
                     generation.ensureCurrent()
                     val now = System.currentTimeMillis()
-                    val len = s.partialText.length
+                    receivedText = s.partialText
+                                    val len = s.partialText.length
                     val shouldUpdate = (now - lastUiUpdateAt) >= 60L || (len - lastUiLen) >= 80
                     if (shouldUpdate) {
                         lastUiUpdateAt = now
@@ -2315,27 +2314,57 @@ class ChatViewModel @Inject constructor(
                 break
             }
             if (streamErrorMessage != null) {
-                val partial = _state.value.streamingText.trim()
+                val partial = receivedText.trim()
                 if (partial.isNotEmpty() || idx >= streamBases.lastIndex) break
             }
         }
-            }
-        } catch (_: TimeoutCancellationException) {
-            generation.ensureCurrent()
-            _state.value = _state.value.copy(
-                streamingText = "",
-                error = UserFacingStrings.chatStreamTimeout(),
-            )
-            return false
         }
         if (!sawDone && streamErrorMessage != null) {
+            val retained = retainInterruptedReply(generation, receivedText, "character", character.id)
             _state.value = _state.value.copy(
                 streamingText = "",
-                error = if (thinkRoute) UserFacingStrings.streamErrorThinkMaxRoute(streamErrorMessage)
-                else UserFacingStrings.streamErrorDetail(streamErrorMessage),
+                error = (if (thinkRoute) UserFacingStrings.streamErrorThinkMaxRoute(streamErrorMessage)
+                else UserFacingStrings.streamErrorDetail(streamErrorMessage)) + if (retained) "\n已保留收到的正文，可继续对话。" else "",
             )
             return false
         }
+        return true
+    }
+
+    private suspend fun retainInterruptedReply(
+        generation: GenerationContext,
+        text: String,
+        speakerType: String,
+        characterId: Long?,
+    ): Boolean {
+        var content = com.mojing.app.domain.engine.InterruptedReply.normalize(text)
+        val world = _state.value.world
+        if (speakerType == "narrator" && world?.gameplayMode == "小说创作") {
+            content = StoryCanon.sanitizeMessageChoices(content, world.worldPrompt)
+        }
+        if (content.isBlank()) return false
+        generation.ensureCurrent()
+        val reply = MessageEntity(
+            sessionId = sessionId,
+            branchId = generation.branchId,
+            speakerType = speakerType,
+            characterId = characterId,
+            content = content,
+            structuredContentJson = structuredContentJsonFor(content),
+            swipeGroupId = generation.swipeGroupId,
+            includeInContext = true,
+        )
+        if (generation.swipeGroupId == null) {
+            messageDao.insert(reply)
+        } else {
+            messageDao.insertAndSelectSwipeVariant(
+                entity = reply, branchId = generation.branchId,
+                targetMessageId = requireNotNull(generation.swipeSourceMessageId),
+            )
+        }
+        generation.swipeGroupId = null
+        generation.swipeSourceMessageId = null
+        refreshMessagesUi()
         return true
     }
 
@@ -2448,12 +2477,14 @@ class ChatViewModel @Inject constructor(
             val context = PromptBuilder.PromptContext(
                 character = character,
                 world = world,
+                personaName = secureStorage.userName,
+                userDescription = secureStorage.userDescription,
                 universalContextMemoryText = universalMemoryText,
                 memoryCorrections = memoryCorrections,
                 encyclopediaHits = sharedWorldContext.encyclopediaHits,
                 loreHits = sharedWorldContext.loreHits,
             )
-            val narratorPrompt = promptBuilder.buildNarratorPrompt(context, guidance, model)
+            val narratorPrompt = promptBuilder.buildNarratorPrompt(context, guidance, model, includeUserProfile = false)
             generation.ensureCurrent()
             recordMemoryCorrectionPromptTrace(
                 branchId = generation.branchId,
@@ -2469,8 +2500,9 @@ class ChatViewModel @Inject constructor(
             var sawDone = false
             var exitNarratorJob = false
             var narratorReplyCommitted = false
+            var receivedText = ""
             try {
-                withTimeout(120_000L) {
+                run {
                     for ((idx, nb) in narrBases.withIndex()) {
                         if (idx > 0) {
                             _state.value = _state.value.copy(streamingText = "")
@@ -2494,6 +2526,7 @@ class ChatViewModel @Inject constructor(
                                 is StreamState.Generating -> {
                                     generation.ensureCurrent()
                                     val now = System.currentTimeMillis()
+                                    receivedText = s.partialText
                                     val len = s.partialText.length
                                     val shouldUpdate = (now - lastUiUpdateAt) >= 60L || (len - lastUiLen) >= 80
                                     if (shouldUpdate) {
@@ -2587,28 +2620,18 @@ class ChatViewModel @Inject constructor(
                             break
                         }
                         if (errMsg != null) {
-                            val partial = _state.value.streamingText.trim()
+                            val partial = receivedText.trim()
                             if (partial.isEmpty() && idx < narrBases.lastIndex) continue
+                            val retained = retainInterruptedReply(generation, receivedText, "narrator", null)
                             _state.value = _state.value.copy(
                                 streamingText = "",
-                                error = UserFacingStrings.streamErrorDetail(errMsg),
+                                error = UserFacingStrings.streamErrorDetail(errMsg) + if (retained) "\n已保留收到的正文，可继续对话。" else "",
                             )
                             exitNarratorJob = true
                             break
                         }
                     }
                 }
-            } catch (_: TimeoutCancellationException) {
-                generation.ensureCurrent()
-                _state.value = _state.value.copy(
-                    streamingText = "",
-                    error = if (narratorReplyCommitted) {
-                        "旁白回复已保存，但对话刷新超时，请重新进入对话"
-                    } else {
-                        UserFacingStrings.chatStreamTimeout()
-                    },
-                )
-                return@narratorScope
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

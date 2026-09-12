@@ -34,6 +34,31 @@ class PromptBuilderTest {
     }
 
     @Test
+    fun `buildForCharacter includes saved user description`() {
+        val result = builder.buildForCharacter(
+            PromptBuilder.PromptContext(
+                character = CharacterEntity(name = "NPC"),
+                personaName = "小明",
+                userDescription = "喜欢推理，习惯先观察再行动",
+            ),
+        )
+        assertTrue(result.contains("用户资料"))
+        assertTrue(result.contains("喜欢推理，习惯先观察再行动"))
+    }
+
+    @Test
+    fun `buildNarratorPrompt includes saved user description`() {
+        val result = builder.buildNarratorPrompt(
+            PromptBuilder.PromptContext(
+                character = CharacterEntity(),
+                personaName = "小明",
+                userDescription = "希望节奏舒缓，重视人物关系",
+            ),
+        )
+        assertTrue(result.contains("希望节奏舒缓，重视人物关系"))
+    }
+
+    @Test
     fun `buildNarratorPrompt includes narrator name`() {
         val world = SessionWorldEntity(sessionId = 1L, narratorEnabled = true, narratorName = "神秘旁白")
         val result = builder.buildNarratorPrompt(PromptBuilder.PromptContext(character = CharacterEntity(), world = world))
@@ -92,5 +117,16 @@ class PromptBuilderTest {
 
         assertEquals(1, result.split("用户锁定记忆（冲突时优先）").size - 1)
         assertTrue(result.indexOf("用户锁定记忆（冲突时优先）") < result.indexOf("旁白自动记忆"))
+    }
+    @Test
+    fun `narrator composed by chat engine includes profile once`() {
+        val context = PromptBuilder.PromptContext(
+            character = CharacterEntity(name = "旁白"),
+            personaName = "林中旅人",
+            userDescription = "沿河寻找故乡",
+        )
+        val narrator = builder.buildNarratorPrompt(context, includeUserProfile = false)
+        val prompt = builder.buildForCharacter(context.copy(character = context.character.copy(personaPrompt = narrator)))
+        assertEquals(1, prompt.split("沿河寻找故乡").size - 1)
     }
 }
