@@ -19,7 +19,8 @@ class ModelNamePickerTest {
             }
         }
         assertTrue(compose.onAllNodes(hasText("model-", substring = true)).fetchSemanticsNodes().size < 40)
-        compose.onNodeWithText("搜索模型").performTextInput("MODEL-4999")
+        compose.onNodeWithContentDescription("搜索模型").performClick()
+        compose.onNodeWithTag("model-picker-search").performTextInput("MODEL-4999")
         compose.onNodeWithText("model-4999").performClick()
         compose.runOnIdle { assertEquals("model-4999", selected) }
     }
@@ -30,9 +31,10 @@ class ModelNamePickerTest {
         compose.setContent {
             MaterialTheme { ModelNamePicker(listOf("original"), selected, { selected = it }, { dismissed = true }) }
         }
-        compose.onNodeWithText("搜索模型").performTextInput("missing")
+        compose.onNodeWithContentDescription("搜索模型").performClick()
+        compose.onNodeWithTag("model-picker-search").performTextInput("missing")
         compose.onNodeWithText("没有匹配的模型，试试其他关键词。").assertIsDisplayed()
-        compose.onNodeWithText("取消").performClick()
+        compose.onNodeWithContentDescription("关闭").performClick()
         compose.runOnIdle { assertTrue(dismissed); assertEquals("original", selected) }
     }
 }
