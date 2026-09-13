@@ -245,3 +245,5 @@ GitHub 各构建阶段采用 4 GB 堆内存的单次 Gradle 进程，Kotlin 在�
 本轮通过 689 项 Android JVM 测试与 10 项 Android 35 模拟器交互测试，覆盖 360dp 小屏、深色大字号、横向平台列表、同名模型隔离、搜索收起、保存锁与失败重试，以及 5,000 项模型目录检索。
 
 1.0.27 Release 构建通过，版本为 10027，沿用正式签名。代码与三个 APK 已上传 GitHub，源码提交为 `fbbf4e64`。
+
+[GitHub Actions 本轮构建](https://github.com/M00NZ1/mojing/actions/runs/34779460825)通过单元测试、Debug、Release 与两个产物上传步骤。本地按 CI 的 4 GB、单 worker、Kotlin 同进程配置完成全量 Release 重建，耗时 3 分 48 秒。
