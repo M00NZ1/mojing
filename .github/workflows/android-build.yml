@@ -38,9 +38,10 @@ jobs:
 
       - name: Build optimized CI test APK
         if: github.event_name != 'pull_request'
-        run: ./gradlew assembleRelease
+        run: ./gradlew assembleRelease --no-daemon '-Dorg.gradle.jvmargs=-Xmx6144m -Dfile.encoding=UTF-8' --max-workers=2
 
       - name: Upload debug APK
+        if: ${{ !cancelled() && hashFiles('mojing/android/app/build/outputs/apk/debug/*.apk') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: mojing-debug

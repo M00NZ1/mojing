@@ -166,7 +166,7 @@ Android 使用 Room migration，schema 位于 [app/schemas/](../android/app/sche
 
 ## CI 与交付
 
-[Android 工作流](../../.github/workflows/android-build.yml)在 Android 路径相关的 main 推送、PR 和手动运行时执行 JVM 测试与 Debug 构建；非 PR 运行还生成 Release APK。产物上传为 Actions artifacts。
+[Android 工作流](../../.github/workflows/android-build.yml)在 Android 路径相关的 main 推送、PR 和手动运行时执行 JVM 测试与 Debug 构建；非 PR 运行还生成 Release APK。Release 阶段使用独立 Gradle 进程、6 GB 堆内存和两个 worker。产物上传为 Actions artifacts；已生成的 Debug APK 在后续 Release 步骤失败时仍可下载。
 
 GitHub Releases 由发布流程单独上传 APK。发布时沿用项目版本与签名配置，安装包放入 Release assets，源码通过 Git 管理。
 
