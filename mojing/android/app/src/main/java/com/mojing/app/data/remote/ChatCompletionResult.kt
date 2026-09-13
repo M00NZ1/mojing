@@ -7,4 +7,6 @@ data class ChatCompletionResult(
     val completionTokens: Int = 0,
     val totalTokens: Int = 0,
     val finishReason: String? = null,
+    val cachedPromptTokens: Int = 0,
+    val usageProvided: Boolean = promptTokens > 0 || completionTokens > 0,
 )

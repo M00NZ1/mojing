@@ -8,11 +8,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.mojing.app.data.ModelPlatform
 import com.mojing.app.data.ModelPlatformCodec
+import com.mojing.app.data.repository.BillingPreferences
 import com.mojing.app.ui.common.ApiProviderPresets
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -139,6 +141,9 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
                                     onDismiss = { modelMenu = false })
                             }
                         }
+                    }
+                    item {
+                        ModelPricingPanel(platform = p)
                     }
                     error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
                 }

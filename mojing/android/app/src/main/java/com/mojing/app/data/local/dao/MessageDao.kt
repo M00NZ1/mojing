@@ -28,6 +28,16 @@ data class MessageRecallResult(
     val fallbackSwipeMessageId: Long? = null,
 )
 
+/** 目录专用轻量投影：不把长篇正文读入目录列表。 */
+data class StoryContentsMessageProjection(
+    val id: Long,
+    val speakerType: String,
+    val branchId: String,
+    val createdAt: Long,
+    val structuredContentJson: String,
+    val contentPreview: String,
+)
+
 private const val CURRENT_MESSAGES_QUERY = """
     SELECT message.*
     FROM branch_visibility_segments AS segment
@@ -141,6 +151,20 @@ private const val VISIBLE_CONTEXT_MESSAGES_QUERY = CURRENT_MESSAGES_QUERY + """
 
 @Dao
 interface MessageDao {
+    @Query("SELECT id, speakerType, branchId, createdAt, structuredContentJson, substr(content, 1, 180) AS contentPreview " +
+        "FROM ($MAIN_CONTEXT_MESSAGES_QUERY) WHERE speakerType IN ('narrator', 'character') " +
+        "AND id < :beforeMessageId ORDER BY id DESC LIMIT :limit")
+    suspend fun getMainStoryContentsBefore(sessionId: Long, beforeMessageId: Long, limit: Int): List<StoryContentsMessageProjection>
+
+    @Query("SELECT id, speakerType, branchId, createdAt, structuredContentJson, substr(content, 1, 180) AS contentPreview " +
+        "FROM ($VISIBLE_CONTEXT_MESSAGES_QUERY) WHERE speakerType IN ('narrator', 'character') " +
+        "AND id < :beforeMessageId ORDER BY id DESC LIMIT :limit")
+    suspend fun getBranchStoryContentsBefore(sessionId: Long, branchId: String, beforeMessageId: Long, limit: Int): List<StoryContentsMessageProjection>
+
+    suspend fun getVisibleStoryContentsBefore(sessionId: Long, branchId: String, beforeMessageId: Long, limit: Int): List<StoryContentsMessageProjection> =
+        if (branchId == "main") getMainStoryContentsBefore(sessionId, beforeMessageId, limit)
+        else getBranchStoryContentsBefore(sessionId, branchId, beforeMessageId, limit)
+
     @Query("SELECT * FROM messages WHERE sessionId = :sessionId AND branchId = 'main' ORDER BY createdAt ASC")
     suspend fun getMainBranchMessages(sessionId: Long): List<MessageEntity>
 
@@ -429,6 +453,21 @@ interface MessageDao {
         )
     }
 
+    /** 搜索页展示真实命中消息数，不以当前分页大小冒充总数。 */
+    @Query(
+        "SELECT COUNT(*) FROM messages AS message WHERE message.sessionId = :sessionId AND message.branchId = 'main' " +
+            "AND (message.id IN (SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression) " +
+            "OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId)) " +
+            "AND ((:exactMatch = 1 AND ((message.searchNormalized <> '' AND message.searchNormalized = :normalizedQuery) OR (message.searchNormalized = '' AND message.content = :query))) " +
+            "OR (:exactMatch = 0 AND ((message.searchNormalized <> '' AND instr(message.searchNormalized, :normalizedQuery) > 0) OR (message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0))))",
+    )
+    suspend fun countMainMessagesIndexed(sessionId: Long, query: String, normalizedQuery: String, matchExpression: String, exactMatch: Int, indexedThroughMessageId: Long, indexComplete: Int): Int
+
+    suspend fun countMainMessages(sessionId: Long, query: String, exactMatch: Int): Int {
+        val state = currentSearchIndexState()
+        return countMainMessagesIndexed(sessionId, query, MessageSearchTokenizer.normalize(query), MessageSearchTokenizer.matchExpression(sessionId, query), exactMatch, state.indexedThroughMessageId, if (state.isComplete) 1 else 0)
+    }
+
     /** 当前故事线最后一页。返回倒序，调用方只反转本页，不读取整段历史。 */
     @Query("$CURRENT_MESSAGES_QUERY ORDER BY message.id DESC LIMIT :limit")
     suspend fun getVisibleMessagesTail(
@@ -563,6 +602,19 @@ interface MessageDao {
             limit = limit,
             beforeMessageId = beforeMessageId,
         )
+    }
+
+    @Query(
+        "SELECT COUNT(*) FROM ($CURRENT_MESSAGES_QUERY) AS message WHERE (message.id IN (SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression) " +
+            "OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId)) " +
+            "AND ((:exactMatch = 1 AND ((message.searchNormalized <> '' AND message.searchNormalized = :normalizedQuery) OR (message.searchNormalized = '' AND message.content = :query))) " +
+            "OR (:exactMatch = 0 AND ((message.searchNormalized <> '' AND instr(message.searchNormalized, :normalizedQuery) > 0) OR (message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0))))",
+    )
+    suspend fun countVisibleMessagesIndexed(sessionId: Long, branchId: String, query: String, normalizedQuery: String, matchExpression: String, exactMatch: Int, indexedThroughMessageId: Long, indexComplete: Int): Int
+
+    suspend fun countVisibleMessages(sessionId: Long, branchId: String, query: String, exactMatch: Int): Int {
+        val state = currentSearchIndexState()
+        return countVisibleMessagesIndexed(sessionId, branchId, query, MessageSearchTokenizer.normalize(query), MessageSearchTokenizer.matchExpression(sessionId, query), exactMatch, state.indexedThroughMessageId, if (state.isComplete) 1 else 0)
     }
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

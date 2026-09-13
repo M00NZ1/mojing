@@ -1505,7 +1505,7 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun returnToLatestMessages() {
+    fun returnToLatestMessages(): Boolean =
         launchHistoryLoad { branchId ->
             val rows = getMessageTailForBranch(branchId, INITIAL_MESSAGE_WINDOW_SIZE + 1)
             applyHistoryWindow(
@@ -1515,7 +1515,6 @@ class ChatViewModel @Inject constructor(
                 hasNewerMessages = false,
             )
         }
-    }
 
     fun openMessageInHistory(messageId: Long): Boolean =
         launchHistoryLoad { branchId ->
@@ -1683,27 +1682,30 @@ class ChatViewModel @Inject constructor(
         return false
     }
 
-    fun speakMessage(text: String) {
-        viewModelScope.launch {
+    private var speechJob: Job? = null
+
+    fun stopSpeaking() {
+        speechJob?.cancel()
+        speechJob = null
+        AndroidTts.stop()
+        com.mojing.app.media.TtsPlayer.stop()
+    }
+
+    fun speakMessage(text: String, characterId: Long? = null) {
+        stopSpeaking()
+        AndroidTts.init(appContext)
+        speechJob = viewModelScope.launch {
+          try {
             val cleaned = TtsSpeakText.normalizeForSpeech(text)
             if (cleaned.isBlank()) {
                 _state.value = _state.value.copy(error = UserFacingStrings.ttsContentEmptyAfterClean())
                 return@launch
             }
             val world = sessionWorldDao.getBySession(sessionId)
-            val char = run {
-                val branchId = currentBranchId()
-                val lastChar = if (branchId == "main") {
-                    messageDao.getLatestMainCharacterMessage(sessionId)
-                } else {
-                    messageDao.getLatestVisibleCharacterMessage(sessionId, branchId)
-                }
-                lastChar?.characterId?.let { characterDao.getById(it) }
-                    ?: participantDao.getBySession(sessionId).firstOrNull()?.characterId?.let { characterDao.getById(it) }
-            }
+            val char = characterId?.let { characterDao.getById(it) }
             val vp = ApiKeyResolver.resolveTtsParams(char, world, secureStorage)
             if (vp.model.equals("system", ignoreCase = true)) {
-                withContext(Dispatchers.Main) { AndroidTts.speak(cleaned) }
+                withContext(Dispatchers.Main) { AndroidTts.speak(cleaned) { message -> _state.update { it.copy(error = message) } } }
                 return@launch
             }
             val pubVp = ApiKeyResolver.resolveTtsParamsPublicVoice(secureStorage)
@@ -1729,9 +1731,14 @@ class ChatViewModel @Inject constructor(
                 if (fishErr != null) {
                     _state.value = _state.value.copy(error = fishErr)
                 } else {
-                    withContext(Dispatchers.Main) { AndroidTts.speak(cleaned) }
+                    withContext(Dispatchers.Main) { AndroidTts.speak(cleaned) { message -> _state.update { it.copy(error = message) } } }
                 }
             }
+          } catch (e: CancellationException) {
+              throw e
+          } catch (_: Exception) {
+              _state.update { it.copy(error = "朗读失败，请检查语音配置后重试") }
+          }
         }
     }
 
@@ -2163,6 +2170,7 @@ class ChatViewModel @Inject constructor(
 
         val recentHistory = slidingWindowBuilder.buildWindow(allMessages, budget.shortTermWindow)
 
+        val replyStartedAt = System.nanoTime()
         var llmHookBase = preStreamBase
         var sawDone = false
         var streamErrorMessage: String? = null
@@ -2219,7 +2227,8 @@ class ChatViewModel @Inject constructor(
                             speakerType = "character",
                             characterId = character.id,
                             content = displayContent,
-                            structuredContentJson = structuredContentJsonFor(displayContent),
+                            structuredContentJson = ReplyGenerationMetadata.record(structuredContentJsonFor(displayContent),
+                                (System.nanoTime() - replyStartedAt) / 1_000_000, s.usage),
                             branchId = branchId,
                             swipeGroupId = gid,
                             includeInContext = true,
@@ -2499,6 +2508,7 @@ class ChatViewModel @Inject constructor(
 
             var sawDone = false
             var exitNarratorJob = false
+            val replyStartedAt = System.nanoTime()
             var narratorReplyCommitted = false
             var receivedText = ""
             try {
@@ -2560,7 +2570,8 @@ class ChatViewModel @Inject constructor(
                                             sessionId = sessionId,
                                             speakerType = "narrator",
                                             content = narrContent,
-                                            structuredContentJson = structuredContentJsonFor(narrContent),
+                                            structuredContentJson = ReplyGenerationMetadata.record(structuredContentJsonFor(narrContent),
+                                                (System.nanoTime() - replyStartedAt) / 1_000_000, s.usage),
                                             branchId = generation.branchId,
                                         ),
                                     )
@@ -3204,7 +3215,7 @@ class ChatViewModel @Inject constructor(
                     structuredContentJson = if (original.speakerType == "user") {
                         original.structuredContentJson
                     } else {
-                        structuredContentJsonFor(content)
+                        ReplyGenerationMetadata.preserve(original.structuredContentJson, structuredContentJsonFor(content))
                     },
                     createdAt = System.currentTimeMillis(),
                 )
@@ -3541,7 +3552,7 @@ class ChatViewModel @Inject constructor(
 
     fun handleMessageAction(action: MessageAction) {
         when (action) {
-            is MessageAction.Speak -> speakMessage(ChatMessageTextFormat.visibleBody(action.message.content, action.message.speakerType))
+            is MessageAction.Speak -> speakMessage(ChatMessageTextFormat.visibleBody(action.message.content, action.message.speakerType), action.message.characterId)
             is MessageAction.Copy -> Unit // 剪贴板：由 ChatScreen 处理
             is MessageAction.ContinueReply -> {
                 val message = action.message

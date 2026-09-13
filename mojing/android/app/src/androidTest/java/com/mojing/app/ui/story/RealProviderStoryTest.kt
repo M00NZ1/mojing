@@ -99,7 +99,7 @@ class RealProviderStoryTest {
                 }).build()
             }.build())
         }
-        retry = LlmRetry(api, CostRecorder(database.costRecordDao()))
+        retry = LlmRetry(api, CostRecorder(database.costRecordDao(), com.mojing.app.domain.billing.BillingPriceRepository(database.costRecordDao(), com.mojing.app.data.repository.BillingPreferences(isolated)), storage))
         rule.runOnUiThread {
             rule.activity.actionBar?.hide()
             vm = StorySimulationViewModel(StoryWritingUseCase(retry), storage,

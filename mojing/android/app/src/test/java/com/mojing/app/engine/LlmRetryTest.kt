@@ -3,12 +3,15 @@ package com.mojing.app.engine
 import com.mojing.app.data.remote.ChatMessage
 import com.mojing.app.data.remote.LlmApiService
 import com.mojing.app.data.remote.LlmHttpException
+import com.mojing.app.data.remote.TokenUsage
 import com.mojing.app.domain.billing.CostRecorder
 import com.mojing.app.domain.engine.LlmRetry
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.clearMocks
+import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.runTest
@@ -33,8 +36,18 @@ class LlmRetryTest {
     }
 
     @Test
+    fun truncatedNonStreamingResponseKeepsUsageAndOutputInFailureRecord() = runTest {
+        coEvery { api.chatCompletion(any(), any(), any()) } returns
+            com.mojing.app.data.remote.ChatCompletionResult("partial", 8, 4, 12, "length", 2, true)
+        runCatching { retry.chatCompletionWithRetry("key", "url", "model", messages) }
+        coVerify(exactly = 1) {
+            costs.recordLlm(null, null, "model", "llm_json", 8, 4, any(), false, any(), "partial", any(), true, 2, "failed")
+        }
+    }
+
+    @Test
     fun rateLimitRetriesAndReportsAttemptsWithNoFinalDelay() = runTest {
-        coEvery { api.streamStoryCompletion(any(), any(), any()) } returnsMany listOf(
+        every { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) } returnsMany listOf(
             flow { throw LlmHttpException(429, retryAfterMs = 1_000) },
             flow { throw LlmHttpException(429, retryAfterMs = 2_000) },
             flow { emit("done") },
@@ -51,13 +64,45 @@ class LlmRetryTest {
         assertEquals(listOf(1, 2, 3), attempts)
         assertEquals(listOf(2 to 1_000L, 3 to 2_000L), retries)
         assertEquals(3_000L, testScheduler.currentTime)
+        coVerify(exactly = 3) { costs.recordLlm(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun successfulStreamRecordsProviderUsageAndCachedTokens() = runTest {
+        every { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) } answers {
+            val usageCallback = arg<(TokenUsage?) -> Unit>(3)
+            flow {
+                usageCallback(TokenUsage(promptTokens = 5, completionTokens = 3, cachedPromptTokens = 2))
+                emit("正文")
+            }
+        }
+        retry.chatCompletionStreamingWithRetry("key", "https://example.test", "model", messages)
+        coVerify(exactly = 1) {
+            costs.recordLlm(null, null, "model", "llm_stream", 5, 3, any(), true, any(), "正文", any(), true, 2, "success")
+        }
+    }
+
+    @Test
+    fun failedStreamKeepsPartialUsageForFailedAttempt() = runTest {
+        every { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) } answers {
+            val callback = arg<(TokenUsage?) -> Unit>(3)
+            flow {
+                callback(TokenUsage(7, 3, 1))
+                emit("部分")
+                throw java.io.IOException("断流")
+            }
+        }
+        runCatching { retry.chatCompletionStreamingWithRetry("key", "url", "model", messages) }
+        coVerify(exactly = 1) {
+            costs.recordLlm(null, null, "model", "llm_stream", 7, 3, any(), false, any(), "部分", any(), true, 1, "failed")
+        }
     }
 
     @Test
     fun badRequestAndUnauthorizedAreNotRetried() = runTest {
         for (status in listOf(400, 401)) {
             clearMocks(api)
-            coEvery { api.streamStoryCompletion(any(), any(), any()) } returns flow {
+            every { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) } returns flow {
                 throw LlmHttpException(status)
             }
             val error = runCatching {
@@ -65,13 +110,13 @@ class LlmRetryTest {
             }.exceptionOrNull()
             assertTrue(error is LlmHttpException)
             assertEquals(status, (error as LlmHttpException).status)
-            coVerify(exactly = 1) { api.streamStoryCompletion(any(), any(), any()) }
+            verify(exactly = 1) { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) }
         }
     }
 
     @Test
     fun failureAfter正文DoesNotRetryOrEmitDuplicate正文() = runTest {
-        coEvery { api.streamStoryCompletion(any(), any(), any()) } returns flow {
+        every { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) } returns flow {
             emit("first")
             throw java.io.IOException("断流")
         }
@@ -81,38 +126,38 @@ class LlmRetryTest {
         }.exceptionOrNull()
         assertTrue(error is java.io.IOException)
         assertEquals(listOf("first"), chunks)
-        coVerify(exactly = 1) { api.streamStoryCompletion(any(), any(), any()) }
+        verify(exactly = 1) { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) }
     }
 
     @Test
     fun cancellationPropagatesWithoutRetry() = runTest {
         val cancelled = CancellationException("stop")
-        coEvery { api.streamStoryCompletion(any(), any(), any()) } returns flow { throw cancelled }
+        every { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) } returns flow { throw cancelled }
         val error = runCatching {
             retry.chatCompletionStreamingWithRetry("key", "url", "model", messages)
         }.exceptionOrNull()
         assertTrue(error is CancellationException)
         assertEquals(cancelled.message, error?.message)
-        coVerify(exactly = 1) { api.streamStoryCompletion(any(), any(), any()) }
+        verify(exactly = 1) { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) }
     }
 
     @Test
     fun successful正文SurvivesBillingFailure() = runTest {
-        coEvery { api.streamStoryCompletion(any(), any(), any()) } returns flow { emit("正文") }
-        coEvery { costs.recordLlm(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws IllegalStateException("db")
+        every { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) } returns flow { emit("正文") }
+        coEvery { costs.recordLlm(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws IllegalStateException("db")
         assertEquals("正文", retry.chatCompletionStreamingWithRetry("key", "url", "model", messages))
-        coVerify(exactly = 1) { api.streamStoryCompletion(any(), any(), any()) }
+        verify(exactly = 1) { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) }
     }
 
     @Test
     fun originalFailureSurvivesFailureBillingFailure() = runTest {
         val original = LlmHttpException(400)
-        coEvery { api.streamStoryCompletion(any(), any(), any()) } returns flow { throw original }
-        coEvery { costs.recordLlm(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws IllegalStateException("db")
+        every { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) } returns flow { throw original }
+        coEvery { costs.recordLlm(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws IllegalStateException("db")
         val error = runCatching {
             retry.chatCompletionStreamingWithRetry("key", "url", "model", messages)
         }.exceptionOrNull()
         assertSame(original, error)
-        coVerify(exactly = 1) { api.streamStoryCompletion(any(), any(), any()) }
+        verify(exactly = 1) { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) }
     }
 }

@@ -8,7 +8,6 @@ import com.mojing.app.ui.common.ProbeUiMessages
 import com.mojing.app.ui.theme.AppThemes
 import com.mojing.app.data.local.dao.CostRecordDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
-import com.mojing.app.data.local.dao.ModelUsageSummary
 import com.mojing.app.data.local.dao.WorldTemplateDao
 import com.mojing.app.data.local.entity.EncyclopediaEntity
 import com.mojing.app.data.local.entity.WorldTemplateEntity
@@ -300,56 +299,6 @@ class SettingsViewModel @Inject constructor(
         _thinkMaxModel.value = value
         secureStorage.thinkMaxModel = value
     }
-
-    // Cost Stats
-    private val _totalCost = MutableStateFlow(0.0)
-    val totalCost: StateFlow<Double> = _totalCost.asStateFlow()
-    private val _totalTokens = MutableStateFlow(0L)
-    val totalTokens: StateFlow<Long> = _totalTokens.asStateFlow()
-    private val _totalCalls = MutableStateFlow(0)
-    val totalCalls: StateFlow<Int> = _totalCalls.asStateFlow()
-    private val _failedCalls = MutableStateFlow(0)
-    val failedCalls: StateFlow<Int> = _failedCalls.asStateFlow()
-    private val _modelUsage = MutableStateFlow<List<ModelUsageSummary>>(emptyList())
-    val modelUsage: StateFlow<List<ModelUsageSummary>> = _modelUsage.asStateFlow()
-    private val _costStatsLoading = MutableStateFlow(false)
-    val costStatsLoading: StateFlow<Boolean> = _costStatsLoading.asStateFlow()
-    private val _costStatsError = MutableStateFlow<String?>(null)
-    val costStatsError: StateFlow<String?> = _costStatsError.asStateFlow()
-
-    fun loadCostStats() {
-        if (_costStatsLoading.value) return
-        viewModelScope.launch {
-            _costStatsLoading.value = true
-            _costStatsError.value = null
-            runCatching {
-                CostStatsSnapshot(
-                    totalCost = costRecordDao.getTotalCost() ?: 0.0,
-                    totalTokens = costRecordDao.getTotalTokens() ?: 0L,
-                    totalCalls = costRecordDao.getTotalCalls(),
-                    failedCalls = costRecordDao.getFailedCalls(),
-                    modelUsage = costRecordDao.getModelUsageSummaries(),
-                )
-            }.onSuccess { snapshot ->
-                _totalCost.value = snapshot.totalCost
-                _totalTokens.value = snapshot.totalTokens
-                _totalCalls.value = snapshot.totalCalls
-                _failedCalls.value = snapshot.failedCalls
-                _modelUsage.value = snapshot.modelUsage
-            }.onFailure {
-                _costStatsError.value = "本机用量记录读取失败，请重试"
-            }
-            _costStatsLoading.value = false
-        }
-    }
-
-    private data class CostStatsSnapshot(
-        val totalCost: Double,
-        val totalTokens: Long,
-        val totalCalls: Int,
-        val failedCalls: Int,
-        val modelUsage: List<ModelUsageSummary>,
-    )
 
     // —— 公共 API 连通测试：本机直连多候选根地址；若仍配置了墨境后端则再尝试流式中继 ——
 

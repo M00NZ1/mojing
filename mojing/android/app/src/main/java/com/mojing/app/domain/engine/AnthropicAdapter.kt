@@ -4,6 +4,7 @@ import com.mojing.app.data.remote.ChatMessage
 import com.mojing.app.data.remote.ChatCompletionResult
 import com.mojing.app.data.remote.LlmHttpException
 import com.mojing.app.data.remote.LlmProtocolException
+import com.mojing.app.data.remote.TokenUsage
 import com.mojing.app.data.remote.parseRetryAfterMs
 import kotlinx.coroutines.channels.trySendBlocking
 import com.mojing.app.data.remote.executeCancellable
@@ -42,6 +43,20 @@ class AnthropicAdapter @Inject constructor(
         temperature: Float,
         maxTokens: Int,
         strictErrors: Boolean = false,
+    ): Flow<String> = streamChatWithUsage(
+        apiKey, baseUrl, model, systemPrompt, messages, temperature, maxTokens, strictErrors,
+    ) { }
+
+    fun streamChatWithUsage(
+        apiKey: String,
+        baseUrl: String,
+        model: String,
+        systemPrompt: String,
+        messages: List<ChatMessage>,
+        temperature: Float,
+        maxTokens: Int,
+        strictErrors: Boolean = false,
+        onUsage: (TokenUsage?) -> Unit,
     ): Flow<String> = callbackFlow {
         val url = buildMessagesUrl(baseUrl)
         val key = apiKey.trim().removePrefix("Bearer ").trim()
@@ -72,8 +87,19 @@ class AnthropicAdapter @Inject constructor(
 
         val listener = object : EventSourceListener() {
             private var completed = false
+            private var inputTokens: Int? = null
+            private var cachedInputTokens = 0
+            private var outputTokens: Int? = null
             override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
                 when (type) {
+                    "message_start" -> runCatching {
+                        val usage = JSONObject(data).optJSONObject("message")?.optJSONObject("usage")
+                        if (usage != null) {
+                            inputTokens = usage.optInt("input_tokens", -1).takeIf { it >= 0 }
+                            cachedInputTokens = usage.optInt("cache_read_input_tokens", 0).coerceAtLeast(0)
+                            inputTokens = inputTokens?.let { (it.toLong() + cachedInputTokens + usage.optInt("cache_creation_input_tokens", 0).coerceAtLeast(0)).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() }
+                        }
+                    }
                     "content_block_delta" -> {
                         try {
                             val json = JSONObject(data)
@@ -84,14 +110,23 @@ class AnthropicAdapter @Inject constructor(
                             }
                         } catch (_: Exception) { if (strictErrors) close(LlmProtocolException("invalid_stream")) }
                     }
-                    "message_delta" -> if (strictErrors) {
-                        val reason = runCatching { JSONObject(data).optJSONObject("delta")?.optString("stop_reason") }.getOrNull()
-                        if (!reason.isNullOrEmpty() && reason !in setOf("end_turn", "stop_sequence", "null")) {
-                            close(LlmProtocolException(if (reason == "max_tokens") "output_limit" else "incomplete_output"))
-                        }
+                    "message_delta" -> {
+                        runCatching {
+                            val json = JSONObject(data)
+                            val usage = json.optJSONObject("usage")
+                            if (usage != null) outputTokens = usage.optInt("output_tokens", -1).takeIf { it >= 0 }
+                            val reason = json.optJSONObject("delta")?.optString("stop_reason")
+                            if (strictErrors && !reason.isNullOrEmpty() && reason !in setOf("end_turn", "stop_sequence", "null")) {
+                                close(LlmProtocolException(if (reason == "max_tokens") "output_limit" else "incomplete_output"))
+                            }
+                        }.onFailure { if (strictErrors) close(LlmProtocolException("invalid_stream")) }
                     }
                     "error" -> if (strictErrors) close(LlmProtocolException("provider_stream_error"))
-                    "message_stop" -> { completed = true; close() }
+                    "message_stop" -> {
+                        completed = true
+                        onUsage(inputTokens?.let { input -> outputTokens?.let { output -> TokenUsage(input, output, cachedInputTokens) } })
+                        close()
+                    }
                 }
             }
 
@@ -159,8 +194,12 @@ class AnthropicAdapter @Inject constructor(
             val usage = json.getAsJsonObject("usage")
             val input = usage?.get("input_tokens")?.asInt ?: 0
             val output = usage?.get("output_tokens")?.asInt ?: 0
-            ChatCompletionResult(content, input, output, input + output,
+            val usageProvided = usage?.has("input_tokens") == true && usage.has("output_tokens")
+            val cached = usage?.get("cache_read_input_tokens")?.asInt ?: 0
+            val totalInput = (input.toLong() + cached + (usage?.get("cache_creation_input_tokens")?.asInt ?: 0)).coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
+            ChatCompletionResult(content, totalInput, output, (totalInput.toLong() + output).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
                 finishReason = if (json.get("stop_reason")?.asString == "max_tokens") "length" else null)
+                .copy(cachedPromptTokens = cached, usageProvided = usageProvided)
         }
     }
 

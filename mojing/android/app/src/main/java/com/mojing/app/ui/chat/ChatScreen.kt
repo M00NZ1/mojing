@@ -45,6 +45,14 @@ import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.FormatListBulleted
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
@@ -67,6 +75,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -126,6 +135,8 @@ fun ChatScreen(
     backLabel: String = "返回会话主页",
     viewModel: ChatViewModel = hiltViewModel()
 ) {
+    val billingViewModel: com.mojing.app.ui.settings.usage.BillingDisplayViewModel = hiltViewModel()
+    val billingState by billingViewModel.state.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
     val modelLabel by viewModel.modelSelectionLabel.collectAsStateWithLifecycle()
     var showModelPicker by remember { mutableStateOf(false) }
@@ -176,11 +187,14 @@ fun ChatScreen(
     var recallMessage by remember(sessionId, state.currentBranchId) { mutableStateOf<com.mojing.app.data.local.entity.MessageEntity?>(null) }
     var showImageGenDialog by remember { mutableStateOf(false) }
     var showEmojiPicker by remember { mutableStateOf(false) }
+    var readingMode by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var latestRequested by remember(sessionId) { mutableStateOf(false) }
+    var latestLoadAttempted by remember(sessionId) { mutableStateOf(false) }
+    var showContextUsage by remember { mutableStateOf(false) }
+    var showContents by remember { mutableStateOf(false) }
     var showSearchDialog by remember { mutableStateOf(false) }
-    var searchQuery by remember { mutableStateOf("") }
     var isImportingChat by remember(sessionId) { mutableStateOf(false) }
     var isAddingAttachment by remember(sessionId) { mutableStateOf(false) }
-    var searchExactMatch by remember { mutableStateOf(false) }
     var isExportingChat by rememberSaveable(sessionId) { mutableStateOf(false) }
     var savingGalleryMessageId by remember(sessionId) { mutableStateOf<Long?>(null) }
     var pendingGalleryPermissionMessageId by remember(sessionId) { mutableStateOf<Long?>(null) }
@@ -283,9 +297,6 @@ fun ChatScreen(
             showImageGenDialog -> showImageGenDialog = false
             showSearchDialog -> {
                 showSearchDialog = false
-                searchQuery = ""
-                searchExactMatch = false
-                viewModel.clearSearch()
             }
             showEmojiPicker -> showEmojiPicker = false
             showBranchOverview -> showBranchOverview = false
@@ -441,7 +452,9 @@ fun ChatScreen(
         snapshotFlow {
             val info = listState.layoutInfo
             val last = info.visibleItemsInfo.lastOrNull()?.index ?: 0
-            info.totalItemsCount == 0 || last >= info.totalItemsCount - 2
+            val tail = info.visibleItemsInfo.lastOrNull()
+            info.totalItemsCount == 0 || (last == info.totalItemsCount - 1 &&
+                tail != null && tail.offset + tail.size <= info.viewportEndOffset)
         }.collect { stickToBottom = it }
     }
 
@@ -482,13 +495,40 @@ fun ChatScreen(
         }
     }
 
-    fun submitSearch() {
-        if (searchQuery.trim().isBlank()) {
-            scope.launch { snackbarHostState.showSnackbar("请输入搜索关键词") }
-            return
+    LaunchedEffect(latestRequested, state.hasNewerMessages, state.isLoadingHistory, state.isGenerating, visibleDisplayLines) {
+        if (!latestRequested || state.isLoadingHistory) return@LaunchedEffect
+        if (state.hasNewerMessages) {
+            if (!state.isGenerating) {
+                if (latestLoadAttempted) {
+                    latestRequested = false
+                } else {
+                    latestLoadAttempted = true
+                    if (!viewModel.returnToLatestMessages()) latestRequested = false
+                }
+            }
+        } else {
+            val last = listState.layoutInfo.totalItemsCount - 1
+            if (last >= 0) listState.animateScrollToItem(last)
+            latestRequested = false
         }
-        viewModel.searchSession(searchQuery, searchExactMatch)
     }
+
+    com.mojing.app.ui.chat.contents.StoryContentsSheet(
+        visible = showContents,
+        sessionId = sessionId,
+        branchId = state.currentBranchId,
+        onOpenMessage = { messageId -> viewModel.openMessageInHistory(messageId) },
+        onDismiss = { showContents = false },
+    )
+
+    if (showContextUsage) {
+        AlertDialog(onDismissRequest = { showContextUsage = false }, title = { Text("上下文用量") },
+            text = { ChatContextUsageStrip(state.conversationTokenEstimate, state.displayContextTokenLimit) },
+            confirmButton = { TextButton(onClick = { showContextUsage = false }) { Text("关闭") } })
+    }
+
+
+    DisposableEffect(viewModel) { onDispose { viewModel.stopSpeaking() } }
 
     LaunchedEffect(state.error) {
         val e = state.error ?: return@LaunchedEffect
@@ -513,6 +553,7 @@ fun ChatScreen(
         }
     }
 
+    if (!showSearchDialog) {
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -637,14 +678,8 @@ fun ChatScreen(
                 Column(Modifier.fillMaxWidth()) {
                     TopAppBar(
                         title = {
-                            ChatModelTitle(
-                                title = stableSessionTitle.ifBlank {
-                                    state.messages.firstOrNull()?.content?.take(20) ?: "对话"
-                                },
-                                model = modelLabel,
-                                generating = state.isGenerating,
-                                onClick = { dismissKeyboard(); showModelPicker = true },
-                            )
+                            Text(stableSessionTitle.ifBlank { "对话" }, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
                         },
                         navigationIcon = {
                             IconButton(onClick = {
@@ -655,6 +690,15 @@ fun ChatScreen(
                             }
                         },
                         actions = {
+                            IconButton(onClick = { dismissKeyboard(); readingMode = !readingMode }) {
+                                Icon(if (readingMode) Icons.Default.Edit else Icons.Default.MenuBook,
+                                    if (readingMode) "退出阅读模式" else "阅读模式")
+                            }
+                            if (state.world?.gameplayMode == "小说创作") {
+                                IconButton(onClick = { dismissKeyboard(); showContents = true }) {
+                                    Icon(Icons.Default.FormatListBulleted, "小说目录")
+                                }
+                            }
                             Box {
                                 BranchSelector(
                                     expanded = branchMenuExpanded,
@@ -705,6 +749,12 @@ fun ChatScreen(
                                             showSearchDialog = true
                                         },
                                     )
+                                    DropdownMenuItem(text = { Text("上下文用量") }, onClick = {
+                                        topActionsMenuExpanded = false; showContextUsage = true
+                                    })
+                                    DropdownMenuItem(text = { Text("停止朗读") }, onClick = {
+                                        topActionsMenuExpanded = false; viewModel.stopSpeaking()
+                                    })
                                     HorizontalDivider()
                                     DropdownMenuItem(
                                         leadingIcon = { Icon(Icons.Default.FileDownload, null) },
@@ -753,7 +803,7 @@ fun ChatScreen(
                     )
                     (state.speakerPlanSummary ?: state.pendingRoundSpeakers.takeIf { it.isNotEmpty() }?.let {
                         "待回复：${it.joinToString("、")}"
-                    })?.let { line ->
+                    })?.takeIf { state.isGenerating && !readingMode }?.let { line ->
                         Text(
                             text = line,
                             modifier = Modifier
@@ -765,22 +815,12 @@ fun ChatScreen(
                             maxLines = 4,
                         )
                     }
-                    if (state.isReady) {
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            color = MaterialTheme.colorScheme.surfaceContainerLow,
-                        ) {
-                            ChatContextUsageStrip(
-                                estimateTokens = state.conversationTokenEstimate,
-                                displayLimit = state.displayContextTokenLimit,
-                            )
-                        }
-                    }
+
                 }
             },
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
-                if (state.isReady && !state.sessionNotFound) {
+                if (state.isReady && !state.sessionNotFound && !readingMode) {
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -841,6 +881,11 @@ fun ChatScreen(
                             )
                         }
                         InputBar(
+                            modelSelector = {
+                                ChatInputModelSelector(modelLabel, state.isGenerating) {
+                                    dismissKeyboard(); showModelPicker = true
+                                }
+                            },
                             narratorGuidance = state.narratorGuidance,
                             onNarratorGuidanceChange = viewModel::updateNarratorGuidance,
                             value = inputFieldValue,
@@ -914,8 +959,10 @@ fun ChatScreen(
                 }
             }
         ) { padding ->
-            val densityMetrics = ChatDensityMode.fromStorage(state.chatDensity).toMetrics()
-            CompositionLocalProvider(LocalChatDensityMetrics provides densityMetrics) {
+            val densityMetrics = if (readingMode) ChatDensityMode.Reader.toMetrics().copy(
+                rowHorizontal = 12.dp, narratorHorizontal = 12.dp, bubbleMaxWidth = 720.dp,
+            ) else ChatDensityMode.fromStorage(state.chatDensity).toMetrics()
+            CompositionLocalProvider(LocalChatDensityMetrics provides densityMetrics, LocalBillingCurrencyState provides billingState) {
             val initialLoadError = state.initialLoadError
             if (initialLoadError != null) {
                 Box(
@@ -1136,11 +1183,34 @@ fun ChatScreen(
                             StreamingText(text = state.streamingText)
                         }
                     }
+                    item(key = "chat-end") { Spacer(Modifier.height(1.dp)) }
                     }
+                    if (!stickToBottom || state.hasNewerMessages) {
+                        ExtendedFloatingActionButton(
+                            onClick = { latestLoadAttempted = false; latestRequested = true },
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                            icon = { Icon(Icons.Default.KeyboardArrowDown, null) },
+                            text = { Text(if (state.isLoadingHistory) "加载中" else "回到最新") },
+                        )
+                    }
+                    if (readingMode) {
+                        FilledTonalIconButton(onClick = { readingMode = false },
+                            modifier = Modifier.align(Alignment.BottomStart).padding(12.dp)) {
+                            Icon(Icons.Default.Edit, "继续对话")
+                        }
+                    }
+
                 }
             }
             }
         }
+    }
+
+    } else {
+        com.mojing.app.ui.chat.search.SearchScreen(
+            sessionId = sessionId, branchId = state.currentBranchId,
+            onBack = { showSearchDialog = false },
+        )
     }
 
     recallMessage?.let { target ->
@@ -1385,119 +1455,7 @@ fun ChatScreen(
         onDismiss = { showBranchOverview = false },
     )
 
-    if (showSearchDialog) {
-        AlertDialog(
-            onDismissRequest = {
-                showSearchDialog = false
-                searchQuery = ""
-                searchExactMatch = false
-                viewModel.clearSearch()
-            },
-            modifier = Modifier.imePadding(),
-            title = { Text("搜索本会话") },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 430.dp),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        FilterChip(
-                            selected = !searchExactMatch,
-                            onClick = { searchExactMatch = false; viewModel.clearSearch() },
-                            label = { Text("模糊") },
-                        )
-                        FilterChip(
-                            selected = searchExactMatch,
-                            onClick = { searchExactMatch = true; viewModel.clearSearch() },
-                            label = { Text("精确") },
-                        )
-                    }
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it; viewModel.clearSearch() },
-                        label = { Text("关键词") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(
-                            onSearch = {
-                                focusManager.clearFocus(true)
-                                submitSearch()
-                            },
-                        ),
-                    )
-                    TextButton(
-                        enabled = !state.isSearchingMessages,
-                        onClick = {
-                            focusManager.clearFocus(true)
-                            submitSearch()
-                        },
-                        modifier = Modifier.padding(top = 4.dp)
-                    ) { Text(if (state.isSearchingMessages) "搜索中…" else "搜索") }
-                    state.searchError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                    if (searchQuery.isNotBlank() && state.completedSearchQuery == searchQuery.trim() &&
-                        !state.isSearchingMessages && state.searchError == null &&
-                        state.searchResults.isEmpty()
-                    ) {
-                        Text(
-                            "暂无匹配消息",
-                            modifier = Modifier.padding(top = 8.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        TextButton(enabled = !state.isSearchingMessages && state.searchBeforeId != Long.MAX_VALUE,
-                            onClick = { submitSearch() }) { Text("最新结果") }
-                        TextButton(enabled = !state.isSearchingMessages && state.searchHasOlder,
-                            onClick = { viewModel.olderSearchResults() }) { Text("更早结果") }
-                    }
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f, fill = false)
-                            .heightIn(max = 220.dp),
-                    ) {
-                        items(state.searchResults, key = { it.id }) { m ->
-                            TextButton(
-                                enabled = !state.isSearchingMessages && !state.isLoadingHistory,
-                                onClick = {
-                                    if (state.isGenerating) {
-                                        showGenerationLockedMessage()
-                                    } else if (viewModel.openMessageInHistory(m.id)) {
-                                        showSearchDialog = false
-                                        searchQuery = ""
-                                        searchExactMatch = false
-                                        viewModel.clearSearch()
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                SearchHitSnippet(
-                                    text = state.searchPreviews[m.id].orEmpty(),
-                                    query = searchQuery,
-                                )
-                            }
-                        }
 
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showSearchDialog = false
-                    searchQuery = ""
-                    searchExactMatch = false
-                    viewModel.clearSearch()
-                }) { Text("关闭") }
-            }
-        )
-    }
 }
 
 /** 历史占位、仅标签无正文等：不在列表中占位，避免「仅含自动配图」单独一条气泡。 */

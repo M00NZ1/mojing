@@ -103,27 +103,19 @@ object HttpTts {
      * 使用已解析的 Key/Base/音色参数请求 TTS（OpenAI 兼容 `/v1/audio/speech`）。
      * [baseUrl] 可为网关根路径；空 Key 或空文本返回 false。
      */
-    private suspend fun playAudioBytes(context: Context, bytes: ByteArray, ext: String): Boolean =
-        withContext(Dispatchers.Main) {
-            runCatching {
-                val file = java.io.File(context.cacheDir, "http_tts_${System.currentTimeMillis()}.$ext")
-                file.writeBytes(bytes)
-                MediaPlayer().apply {
-                    setDataSource(file.absolutePath)
-                    setOnCompletionListener { mp ->
-                        mp.release()
-                        file.delete()
-                    }
-                    setOnErrorListener { mp, _, _ ->
-                        mp.release()
-                        file.delete()
-                        true
-                    }
-                    prepare()
-                    start()
-                }
-            }.isSuccess
+    private suspend fun playAudioBytes(context: Context, bytes: ByteArray, ext: String): Boolean {
+        val file = withContext(Dispatchers.IO) {
+            java.io.File.createTempFile("http_tts_", ".$ext", context.cacheDir).also { it.writeBytes(bytes) }
         }
+        var handedOff = false
+        try {
+            return withContext(Dispatchers.Main) {
+                TtsPlayer.play(file, deleteWhenFinished = true).also { handedOff = it }
+            }
+        } finally {
+            if (!handedOff) file.delete()
+        }
+    }
 
     suspend fun speakHttpTts(
         context: Context,

@@ -4,6 +4,7 @@ import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.border
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
@@ -26,7 +27,8 @@ fun SearchBar(
     OutlinedTextField(
         value = query,
         onValueChange = onQueryChange,
-        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+            .border(1.dp, MaterialTheme.colorScheme.outline, androidx.compose.foundation.shape.RoundedCornerShape(28.dp)),
         placeholder = { Text(placeholder) },
         leadingIcon = { Icon(Icons.Default.Search, "搜索") },
         singleLine = true,
@@ -35,6 +37,11 @@ fun SearchBar(
         }) else null,
         shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
         colors = TextFieldDefaults.colors(
+            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+            focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            cursorColor = MaterialTheme.colorScheme.primary,
             focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
             unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
             focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,

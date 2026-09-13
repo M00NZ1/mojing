@@ -115,8 +115,11 @@ class LlmApiService @Inject constructor() {
             val message = (choices?.getOrNull(0) as? Map<*, *>)?.get("message") as? Map<*, *>
             val content = message?.get("content") as? String ?: ""
             val usage = parsed["usage"] as? Map<*, *>
-            val promptTokens = (usage?.get("prompt_tokens") as? Number)?.toInt() ?: 0
-            val completionTokens = (usage?.get("completion_tokens") as? Number)?.toInt() ?: 0
+            val promptValue = (usage?.get("prompt_tokens") as? Number)?.toInt()
+            val completionValue = (usage?.get("completion_tokens") as? Number)?.toInt()
+            val promptTokens = promptValue ?: 0
+            val completionTokens = completionValue ?: 0
+            val cachedPromptTokens = ((usage?.get("prompt_tokens_details") as? Map<*, *>)?.get("cached_tokens") as? Number)?.toInt() ?: (usage?.get("prompt_cache_hit_tokens") as? Number)?.toInt() ?: 0
             val totalTokens = (usage?.get("total_tokens") as? Number)?.toInt()
                 ?: (promptTokens + completionTokens)
             ChatCompletionResult(
@@ -125,6 +128,8 @@ class LlmApiService @Inject constructor() {
                 completionTokens = completionTokens,
                 totalTokens = totalTokens,
                 finishReason = (choices?.firstOrNull() as? Map<*, *>)?.get("finish_reason") as? String,
+                cachedPromptTokens = cachedPromptTokens,
+                usageProvided = promptValue != null && completionValue != null,
             )
         }
     }
@@ -137,30 +142,48 @@ class LlmApiService @Inject constructor() {
     fun streamChatCompletion(apiKey: String, baseUrl: String, request: ChatRequest): Flow<String> =
         streamCompletion(apiKey, baseUrl, request, strict = false)
 
+    /** Streams text while reporting provider usage once when the stream closes. */
+    fun streamChatCompletionWithUsage(
+        apiKey: String,
+        baseUrl: String,
+        request: ChatRequest,
+        onUsage: (TokenUsage?) -> Unit,
+    ): Flow<String> = streamCompletion(apiKey, baseUrl, request.copy(includeUsage = true), strict = false, onUsage = onUsage)
+
     /** 完整结构化生成要求明确的结束标记，并单独限制无数据等待时间。 */
     fun streamStoryCompletion(apiKey: String, baseUrl: String, request: ChatRequest): Flow<String> =
         streamCompletion(apiKey, baseUrl, request, strict = true)
 
+    fun streamStoryCompletionWithUsage(
+        apiKey: String,
+        baseUrl: String,
+        request: ChatRequest,
+        onUsage: (TokenUsage?) -> Unit,
+    ): Flow<String> = streamCompletion(apiKey, baseUrl, request.copy(includeUsage = true), strict = true, onUsage = onUsage)
+
     private fun streamCompletion(
         apiKey: String, baseUrl: String, request: ChatRequest, strict: Boolean,
+        onUsage: (TokenUsage?) -> Unit = {},
     ): Flow<String> = flow {
         val requestClient = if (strict) client.newBuilder().readTimeout(90, TimeUnit.SECONDS).build() else client
         if (baseUrl.toHttpUrl().host == "api.anthropic.com") {
-            emitAll(com.mojing.app.domain.engine.AnthropicAdapter(requestClient).streamChat(
+            emitAll(com.mojing.app.domain.engine.AnthropicAdapter(requestClient).streamChatWithUsage(
                 apiKey, baseUrl, request.model,
                 request.messages.filter { it.role == "system" }.joinToString("\n\n") { it.content },
                 request.messages, request.temperature, request.max_tokens, strictErrors = strict,
+                onUsage = onUsage,
             ))
         } else {
-            emitAll(streamOpenAiCompletion(requestClient, apiKey, baseUrl, request, strict))
+            emitAll(streamOpenAiCompletion(requestClient, apiKey, baseUrl, request, strict, onUsage))
         }
     }
 
     private fun streamOpenAiCompletion(
         requestClient: OkHttpClient, apiKey: String, baseUrl: String,
         request: ChatRequest, strict: Boolean,
+        onUsage: (TokenUsage?) -> Unit,
     ): Flow<String> = callbackFlow {
-        val httpRequest = buildChatCompletionRequest(apiKey, baseUrl, request.copy(stream = true))
+        val httpRequest = buildChatCompletionRequest(apiKey, baseUrl, request.copy(stream = true, includeUsage = request.includeUsage))
         val call = requestClient.newCall(httpRequest)
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
@@ -175,8 +198,10 @@ class LlmApiService @Inject constructor() {
                             throw LlmProtocolException("unsupported_stream")
                         }
                         val source = response.body?.source() ?: throw LlmProtocolException("empty_response")
-                        val completed = readSseResponse(source, strict) { chunk -> trySendBlocking(chunk).getOrThrow() }
+                        var usage: TokenUsage? = null
+                        val completed = readSseResponse(source, strict, onUsageFound = { usage = it; onUsage(it) }) { chunk -> trySendBlocking(chunk).getOrThrow() }
                         if (strict && !completed) throw IOException("Streaming response ended before completion")
+                        if (usage == null) onUsage(null)
                         close()
                     } catch (e: Throwable) {
                         if (call.isCanceled()) close() else close(e)
@@ -279,6 +304,9 @@ class LlmApiService @Inject constructor() {
 
     internal fun chatPayload(baseUrl: String, request: ChatRequest): JsonObject =
         gson.toJsonTree(request).asJsonObject.apply {
+            if (request.stream && request.includeUsage) {
+                add("stream_options", JsonObject().apply { addProperty("include_usage", true) })
+            }
             if (request.jsonOutput) {
                 val host = baseUrl.toHttpUrl().host
                 val model = request.model.lowercase()
@@ -298,24 +326,27 @@ class LlmApiService @Inject constructor() {
     private fun readSseResponse(
         source: BufferedSource,
         strict: Boolean,
+        onUsageFound: (TokenUsage) -> Unit = {},
         emitChunk: (String) -> Unit,
     ): Boolean {
         val dataLines = mutableListOf<String>()
         var done = false
+        var sawFinishStop = false
         while (!done && !source.exhausted()) {
             val line = source.readUtf8Line() ?: break
             when {
-                line.isEmpty() -> done = emitSseEvent(dataLines, strict, emitChunk)
+                line.isEmpty() -> done = emitSseEvent(dataLines, strict, onUsageFound, emitChunk) { sawFinishStop = true }
                 line.startsWith(":") -> Unit
                 line.startsWith("data:") -> dataLines += line.removePrefix("data:").removePrefix(" ")
             }
         }
-        if (!done && dataLines.isNotEmpty()) done = emitSseEvent(dataLines, strict, emitChunk)
-        return done
+        if (!done && dataLines.isNotEmpty()) done = emitSseEvent(dataLines, strict, onUsageFound, emitChunk) { sawFinishStop = true }
+        return done || (strict && sawFinishStop)
     }
 
     private fun emitSseEvent(
-        dataLines: MutableList<String>, strict: Boolean, emitChunk: (String) -> Unit,
+        dataLines: MutableList<String>, strict: Boolean, onUsageFound: (TokenUsage) -> Unit,
+        emitChunk: (String) -> Unit, onFinishStop: () -> Unit = {},
     ): Boolean {
         if (dataLines.isEmpty()) return false
         val data = dataLines.joinToString("\n")
@@ -324,6 +355,18 @@ class LlmApiService @Inject constructor() {
         val root = runCatching { gson.fromJson(data, JsonObject::class.java) }.getOrNull()
             ?: if (strict) throw LlmProtocolException("invalid_stream") else return false
         if (root.has("error")) throw LlmProtocolException("provider_stream_error")
+        runCatching {
+            root.get("usage")?.takeIf { it.isJsonObject }?.asJsonObject?.let { usage ->
+                val prompt = usage.get("prompt_tokens")?.takeIf { it.isJsonPrimitive }?.asInt
+                val completion = usage.get("completion_tokens")?.takeIf { it.isJsonPrimitive }?.asInt
+                if (prompt != null && completion != null) {
+                    val cached = usage.get("prompt_tokens_details")?.takeIf { it.isJsonObject }
+                        ?.asJsonObject?.get("cached_tokens")?.takeIf { it.isJsonPrimitive }?.asInt
+                        ?: usage.get("prompt_cache_hit_tokens")?.takeIf { it.isJsonPrimitive }?.asInt ?: 0
+                    onUsageFound(TokenUsage(prompt, completion, cached))
+                }
+            }
+        }
         val choice = root.get("choices")?.takeIf { it.isJsonArray }?.asJsonArray
             ?.firstOrNull()?.takeIf { it.isJsonObject }?.asJsonObject ?: return false
         val finish = choice.get("finish_reason")?.takeIf { it.isJsonPrimitive }?.asString
@@ -341,7 +384,8 @@ class LlmApiService @Inject constructor() {
         if (strict && finish != null && finish != "stop") {
             throw LlmProtocolException(if (finish == "length") "output_limit" else "incomplete_output")
         }
-        return strict && finish == "stop"
+        if (strict && finish == "stop") onFinishStop()
+        return false
     }
 
     private fun Response.toLlmHttpException(): LlmHttpException {

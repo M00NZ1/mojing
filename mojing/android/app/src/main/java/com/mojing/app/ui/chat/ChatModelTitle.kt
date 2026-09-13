@@ -27,3 +27,16 @@ internal fun ChatModelTitle(title: String, model: String, generating: Boolean, o
         }
     }
 }
+
+@Composable
+internal fun ChatInputModelSelector(model: String, generating: Boolean, onClick: () -> Unit) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Text((if (generating) "下次 · " else "") + model, modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Icon(Icons.Default.KeyboardArrowDown, "切换平台和模型", modifier = Modifier.size(18.dp))
+        }
+    }
+}

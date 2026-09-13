@@ -72,7 +72,7 @@ class StoryRecoveryProcessTest {
             lateinit var vm: StorySimulationViewModel
             var opened = 0L
             rule.runOnUiThread {
-                vm = StorySimulationViewModel(StoryWritingUseCase(LlmRetry(LlmApiService(), CostRecorder(database.costRecordDao()))),
+                vm = StorySimulationViewModel(StoryWritingUseCase(LlmRetry(LlmApiService(), CostRecorder(database.costRecordDao(), com.mojing.app.domain.billing.BillingPriceRepository(database.costRecordDao(), com.mojing.app.data.repository.BillingPreferences(isolated)), storage))),
                     storage, database.worldTemplateDao(), database.encyclopediaDao(), database.characterDao(),
                     CreateSessionUseCase(SessionCreationTransaction(database), database.characterDao(), database.worldTemplateDao(), storage, database.legacyWorldMappingDao(), database.encyclopediaDao()),
                     StoryOpeningDraftStore(database))

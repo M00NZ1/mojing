@@ -11,7 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -80,6 +80,7 @@ fun InputBar(
     /** 朗读当前输入框文字（不发送） */
     onPreviewSpeak: () -> Unit,
     modifier: Modifier = Modifier,
+    modelSelector: (@Composable () -> Unit)? = null,
     narratorGuidance: String = "",
     onNarratorGuidanceChange: (String) -> Unit = {},
 ) {
@@ -201,94 +202,22 @@ fun InputBar(
                         },
                     ),
                 )
-                BoxWithConstraints(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp),
-                ) {
-                    val useCompactSendAction = maxWidth < 320.dp
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { dismissKeyboard(); showActionSheet = true },
+                        enabled = !isGenerating && !isAddingAttachment) {
+                        Icon(Icons.Default.Add, "更多输入工具")
+                    }
+                    Box(Modifier.weight(1f)) { modelSelector?.invoke() }
+                    if (isImeOpen) {
+                        IconButton(onClick = ::dismissKeyboard) { Icon(Icons.Default.KeyboardHide, "收起键盘") }
+                    }
+                    FilledIconButton(
+                        onClick = if (isGenerating) onStop else onSend,
+                        enabled = isGenerating || (!isAddingAttachment && (value.text.isNotBlank() || pendingAttachmentCount > 0)),
+                        modifier = Modifier.size(48.dp),
                     ) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(0.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            if (!isGenerating) {
-                                IconButton(onClick = {
-                                    dismissKeyboard()
-                                    onAttachImageClick()
-                                }, enabled = !isAddingAttachment, modifier = Modifier.size(48.dp)) {
-                                    Icon(
-                                        Icons.Default.AttachFile,
-                                        "添加图片",
-                                        modifier = Modifier.size(22.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                IconButton(onClick = {
-                                    dismissKeyboard()
-                                    showActionSheet = true
-                                }, enabled = !isAddingAttachment, modifier = Modifier.size(48.dp)) {
-                                    Icon(
-                                        Icons.Default.Add,
-                                        "更多输入工具",
-                                        modifier = Modifier.size(22.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            }
-                            if (isImeOpen) {
-                                IconButton(
-                                    onClick = ::dismissKeyboard,
-                                    modifier = Modifier.size(48.dp),
-                                ) {
-                                    Icon(
-                                        Icons.Default.KeyboardHide,
-                                        "收起键盘",
-                                        modifier = Modifier.size(22.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            }
-
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (isGenerating) {
-                                FilledTonalButton(
-                                    onClick = onStop,
-                                    modifier = Modifier.heightIn(min = 48.dp),
-                                ) {
-                                    Icon(Icons.Default.Stop, "停止", modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("停止")
-                                }
-                            } else {
-                                val sendEnabled = !isAddingAttachment &&
-                                    (value.text.isNotBlank() || pendingAttachmentCount > 0)
-                                if (useCompactSendAction) {
-                                    FilledIconButton(
-                                        onClick = onSend,
-                                        enabled = sendEnabled,
-                                        modifier = Modifier.size(48.dp),
-                                    ) {
-                                        Icon(Icons.AutoMirrored.Filled.Send, "发送", modifier = Modifier.size(20.dp))
-                                    }
-                                } else {
-                                    Button(
-                                        onClick = onSend,
-                                        enabled = sendEnabled,
-                                        modifier = Modifier.heightIn(min = 48.dp),
-                                    ) {
-                                        Icon(Icons.AutoMirrored.Filled.Send, "发送", modifier = Modifier.size(18.dp))
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("发送")
-                                    }
-                                }
-                            }
-                        }
+                        if (isGenerating) Icon(Icons.Default.Stop, "停止")
+                        else Icon(Icons.AutoMirrored.Filled.Send, "发送")
                     }
                 }
             }
@@ -337,6 +266,11 @@ fun InputBar(
                     }
                 }
                 item {
+                    ListItem(
+                        headlineContent = { Text("添加图片") },
+                        leadingContent = { Icon(Icons.Default.AttachFile, null) },
+                        modifier = Modifier.clickable { showActionSheet = false; onAttachImageClick() },
+                    )
                     ListItem(
                         headlineContent = { Text("试听朗读") },
                         supportingContent = { Text(if (value.text.isBlank()) "输入文字后可试听" else "朗读输入框内容") },

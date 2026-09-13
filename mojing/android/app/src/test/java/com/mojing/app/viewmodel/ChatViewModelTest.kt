@@ -1832,6 +1832,9 @@ class ChatViewModelTest {
             assertEquals("narrator=$narrator interrupted=$interrupted", 1, replies.size)
             assertEquals("第一段第二段尾字", replies.single().content)
             assertEquals("main", replies.single().branchId)
+            val metadata = com.google.gson.JsonParser.parseString(replies.single().structuredContentJson).asJsonObject
+            assertEquals(!interrupted, metadata.has("generation_duration_ms"))
+            if (!interrupted) assertTrue(metadata.get("generation_duration_ms").asLong > 0)
             assertFalse(vm.state.value.isGenerating)
             if (interrupted) assertTrue(vm.state.value.error.orEmpty().contains("已保留"))
             else assertEquals(null, vm.state.value.error)

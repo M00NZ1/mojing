@@ -23,7 +23,7 @@ import com.mojing.app.data.local.entity.*
         SessionMemoryCorrectionEntity::class, BranchSwipeSelectionEntity::class,
         LegacyWorldMappingEntity::class, LegacyLoreMappingEntity::class,
     ],
-    version = 20,
+    version = 21,
     exportSchema = true
 )
 @TypeConverters(Converters::class)

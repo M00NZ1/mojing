@@ -41,6 +41,7 @@ import com.mojing.app.ui.navigation.returnToSessionHome
 import com.mojing.app.ui.common.hideImeKeyboard
 import com.mojing.app.ui.common.isImeKeyboardOpen
 import com.mojing.app.ui.util.UserFacingStrings
+import com.mojing.app.ui.settings.usage.UsageScreen
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -146,7 +147,7 @@ fun SettingsScreen(
                             if (profileName.trim() == name) profileName = name
                         },
                     )
-                    3 -> CostTab(viewModel)
+                    3 -> UsageScreen(viewModel = hiltViewModel())
                 }
             }
         }
@@ -528,129 +529,3 @@ private fun ExpandableSettingsCard(
         }
     }
 }
-
-@Composable fun CostTab(viewModel: SettingsViewModel) {
-    LaunchedEffect(Unit) {
-        viewModel.loadCostStats()
-    }
-
-    val totalCost by viewModel.totalCost.collectAsStateWithLifecycle()
-    val totalTokens by viewModel.totalTokens.collectAsStateWithLifecycle()
-    val totalCalls by viewModel.totalCalls.collectAsStateWithLifecycle()
-    val failedCalls by viewModel.failedCalls.collectAsStateWithLifecycle()
-    val modelUsage by viewModel.modelUsage.collectAsStateWithLifecycle()
-    val loading by viewModel.costStatsLoading.collectAsStateWithLifecycle()
-    val error by viewModel.costStatsError.collectAsStateWithLifecycle()
-
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text("本机用量", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "汇总这台设备上由墨境记录的对话、配图和朗读请求。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (loading) {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        }
-        error?.let { message ->
-            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(message, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = viewModel::loadCostStats) { Text("重新加载") }
-                }
-            }
-        }
-
-        if (!loading && error == null && totalCalls == 0) {
-            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text("还没有用量记录", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        "完成一次对话、配图或朗读后，这里会显示本机统计。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        } else if (totalCalls > 0) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                UsageMetricCard(Icons.Outlined.Paid, formatUsd(totalCost), "估算费用")
-                UsageMetricCard(Icons.Outlined.DataUsage, formatCount(totalTokens), "处理 Token")
-            }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                UsageMetricCard(Icons.Outlined.Forum, formatCount(totalCalls.toLong()), "请求次数")
-                UsageMetricCard(Icons.Outlined.ErrorOutline, formatCount(failedCalls.toLong()), "失败请求")
-            }
-
-            if (modelUsage.isNotEmpty()) {
-                Text("按模型查看", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 4.dp))
-                modelUsage.forEach { summary ->
-                    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                        Column(
-                            modifier = Modifier.fillMaxWidth().padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(summary.modelName, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-                                Text(formatUsd(summary.estimatedCost), style = MaterialTheme.typography.labelLarge)
-                            }
-                            Text(
-                                "${formatCount(summary.totalCalls.toLong())} 次请求 · ${formatCount(summary.totalTokens)} Token",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            if (summary.failedCalls > 0) {
-                                Text(
-                                    "${formatCount(summary.failedCalls.toLong())} 次失败",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.error,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            Text(
-                "费用按本机价格表估算，实际账单以模型服务商为准。",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun RowScope.UsageMetricCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    value: String,
-    label: String,
-) {
-    ElevatedCard(modifier = Modifier.weight(1f)) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp),
-        ) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Text(value, style = MaterialTheme.typography.titleMedium)
-            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-private fun formatCount(value: Long): String = String.format(Locale.US, "%,d", value)
-
-private fun formatUsd(value: Double): String = String.format(Locale.US, "US$%.4f", value)

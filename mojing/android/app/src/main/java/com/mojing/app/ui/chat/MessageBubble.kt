@@ -63,6 +63,63 @@ import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.domain.engine.StructuredParser
 import com.mojing.app.ui.common.avatarImageModel
 import com.mojing.app.ui.common.ImagePreviewDialog
+import com.mojing.app.domain.billing.CurrencyDisplayState
+import com.mojing.app.domain.billing.formatBillingAmount
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
+internal val LocalBillingCurrencyState = staticCompositionLocalOf { CurrencyDisplayState() }
+
+@Composable
+private fun ReplyUsageCaption(json: String, sessionId: Long) {
+    val duration = remember(json) { ReplyGenerationMetadata.durationLabel(json) } ?: return
+    val savedUsage = remember(json) { ReplyGenerationMetadata.usage(json) }
+    val recordId = remember(json) { runCatching { savedUsage?.get("record_id")?.asLong }.getOrNull() }
+    val billingVm: com.mojing.app.ui.settings.usage.BillingDisplayViewModel = androidx.hilt.navigation.compose.hiltViewModel()
+    val recordFlow = remember(recordId, billingVm) {
+        if (recordId != null && recordId > 0) billingVm.observeRecord(recordId)
+        else kotlinx.coroutines.flow.flowOf(null)
+    }
+    val liveRecord by recordFlow.collectAsStateWithLifecycle(initialValue = null)
+    val usage = remember(savedUsage, liveRecord, sessionId) {
+        savedUsage?.deepCopy()?.apply {
+            liveRecord?.takeIf { it.sessionId == sessionId && it.modelName == savedUsage.get("model")?.asString &&
+                (savedUsage.get("platform_id")?.asString?.let { id -> it.platformId == id }
+                    ?: (it.platformName == savedUsage.get("platform")?.asString)) }?.let {
+                addProperty("cost_known", it.costKnown)
+                addProperty("cost", it.estimatedCost)
+                addProperty("currency", it.currency)
+            }
+        }
+    }
+    var showDetail by remember(json) { mutableStateOf(false) }
+    val currencyState = LocalBillingCurrencyState.current
+    val caption = runCatching {
+        if (usage == null) duration else {
+            val tokens = usage.get("total_tokens").asInt
+            val estimated = usage.get("token_source").asString == "estimated"
+            val cost = if (usage.get("cost_known").asBoolean)
+                "≈" + formatBillingAmount(usage.get("cost").asDouble, usage.get("currency").asString, currencyState)
+            else "价格待配置"
+            "$duration · ${if (estimated) "约 " else ""}${String.format(java.util.Locale.US, "%,d", tokens)} Token · $cost"
+        }
+    }.getOrDefault(duration)
+    Text(caption, modifier = Modifier.padding(horizontal = 20.dp).clickable(enabled = usage != null) { showDetail = true }.padding(vertical = 6.dp),
+        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (showDetail && usage != null) {
+        AlertDialog(onDismissRequest = { showDetail = false }, title = { Text("本条生成用量") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(usage.get("platform")?.asString.orEmpty())
+                Text(usage.get("model")?.asString.orEmpty())
+                Text(duration)
+                Text("输入 ${usage.get("input_tokens")?.asInt ?: 0} · 输出 ${usage.get("output_tokens")?.asInt ?: 0} Token")
+                Text("缓存输入 ${usage.get("cached_tokens")?.asInt ?: 0} Token")
+                Text(if (usage.get("token_source")?.asString == "api") "Token 来自平台接口" else "Token 按文本估算")
+                Text(if (usage.get("cost_known")?.asBoolean == true) "预估费用 " + formatBillingAmount(
+                    usage.get("cost").asDouble, usage.get("currency").asString, currencyState) else "价格待配置")
+            } }, confirmButton = { TextButton(onClick = { showDetail = false }) { Text("关闭") } })
+    }
+}
 
 @Composable
 internal fun MessageActionPanelContent(
@@ -75,6 +132,7 @@ internal fun MessageActionPanelContent(
     isSavingImages: Boolean,
     onDismiss: () -> Unit,
     onAction: (MessageAction) -> Unit,
+    onSelectText: (() -> Unit)? = null,
 ) {
     if (isGenerating) {
         Text("回复生成中，部分操作暂不可用", modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
@@ -92,6 +150,12 @@ internal fun MessageActionPanelContent(
                 onDismiss(); onAction(MessageAction.Regenerate(message))
             }
         }
+    }
+    if (onSelectText != null) {
+        MessageActionRow(modifier = Modifier.fillMaxWidth(), text = { Text("选择文字") },
+            supportingText = "打开正文，自由选择并复制段落",
+            onClick = { onDismiss(); onSelectText() },
+            leadingIcon = { Icon(Icons.Default.TextFields, null) })
     }
     HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
     MessageActionRow(
@@ -245,6 +309,11 @@ fun MessageBubble(
     showSenderHeader: Boolean = false,
     timeText: String = "",
 ) {
+    var showSelection by remember(message.id) { mutableStateOf(false) }
+    if (showSelection) {
+        ChatTextSelectionDialog(ChatMessageTextFormat.forClipboard(message.content, message.speakerType),
+            onDismiss = { showSelection = false })
+    }
     var showMenu by remember(message.id) { mutableStateOf(false) }
     var previewImagePath by remember(message.id) { mutableStateOf<String?>(null) }
     val dismissMenu = { showMenu = false }
@@ -299,11 +368,13 @@ fun MessageBubble(
                     MessageActionPanelContent(
                         message, isBookmarked, canContinueReply, canRegenerate, isGenerating,
                         imageAttachmentCount, isSavingImages, dismissMenu, onAction,
+                        onSelectText = { showSelection = true },
                     )
                 }
             }
         }
     }
+    Column {
     when (message.speakerType) {
         "user" -> UserMessageBubble(
             message,
@@ -316,7 +387,7 @@ fun MessageBubble(
             showSenderHeader = showSenderHeader,
             timeText = timeText,
             onClick = { showMenu = true },
-            onLongPress = { showMenu = true },
+            onLongPress = { showSelection = true },
             onImageClick = { previewImagePath = it },
         )
         "character" -> CharacterMessageBubble(
@@ -331,14 +402,14 @@ fun MessageBubble(
             showSenderHeader = showSenderHeader,
             timeText = timeText,
             onClick = { showMenu = true },
-            onLongPress = { showMenu = true },
+            onLongPress = { showSelection = true },
             onImageClick = { previewImagePath = it },
         )
         "narrator" -> Box {
             NarratorMessageBubble(
                 message,
                 showHistoricalChoices = !isCurrentChoiceMessage,
-                modifier = Modifier.combinedClickable(onClick = { showMenu = true }, onLongClick = { showMenu = true }),
+                modifier = Modifier.combinedClickable(onClick = { showMenu = true }, onLongClick = { showSelection = true }),
             )
         }
         else -> UserMessageBubble(
@@ -352,9 +423,11 @@ fun MessageBubble(
             showSenderHeader = showSenderHeader,
             timeText = timeText,
             onClick = { showMenu = true },
-            onLongPress = { showMenu = true },
+            onLongPress = { showSelection = true },
             onImageClick = { previewImagePath = it },
         )
+    }
+    ReplyUsageCaption(message.structuredContentJson, message.sessionId)
     }
     previewImagePath?.let { path ->
         ImagePreviewDialog(imageUrl = path, onDismiss = { previewImagePath = null })

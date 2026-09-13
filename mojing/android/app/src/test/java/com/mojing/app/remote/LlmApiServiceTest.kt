@@ -6,11 +6,13 @@ import com.mojing.app.data.remote.LlmApiService
 import com.mojing.app.data.remote.LlmHttpException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
@@ -116,6 +118,71 @@ class LlmApiServiceTest {
         } finally {
             server.close()
         }
+    }
+
+    @Test
+    fun streamUsageReadsOpenAiFinalUsageOnlyEventAndRequestsItExplicitly() = runBlocking {
+        var requestBody = ""
+        val server = RawHttpServer { socket ->
+            requestBody = readRequest(socket)
+            val output = socket.getOutputStream()
+            output.write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n".toByteArray())
+            output.write("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n".toByteArray())
+            output.write("data: {\"choices\":[],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7,\"prompt_tokens_details\":{\"cached_tokens\":3}}}\n\n".toByteArray())
+            output.write("data: [DONE]\n\n".toByteArray())
+            output.flush()
+        }
+        server.start()
+        try {
+            var usage: com.mojing.app.data.remote.TokenUsage? = null
+            val chunks = api.streamChatCompletionWithUsage("test-key", server.baseUrl, testRequest()) {
+                usage = it
+            }.toList()
+            assertEquals(listOf("ok"), chunks)
+            assertEquals(com.mojing.app.data.remote.TokenUsage(11, 7, 3), usage)
+            assertTrue(requestBody.contains("\"include_usage\":true"))
+            server.awaitFinished()
+        } finally { server.close() }
+    }
+
+    @Test
+    fun streamUsageIsNullWhenProviderOmitsUsage() = runBlocking {
+        val server = RawHttpServer { socket ->
+            readRequest(socket)
+            val output = socket.getOutputStream()
+            output.write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n".toByteArray())
+            output.write("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n".toByteArray())
+            output.write("data: [DONE]\n\n".toByteArray())
+            output.flush()
+        }
+        server.start()
+        try {
+            var usage: com.mojing.app.data.remote.TokenUsage? = com.mojing.app.data.remote.TokenUsage(1, 1)
+            api.streamChatCompletionWithUsage("test-key", server.baseUrl, testRequest()) { usage = it }.collect { }
+            assertNull(usage)
+        } finally { server.close() }
+    }
+
+    @Test
+    fun strictStreamConsumesUsageAfterStopBeforeDone() = runBlocking {
+        val server = RawHttpServer { socket ->
+            readRequest(socket)
+            val output = socket.getOutputStream()
+            output.write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n".toByteArray())
+            output.write("data: {\"choices\":[{\"delta\":{\"content\":\"正文\"},\"finish_reason\":\"stop\"}]}\n\n".toByteArray())
+            output.write("data: {\"choices\":[],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2}}\n\n".toByteArray())
+            output.write("data: [DONE]\n\n".toByteArray())
+            output.flush()
+        }
+        server.start()
+        try {
+            var usage: com.mojing.app.data.remote.TokenUsage? = null
+            val result = api.streamStoryCompletionWithUsage("test-key", server.baseUrl, testRequest()) {
+                usage = it
+            }.toList().joinToString("")
+            assertEquals("正文", result)
+            assertEquals(com.mojing.app.data.remote.TokenUsage(4, 2), usage)
+        } finally { server.close() }
     }
 
     @Test

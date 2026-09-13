@@ -39,6 +39,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
@@ -130,7 +133,8 @@ fun SwipeRevealListRow(
                 }
                 Box(
                     modifier = Modifier
-                        .width(rowWidth + with(LocalDensity.current) { offsetPx.toDp() })
+                        .offset { IntOffset(offsetPx.roundToInt(), 0) }
+                        .width(rowWidth)
                         .draggable(
                             orientation = Orientation.Horizontal,
                             enabled = swipeEnabled,

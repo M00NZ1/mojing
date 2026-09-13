@@ -457,4 +457,26 @@ object Migrations {
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_legacy_lore_mappings_encyclopediaEntryId` ON `legacy_lore_mappings` (`encyclopediaEntryId`)")
         }
     }
+    val MIGRATION_20_21 = object : Migration(20, 21) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            val existing = mutableSetOf<String>()
+            db.query("PRAGMA table_info(`llm_cost_records`)").use { cursor ->
+                while (cursor.moveToNext()) existing += cursor.getString(cursor.getColumnIndexOrThrow("name"))
+            }
+            fun addColumn(sql: String) {
+                val name = sql.substringAfter("ADD COLUMN `").substringBefore('`')
+                if (name !in existing) db.execSQL(sql)
+            }
+            addColumn("ALTER TABLE `llm_cost_records` ADD COLUMN `platformId` TEXT NOT NULL DEFAULT ''")
+            addColumn("ALTER TABLE `llm_cost_records` ADD COLUMN `platformName` TEXT NOT NULL DEFAULT ''")
+            addColumn("ALTER TABLE `llm_cost_records` ADD COLUMN `currency` TEXT NOT NULL DEFAULT 'USD'")
+            addColumn("ALTER TABLE `llm_cost_records` ADD COLUMN `costKnown` INTEGER NOT NULL DEFAULT 1")
+            addColumn("ALTER TABLE `llm_cost_records` ADD COLUMN `tokenSource` TEXT NOT NULL DEFAULT 'estimated'")
+            addColumn("ALTER TABLE `llm_cost_records` ADD COLUMN `status` TEXT NOT NULL DEFAULT 'legacy'")
+            addColumn("ALTER TABLE `llm_cost_records` ADD COLUMN `cachedPromptTokens` INTEGER NOT NULL DEFAULT 0")
+            addColumn("ALTER TABLE `llm_cost_records` ADD COLUMN `pricingSnapshotJson` TEXT NOT NULL DEFAULT '{}'")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_llm_cost_records_platformId_modelName_id` ON `llm_cost_records` (`platformId`, `modelName`, `id`)")
+        }
+    }
+
 }

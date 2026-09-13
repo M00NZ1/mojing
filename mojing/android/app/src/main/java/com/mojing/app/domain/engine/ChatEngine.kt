@@ -1,5 +1,11 @@
 package com.mojing.app.domain.engine
 
+import com.mojing.app.data.local.entity.CostRecordEntity
+import com.mojing.app.data.remote.TokenUsage
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.emitAll
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.remote.ChatMessage
@@ -17,7 +23,7 @@ import javax.inject.Singleton
 
 sealed class StreamState {
     data class Generating(val partialText: String) : StreamState()
-    data class Done(val fullText: String) : StreamState()
+    data class Done(val fullText: String, val usage: CostRecordEntity? = null) : StreamState()
     data class Error(val message: String) : StreamState()
 }
 
@@ -46,29 +52,64 @@ class ChatEngine @Inject constructor(
         return parts.joinToString(" | ")
     }
 
-    private suspend fun recordStreamCost(
-        sessionId: Long,
-        character: CharacterEntity,
-        model: String,
-        messages: List<ChatMessage>,
-        fullText: String,
-        durationMs: Int,
-        success: Boolean,
-    ) {
-        val cid = character.id.takeIf { it > 0L }
-        val promptJoined = messages.joinToString("\n") { it.content }
-        costRecorder.recordLlm(
-            sessionId = sessionId,
-            characterId = cid,
-            modelName = model,
-            provider = "llm_stream",
-            promptTokens = 0,
-            completionTokens = 0,
-            durationMs = durationMs,
-            success = success,
-            promptTextFallback = promptJoined,
-            completionTextFallback = fullText.ifBlank { null },
-        )
+    private fun streamRequest(
+        sessionId: Long, character: CharacterEntity, messages: List<ChatMessage>,
+        apiKey: String, baseUrl: String, model: String, temperature: Float, maxTokens: Int,
+    ): Flow<StreamState> = flow {
+        val billing = costRecorder.capture(model, baseUrl, apiKey)
+        val text = StringBuilder()
+        val started = System.nanoTime()
+        var usage: TokenUsage? = null
+        var recorded = false
+        suspend fun record(success: Boolean, status: String): CostRecordEntity? {
+            if (recorded) return null
+            recorded = true
+            // Accounting must not discard an otherwise completed response.
+            return withContext(NonCancellable) {
+                withTimeoutOrNull(5_000) {
+                    try {
+                        costRecorder.recordLlm(
+                            sessionId = sessionId, characterId = character.id.takeIf { it > 0 },
+                            modelName = model, provider = "llm_stream",
+                            promptTokens = usage?.promptTokens ?: 0,
+                            completionTokens = usage?.completionTokens ?: 0,
+                            durationMs = ((System.nanoTime() - started) / 1_000_000).coerceIn(0, Int.MAX_VALUE.toLong()).toInt(),
+                            success = success, promptTextFallback = messages.joinToString("\n") { it.content },
+                            completionTextFallback = text.toString(), request = billing,
+                            usageProvided = usage != null, cachedPromptTokens = usage?.cachedPromptTokens ?: 0,
+                            status = status,
+                        )
+                    } catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { null }
+                }
+            }
+        }
+        val result: StreamState = try {
+            val source = if (OpenAiCompatibleRouting.isAnthropicHost(baseUrl)) {
+                anthropicAdapter.streamChatWithUsage(
+                    apiKey, baseUrl, model, messages.filter { it.role == "system" }.joinToString("\n") { it.content },
+                    messages.filter { it.role != "system" }, temperature, maxTokens,
+                    onUsage = { usage = it }, strictErrors = true,
+                )
+            } else {
+                llmApi.streamChatCompletionWithUsage(apiKey, baseUrl,
+                    ChatRequest(model = model, messages = messages, temperature = temperature, max_tokens = maxTokens),
+                    onUsage = { usage = it })
+            }
+            source.collect { chunk ->
+                if (chunk.startsWith("__ERROR__")) throw IOException(chunk.removePrefix("__ERROR__"))
+                text.append(chunk)
+                emit(StreamState.Generating(text.toString()))
+            }
+            StreamState.Done(text.toString(), record(true, "success"))
+        } catch (cancelled: CancellationException) {
+            record(false, "cancelled")
+            throw cancelled
+        } catch (error: Exception) {
+            record(false, "failed")
+            StreamState.Error(describeThrowable(error))
+        }
+        emit(result)
     }
 
     fun streamGenerate(
@@ -116,52 +157,7 @@ class ChatEngine @Inject constructor(
             messages.add(ChatMessage(role, cleanContent))
         }
 
-        val fullText = StringBuilder()
-        var hasError = false
-        var errorMessage = ""
-        val t0 = System.currentTimeMillis()
-        val isAnthropic = OpenAiCompatibleRouting.isAnthropicHost(baseUrl)
-        try {
-            if (isAnthropic) {
-                val anthropicMessages = messages.filter { it.role != "system" }
-                anthropicAdapter.streamChat(
-                    apiKey, baseUrl, model, systemPrompt, anthropicMessages, temperature, maxTokens
-                ).collect { chunk: String ->
-                    if (chunk.startsWith("__ERROR__")) {
-                        errorMessage = chunk.removePrefix("__ERROR__")
-                        hasError = true
-                        return@collect
-                    }
-                    fullText.append(chunk)
-                    emit(StreamState.Generating(fullText.toString()))
-                }
-            } else {
-                val request = ChatRequest(
-                    model = model,
-                    messages = messages,
-                    temperature = temperature,
-                    max_tokens = maxTokens,
-                )
-                llmApi.streamChatCompletion(apiKey, baseUrl, request).collect { chunk ->
-                    fullText.append(chunk)
-                    emit(StreamState.Generating(fullText.toString()))
-                }
-            }
-            val elapsed = (System.currentTimeMillis() - t0).toInt()
-            if (hasError) {
-                recordStreamCost(sessionId, character, model, messages, "", elapsed, false)
-                emit(StreamState.Error(errorMessage))
-            } else {
-                recordStreamCost(sessionId, character, model, messages, fullText.toString(), elapsed, true)
-                emit(StreamState.Done(fullText.toString()))
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            val elapsed = (System.currentTimeMillis() - t0).toInt()
-            recordStreamCost(sessionId, character, model, messages, fullText.toString(), elapsed, false)
-            emit(StreamState.Error(describeThrowable(e)))
-        }
+        emitAll(streamRequest(sessionId, character, messages, apiKey, baseUrl, model, temperature, maxTokens))
     }
 
     fun streamGenerateWithMemory(
@@ -214,53 +210,8 @@ class ChatEngine @Inject constructor(
             messages.add(ChatMessage(role, cleanContent))
         }
 
-        val request = ChatRequest(
-            model = model,
-            messages = messages,
-            temperature = character.temperature,
-            max_tokens = budget.reservedForOutput,
-        )
-
-        val fullText = StringBuilder()
-        var hasError = false
-        var errorMessage = ""
-        val t0 = System.currentTimeMillis()
-        val isAnthropic = OpenAiCompatibleRouting.isAnthropicHost(baseUrl)
-        try {
-            if (isAnthropic) {
-                val anthropicMessages = messages.filter { it.role != "system" }
-                anthropicAdapter.streamChat(
-                    apiKey, baseUrl, model, systemPrompt, anthropicMessages, character.temperature, budget.reservedForOutput
-                ).collect { chunk ->
-                    if (chunk.startsWith("__ERROR__")) {
-                        errorMessage = chunk.removePrefix("__ERROR__")
-                        hasError = true
-                        return@collect
-                    }
-                    fullText.append(chunk)
-                    emit(StreamState.Generating(fullText.toString()))
-                }
-            } else {
-                llmApi.streamChatCompletion(apiKey, baseUrl, request).collect { chunk ->
-                    fullText.append(chunk)
-                    emit(StreamState.Generating(fullText.toString()))
-                }
-            }
-            val elapsed = (System.currentTimeMillis() - t0).toInt()
-            if (hasError) {
-                recordStreamCost(sessionId, character, model, messages, "", elapsed, false)
-                emit(StreamState.Error(errorMessage))
-            } else {
-                recordStreamCost(sessionId, character, model, messages, fullText.toString(), elapsed, true)
-                emit(StreamState.Done(fullText.toString()))
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            val elapsed = (System.currentTimeMillis() - t0).toInt()
-            recordStreamCost(sessionId, character, model, messages, fullText.toString(), elapsed, false)
-            emit(StreamState.Error(describeThrowable(e)))
-        }
+        emitAll(streamRequest(sessionId, character, messages, apiKey, baseUrl, model,
+            character.temperature, budget.reservedForOutput))
     }
 
     suspend fun nonStreamingCall(
