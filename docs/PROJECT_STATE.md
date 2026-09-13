@@ -204,7 +204,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 当前分支为 `main`。本轮 Android 版本为 1.0.27 / 10027，Room schema 为 21。
 
-上一公开版为 [1.0.22 · 2026-09-11](https://github.com/M00NZ1/mojing/releases/tag/build-20260911-c3d009cd)。本轮 APK 输出目录为 `outputs/android/20260914-1.0.27/`。
+当前交付为 [墨境 1.0.27](https://github.com/M00NZ1/mojing/releases/tag/v1.0.27)，提供通用版、ARM64 与 ARMv7。APK 输出目录为 `outputs/android/20260914-1.0.27/`。
 
 正式数据库 `mojing/backend/storage/app.db` 为 3,891,200 字节，修改时间为 2026-08-28 23:23:12。本批未修改数据库、媒体、凭据、签名或历史 worktree；既有运行环境保持原状，测试日志与截图保留在 `.codex-work/`。
 
@@ -240,6 +240,8 @@ Android 1.0.24 / 10024 已生成 Release APK，包含对话两分钟总超时移
 
 对话模型按横向平台标签切换，默认定位当前平台，点击模型后保存下一次请求的线路。聊天与默认模型选择共用紧凑搜索栏，搜索默认收起；长模型目录按需渲染，平台切换回到目录顶部。保存中禁用模型选择，失败后支持重试。
 
-GitHub Release 构建使用 6 GB 堆内存及两个 worker，并保留后续步骤失败时的 Debug APK 上传。
+GitHub 各构建阶段采用 4 GB 堆内存的单次 Gradle 进程，Kotlin 在同一进程执行，Release 使用一个 worker；后续步骤失败时仍上传已生成的 Debug APK。
 
 本轮通过 689 项 Android JVM 测试与 10 项 Android 35 模拟器交互测试，覆盖 360dp 小屏、深色大字号、横向平台列表、同名模型隔离、搜索收起、保存锁与失败重试，以及 5,000 项模型目录检索。
+
+1.0.27 Release 构建通过，版本为 10027，沿用正式签名。代码与三个 APK 已上传 GitHub，源码提交为 `fbbf4e64`。

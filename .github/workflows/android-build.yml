@@ -31,14 +31,16 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Run unit tests
-        run: ./gradlew testDebugUnitTest
+        run: ./gradlew testDebugUnitTest --no-daemon '-Dorg.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8' -Pkotlin.compiler.execution.strategy=in-process --max-workers=2
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleDebug --no-daemon '-Dorg.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8' -Pkotlin.compiler.execution.strategy=in-process --max-workers=2
 
       - name: Build optimized CI test APK
         if: github.event_name != 'pull_request'
-        run: ./gradlew assembleRelease --no-daemon '-Dorg.gradle.jvmargs=-Xmx6144m -Dfile.encoding=UTF-8' --max-workers=2
+        run: |
+          free -h
+          ./gradlew assembleRelease --no-daemon '-Dorg.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8' -Pkotlin.compiler.execution.strategy=in-process --max-workers=1
 
       - name: Upload debug APK
         if: ${{ !cancelled() && hashFiles('mojing/android/app/build/outputs/apk/debug/*.apk') != '' }}
