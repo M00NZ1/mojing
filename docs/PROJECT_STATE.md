@@ -247,3 +247,9 @@ GitHub 各构建阶段采用 4 GB 堆内存的单次 Gradle 进程，Kotlin 在�
 1.0.27 Release 构建通过，版本为 10027，沿用正式签名。代码与三个 APK 已上传 GitHub，源码提交为 `fbbf4e64`。
 
 [GitHub Actions 本轮构建](https://github.com/M00NZ1/mojing/actions/runs/34779460825)通过单元测试、Debug、Release 与两个产物上传步骤。本地按 CI 的 4 GB、单 worker、Kotlin 同进程配置完成全量 Release 重建，耗时 3 分 48 秒。
+
+## 故事线选择面板
+
+故事线选择采用独立面板，支持名称搜索、当前故事线定位、清晰选中标记和固定滚动区域。列表按可见范围渲染，新建与故事线总览入口始终保留。
+
+本批 Android Debug 构建与 3 项 Android 15 模拟器测试通过，覆盖 1,000 条故事线的搜索、当前项定位、空结果入口和避免重复切换。
