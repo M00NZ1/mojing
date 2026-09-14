@@ -366,8 +366,15 @@ class ChatViewModel @Inject constructor(
             speakerPlanSummary = null,
             error = null,
         )
+        RetainedChatSessions.retainGeneration(sessionId, job, appContext) { _state.value.error }
         job.start()
         return true
+    }
+
+    private fun launchSessionMaintenance(block: suspend kotlinx.coroutines.CoroutineScope.() -> Unit) {
+        val job = viewModelScope.launch(Dispatchers.IO, start = CoroutineStart.LAZY, block = block)
+        RetainedChatSessions.retainGeneration(sessionId, job, appContext)
+        job.start()
     }
 
     private fun GenerationContext.ensureCurrent() {
@@ -2262,7 +2269,7 @@ class ChatViewModel @Inject constructor(
                         generation.ensureCurrent()
                         val memoryRevision = universalContextMemoryManager.reserveUpdateRevision(sessionId, branchId)
                         val msgs = getContextMessagesForBranch(branchId)
-                        viewModelScope.launch(Dispatchers.IO) {
+                        launchSessionMaintenance {
                             val memoryResult = universalContextMemoryManager.updateAfterMessages(
                                 sessionId = sessionId,
                                 branchId = branchId,
@@ -2587,7 +2594,7 @@ class ChatViewModel @Inject constructor(
                                     }
                                     val branchId = generation.branchId
                                     val memoryRevision = universalContextMemoryManager.reserveUpdateRevision(sessionId, branchId)
-                                    viewModelScope.launch(Dispatchers.IO) {
+                                    launchSessionMaintenance {
                                         val memoryResult = universalContextMemoryManager.updateAfterMessages(
                                             sessionId = sessionId,
                                             branchId = branchId,

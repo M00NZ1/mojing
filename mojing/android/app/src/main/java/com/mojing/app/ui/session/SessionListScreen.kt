@@ -98,6 +98,8 @@ fun SessionListScreen(
     val sessionLibraryState by viewModel.sessionLibraryState.collectAsStateWithLifecycle()
     val sessions = (sessionLibraryState as? SessionLibraryUiState.Loaded)?.sessions.orEmpty()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val generatingSessions by com.mojing.app.ui.chat.RetainedChatSessions.running.collectAsStateWithLifecycle()
+    val backgroundFailures by com.mojing.app.ui.chat.RetainedChatSessions.stores.failures.collectAsStateWithLifecycle()
     val pendingGenTasks by viewModel.pendingGenerationTaskCount.collectAsStateWithLifecycle()
     val hasPublicLlmKey by viewModel.hasPublicLlmKey.collectAsStateWithLifecycle()
     val isCreatingSession by viewModel.isCreatingSession.collectAsStateWithLifecycle()
@@ -462,7 +464,9 @@ fun SessionListScreen(
                                 onDelete = { deleteTarget = row },
                                 onClick = { onSessionClick(row.session.id) },
                             ) {
-                                SessionListRowInner(row = row)
+                                SessionListRowInner(row = row, isGenerating = row.session.id in generatingSessions,
+                                    backgroundFailure = backgroundFailures[row.session.id]?.message,
+                                    onStop = { com.mojing.app.ui.chat.RetainedChatSessions.stores.stop(row.session.id) })
                             }
                             if (index < filteredSessions.lastIndex) {
                                 HorizontalDivider(
@@ -487,9 +491,9 @@ fun SessionListScreen(
             confirmButton = {
                 TextButton(onClick = {
                     val title = session.title.ifBlank { "未命名对话" }
-                    viewModel.deleteSession(session.id)
+                    val deleted = viewModel.deleteSession(session.id)
                     deleteTarget = null
-                    Toast.makeText(context, UserFacingStrings.itemDeleted(title), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, if (deleted) UserFacingStrings.itemDeleted(title) else "请先停止此对话的后台任务，再删除", Toast.LENGTH_SHORT).show()
                 }) { Text("删除", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
@@ -869,7 +873,7 @@ private fun QuickStartGuideSteps(onCharacters: () -> Unit, onCreateSession: () -
 }
 
 @Composable
-fun SessionListRowInner(row: SessionWithListMeta) {
+fun SessionListRowInner(row: SessionWithListMeta, isGenerating: Boolean = false, onStop: (() -> Unit)? = null, backgroundFailure: String? = null) {
     val session = row.session
     val dateTimeFormat = remember { SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()) }
     val preview = ChatMessageTextFormat.preview(
@@ -895,7 +899,14 @@ fun SessionListRowInner(row: SessionWithListMeta) {
                         tint = MaterialTheme.colorScheme.primary)
                 }
             }
-            if (preview.isNotEmpty()) Text(preview, style = MaterialTheme.typography.bodyMedium,
+            if (isGenerating) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                Text("后台处理中 · 点击查看", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                if (onStop != null) TextButton(onClick = onStop) { Text("停止") }
+            }
+            if (!isGenerating && backgroundFailure != null) Text("生成未完成 · $backgroundFailure",
+                maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+            if (!isGenerating && backgroundFailure == null && preview.isNotEmpty()) Text(preview, style = MaterialTheme.typography.bodyMedium,
                 maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("$meta · ${dateTimeFormat.format(Date(session.updatedAt))}",
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

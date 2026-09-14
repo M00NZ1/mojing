@@ -136,7 +136,9 @@ internal fun NavGraph(
                 InvalidRouteRedirect(navController, Routes.SESSION_LIST)
                 return@composable
             }
+            val chatModel = com.mojing.app.ui.chat.retainedChatViewModel(entry, sessionId)
             ChatScreen(
+                viewModel = chatModel,
                 sessionId = sessionId,
                 backLabel = if ((entry.arguments?.getLong("sourceMessageId") ?: 0L) > 0L) "返回百科" else "返回会话主页",
                 onBack = {

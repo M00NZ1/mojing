@@ -82,8 +82,14 @@ class NotificationHelper @Inject constructor(
         manager.notify(sessionId.toInt(), notification)
     }
 
-    fun createGenerateNotification(title: String, progress: Int): Notification {
-        val intent = Intent(context, MainActivity::class.java)
+    fun createGenerateNotification(title: String, progress: Int, sessionId: Long? = null): Notification {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            if (sessionId != null) {
+                putExtra(ExternalNavigationContract.EXTRA_NAVIGATE_TO, ExternalNavigationContract.DESTINATION_CHAT)
+                putExtra(ExternalNavigationContract.EXTRA_SESSION_ID, sessionId)
+            }
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
         val pendingIntent = PendingIntent.getActivity(
             context, 0, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -93,7 +99,7 @@ class NotificationHelper @Inject constructor(
             .setContentTitle(title)
             .setContentText("正在生成回复…")
             .setSmallIcon(R.drawable.ic_notification)
-            .setProgress(100, progress, progress == 100)
+            .setProgress(100, progress, progress == 0)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(pendingIntent)

@@ -1,44 +1,43 @@
 package com.mojing.app.service
 
-import android.app.Notification
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.os.IBinder
-import androidx.core.app.NotificationCompat
-import com.mojing.app.MainActivity
+import com.mojing.app.ui.chat.RetainedChatSessions
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import kotlinx.coroutines.*
 
 @AndroidEntryPoint
 class GenerateService : Service() {
-
     @Inject lateinit var notificationHelper: NotificationHelper
-
-    override fun onCreate() {
-        super.onCreate()
-    }
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var notificationJob: Job? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val title = intent?.getStringExtra("title") ?: "生成中"
-        val notification = notificationHelper.createGenerateNotification(title, 0)
-        startForeground(1001, notification)
+        startForeground(1001, notificationHelper.createGenerateNotification("墨境 · 对话生成中", 0, RetainedChatSessions.running.value.firstOrNull()))
+        if (notificationJob == null) notificationJob = serviceScope.launch {
+            RetainedChatSessions.running.collect { ids ->
+                if (ids.isNotEmpty()) {
+                    getSystemService(android.app.NotificationManager::class.java).notify(1001,
+                        notificationHelper.createGenerateNotification("墨境 · ${ids.size} 个对话处理中", 0, ids.first()))
+                }
+            }
+        }
+        if (RetainedChatSessions.running.value.isEmpty()) stopSelf(startId)
         return START_NOT_STICKY
     }
 
-    fun updateProgress(title: String, progress: Int) {
-        val notification = notificationHelper.createGenerateNotification(title, progress)
-        val manager = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
-        manager.notify(1001, notification)
-    }
-
-    fun complete(title: String) {
-        val notification = notificationHelper.createCompletionNotification(title)
-        val manager = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
-        manager.notify(1001, notification)
-        stopForeground(STOP_FOREGROUND_DETACH)
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        RetainedChatSessions.stores.stopAll()
+        stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        serviceScope.cancel()
+        super.onDestroy()
+    }
 }

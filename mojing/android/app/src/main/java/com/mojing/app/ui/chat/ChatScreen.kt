@@ -167,6 +167,14 @@ fun ChatScreen(
     var hasAutoPositionedInitially by remember(sessionId) { mutableStateOf(false) }
     var speakerTurnMode by remember { mutableStateOf(viewModel.currentSpeakerTurnMode()) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val backgroundFailures by RetainedChatSessions.stores.failures.collectAsStateWithLifecycle()
+    val backgroundFailure = backgroundFailures[sessionId]
+    LaunchedEffect(backgroundFailure?.token) {
+        val notice = backgroundFailure ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(notice.message, actionLabel = "知道了", withDismissAction = true,
+            duration = androidx.compose.material3.SnackbarDuration.Indefinite)
+        RetainedChatSessions.stores.dismissFailure(sessionId, notice.token)
+    }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var showAddParticipant by remember { mutableStateOf(false) }
@@ -204,7 +212,6 @@ fun ChatScreen(
     var speechListening by remember { mutableStateOf(false) }
     var worldCredentialFieldsDirty by remember { mutableStateOf(false) }
     var showUnsavedWorldDialog by remember { mutableStateOf(false) }
-    var showStopAndLeaveDialog by remember { mutableStateOf(false) }
     var correctionDialogOpen by remember { mutableStateOf(false) }
     var correctionEditing by remember { mutableStateOf<SessionMemoryCorrectionEntity?>(null) }
     var correctionDraft by remember { mutableStateOf("") }
@@ -283,7 +290,6 @@ fun ChatScreen(
 
     fun requestLeave() {
         when {
-            state.isGenerating -> showStopAndLeaveDialog = true
             worldCredentialFieldsDirty -> showUnsavedWorldDialog = true
             else -> onBack()
         }
@@ -292,7 +298,6 @@ fun ChatScreen(
     BackHandler {
         when {
             isImeOpen -> dismissKeyboard()
-            showStopAndLeaveDialog -> showStopAndLeaveDialog = false
             showUnsavedWorldDialog -> showUnsavedWorldDialog = false
             showImageGenDialog -> showImageGenDialog = false
             showSearchDialog -> {
@@ -1267,28 +1272,6 @@ fun ChatScreen(
                         scope.launch { drawerState.open() }
                     }) { Text("回去保存") }
                 }
-            },
-        )
-    }
-
-    if (showStopAndLeaveDialog) {
-        AlertDialog(
-            onDismissRequest = { showStopAndLeaveDialog = false },
-            title = { Text("停止生成并退出？") },
-            text = { Text("当前回复仍在生成。退出会停止本次生成，已经保存的消息不会丢失。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showStopAndLeaveDialog = false
-                    viewModel.stopGeneration()
-                    if (worldCredentialFieldsDirty) {
-                        showUnsavedWorldDialog = true
-                    } else {
-                        onBack()
-                    }
-                }) { Text("停止并退出") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showStopAndLeaveDialog = false }) { Text("继续生成") }
             },
         )
     }

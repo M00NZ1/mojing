@@ -202,11 +202,13 @@ class SessionViewModel @Inject constructor(
         }
     }
 
-    fun deleteSession(id: Long) {
+    fun deleteSession(id: Long): Boolean {
+        if (id in com.mojing.app.ui.chat.RetainedChatSessions.running.value) return false
         viewModelScope.launch {
             sessionDao.delete(id)
             runCatching { uiPreferencesRepository.clearLastChatBranch(id) }
         }
+        return true
     }
 
     fun setSessionPinned(id: Long, pinned: Boolean) {

@@ -2977,4 +2977,41 @@ class ChatViewModelTest {
         vm.stopGeneration()
         advanceUntilIdle()
     }
+    @Test
+    fun narratorReplyFinishesOnceAfterLeavingAndReopeningTheSession() = runTest(testDispatcher) {
+        val registry = com.mojing.app.ui.chat.RetainedChatSessions.stores
+        val messages = mockk<MessageDao>(relaxed = true)
+        val world = mockk<SessionWorldDao>(relaxed = true)
+        coEvery { world.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L)
+        val engine = mockk<ChatEngine>(relaxed = true)
+        val finish = CompletableDeferred<Unit>()
+        every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns kotlinx.coroutines.flow.flow {
+            emit(StreamState.Generating("窗外的雨"))
+            finish.await()
+            emit(StreamState.Done("窗外的雨渐渐停了。"))
+        }
+        val vm = registry.acquire(42L) { store ->
+            createViewModel(messageDao = messages, sessionWorldDao = world, chatEngine = engine,
+                secureStorage = validSecureStorage(), llmApiService = validLlmApiService()).also { store.put("vm", it) }
+        }
+        try {
+            advanceUntilIdle()
+            assertTrue(vm.requestNarrator()); runCurrent()
+            assertTrue(vm.state.value.isGenerating)
+            registry.release(42L)
+            assertTrue(42L in registry.running.value)
+            val reopened = registry.acquire<ChatViewModel>(42L) { error("Duplicate generation owner") }
+            assertTrue(reopened === vm)
+            registry.release(42L)
+            finish.complete(Unit); advanceUntilIdle()
+            coVerify(exactly = 1) { messages.insert(match { it.speakerType == "narrator" && it.content == "窗外的雨渐渐停了。" }) }
+            assertFalse(vm.state.value.isGenerating)
+        } finally {
+            finish.complete(Unit)
+            vm.stopGeneration()
+            registry.release(42L)
+            advanceUntilIdle()
+        }
+    }
+
 }
