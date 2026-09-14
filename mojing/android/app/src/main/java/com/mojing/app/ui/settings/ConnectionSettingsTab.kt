@@ -130,12 +130,6 @@ fun ConnectionSettingsTab(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text("模型与联网", style = MaterialTheme.typography.titleLarge)
-        Text(
-            "先配置日常使用的对话线路；配图和朗读可按需单独覆盖，不填专用 Key 时会复用对话 Key。",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
             ConnectionChannel.entries.forEachIndexed { index, channel ->
                 SegmentedButton(
@@ -330,27 +324,6 @@ private fun ProbeProgress(channel: String, busy: String?, hint: String, lines: L
     }
 }
 
-@Composable
-private fun ExpandableSettingsCard(
-    title: String,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-    content: @Composable () -> Unit,
-) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(title, style = MaterialTheme.typography.titleSmall)
-                TextButton(onClick = onToggle) { Text(if (expanded) "收起" else "展开") }
-            }
-            if (expanded) content()
-        }
-    }
-}
 
 @Composable
 private fun SettingSwitchRow(

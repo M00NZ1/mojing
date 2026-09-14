@@ -88,4 +88,44 @@ class UsageViewModelTest {
         assertFalse(vm.state.value.canLoadMore)
         coVerify(exactly = 2) { dao.requestPage("p", "m", 41, 40) }
     }
+    @Test fun filteredTokenPagingKeepsPairCursor() = runTest(dispatcher) {
+        coEvery { dao.requestPage(any(), any(), any(), any()) } returns emptyList()
+        val page = (80L downTo 41L).map { CostRecordEntity(id = it, platformId = "p", modelName = "m", totalTokens = 500) }
+        coEvery { dao.filteredRequestPage("p", "m", Long.MAX_VALUE, Long.MAX_VALUE, 40, "success", "tokens") } returns page
+        coEvery { dao.filteredRequestPage("p", "m", 41, 500, 40, "success", "tokens") } returns listOf(CostRecordEntity(id = 40, totalTokens = 500))
+        val vm = UsageViewModel(dao, currency); advanceUntilIdle()
+        vm.openDestination("p", "平台", "m"); advanceUntilIdle()
+        vm.filterRequests("success", "tokens"); advanceUntilIdle()
+        vm.loadMoreRequests(); advanceUntilIdle()
+        assertEquals(41, vm.state.value.requests.size)
+        assertEquals(40L, vm.state.value.requestCursor)
+        assertFalse(vm.state.value.canLoadMore)
+    }
+
+    @Test fun deepModelDestinationSkipsOverviewAndKeepsFilteredPagesOnReentry() = runTest(dispatcher) {
+        coEvery { dao.requestPage("p", "m", any(), 40) } returns emptyList()
+        coEvery { dao.filteredRequestPage("p", "m", any(), any(), 40, "failed", "tokens") } returns listOf(CostRecordEntity(id = 7, platformId = "p", modelName = "m"))
+        val vm = UsageViewModel(dao, currency, androidx.lifecycle.SavedStateHandle(mapOf("platformId" to "p", "platformName" to "渠道", "modelName" to "m")))
+        advanceUntilIdle()
+        coVerify(exactly = 0) { dao.usageSummary(null, null) }
+        coVerify(exactly = 0) { dao.modelUsage(any()) }
+        vm.filterRequests("failed", "tokens"); advanceUntilIdle()
+        val before = vm.state.value
+        vm.openDestination("p", "渠道", "m"); advanceUntilIdle()
+        assertEquals(before, vm.state.value)
+        coVerify(exactly = 1) { dao.filteredRequestPage("p", "m", any(), any(), 40, "failed", "tokens") }
+    }
+
+    @Test fun reenteringLoadingPlatformDoesNotRestartItsQuery() = runTest(dispatcher) {
+        val gate = CompletableDeferred<List<ModelChannelUsageSummary>>()
+        coEvery { dao.modelUsage("p") } coAnswers { gate.await() }
+        val vm = UsageViewModel(dao, currency, androidx.lifecycle.SavedStateHandle(mapOf("platformId" to "p")))
+        runCurrent()
+        vm.openDestination("p", "渠道", null); runCurrent()
+        assertTrue(vm.state.value.loading)
+        coVerify(exactly = 1) { dao.modelUsage("p") }
+        gate.complete(emptyList()); advanceUntilIdle()
+        assertFalse(vm.state.value.loading)
+    }
+
 }

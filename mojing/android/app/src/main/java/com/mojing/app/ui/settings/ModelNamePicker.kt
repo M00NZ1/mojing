@@ -27,10 +27,7 @@ internal fun ModelNamePicker(names: List<String>, selected: String, onSelect: (S
             key(search) {
                 LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false)) {
                     items(matches, key = { it }) { name ->
-                        TextButton(onClick = { onSelect(name) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                            Text(name, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                            if (name == selected) Icon(Icons.Default.Check, "已选择", Modifier.size(18.dp))
-                        }
+                        com.mojing.app.ui.common.ModelOptionRow(name, name == selected, { onSelect(name) })
                     }
                 }
             }

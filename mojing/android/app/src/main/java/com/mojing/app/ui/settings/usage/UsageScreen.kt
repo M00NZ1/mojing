@@ -31,6 +31,15 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedCard
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,28 +59,29 @@ import com.mojing.app.domain.billing.formatBillingAmount
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun UsageScreen(viewModel: UsageViewModel, onBack: (() -> Unit)? = null) {
-    androidx.compose.runtime.LaunchedEffect(viewModel) { viewModel.refresh() }
+fun UsageScreen(
+    viewModel: UsageViewModel, onBack: (() -> Unit)? = null,
+    platformId: String? = null, platformName: String = "", modelName: String? = null,
+    onPlatform: (UsagePlatformUi) -> Unit = viewModel::openPlatform,
+    onModel: (UsageModelUi) -> Unit = viewModel::openModel,
+) {
+    androidx.compose.runtime.LaunchedEffect(viewModel, platformId, modelName) {
+        if (platformId == null) viewModel.refresh() else viewModel.openDestination(platformId, platformName, modelName)
+    }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val currencyState by viewModel.currencyState.collectAsStateWithLifecycle()
-    val level = state.level
-    val screenStates = rememberSaveableStateHolder()
-    val title = when (level) {
-        1 -> state.selectedPlatform?.name ?: "平台用量"
-        2 -> state.selectedModel?.name ?: "模型用量"
-        else -> "本机用量"
-    }
-    fun goBack() { if (!viewModel.back()) onBack?.invoke() }
-    if (level > 0) BackHandler(onBack = ::goBack)
-    Scaffold(topBar = { TopAppBar(title = { Text(title) }, navigationIcon = {
-        if (level > 0) IconButton(onClick = ::goBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回") }
-    }) }) { padding ->
-        screenStates.SaveableStateProvider("$level:${if (level > 0) state.selectedPlatform?.id.orEmpty() else ""}:${if (level > 1) state.selectedModel?.name.orEmpty() else ""}") {
-        when (level) {
-            0 -> SummaryLevel(state, currencyState, viewModel, Modifier.padding(padding), onPlatform = viewModel::openPlatform)
-            1 -> ModelLevel(state, currencyState, viewModel, Modifier.padding(padding), onModel = viewModel::openModel)
-            else -> RequestLevel(state, currencyState, viewModel, Modifier.padding(padding))
-        }
+    val level = if (platformId == null) 0 else if (modelName == null) 1 else 2
+    if (level == 0) {
+        SummaryLevel(state, currencyState, viewModel, Modifier, onPlatform)
+    } else {
+        BackHandler { onBack?.invoke() }
+        Scaffold(topBar = {
+            TopAppBar(title = { Text(if (level == 1) platformName.ifBlank { "历史平台" } else modelName.orEmpty().ifBlank { "未记录模型" },
+                maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium) },
+                navigationIcon = { IconButton(onClick = { onBack?.invoke() }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回") } })
+        }) { padding ->
+            if (level == 1) ModelLevel(state, currencyState, viewModel, Modifier.padding(padding), onModel)
+            else RequestLevel(state, currencyState, viewModel, Modifier.padding(padding))
         }
     }
 }
@@ -79,7 +89,6 @@ fun UsageScreen(viewModel: UsageViewModel, onBack: (() -> Unit)? = null) {
 @Composable private fun SummaryLevel(state: UsageUiState, currencyState: CurrencyDisplayState, vm: UsageViewModel, modifier: Modifier, onPlatform: (UsagePlatformUi) -> Unit) {
     val listState = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.foundation.lazy.LazyListState.Saver) { androidx.compose.foundation.lazy.LazyListState() }
     UsageContainer(modifier, state.loading, state.error, vm::refresh) {
-        Text("按渠道汇总", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxSize()) {
             item { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 CurrencyToolbar(currencyState, vm)
@@ -96,11 +105,15 @@ fun UsageScreen(viewModel: UsageViewModel, onBack: (() -> Unit)? = null) {
 
 @Composable private fun ModelLevel(state: UsageUiState, currencyState: CurrencyDisplayState, vm: UsageViewModel, modifier: Modifier, onModel: (UsageModelUi) -> Unit) {
     val listState = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.foundation.lazy.LazyListState.Saver) { androidx.compose.foundation.lazy.LazyListState() }
+    var sort by rememberSaveable { mutableStateOf("最近使用") }
+    val models = when (sort) { "Token" -> state.models.sortedByDescending { it.tokens }; "请求数" -> state.models.sortedByDescending { it.calls }; else -> state.models }
     UsageContainer(modifier, state.loading, state.error, { state.selectedPlatform?.let(vm::openPlatform) }) {
-        Text("按模型查看", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        state.selectedPlatform?.let { Text("共 ${count(it.tokens)} Token · ${it.failed} 次失败", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("最近使用", "Token", "请求数").forEach { option -> FilterChip(selected = sort == option, onClick = { sort = option }, label = { Text(option) }) }
+        }
+        Text("${state.models.size} 个模型 · ${count(state.models.sumOf { it.tokens })} Token", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxSize()) {
-            items(state.models, key = { it.name }) { model ->
+            items(models, key = { it.name }) { model ->
                 UsageCard(model.name.ifBlank { "未记录模型" }, "${count(model.calls.toLong())} 次请求 · ${count(model.tokens)} Token", "成功 ${model.calls - model.failed} · 失败或取消 ${model.failed} · 待定价 ${model.unknownPrice}", model.currencies, currencyState, onClick = { onModel(model) })
             }
             if (state.models.isEmpty() && !state.loading) item { Text("暂无模型用量记录", color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -111,11 +124,19 @@ fun UsageScreen(viewModel: UsageViewModel, onBack: (() -> Unit)? = null) {
 @Composable private fun RequestLevel(state: UsageUiState, currencyState: CurrencyDisplayState, vm: UsageViewModel, modifier: Modifier) {
     val listState = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.foundation.lazy.LazyListState.Saver) { androidx.compose.foundation.lazy.LazyListState() }
     UsageContainer(modifier, state.loading && state.requests.isEmpty(), state.error, vm::loadMoreRequests) {
-        Text("每次请求", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("all" to "全部", "success" to "成功", "failed" to "失败", "cancelled" to "已取消").forEach { (value, label) ->
+                FilterChip(selected = state.requestFilter == value, onClick = { vm.filterRequests(value, state.requestOrder) }, label = { Text(label) })
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = state.requestOrder == "time", onClick = { vm.filterRequests(state.requestFilter, "time") }, label = { Text("最新记录") })
+            FilterChip(selected = state.requestOrder == "tokens", onClick = { vm.filterRequests(state.requestFilter, "tokens") }, label = { Text("Token 最多") })
+        }
         LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
             items(state.requests, key = { it.record.id }) { item ->
                 val r = item.record
-                Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                OutlinedCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(formatDate(r.createdAt), style = MaterialTheme.typography.labelMedium)
                         val statusLabel = when (r.status) { "cancelled" -> "已取消"; "failed" -> "失败"; else -> if (r.success) "成功" else "失败" }
@@ -141,7 +162,7 @@ fun UsageScreen(viewModel: UsageViewModel, onBack: (() -> Unit)? = null) {
 }
 
 @Composable private fun UsageCard(title: String, subtitle: String, detail: String, currencies: List<UsageCurrencyUi>, currencyState: CurrencyDisplayState = CurrencyDisplayState(), onClick: () -> Unit) {
-    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+    OutlinedCard(onClick = onClick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Outlined.DataUsage, null, tint = MaterialTheme.colorScheme.primary); Text(title, Modifier.weight(1f).padding(horizontal = 10.dp), fontWeight = FontWeight.SemiBold); Icon(Icons.Outlined.ChevronRight, "查看") }
         Text(subtitle, style = MaterialTheme.typography.bodyMedium)
         Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -150,15 +171,18 @@ fun UsageScreen(viewModel: UsageViewModel, onBack: (() -> Unit)? = null) {
 }
 
 @Composable private fun CurrencyToolbar(state: CurrencyDisplayState, vm: UsageViewModel) {
+    var editRate by rememberSaveable { mutableStateOf(false) }
     var manual by rememberSaveable { mutableStateOf("") }
     var rateError by rememberSaveable { mutableStateOf<String?>(null) }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         TextButton(onClick = { vm.setDisplayCurrency("CNY") }) { Text(if (state.displayCurrency == "CNY") "✓ CNY ¥" else "CNY ¥") }
         TextButton(onClick = { vm.setDisplayCurrency("USD") }) { Text(if (state.displayCurrency == "USD") "✓ USD $" else "USD $") }
-        TextButton(onClick = vm::refreshCurrency, enabled = !state.loading) { Text("刷新") }
+        TextButton(onClick = { editRate = !editRate }) { Text("汇率") }
     }
     Text(state.usdToCny?.let { "1 USD = ${java.math.BigDecimal.valueOf(it).setScale(4, java.math.RoundingMode.HALF_UP)} CNY · ${state.rateDate}" }
         ?: "暂无汇率，按原币显示", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (editRate) Column {
+    TextButton(onClick = vm::refreshCurrency, enabled = !state.loading) { Text("刷新汇率") }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(manual, { manual = it }, Modifier.weight(1f), singleLine = true, label = { Text("USD/CNY 汇率") }, placeholder = { Text("例如 7.20") })
         TextButton(onClick = {
@@ -166,6 +190,7 @@ fun UsageScreen(viewModel: UsageViewModel, onBack: (() -> Unit)? = null) {
             if (rate == null || !rate.isFinite() || rate <= 0) rateError = "请输入有效的正数汇率"
             else { vm.setManualRate(rate); rateError = null }
         }) { Text("应用") }
+    }
     }
     (rateError ?: state.error)?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
 }

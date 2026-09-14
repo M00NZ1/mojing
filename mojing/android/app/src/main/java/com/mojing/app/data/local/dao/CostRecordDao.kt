@@ -124,6 +124,12 @@ interface CostRecordDao {
         "GROUP BY modelName ORDER BY MAX(id) DESC")
     suspend fun modelUsage(platformId: String): List<ModelChannelUsageSummary>
 
+    @Query("SELECT * FROM llm_cost_records WHERE platformId=:platformId AND modelName=:modelName " +
+        "AND (:statusFilter='all' OR (:statusFilter='success' AND success=1) OR (:statusFilter='failed' AND success=0 AND status!='cancelled') OR (:statusFilter='cancelled' AND status='cancelled')) " +
+        "AND ((CASE WHEN :sortOrder='tokens' THEN totalTokens ELSE id END) < :beforeValue OR ((CASE WHEN :sortOrder='tokens' THEN totalTokens ELSE id END) = :beforeValue AND id < :beforeId)) " +
+        "ORDER BY (CASE WHEN :sortOrder='tokens' THEN totalTokens ELSE id END) DESC, id DESC LIMIT :limit")
+    suspend fun filteredRequestPage(platformId: String, modelName: String, beforeId: Long, beforeValue: Long, limit: Int, statusFilter: String, sortOrder: String): List<CostRecordEntity>
+
     @Query("SELECT * FROM llm_cost_records WHERE platformId=:platformId AND modelName=:modelName AND id < :beforeId ORDER BY id DESC LIMIT :limit")
     suspend fun requestPage(platformId: String, modelName: String, beforeId: Long, limit: Int): List<CostRecordEntity>
 

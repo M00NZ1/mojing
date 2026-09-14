@@ -274,6 +274,25 @@ internal fun NavGraph(
             else WorldSettingsScreen(worldId = worldId, onBack = { navController.popBackStack() })
         }
 
+        composable("usage/platform?platformId={platformId}&platformName={platformName}", arguments = listOf(
+            navArgument("platformId") { type = NavType.StringType; defaultValue = "" },
+            navArgument("platformName") { type = NavType.StringType; defaultValue = "" },
+        )) { entry ->
+            val platformId = entry.arguments?.getString("platformId").orEmpty()
+            val platformName = entry.arguments?.getString("platformName").orEmpty()
+            com.mojing.app.ui.settings.usage.UsageScreen(viewModel = androidx.hilt.navigation.compose.hiltViewModel(),
+                platformId = platformId, platformName = platformName, onBack = { navController.popBackStack() },
+                onModel = { model -> navController.navigate("usage/model?platformId=${android.net.Uri.encode(platformId)}&platformName=${android.net.Uri.encode(platformName)}&modelName=${android.net.Uri.encode(model.name)}") })
+        }
+        composable("usage/model?platformId={platformId}&platformName={platformName}&modelName={modelName}", arguments = listOf(
+            navArgument("platformId") { type = NavType.StringType; defaultValue = "" },
+            navArgument("platformName") { type = NavType.StringType; defaultValue = "" },
+            navArgument("modelName") { type = NavType.StringType; defaultValue = "" },
+        )) { entry ->
+            com.mojing.app.ui.settings.usage.UsageScreen(viewModel = androidx.hilt.navigation.compose.hiltViewModel(),
+                platformId = entry.arguments?.getString("platformId").orEmpty(), platformName = entry.arguments?.getString("platformName").orEmpty(),
+                modelName = entry.arguments?.getString("modelName").orEmpty(), onBack = { navController.popBackStack() })
+        }
         composable(Routes.SETTINGS) { entry ->
             val modelRequested by entry.savedStateHandle
                 .getStateFlow(SETTINGS_MODEL_REQUEST, false).collectAsStateWithLifecycle()

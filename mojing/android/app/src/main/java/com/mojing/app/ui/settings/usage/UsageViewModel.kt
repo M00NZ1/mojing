@@ -1,6 +1,7 @@
 package com.mojing.app.ui.settings.usage
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.local.dao.CostRecordDao
 import com.mojing.app.domain.billing.BillingCurrencyRepository
@@ -25,6 +26,9 @@ data class UsageUiState(
     val models: List<UsageModelUi> = emptyList(),
     val selectedModel: UsageModelUi? = null,
     val requests: List<UsageRequestUi> = emptyList(),
+    val requestFilter: String = "all",
+    val requestOrder: String = "time",
+    val requestSortCursor: Long = Long.MAX_VALUE,
     val requestCursor: Long = Long.MAX_VALUE,
     val canLoadMore: Boolean = true,
 )
@@ -39,6 +43,7 @@ internal fun mergeUsageRequests(existing: List<UsageRequestUi>, page: List<Usage
 class UsageViewModel @Inject constructor(
     private val dao: CostRecordDao,
     private val billingCurrency: BillingCurrencyRepository,
+    savedStateHandle: SavedStateHandle = SavedStateHandle(),
 ) : ViewModel() {
     private val _state = MutableStateFlow(UsageUiState())
     val state: StateFlow<UsageUiState> = _state.asStateFlow()
@@ -47,10 +52,24 @@ class UsageViewModel @Inject constructor(
     private var generation = 0L
 
     init {
-        refresh()
+        val platformId = savedStateHandle.get<String>("platformId")
+        if (platformId == null) refresh()
+        else openDestination(platformId, savedStateHandle.get<String>("platformName").orEmpty(), savedStateHandle["modelName"])
         val cached = billingCurrency.state.value
         if (cached.usdToCny == null || (cached.rateDate.isNotBlank() && cached.rateDate != "手动" && cached.rateDate != LocalDate.now().toString())) {
             viewModelScope.launch { billingCurrency.refreshRate() }
+        }
+    }
+
+    fun openDestination(platformId: String, platformName: String, modelName: String?) {
+        val current = _state.value
+        val level = if (modelName == null) 1 else 2
+        if (current.level == level && current.selectedPlatform?.id == platformId && current.selectedModel?.name == modelName) return
+        val platform = UsagePlatformUi(platformId, platformName, 0, 0, 0, 0)
+        if (modelName == null) openPlatform(platform)
+        else {
+            _state.value = current.copy(selectedPlatform = platform)
+            openModel(UsageModelUi(platformId, modelName, 0, 0, 0, 0))
         }
     }
 
@@ -100,7 +119,7 @@ class UsageViewModel @Inject constructor(
 
     fun openModel(model: UsageModelUi) {
         loadJob?.cancel(); ++generation
-        _state.value = _state.value.copy(level = 2, selectedModel = model, requests = emptyList(), requestCursor = Long.MAX_VALUE, canLoadMore = true, loading = true, error = null)
+        _state.value = _state.value.copy(level = 2, selectedModel = model, requests = emptyList(), requestCursor = Long.MAX_VALUE, requestSortCursor = Long.MAX_VALUE, canLoadMore = true, loading = true, error = null)
         loadRequests(model, Long.MAX_VALUE, replace = true)
     }
 
@@ -112,6 +131,15 @@ class UsageViewModel @Inject constructor(
         return true
     }
 
+    fun filterRequests(status: String, order: String) {
+        require(status in listOf("all", "success", "failed", "cancelled") && order in listOf("time", "tokens"))
+        val model = _state.value.selectedModel ?: return
+        loadJob?.cancel(); ++generation
+        _state.value = _state.value.copy(requestFilter = status, requestOrder = order, requests = emptyList(),
+            requestCursor = Long.MAX_VALUE, requestSortCursor = Long.MAX_VALUE, canLoadMore = true)
+        loadRequests(model, Long.MAX_VALUE, replace = true)
+    }
+
     fun loadMoreRequests() {
         val current = _state.value
         val model = current.selectedModel ?: return
@@ -120,13 +148,19 @@ class UsageViewModel @Inject constructor(
 
     private fun loadRequests(model: UsageModelUi, beforeId: Long, replace: Boolean) {
         val token = generation
+        val filter = _state.value.requestFilter
+        val order = _state.value.requestOrder
+        val beforeValue = if (replace) Long.MAX_VALUE else _state.value.requestSortCursor
         _state.value = _state.value.copy(loading = true, error = null)
         loadJob = viewModelScope.launch {
-            runCatching { dao.requestPage(model.platformId, model.name, beforeId, 40) }
+            runCatching {
+                if (filter == "all" && order == "time") dao.requestPage(model.platformId, model.name, beforeId, 40)
+                else dao.filteredRequestPage(model.platformId, model.name, beforeId, beforeValue, 40, filter, order)
+            }
                 .onSuccess { rows ->
                     val records = rows.map(::UsageRequestUi)
                     val merged = mergeUsageRequests(_state.value.requests, records, replace)
-                    if (token == generation) _state.value = _state.value.copy(loading = false, error = null, requests = merged, requestCursor = records.lastOrNull()?.record?.id ?: beforeId, canLoadMore = records.size == 40)
+                    if (token == generation) _state.value = _state.value.copy(loading = false, error = null, requests = merged, requestSortCursor = records.lastOrNull()?.record?.let { if (order == "tokens") it.totalTokens.toLong() else it.id } ?: beforeValue, requestCursor = records.lastOrNull()?.record?.id ?: beforeId, canLoadMore = records.size == 40)
                 }
                 .onFailure { error -> if (error is CancellationException) throw error; if (token == generation) _state.value = _state.value.copy(loading = false, error = "请求记录读取失败，请重试") }
         }

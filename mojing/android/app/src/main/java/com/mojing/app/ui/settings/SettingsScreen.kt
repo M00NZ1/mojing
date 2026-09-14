@@ -147,7 +147,9 @@ fun SettingsScreen(
                             if (profileName.trim() == name) profileName = name
                         },
                     )
-                    3 -> UsageScreen(viewModel = hiltViewModel())
+                    3 -> UsageScreen(viewModel = hiltViewModel(), onPlatform = { platform ->
+                        navController.navigate("usage/platform?platformId=${android.net.Uri.encode(platform.id)}&platformName=${android.net.Uri.encode(platform.name)}")
+                    })
                 }
             }
         }
@@ -501,31 +503,6 @@ private fun CreationOptionPicker(
                     },
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun ExpandableSettingsCard(
-    title: String,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-    content: @Composable () -> Unit,
-) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(title, style = MaterialTheme.typography.titleSmall)
-                TextButton(onClick = onToggle) { Text(if (expanded) "收起" else "展开") }
-            }
-            if (expanded) content()
         }
     }
 }

@@ -1,6 +1,10 @@
 package com.mojing.app.ui.settings
 
-import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.platform.testTag
 import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
 
 import androidx.compose.foundation.layout.*
@@ -28,6 +32,7 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
     val activeId by viewModel.activePlatformId.collectAsStateWithLifecycle()
     val initialPlatforms = remember { runCatching { viewModel.modelPlatforms() } }
     var platforms by remember { mutableStateOf(initialPlatforms.getOrDefault(emptyList())) }
+    var selectedPlatformId by rememberSaveable { mutableStateOf(activeId) }
     var draft by remember { mutableStateOf<ModelPlatform?>(null) }
     var originalDraft by remember { mutableStateOf<ModelPlatform?>(null) }
     var confirmDiscard by remember { mutableStateOf(false) }
@@ -59,16 +64,25 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
                 modelsText = ""; error = null; discoveryNotice = null
             }) { Text("添加平台") }
         }
-        Text("每个平台独立保存 Key。保存后作为默认线路；聊天中可随时选择已配置的模型。",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        platforms.forEach { p ->
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().testTag("settings-platform-tabs")) {
+            items(platforms, key = { it.id }) { platform ->
+                FilterChip(selected = platform.id == (selectedPlatformId.takeIf { id -> platforms.any { it.id == id } } ?: platforms.firstOrNull()?.id),
+                    onClick = { selectedPlatformId = platform.id }, label = { Text(platform.name) })
+            }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        platforms.filter { it.id == (selectedPlatformId.takeIf { id -> platforms.any { it.id == id } } ?: platforms.firstOrNull()?.id) }.forEach { p ->
             OutlinedCard(onClick = { draft = p; originalDraft = p; confirmDiscard = false; modelsText = p.models.joinToString("\n"); error = null; discoveryNotice = null },
                 modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(p.name + if (p.id == activeId) " · 默认" else "", style = MaterialTheme.typography.titleMedium)
+                    Text(p.baseUrl, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    Text("默认模型", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(p.selectedModel.ifBlank { "待配置模型" }, style = MaterialTheme.typography.bodyMedium)
                     Text("${p.models.size} 个模型 · ${if (p.apiKey.isBlank()) "未填写 Key" else "Key 已保存"}",
                         style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("编辑连接与模型 ›", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     if (p.id != activeId && p.apiKey.isNotBlank() && p.models.isNotEmpty()) {
                         TextButton(enabled = !busy, onClick = {
                             busy = true
@@ -82,14 +96,15 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
                     }
                 }
             }
+            key(p.id) { ModelPricingPanel(platform = p) }
         }
     }
     draft?.let { p ->
-        AlertDialog(
+        PlatformEditorDialog(
             onDismissRequest = ::requestClose,
             title = { Text(if (platforms.any { it.id == p.id }) "编辑平台" else "添加平台") },
             text = {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                LazyColumn(contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     item {
                         Box {
                             TextButton(onClick = { presetMenu = true }, enabled = !busy && !fetching) { Text("选择服务商预设") }
@@ -106,9 +121,11 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
                             }
                         }
                     }
-                    item { OutlinedTextField(p.name, { draft = p.copy(name = it) }, label = { Text("平台名称") }, enabled = !busy && !fetching, singleLine = true) }
-                    item { OutlinedTextField(p.baseUrl, { draft = p.copy(baseUrl = it, apiKey = "", models = emptyList(), selectedModel = ""); modelsText = ""; discoveryNotice = null }, label = { Text("服务地址") }, enabled = !busy && !fetching, singleLine = true) }
-                    item { OutlinedTextField(p.apiKey, { draft = p.copy(apiKey = it) }, label = { Text("API Key") }, visualTransformation = PasswordVisualTransformation(), enabled = !busy && !fetching, singleLine = true) }
+                    item { Text("连接配置", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary) }
+                    item { OutlinedTextField(p.name, { draft = p.copy(name = it) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), label = { Text("平台名称") }, enabled = !busy && !fetching, singleLine = true) }
+                    item { OutlinedTextField(p.baseUrl, { draft = p.copy(baseUrl = it, apiKey = "", models = emptyList(), selectedModel = ""); modelsText = ""; discoveryNotice = null }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), label = { Text("服务地址") }, enabled = !busy && !fetching, singleLine = true) }
+                    item { OutlinedTextField(p.apiKey, { draft = p.copy(apiKey = it) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), label = { Text("API Key") }, visualTransformation = PasswordVisualTransformation(), enabled = !busy && !fetching, singleLine = true) }
+                    item { HorizontalDivider(); Spacer(Modifier.height(16.dp)); Text("模型目录", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary) }
                     item {
                         OutlinedButton(enabled = !busy && p.apiKey.isNotBlank() && p.baseUrl.isNotBlank(), onClick = {
                             if (fetching) { fetchJob?.cancel(); return@OutlinedButton }
@@ -128,7 +145,7 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
                         }) { Text(if (fetching) "取消获取" else "通过 Key 获取全部模型") }
                     }
                     discoveryNotice?.let { message -> item { Text(message, style = MaterialTheme.typography.bodySmall) } }
-                    item { OutlinedTextField(modelsText, { modelsText = it; discoveryNotice = null }, label = { Text("模型名称") }, supportingText = { Text("每行一个，也可用逗号分隔。默认模型可在下方选择。") }, minLines = 3, maxLines = 8, enabled = !busy && !fetching) }
+                    item { OutlinedTextField(modelsText, { modelsText = it; discoveryNotice = null }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), label = { Text("模型名称") }, supportingText = { Text("每行一个，也可用逗号分隔。默认模型可在下方选择。") }, minLines = 3, maxLines = 8, enabled = !busy && !fetching) }
                     item {
                         val names = ModelPlatformCodec.modelNames(modelsText)
                         Box {
@@ -142,25 +159,22 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
                             }
                         }
                     }
-                    item {
-                        ModelPricingPanel(platform = p)
-                    }
                     error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
                 }
             },
             confirmButton = {
-                TextButton(enabled = !busy && !fetching, onClick = {
+                Button(enabled = !busy && !fetching, onClick = {
                     val names = ModelPlatformCodec.modelNames(modelsText)
                     val url = p.baseUrl.trim().toHttpUrlOrNull()
                     if (p.name.isBlank() || url == null || p.apiKey.isBlank() || names.isEmpty()) {
-                        error = "请填写平台名称、有效地址、Key 和至少一个模型"; return@TextButton
+                        error = "请填写平台名称、有效地址、Key 和至少一个模型"; return@Button
                     }
                     busy = true
                     scope.launch {
                         try {
                             viewModel.savePlatform(p.copy(name = p.name.trim(), baseUrl = p.baseUrl.trim(), apiKey = p.apiKey.trim(), models = names,
                                 selectedModel = p.selectedModel.takeIf { it in names } ?: names.first()))
-                            platforms = viewModel.modelPlatforms(); draft = null
+                            platforms = viewModel.modelPlatforms(); selectedPlatformId = p.id; draft = null
                             snackbar.showSnackbar("平台已保存，可在聊天中选择模型")
                         } catch (e: CancellationException) { throw e }
                         catch (_: Exception) { error = "保存失败，填写的内容已保留，请重试" }

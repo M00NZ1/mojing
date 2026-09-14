@@ -86,17 +86,9 @@ fun ChatModelPicker(
                     items(names, key = { it }) { name ->
                         val activePlatform = requireNotNull(platform)
                         val isSelected = selectedModel == (activePlatform.id to name)
-                        TextButton(onClick = { onSelect(activePlatform.id, name) }, enabled = !isSaving && activePlatform.apiKey.isNotBlank(),
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                                .testTag("chat-model:${activePlatform.id}:$name").semantics { selected = isSelected },
-                            shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                            colors = ButtonDefaults.textButtonColors(
-                                containerColor = if (isSelected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
-                                contentColor = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface),
-                        ) {
-                            Text(name, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                            if (isSelected) Icon(Icons.Default.Check, "已选择", Modifier.padding(start = 8.dp).size(18.dp))
-                        }
+                        com.mojing.app.ui.common.ModelOptionRow(name, isSelected,
+                            onClick = { onSelect(activePlatform.id, name) }, enabled = !isSaving && activePlatform.apiKey.isNotBlank(),
+                            modifier = Modifier.testTag("chat-model:${activePlatform.id}:$name"))
                     }
                 }
             }

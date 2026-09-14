@@ -28,7 +28,7 @@ import com.mojing.app.domain.billing.ModelPricing
 import com.mojing.app.domain.billing.ModelPricingDiscovery
 import com.mojing.app.domain.billing.PriceUnavailableException
 import com.mojing.app.ui.common.MoJingOutlinedButton
-import com.mojing.app.ui.common.MoJingTextField
+import androidx.compose.material3.OutlinedTextField as MoJingTextField
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -54,7 +54,11 @@ fun ModelPricingPanel(
             val configured by androidx.compose.runtime.produceState<ModelPricing?>(null, platform.id, model, revision) {
                 value = runCatching { prices.price(platform.id, model) }.getOrNull()
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            androidx.compose.material3.Surface(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+            Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column(Modifier.weight(1f)) {
                     Text(model, style = MaterialTheme.typography.bodyMedium)
                     Text(
@@ -65,6 +69,7 @@ fun ModelPricingPanel(
                     )
                 }
                 TextButton(onClick = { editing = model }) { Text("编辑") }
+            }
             }
         }
         }

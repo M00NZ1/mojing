@@ -10,7 +10,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -23,14 +22,14 @@ import androidx.compose.ui.text.input.*
 import androidx.compose.ui.unit.dp
 
 @Composable
-private fun fieldColors() = TextFieldDefaults.colors(
+private fun fieldColors() = OutlinedTextFieldDefaults.colors(
     focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
     unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
     disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-    focusedIndicatorColor = Color.Transparent,
-    unfocusedIndicatorColor = Color.Transparent,
-    disabledIndicatorColor = Color.Transparent,
-    errorIndicatorColor = Color.Transparent,
+    focusedBorderColor = MaterialTheme.colorScheme.primary,
+    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+    disabledBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+    errorBorderColor = MaterialTheme.colorScheme.error,
     errorContainerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f),
 )
 
@@ -51,7 +50,7 @@ fun MoJingTextField(
     shape: Shape = RoundedCornerShape(18.dp), colors: TextFieldColors = fieldColors(),
 ) {
     val source = interactionSource ?: remember { MutableInteractionSource() }
-    TextField(value, onValueChange, modifier, enabled, readOnly, textStyle,
+    OutlinedTextField(value, onValueChange, modifier, enabled, readOnly, textStyle,
         label, placeholder, leadingIcon, trailingIcon, prefix, suffix, supportingText, isError,
         visualTransformation, keyboardOptions, keyboardActions, singleLine, maxLines, minLines,
         source, shape, colors)
@@ -74,7 +73,7 @@ fun MoJingTextField(
     shape: Shape = RoundedCornerShape(18.dp), colors: TextFieldColors = fieldColors(),
 ) {
     val source = interactionSource ?: remember { MutableInteractionSource() }
-    TextField(value, onValueChange, modifier, enabled, readOnly, textStyle,
+    OutlinedTextField(value, onValueChange, modifier, enabled, readOnly, textStyle,
         label, placeholder, leadingIcon, trailingIcon, prefix, suffix, supportingText, isError,
         visualTransformation, keyboardOptions, keyboardActions, singleLine, maxLines, minLines,
         source, shape, colors)
