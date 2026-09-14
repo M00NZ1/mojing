@@ -5,7 +5,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.local.dao.MessageDao
 import com.mojing.app.data.local.entity.MessageEntity
-import com.mojing.app.ui.chat.ChatMessageTextFormat
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -27,7 +26,9 @@ data class SearchState(
 )
 
 @HiltViewModel
-class SearchViewModel @Inject constructor(application: Application, private val messageDao: MessageDao, private val presentationLoader: SearchPresentationLoader) : AndroidViewModel(application) {
+class SearchViewModel @Inject constructor(application: Application, private val messageDao: MessageDao, private val presentationLoader: SearchPresentationLoader,
+    private val resultFormatter: SearchResultFormatter,
+) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(SearchState())
     val state = _state.asStateFlow()
     private var revision = 0L
@@ -77,9 +78,10 @@ class SearchViewModel @Inject constructor(application: Application, private val 
                 val page = loadPage(sessionId, branchId, q, exact, Long.MAX_VALUE)
                 val total = if (branchId == "main") messageDao.countMainMessages(sessionId, q, if (exact) 1 else 0)
                     else messageDao.countVisibleMessages(sessionId, branchId, q, if (exact) 1 else 0)
+                val hits = resultFormatter.format(page, q)
                 if (token != revision) return@launch
                 beforeId = page.lastOrNull()?.id ?: Long.MAX_VALUE
-                _state.update { it.copy(searching = false, hits = page.map { m -> hit(m, q) },
+                _state.update { it.copy(searching = false, hits = hits,
                     totalMatches = total, hasOlder = page.size < total && page.isNotEmpty()) }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { if (token == revision) _state.update { it.copy(searching = false, error = "搜索未完成，请重试") } }
@@ -98,9 +100,10 @@ class SearchViewModel @Inject constructor(application: Application, private val 
         searchJob = viewModelScope.launch {
             try {
                 val page = loadPage(sessionId, branchId, current.completedQuery, current.exactMatch, cursor)
+                val formatted = resultFormatter.format(page, current.completedQuery)
                 if (token != revision) return@launch
                 beforeId = page.lastOrNull()?.id ?: beforeId
-                val hits = (state.value.hits + page.map { hit(it, current.completedQuery) }).distinctBy { it.message.id }
+                val hits = (state.value.hits + formatted).distinctBy { it.message.id }
                 _state.update { it.copy(searching = false, hits = hits,
                     hasOlder = page.isNotEmpty() && hits.size < (it.totalMatches ?: Int.MAX_VALUE)) }
                 if (openNext && detailToken == detailRevision) {
@@ -162,11 +165,6 @@ class SearchViewModel @Inject constructor(application: Application, private val 
         searchJob?.cancel(); detailJob?.cancel()
         searchJob = null; detailJob = null
     }
-
-    private fun hit(message: MessageEntity, query: String) = SearchHit(
-        message.copy(content = "", structuredContentJson = "{}", searchNormalized = "", searchTerms = ""),
-        ChatMessageTextFormat.searchPreview(message.content, message.speakerType, query),
-    )
 
     private suspend fun loadPage(sessionId: Long, branchId: String, q: String, exact: Boolean, before: Long): List<MessageEntity> =
         if (branchId == "main") messageDao.searchMainMessages(sessionId, q, if (exact) 1 else 0, PAGE_SIZE, before)

@@ -11,6 +11,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.resetMain
@@ -41,11 +42,30 @@ class SearchViewModelTest {
         dao = mockk(relaxed = true)
         val presentation = io.mockk.mockk<SearchPresentationLoader>()
         io.mockk.coEvery { presentation.load(any(), any()) } returns SearchPresentation()
-        viewModel = SearchViewModel(application, dao, presentation)
+        viewModel = SearchViewModel(application, dao, presentation, SearchResultFormatter(dispatcher))
         viewModel.initialize(1L, "main")
     }
 
     @After fun tearDown() { Dispatchers.resetMain() }
+
+    @Test fun changingQueryWhileSnippetIsQueuedCannotPublishOldResults() = runTest(dispatcher) {
+        val cpu = QueuedSearchDispatcher()
+        val presentation = mockk<SearchPresentationLoader>()
+        val vm = SearchViewModel(application, dao, presentation, SearchResultFormatter(cpu))
+        vm.initialize(1L)
+        coEvery { dao.searchMainMessages(any(), any(), any(), any(), any()) } returns listOf(message(8L, "old body"))
+        coEvery { dao.countMainMessages(any(), any(), any()) } returns 1
+        vm.setQuery("old"); vm.search(1L, "main")
+        runCurrent()
+        assertTrue(vm.state.value.searching)
+        assertTrue(vm.state.value.hits.isEmpty())
+        vm.setQuery("new")
+        cpu.runCurrent()
+        advanceUntilIdle()
+        assertEquals("new", vm.state.value.query)
+        assertFalse(vm.state.value.searching)
+        assertTrue(vm.state.value.hits.isEmpty())
+    }
 
     @Test fun changingQueryCancelsInFlightSearchAndClearsSearchState() = runTest(dispatcher) {
         val gate = CompletableDeferred<List<MessageEntity>>()
