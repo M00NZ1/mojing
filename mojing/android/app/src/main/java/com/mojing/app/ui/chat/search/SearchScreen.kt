@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -77,7 +79,7 @@ fun SearchScreen(
     CompositionLocalProvider(LocalBillingCurrencyState provides currency,
         LocalReplyUsageLookup provides remember(billing) { { id -> billing.observeRecord(id) } }) {
     Surface(Modifier.fillMaxSize().systemBarsPadding()) {
-        if (state.selectedMessageId != null) SearchContextScreen(state, viewModel, sessionId, branchId, onBack)
+        if (state.selectedMessageId != null) SearchContextScreen(state, viewModel, sessionId, branchId)
         else SearchResultsScreen(state, viewModel, sessionId, branchId, onBack, resultListState)
     }
     }
@@ -123,12 +125,27 @@ fun SearchScreen(
     }
 }
 
-@Composable private fun SearchContextScreen(state: SearchState, vm: SearchViewModel, sessionId: Long, branchId: String, onBack: () -> Unit) {
+@Composable private fun SearchContextScreen(state: SearchState, vm: SearchViewModel, sessionId: Long, branchId: String) {
     val index = state.hits.indexOfFirst { it.message.id == state.selectedMessageId }
     val current = (index + 1).coerceAtLeast(1)
-    Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = vm::closeHit) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回搜索结果") }; Text("消息原文", style = MaterialTheme.typography.titleMedium); Text("  ${formatDate(state.selectedMessageId?.let { id -> state.contextMessages.firstOrNull { it.id == id }?.createdAt ?: 0L } ?: 0L)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    var readerQuery by androidx.compose.runtime.saveable.rememberSaveable(state.completedQuery) { mutableStateOf(state.completedQuery) }
+    val focus = LocalFocusManager.current
+    val submit = {
+        if (readerQuery.isNotBlank()) {
+            focus.clearFocus()
+            vm.setQuery(readerQuery)
+            vm.search(sessionId, branchId)
+        }
+    }
+    Box(Modifier.fillMaxSize().imePadding()) {
+        Column(Modifier.fillMaxSize().padding(bottom = 64.dp)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = vm::closeHit) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回搜索结果") }
+                OutlinedTextField(value = readerQuery, onValueChange = { readerQuery = it }, modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(28.dp), singleLine = true, placeholder = { Text("搜索消息") },
+                    trailingIcon = { IconButton(onClick = { readerQuery = "" }) { Icon(Icons.Default.Close, "清除关键词") } },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { submit() }))
+            }
             if (state.searching && state.contextMessages.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (!state.searching && state.contextMessages.isEmpty()) {
                 Text(state.error ?: "找不到这条消息", Modifier.padding(20.dp), color = if (state.error == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
@@ -148,8 +165,10 @@ fun SearchScreen(
                 state.contextMessages.map { ChatDisplayLine("search_${it.id}", null, listOf(it), 0) }
                     .decorateChatLineList(presentation.characters.mapValues { it.value.name }, presentation.userName, presentation.narratorName)
             }
-            CompositionLocalProvider(LocalChatDensityMetrics provides ChatDensityMode.fromStorage(presentation.density).toMetrics()) {
-                LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(end = 48.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            CompositionLocalProvider(LocalChatDensityMetrics provides ChatDensityMode.fromStorage(presentation.density).toMetrics().copy(
+                rowHorizontal = 12.dp, narratorHorizontal = 12.dp, bubbleMaxWidth = 720.dp,
+            )) {
+                LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 128.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(lines, key = { it.line.stableKey }) { meta ->
                         val message = meta.line.selectedMessage()
                         val focused = message.id == state.selectedMessageId
@@ -157,8 +176,12 @@ fun SearchScreen(
                             MessageSearchHighlight(state.completedQuery, focused && positionedId == message.id)
                         }
                         val character = presentation.characters[message.characterId]
-                        Column(if (focused) Modifier.fillMaxWidth().border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(20.dp)).padding(vertical = 6.dp) else Modifier.fillMaxWidth()) {
-                            if (focused) Text("当前匹配", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                        Column(Modifier.fillMaxWidth()) {
+                            if (focused) Surface(modifier = Modifier.align(Alignment.CenterHorizontally).padding(vertical = 6.dp),
+                                shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
+                                Text(formatDate(message.createdAt), Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.labelMedium)
+                            }
                             CompositionLocalProvider(LocalMessageSearchHighlight provides highlight) {
                                 MessageLineBlock(line = meta.line, messageAttachments = presentation.attachments,
                                     avatarPath = character?.avatar.orEmpty(), avatarColor = character?.color ?: "#F97316", cardImagePath = character?.card.orEmpty(),
@@ -171,7 +194,21 @@ fun SearchScreen(
                 }
             }
         }
-        Column(Modifier.align(Alignment.CenterEnd).padding(end = 8.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.shapes.large), horizontalAlignment = Alignment.CenterHorizontally) { IconButton(enabled = index > 0 && !state.searching, onClick = { vm.navigateHit(sessionId, branchId, -1) }) { Icon(Icons.Default.KeyboardArrowUp, "上一个") }; Text("$current/${state.totalMatches ?: state.hits.size}", style = MaterialTheme.typography.labelSmall); IconButton(enabled = index >= 0 && (index < state.hits.lastIndex || state.hasOlder) && !state.searching, onClick = { vm.navigateHit(sessionId, branchId, 1) }) { Icon(Icons.Default.KeyboardArrowDown, "下一个") } }
+        Column(Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 80.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 3.dp) {
+                IconButton(enabled = index > 0 && !state.searching, onClick = { vm.navigateHit(sessionId, branchId, -1) }) { Icon(Icons.Default.KeyboardArrowUp, "上一个") }
+            }
+            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 3.dp) {
+                IconButton(enabled = index >= 0 && (index < state.hits.lastIndex || state.hasOlder) && !state.searching, onClick = { vm.navigateHit(sessionId, branchId, 1) }) { Icon(Icons.Default.KeyboardArrowDown, "下一个") }
+            }
+        }
+        Surface(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 3.dp) {
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("$current / ${state.totalMatches ?: state.hits.size}", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                TextButton(onClick = vm::closeHit) { Text("以列表显示") }
+            }
+        }
     }
 }
 
