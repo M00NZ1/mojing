@@ -114,7 +114,16 @@ fun SessionListScreen(
     }
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
-    var deleteTarget by remember { mutableStateOf<SessionWithListMeta?>(null) }
+    var deleteTargetId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var deleteTargetTitle by rememberSaveable { mutableStateOf("") }
+    val deletionState by viewModel.deletionState.collectAsStateWithLifecycle()
+    LaunchedEffect(deletionState.sessionId, deletionState.completed) {
+        if (deletionState.completed) {
+            deleteTargetId = null
+            Toast.makeText(context, "对话已删除", Toast.LENGTH_SHORT).show()
+            viewModel.clearDeletionResult()
+        }
+    }
     var showCreateDialog by remember { mutableStateOf(false) }
     var pendingTemplateId by rememberSaveable { mutableStateOf<Long?>(null) }
     var dialogLoadRequestVersion by rememberSaveable { mutableIntStateOf(0) }
@@ -461,7 +470,7 @@ fun SessionListScreen(
                                 swipeEnabled = true,
                                 isPinned = row.session.pinnedAt > 0,
                                 onPinToggle = { viewModel.setSessionPinned(row.session.id, row.session.pinnedAt == 0L) },
-                                onDelete = { deleteTarget = row },
+                                onDelete = { viewModel.clearDeletionResult(); deleteTargetId = row.session.id; deleteTargetTitle = row.session.title },
                                 onClick = { onSessionClick(row.session.id) },
                             ) {
                                 SessionListRowInner(row = row, isGenerating = row.session.id in generatingSessions,
@@ -482,23 +491,13 @@ fun SessionListScreen(
         }
     }
 
-    deleteTarget?.let { row ->
-        val session = row.session
-        AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            title = { Text("确认删除") },
-            text = { Text("确定要删除「${session.title}」吗？此操作不可撤回。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    val title = session.title.ifBlank { "未命名对话" }
-                    val deleted = viewModel.deleteSession(session.id)
-                    deleteTarget = null
-                    Toast.makeText(context, if (deleted) UserFacingStrings.itemDeleted(title) else "请先停止此对话的后台任务，再删除", Toast.LENGTH_SHORT).show()
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) { Text("取消") }
-            }
+    deleteTargetId?.let { id ->
+        SessionDeleteDialog(
+            title = deleteTargetTitle,
+            busy = deletionState.sessionId == id && deletionState.running,
+            error = deletionState.error.takeIf { deletionState.sessionId == id },
+            onDelete = { viewModel.deleteSession(id) },
+            onDismiss = { deleteTargetId = null; viewModel.clearDeletionResult() },
         )
     }
 

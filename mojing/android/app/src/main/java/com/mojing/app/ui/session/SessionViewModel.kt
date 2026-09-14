@@ -32,6 +32,13 @@ internal sealed interface SessionLibraryUiState {
     data object Failed : SessionLibraryUiState
 }
 
+internal data class SessionDeletionState(
+    val sessionId: Long? = null,
+    val running: Boolean = false,
+    val completed: Boolean = false,
+    val error: String? = null,
+)
+
 @HiltViewModel
 class SessionViewModel @Inject constructor(
     private val sessionDao: SessionDao,
@@ -202,13 +209,31 @@ class SessionViewModel @Inject constructor(
         }
     }
 
-    fun deleteSession(id: Long): Boolean {
-        if (id in com.mojing.app.ui.chat.RetainedChatSessions.running.value) return false
-        viewModelScope.launch {
-            sessionDao.delete(id)
-            runCatching { uiPreferencesRepository.clearLastChatBranch(id) }
+    private val _deletionState = MutableStateFlow(SessionDeletionState())
+    internal val deletionState = _deletionState.asStateFlow()
+
+    internal fun clearDeletionResult() {
+        if (!_deletionState.value.running) _deletionState.value = SessionDeletionState()
+    }
+
+    fun deleteSession(id: Long) {
+        if (_deletionState.value.running) return
+        if (id in com.mojing.app.ui.chat.RetainedChatSessions.running.value) {
+            _deletionState.value = SessionDeletionState(id, error = "请先停止此对话的后台任务，再删除")
+            return
         }
-        return true
+        _deletionState.value = SessionDeletionState(id, running = true)
+        viewModelScope.launch {
+            try {
+                sessionDao.delete(id)
+                _deletionState.value = SessionDeletionState(id, completed = true)
+                runCatching { uiPreferencesRepository.clearLastChatBranch(id) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _deletionState.value = SessionDeletionState(id, error = "删除未完成，请重试")
+            }
+        }
     }
 
     fun setSessionPinned(id: Long, pinned: Boolean) {

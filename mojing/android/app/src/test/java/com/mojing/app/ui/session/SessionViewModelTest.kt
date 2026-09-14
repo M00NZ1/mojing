@@ -254,6 +254,52 @@ class SessionViewModelTest {
         coVerify(exactly = 1) { preferences.clearLastChatBranch(42L) }
     }
 
+    @Test
+    fun deletionWaitsForDatabaseAndRejectsDuplicateSubmission() = runTest(dispatcher) {
+        val gate = CompletableDeferred<Unit>()
+        coEvery { sessionDao.delete(42L) } coAnswers { gate.await() }
+        val model = createViewModel()
+        model.deleteSession(42L)
+        model.deleteSession(42L)
+        runCurrent()
+        assertTrue(model.deletionState.value.running)
+        assertFalse(model.deletionState.value.completed)
+        model.clearDeletionResult()
+        assertTrue(model.deletionState.value.running)
+        coVerify(exactly = 1) { sessionDao.delete(42L) }
+        gate.complete(Unit); advanceUntilIdle()
+        assertTrue(model.deletionState.value.completed)
+        assertFalse(model.deletionState.value.running)
+    }
+
+    @Test
+    fun failedDeletionRetainsRetryStateWithoutAnnouncingSuccess() = runTest(dispatcher) {
+        coEvery { sessionDao.delete(42L) } throws IllegalStateException("private database detail")
+        val model = createViewModel()
+        model.deleteSession(42L); advanceUntilIdle()
+        assertEquals("删除未完成，请重试", model.deletionState.value.error)
+        assertFalse(model.deletionState.value.completed)
+        coVerify(exactly = 0) { preferences.clearLastChatBranch(any()) }
+        coEvery { sessionDao.delete(42L) } returns Unit
+        model.deleteSession(42L); advanceUntilIdle()
+        assertTrue(model.deletionState.value.completed)
+        assertEquals(null, model.deletionState.value.error)
+    }
+
+    @Test
+    fun generatingSessionCannotBeDeleted() = runTest(dispatcher) {
+        val registry = com.mojing.app.ui.chat.RetainedChatSessions.stores
+        val job = kotlinx.coroutines.Job()
+        registry.retainJob(42L, job)
+        try {
+            val model = createViewModel()
+            model.deleteSession(42L); runCurrent()
+            assertEquals("请先停止此对话的后台任务，再删除", model.deletionState.value.error)
+            assertFalse(model.deletionState.value.running)
+            coVerify(exactly = 0) { sessionDao.delete(any()) }
+        } finally { job.complete(); runCurrent() }
+    }
+
     private fun createViewModel(): SessionViewModel = SessionViewModel(
         sessionDao = sessionDao,
         worldTemplateDao = worldTemplateDao,
