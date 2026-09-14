@@ -195,3 +195,9 @@ node mojing/frontend/scripts/generate-brand-assets.mjs
 `tests/test_android_unified_world_schema.py` 使用独立 SQLite 检查 Room 19→20 的新增表、重复执行、原表结构、外键与完整性。`PromoteWorldTemplateUseCaseInstrumentedTest` 覆盖本地归入、条目复制与重复操作；设备运行应使用隔离应用数据。
 
 GitHub Actions 的优化测试包命名为 `mojing-ci-test-not-for-upgrade`。正式交付 APK 使用本机签名配置构建，构建完成后检查包内版本和签名。
+
+### 小说章节与搜索阅读
+
+小说续章使用现有消息表。`chapter_number`、`chapter_title` 与 `chapter_incomplete` 保存在消息结构元数据中，沿用 Room schema 21。草稿按约 1.5 秒间隔保存，完成正文与生成统计在同一事务更新；草稿写入校验消息所属会话、故事线与未完成状态。章节改名同步正文标题和搜索索引，不截断后续消息。
+
+小说 TXT 导出固定当前故事线和消息上界，每页读取 128 条，输出书名、章节标题及连续正文。原有无章节编号的续写片段保留正文；用户指令和未选择选项不写入小说。

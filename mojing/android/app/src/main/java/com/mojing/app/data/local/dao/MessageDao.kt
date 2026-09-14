@@ -151,6 +151,12 @@ private const val VISIBLE_CONTEXT_MESSAGES_QUERY = CURRENT_MESSAGES_QUERY + """
 
 @Dao
 interface MessageDao {
+    @Query("SELECT COALESCE(MAX(CASE WHEN json_valid(structuredContentJson) THEN CAST(json_extract(structuredContentJson, '$.chapter_number') AS INTEGER) ELSE 0 END), 0) FROM ($MAIN_CONTEXT_MESSAGES_QUERY)")
+    suspend fun getMainMaxChapter(sessionId: Long): Int
+
+    @Query("SELECT COALESCE(MAX(CASE WHEN json_valid(structuredContentJson) THEN CAST(json_extract(structuredContentJson, '$.chapter_number') AS INTEGER) ELSE 0 END), 0) FROM ($VISIBLE_CONTEXT_MESSAGES_QUERY)")
+    suspend fun getBranchMaxChapter(sessionId: Long, branchId: String): Int
+
     @Query("SELECT id, speakerType, branchId, createdAt, structuredContentJson, substr(content, 1, 180) AS contentPreview " +
         "FROM ($MAIN_CONTEXT_MESSAGES_QUERY) WHERE speakerType IN ('narrator', 'character') " +
         "AND id < :beforeMessageId ORDER BY id DESC LIMIT :limit")
@@ -733,6 +739,34 @@ interface MessageDao {
             deleteMemorySegmentTail(current.sessionId, branchId, id)
             invalidateContextMemoryForBranch(current.sessionId, branchId, System.currentTimeMillis())
         }
+    }
+
+    @Query("UPDATE messages SET structuredContentJson = :json WHERE id = :id")
+    suspend fun updateStructuredRaw(id: Long, json: String)
+
+    @Transaction
+    suspend fun renameNovelChapter(id: Long, sessionId: Long, title: String) {
+        require(title.isNotBlank())
+        val current = getById(id) ?: error("章节已不存在")
+        check(current.sessionId == sessionId)
+        val root = runCatching { com.google.gson.JsonParser.parseString(current.structuredContentJson).asJsonObject }
+            .getOrElse { com.google.gson.JsonObject() }
+        val oldTitle = com.mojing.app.domain.story.NovelChapter.title(current.structuredContentJson)
+        if (oldTitle == title.trim()) return
+        if (!root.has("chapter_original_title")) root.addProperty("chapter_original_title", oldTitle)
+        val content = com.mojing.app.domain.story.NovelChapter.renameContent(current.content, oldTitle, title)
+        root.addProperty("chapter_title", title.trim())
+        updateContent(id, content)
+        updateStructuredRaw(id, root.toString())
+    }
+
+    @Transaction
+    suspend fun updateNovelDraft(id: Long, sessionId: Long, branchId: String, content: String, json: String) {
+        val current = getById(id) ?: error("章节已不存在")
+        check(current.sessionId == sessionId && current.branchId == branchId)
+        check(com.mojing.app.domain.story.NovelChapter.incomplete(current.structuredContentJson))
+        updateContent(id, content)
+        updateStructuredRaw(id, json)
     }
 
     @Query("DELETE FROM messages WHERE id = :id")

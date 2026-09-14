@@ -12,6 +12,7 @@ data class StoryContentsEntry(
     val dateLabel: String,
     val preview: String,
     val chapterNumber: Int?,
+    val incomplete: Boolean = false,
 )
 
 /** DAO 按 id 倒序返回；目录保持同一顺序，加载更早页面时可直接追加。 */
@@ -30,6 +31,7 @@ internal fun StoryContentsMessageProjection.toContentsEntry(): StoryContentsEntr
         markdownTitle.orEmpty().ifBlank { "片段 · $dateLabel" }
     }
     return StoryContentsEntry(
+        incomplete = com.mojing.app.domain.story.NovelChapter.incomplete(structuredContentJson),
         messageId = id,
         title = title,
         dateLabel = dateLabel,

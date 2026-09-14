@@ -393,6 +393,17 @@ fun ChatScreen(
             }
         }
     }
+    val exportNovelLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        if (uri != null) scope.launch {
+            isExportingChat = true
+            try {
+                ContentDocumentWriter.writeStream(context, uri) { viewModel.exportNovel(it) }
+                snackbarHostState.showSnackbar("小说已导出")
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (e: Exception) { snackbarHostState.showSnackbar(UserFacingStrings.documentWriteFailed(e.message)) }
+            finally { isExportingChat = false }
+        }
+    }
     val exportChatLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
@@ -519,6 +530,12 @@ fun ChatScreen(
     }
 
     com.mojing.app.ui.chat.contents.StoryContentsSheet(
+        novelTitle = stableSessionTitle,
+        busy = state.isGenerating || isExportingChat,
+        onRenameNovel = viewModel::renameNovel,
+        onNextChapter = { title, direction -> viewModel.requestNarrator(guidance = direction, nextChapter = true, chapterTitle = title) },
+        onRenameChapter = viewModel::renameChapter,
+        onExport = { exportNovelLauncher.launch("novel_${sessionId}.txt") },
         visible = showContents,
         sessionId = sessionId,
         branchId = state.currentBranchId,

@@ -14,7 +14,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun StoryContentsSheet(
     visible: Boolean,
@@ -22,15 +22,49 @@ fun StoryContentsSheet(
     branchId: String,
     onOpenMessage: (Long) -> Boolean,
     onDismiss: () -> Unit,
+    novelTitle: String = "", busy: Boolean = false,
+    onRenameNovel: (String) -> Unit = {},
+    onNextChapter: (String, String) -> Boolean = { _, _ -> false },
+    onRenameChapter: (Long, String, () -> Unit) -> Unit = { _, _, _ -> },
+    onExport: () -> Unit = {},
     viewModel: StoryContentsViewModel = hiltViewModel(),
 ) {
     if (!visible) return
     LaunchedEffect(sessionId, branchId) { viewModel.load(sessionId, branchId) }
     val state by viewModel.state.collectAsState()
+    var editingNovel by remember { mutableStateOf(false) }
+    var creatingChapter by remember { mutableStateOf(false) }
+    var editingChapter by remember { mutableStateOf<StoryContentsEntry?>(null) }
+    var title by remember { mutableStateOf("") }
+    var direction by remember { mutableStateOf("") }
+    if (editingNovel || creatingChapter || editingChapter != null) AlertDialog(
+        onDismissRequest = { editingNovel = false; creatingChapter = false; editingChapter = null },
+        title = { Text(if (creatingChapter) "生成下一章" else if (editingNovel) "小说标题" else "章节名称") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            com.mojing.app.ui.common.MoJingTextField(value = title, onValueChange = { title = it.take(100) }, singleLine = true,
+                label = { Text(if (creatingChapter) "章节名（可由模型生成）" else "名称") })
+            if (creatingChapter) com.mojing.app.ui.common.MoJingTextField(value = direction, onValueChange = { direction = it.take(4000) },
+                label = { Text("剧情走向（可选）") }, minLines = 2, maxLines = 5)
+        } },
+        confirmButton = { TextButton(enabled = !busy && (creatingChapter || title.isNotBlank()), onClick = {
+            when {
+                creatingChapter -> if (onNextChapter(title, direction)) { creatingChapter = false; onDismiss() }
+                editingNovel -> { onRenameNovel(title); editingNovel = false }
+                else -> editingChapter?.let { entry -> onRenameChapter(entry.messageId, title) { onDismiss() }; editingChapter = null }
+            }
+        }) { Text(if (creatingChapter) "开始生成" else "保存") } },
+        dismissButton = { TextButton(onClick = { editingNovel = false; creatingChapter = false; editingChapter = null }) { Text("取消") } },
+    )
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
             Text("小说目录", style = MaterialTheme.typography.headlineSmall)
-            Text("按当前故事线列出可跳转章节", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            TextButton(enabled = !busy, onClick = { title = novelTitle; editingNovel = true }) {
+                Text(novelTitle.ifBlank { "设置小说标题" }, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(enabled = !busy, onClick = { title = ""; direction = ""; creatingChapter = true }) { Text(if (state.entries.firstOrNull()?.incomplete == true) "继续未完成章节" else "生成下一章") }
+                TextButton(enabled = !busy && state.entries.isNotEmpty(), onClick = onExport) { Text("导出小说 TXT") }
+            }
             Spacer(Modifier.height(12.dp))
         }
         when {
@@ -46,6 +80,7 @@ fun StoryContentsSheet(
                         modifier = Modifier.fillMaxWidth().clickable {
                             if (onOpenMessage(entry.messageId)) onDismiss()
                         },
+                        trailingContent = { TextButton(enabled = !busy, onClick = { title = entry.title; editingChapter = entry }) { Text("命名") } },
                         leadingContent = { Icon(Icons.Default.MenuBook, contentDescription = null) },
                         headlineContent = { Text(entry.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         supportingContent = {

@@ -1,5 +1,6 @@
 package com.mojing.app.ui.chat
 
+import com.mojing.app.domain.story.NovelChapter
 import android.content.Context
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -2416,6 +2417,8 @@ class ChatViewModel @Inject constructor(
         guidance: String = "",
         expectedTailMessageId: Long? = null,
         draftSubmissionId: String? = null,
+        nextChapter: Boolean = false,
+        chapterTitle: String = "",
         onGuidanceCommitted: (() -> Unit)? = null,
     ): Boolean {
         if (_state.value.isGenerating || generationJob?.isActive == true) return false
@@ -2424,6 +2427,14 @@ class ChatViewModel @Inject constructor(
 
         return launchSingleGeneration(expectedTailMessageId, draftSubmissionId) narratorScope@{ generation ->
             if (!generation.ensureExpectedUserTail()) return@narratorScope
+            val resumeChapter = if (nextChapter) getMessageTailForBranch(generation.branchId, 1).lastOrNull()?.takeIf {
+                it.branchId == generation.branchId && NovelChapter.incomplete(it.structuredContentJson)
+            } else null
+            val chapterNumber = if (nextChapter) {
+                val latest = if (generation.branchId == "main") messageDao.getMainMaxChapter(sessionId)
+                    else messageDao.getBranchMaxChapter(sessionId, generation.branchId)
+                resumeChapter?.let { NovelChapter.number(it.structuredContentJson) } ?: (latest.coerceAtLeast(1) + 1)
+            } else null
             val guidanceText = guidance.trim()
             val apiKey = requestPlatform()?.apiKey ?: ApiKeyResolver.resolveNarratorApiKey(world, secureStorage.publicApiKey)
             val baseUrlRaw = requestPlatform()?.baseUrl ?: ApiKeyResolver.resolveNarratorBaseUrlRaw(world, secureStorage.publicBaseUrl.trim())
@@ -2447,7 +2458,7 @@ class ChatViewModel @Inject constructor(
                 )
                 return@narratorScope
             }
-            if (guidanceText.isNotEmpty()) {
+            if (guidanceText.isNotEmpty() && !nextChapter) {
                 var guidanceCommitted = false
                 try {
                     generation.ensureCurrent()
@@ -2500,7 +2511,11 @@ class ChatViewModel @Inject constructor(
                 encyclopediaHits = sharedWorldContext.encyclopediaHits,
                 loreHits = sharedWorldContext.loreHits,
             )
-            val narratorPrompt = promptBuilder.buildNarratorPrompt(context, guidance, model, includeUserProfile = false)
+            val narratorPrompt = promptBuilder.buildNarratorPrompt(context, guidance, model, includeUserProfile = false) +
+                if (chapterNumber != null) "\n小说名：${_state.value.sessionTitle}。本次续写小说第 $chapterNumber 章。承接已有剧情，写完整连续的小说正文，不回复用户、不生成选项或大纲。第一行给出章节标题，随后正文。" +
+                    chapterTitle.trim().takeIf { it.isNotEmpty() }?.let { "指定章节标题：$it" }.orEmpty() +
+                    if (resumeChapter != null) "\n上一条是本章未完成草稿。保留已有情节，返回从本章开头到结尾的完整正文。" else ""
+                else ""
             generation.ensureCurrent()
             recordMemoryCorrectionPromptTrace(
                 branchId = generation.branchId,
@@ -2518,6 +2533,19 @@ class ChatViewModel @Inject constructor(
             val replyStartedAt = System.nanoTime()
             var narratorReplyCommitted = false
             var receivedText = ""
+            var chapterDraftId = resumeChapter?.id
+            var lastChapterSave = 0L
+            suspend fun saveChapterDraft() {
+                if (chapterNumber == null || receivedText.isBlank() || narratorReplyCommitted) return
+                if (resumeChapter != null && receivedText.length < resumeChapter.content.length) return
+                val title = chapterTitle.trim().ifBlank { resumeChapter?.let { NovelChapter.title(it.structuredContentJson) }.orEmpty().ifBlank { "第 $chapterNumber 章" } }
+                val json = NovelChapter.draftMetadata("{}", chapterNumber, title)
+                val id = chapterDraftId
+                if (id == null) chapterDraftId = messageDao.insert(MessageEntity(sessionId = sessionId, speakerType = "narrator",
+                    branchId = generation.branchId, content = receivedText, structuredContentJson = json))
+                else messageDao.updateNovelDraft(id, sessionId, generation.branchId, receivedText, json)
+                lastChapterSave = System.currentTimeMillis()
+            }
             try {
                 run {
                     for ((idx, nb) in narrBases.withIndex()) {
@@ -2544,6 +2572,7 @@ class ChatViewModel @Inject constructor(
                                     generation.ensureCurrent()
                                     val now = System.currentTimeMillis()
                                     receivedText = s.partialText
+                                    if (chapterNumber != null && now - lastChapterSave >= 1500L) saveChapterDraft()
                                     val len = s.partialText.length
                                     val shouldUpdate = (now - lastUiUpdateAt) >= 60L || (len - lastUiLen) >= 80
                                     if (shouldUpdate) {
@@ -2563,25 +2592,30 @@ class ChatViewModel @Inject constructor(
                                         CharacterMediaMarkers.parse(s.fullText).displayText.trim()
                                             .ifBlank { s.fullText.trim() },
                                     )
-                                    val narrContent = if (world.gameplayMode == "小说创作") {
+                                    val baseNarrContent = if (world.gameplayMode == "小说创作") {
                                         StoryCanon.sanitizeMessageChoices(normalizedNarrContent, world.worldPrompt)
                                     } else {
                                         normalizedNarrContent
                                     }
+                                    val chapter = chapterNumber?.let { NovelChapter.generated(it, chapterTitle, baseNarrContent) }
+                                    val narrContent = chapter?.second ?: baseNarrContent
+                                    val replyMetadata = if (chapter != null) NovelChapter.metadata(structuredContentJsonFor(narrContent), chapterNumber!!, chapter.first)
+                                        else structuredContentJsonFor(narrContent)
                                     UsbSessionLog.i(
                                         "Narrator",
                                         "session=$sessionId displayLen=${narrContent.length} display=${clipLog(narrContent)}",
                                     )
-                                    messageDao.insert(
-                                        MessageEntity(
+                                    val completedReply = MessageEntity(
                                             sessionId = sessionId,
                                             speakerType = "narrator",
                                             content = narrContent,
-                                            structuredContentJson = ReplyGenerationMetadata.record(structuredContentJsonFor(narrContent),
+                                            structuredContentJson = ReplyGenerationMetadata.record(replyMetadata,
                                                 (System.nanoTime() - replyStartedAt) / 1_000_000, s.usage),
                                             branchId = generation.branchId,
-                                        ),
-                                    )
+                                        )
+                                    val draftId = chapterDraftId
+                                    if (draftId == null) messageDao.insert(completedReply)
+                                    else messageDao.updateNovelDraft(draftId, sessionId, generation.branchId, completedReply.content, completedReply.structuredContentJson)
                                     narratorReplyCommitted = true
                                     _state.value = _state.value.copy(streamingText = "")
                                     refreshMessagesUi(generation.branchId)
@@ -2640,7 +2674,7 @@ class ChatViewModel @Inject constructor(
                         if (errMsg != null) {
                             val partial = receivedText.trim()
                             if (partial.isEmpty() && idx < narrBases.lastIndex) continue
-                            val retained = retainInterruptedReply(generation, receivedText, "narrator", null)
+                            val retained = if (chapterNumber != null) { saveChapterDraft(); chapterDraftId != null } else retainInterruptedReply(generation, receivedText, "narrator", null)
                             _state.value = _state.value.copy(
                                 streamingText = "",
                                 error = UserFacingStrings.streamErrorDetail(errMsg) + if (retained) "\n已保留收到的正文，可继续对话。" else "",
@@ -2663,8 +2697,49 @@ class ChatViewModel @Inject constructor(
                     },
                 )
                 return@narratorScope
+            } finally {
+                if (chapterNumber != null && !narratorReplyCommitted) withContext(kotlinx.coroutines.NonCancellable) {
+                    try {
+                        saveChapterDraft()
+                        if (!_state.value.isGenerating && currentBranchId() == generation.branchId) refreshMessagesUi(generation.branchId)
+                    } catch (_: Exception) { _state.update { it.copy(error = "章节草稿保存失败，请复制已显示正文") } }
+                }
             }
             if (exitNarratorJob) return@narratorScope
+        }
+    }
+
+    fun renameNovel(title: String) {
+        if (title.isBlank() || _state.value.isGenerating) return
+        viewModelScope.launch {
+            try { sessionDao.updateTitle(sessionId, title.trim().take(100)); _state.update { it.copy(sessionTitle = title.trim().take(100)) } }
+            catch (e: CancellationException) { throw e }
+            catch (_: Exception) { _state.update { it.copy(error = "小说标题保存失败，请重试") } }
+        }
+    }
+
+    fun renameChapter(messageId: Long, title: String, onSuccess: () -> Unit) {
+        if (title.isBlank() || _state.value.isGenerating) return
+        val branch = currentBranchId()
+        viewModelScope.launch {
+            try {
+                getVisibleMessage(branch, messageId) ?: return@launch
+                if (currentBranchId() != branch || _state.value.isGenerating) return@launch
+                messageDao.renameNovelChapter(messageId, sessionId, title)
+                refreshMessagesUi(branch)
+                onSuccess()
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { _state.update { it.copy(error = "章节名称保存失败，请重试") } }
+        }
+    }
+
+    suspend fun exportNovel(output: OutputStream): Long = withContext(Dispatchers.IO) {
+        val branch = currentBranchId()
+        val title = sessionDao.getById(sessionId)?.title.orEmpty()
+        val maxId = getMessageTailForBranch(branch, 1).lastOrNull()?.id ?: 0L
+        NovelChapter.export(output, title, maxId) { after, limit ->
+            if (branch == "main") messageDao.getMainMessagesAfter(sessionId, after, limit)
+            else messageDao.getVisibleMessagesAfter(sessionId, branch, after, limit)
         }
     }
 
