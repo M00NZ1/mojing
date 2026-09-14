@@ -69,56 +69,42 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 internal val LocalBillingCurrencyState = staticCompositionLocalOf { CurrencyDisplayState() }
+internal val LocalReplyUsageLookup = staticCompositionLocalOf<(Long) -> kotlinx.coroutines.flow.Flow<com.mojing.app.data.local.entity.CostRecordEntity?>> {
+    { kotlinx.coroutines.flow.flowOf(null) }
+}
 
 @Composable
-private fun ReplyUsageCaption(json: String, sessionId: Long) {
-    val duration = remember(json) { ReplyGenerationMetadata.durationLabel(json) } ?: return
+internal fun ReplyUsageCaption(json: String, sessionId: Long, fallbackText: String = "") {
+    val recordedDuration = remember(json) { ReplyGenerationMetadata.durationLabel(json) }
     val savedUsage = remember(json) { ReplyGenerationMetadata.usage(json) }
+    if (recordedDuration == null && savedUsage == null && fallbackText.isBlank()) return
+    val fallbackTokens = remember(fallbackText) { com.mojing.app.domain.engine.TokenCounter.estimateScaledPrefix(fallbackText) }
+    val duration = recordedDuration ?: "时长未记录"
     val recordId = remember(json) { runCatching { savedUsage?.get("record_id")?.asLong }.getOrNull() }
-    val billingVm: com.mojing.app.ui.settings.usage.BillingDisplayViewModel = androidx.hilt.navigation.compose.hiltViewModel()
-    val recordFlow = remember(recordId, billingVm) {
-        if (recordId != null && recordId > 0) billingVm.observeRecord(recordId)
+    val lookup = LocalReplyUsageLookup.current
+    val recordFlow = remember(recordId, lookup) {
+        if (recordId != null && recordId > 0) lookup(recordId)
         else kotlinx.coroutines.flow.flowOf(null)
     }
     val liveRecord by recordFlow.collectAsStateWithLifecycle(initialValue = null)
     val usage = remember(savedUsage, liveRecord, sessionId) {
-        savedUsage?.deepCopy()?.apply {
-            liveRecord?.takeIf { it.sessionId == sessionId && it.modelName == savedUsage.get("model")?.asString &&
-                (savedUsage.get("platform_id")?.asString?.let { id -> it.platformId == id }
-                    ?: (it.platformName == savedUsage.get("platform")?.asString)) }?.let {
-                addProperty("cost_known", it.costKnown)
-                addProperty("cost", it.estimatedCost)
-                addProperty("currency", it.currency)
-            }
-        }
+        mergeReplyUsage(savedUsage, liveRecord, sessionId)
     }
-    var showDetail by remember(json) { mutableStateOf(false) }
     val currencyState = LocalBillingCurrencyState.current
     val caption = runCatching {
-        if (usage == null) duration else {
+        if (usage == null) "$duration · 正文约 $fallbackTokens Token · 费用未记录" else {
             val tokens = usage.get("total_tokens").asInt
-            val estimated = usage.get("token_source").asString == "estimated"
+            val estimated = usage.get("token_source")?.asString == "estimated"
             val cost = if (usage.get("cost_known").asBoolean)
                 "≈" + formatBillingAmount(usage.get("cost").asDouble, usage.get("currency").asString, currencyState)
             else "价格待配置"
             "$duration · ${if (estimated) "约 " else ""}${String.format(java.util.Locale.US, "%,d", tokens)} Token · $cost"
         }
     }.getOrDefault(duration)
-    Text(caption, modifier = Modifier.padding(horizontal = 20.dp).clickable(enabled = usage != null) { showDetail = true }.padding(vertical = 6.dp),
-        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    if (showDetail && usage != null) {
-        AlertDialog(onDismissRequest = { showDetail = false }, title = { Text("本条生成用量") },
-            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(usage.get("platform")?.asString.orEmpty())
-                Text(usage.get("model")?.asString.orEmpty())
-                Text(duration)
-                Text("输入 ${usage.get("input_tokens")?.asInt ?: 0} · 输出 ${usage.get("output_tokens")?.asInt ?: 0} Token")
-                Text("缓存输入 ${usage.get("cached_tokens")?.asInt ?: 0} Token")
-                Text(if (usage.get("token_source")?.asString == "api") "Token 来自平台接口" else "Token 按文本估算")
-                Text(if (usage.get("cost_known")?.asBoolean == true) "预估费用 " + formatBillingAmount(
-                    usage.get("cost").asDouble, usage.get("currency").asString, currencyState) else "价格待配置")
-            } }, confirmButton = { TextButton(onClick = { showDetail = false }) { Text("关闭") } })
-    }
+    Text(caption, modifier = Modifier.fillMaxWidth().padding(horizontal = LocalChatDensityMetrics.current.rowHorizontal, vertical = 6.dp)
+        .semantics { contentDescription = "本条回复生成用量" },
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
 }
 
 @Composable
@@ -308,6 +294,7 @@ fun MessageBubble(
     senderLabel: String = "",
     showSenderHeader: Boolean = false,
     timeText: String = "",
+    readOnly: Boolean = false,
 ) {
     var showSelection by remember(message.id) { mutableStateOf(false) }
     if (showSelection) {
@@ -386,7 +373,7 @@ fun MessageBubble(
             senderLabel = senderLabel,
             showSenderHeader = showSenderHeader,
             timeText = timeText,
-            onClick = { showMenu = true },
+            onClick = { if (readOnly) showSelection = true else showMenu = true },
             onLongPress = { showSelection = true },
             onImageClick = { previewImagePath = it },
         )
@@ -401,7 +388,7 @@ fun MessageBubble(
             senderLabel = senderLabel,
             showSenderHeader = showSenderHeader,
             timeText = timeText,
-            onClick = { showMenu = true },
+            onClick = { if (readOnly) showSelection = true else showMenu = true },
             onLongPress = { showSelection = true },
             onImageClick = { previewImagePath = it },
         )
@@ -409,7 +396,7 @@ fun MessageBubble(
             NarratorMessageBubble(
                 message,
                 showHistoricalChoices = !isCurrentChoiceMessage,
-                modifier = Modifier.combinedClickable(onClick = { showMenu = true }, onLongClick = { showSelection = true }),
+                modifier = Modifier.combinedClickable(onClick = { if (readOnly) showSelection = true else showMenu = true }, onLongClick = { showSelection = true }),
             )
         }
         else -> UserMessageBubble(
@@ -422,12 +409,13 @@ fun MessageBubble(
             senderLabel = senderLabel,
             showSenderHeader = showSenderHeader,
             timeText = timeText,
-            onClick = { showMenu = true },
+            onClick = { if (readOnly) showSelection = true else showMenu = true },
             onLongPress = { showSelection = true },
             onImageClick = { previewImagePath = it },
         )
     }
-    ReplyUsageCaption(message.structuredContentJson, message.sessionId)
+    if (message.speakerType != "user" && !com.mojing.app.domain.story.NovelChapter.incomplete(message.structuredContentJson))
+        ReplyUsageCaption(message.structuredContentJson, message.sessionId, message.content)
     }
     previewImagePath?.let { path ->
         ImagePreviewDialog(imageUrl = path, onDismiss = { previewImagePath = null })
@@ -519,15 +507,15 @@ fun UserMessageBubble(
                                 quoted.quote?.let { source ->
                                     Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                         shape = RoundedCornerShape(8.dp)) {
-                                        Text("引用 · $source", modifier = Modifier.padding(10.dp),
+                                        SearchableMessageText("引用 · $source", modifier = Modifier.padding(10.dp),
                                             color = MaterialTheme.colorScheme.onSurface,
                                             style = MaterialTheme.typography.bodySmall,
-                                            maxLines = 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                            maxLines = if (LocalMessageSearchHighlight.current.query.isBlank()) 3 else Int.MAX_VALUE)
                                     }
                                     Spacer(Modifier.height(8.dp))
                                 }
-                                Text(
-                                    text = ChatMessageTextFormat.forBubbleDisplay(quoted.body),
+                                SearchableMessageText(
+                    text = ChatMessageTextFormat.forBubbleDisplay(quoted.body),
                                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                                     style = d.bodyTextStyle(),
                                 )
@@ -748,8 +736,8 @@ fun CharacterMessageBubble(
                             color = MaterialTheme.colorScheme.surfaceContainer,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text(
-                                text = "🎭 $body",
+                            SearchableMessageText(
+                    text = "🎭 $body",
                                 modifier = Modifier.padding(d.bubbleInnerPadding),
                                 style = d.narrationTextStyle(),
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
@@ -761,8 +749,8 @@ fun CharacterMessageBubble(
                         if (thought.isBlank()) return@forEach
                         val body = ChatMessageTextFormat.forBubbleDisplay(thought)
                         if (body.isBlank()) return@forEach
-                        Text(
-                            text = "💭 $body",
+                        SearchableMessageText(
+                    text = "💭 $body",
                             modifier = Modifier.padding(horizontal = d.bubbleInnerPadding, vertical = 2.dp),
                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = (d.bodyFontSp - 1f).coerceAtLeast(12f).sp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -778,8 +766,8 @@ fun CharacterMessageBubble(
                                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                 modifier = Modifier.widthIn(max = d.bubbleMaxWidth),
                             ) {
-                                Text(
-                                    text = body,
+                                SearchableMessageText(
+                    text = body,
                                     modifier = Modifier.padding(d.bubbleInnerPadding),
                                     color = MaterialTheme.colorScheme.onSurface,
                                     style = d.bodyTextStyle(),
@@ -800,8 +788,8 @@ fun CharacterMessageBubble(
                                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                 modifier = Modifier.widthIn(max = d.bubbleMaxWidth),
                             ) {
-                                Text(
-                                    text = plainBody,
+                                SearchableMessageText(
+                    text = plainBody,
                                     modifier = Modifier.padding(d.bubbleInnerPadding),
                                     color = MaterialTheme.colorScheme.onSurface,
                                     style = d.bodyTextStyle(),
@@ -820,8 +808,8 @@ fun CharacterMessageBubble(
                                 .fillMaxWidth()
                                 .padding(top = 6.dp),
                         ) {
-                            Text(
-                                text = "▸ $body",
+                            SearchableMessageText(
+                    text = "▸ $body",
                                 modifier = Modifier.padding(d.bubbleInnerPadding),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = (d.bodyFontSp - 1f).coerceAtLeast(12f).sp),
@@ -842,8 +830,8 @@ fun CharacterMessageBubble(
                                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                 modifier = Modifier.widthIn(max = d.bubbleMaxWidth),
                             ) {
-                                Text(
-                                    text = plain,
+                                SearchableMessageText(
+                    text = plain,
                                     modifier = Modifier.padding(d.bubbleInnerPadding),
                                     color = MaterialTheme.colorScheme.onSurface,
                                     style = d.bodyTextStyle(),
@@ -901,7 +889,7 @@ fun NarratorMessageBubble(
     ) {
         Column(modifier = Modifier.padding(d.narratorInnerPadding)) {
             if (body.isNotBlank()) {
-                Text(
+                SearchableMessageText(
                     text = "🎭 $body",
                     style = d.narrationTextStyle(),
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
@@ -917,8 +905,8 @@ fun NarratorMessageBubble(
                         .fillMaxWidth()
                         .padding(top = 6.dp),
                 ) {
-                    Text(
-                        text = "▸ $label",
+                    SearchableMessageText(
+                    text = "▸ $label",
                         modifier = Modifier.padding(d.bubbleInnerPadding),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium,

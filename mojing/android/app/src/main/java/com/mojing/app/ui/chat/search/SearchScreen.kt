@@ -42,6 +42,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.CompositionLocalProvider
+import com.mojing.app.ui.chat.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -65,12 +69,17 @@ fun SearchScreen(
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val billing: com.mojing.app.ui.settings.usage.BillingDisplayViewModel = hiltViewModel()
+    val currency by billing.state.collectAsStateWithLifecycle()
     val resultListState = rememberLazyListState()
     LaunchedEffect(sessionId, branchId) { viewModel.initialize(sessionId, branchId) }
     BackHandler { if (state.selectedMessageId != null) viewModel.closeHit() else onBack() }
+    CompositionLocalProvider(LocalBillingCurrencyState provides currency,
+        LocalReplyUsageLookup provides remember(billing) { { id -> billing.observeRecord(id) } }) {
     Surface(Modifier.fillMaxSize().systemBarsPadding()) {
         if (state.selectedMessageId != null) SearchContextScreen(state, viewModel, sessionId, branchId, onBack)
         else SearchResultsScreen(state, viewModel, sessionId, branchId, onBack, resultListState)
+    }
     }
 }
 
@@ -129,15 +138,46 @@ fun SearchScreen(
                 TextButton(onClick = { vm.navigateHit(sessionId, branchId, 1) }) { Text(state.error) }
             }
             val listState = rememberLazyListState()
-            LaunchedEffect(state.contextMessages, state.selectedMessageId) { val i = state.contextMessages.indexOfFirst { it.id == state.selectedMessageId }; if (i >= 0) listState.animateScrollToItem(i) }
-            LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(start = 16.dp, end = 64.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { items(state.contextMessages, key = { it.id }) { msg -> ContextMessage(msg, state.completedQuery, msg.id == state.selectedMessageId) } }
+            var positionedId by remember(state.selectedMessageId, state.completedQuery) { mutableStateOf<Long?>(null) }
+            LaunchedEffect(state.contextMessages, state.selectedMessageId) {
+                val i = state.contextMessages.indexOfFirst { it.id == state.selectedMessageId }
+                if (i >= 0) { listState.scrollToItem(i); positionedId = state.selectedMessageId }
+            }
+            val presentation = state.presentation
+            val lines = remember(state.contextMessages, presentation) {
+                state.contextMessages.map { ChatDisplayLine("search_${it.id}", null, listOf(it), 0) }
+                    .decorateChatLineList(presentation.characters.mapValues { it.value.name }, presentation.userName, presentation.narratorName)
+            }
+            CompositionLocalProvider(LocalChatDensityMetrics provides ChatDensityMode.fromStorage(presentation.density).toMetrics()) {
+                LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(end = 48.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(lines, key = { it.line.stableKey }) { meta ->
+                        val message = meta.line.selectedMessage()
+                        val focused = message.id == state.selectedMessageId
+                        val highlight = remember(message.id, state.completedQuery, positionedId) {
+                            MessageSearchHighlight(state.completedQuery, focused && positionedId == message.id)
+                        }
+                        val character = presentation.characters[message.characterId]
+                        Column(if (focused) Modifier.fillMaxWidth().border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(20.dp)).padding(vertical = 6.dp) else Modifier.fillMaxWidth()) {
+                            if (focused) Text("当前匹配", Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            CompositionLocalProvider(LocalMessageSearchHighlight provides highlight) {
+                                MessageLineBlock(line = meta.line, messageAttachments = presentation.attachments,
+                                    avatarPath = character?.avatar.orEmpty(), avatarColor = character?.color ?: "#F97316", cardImagePath = character?.card.orEmpty(),
+                                    userAvatarImagePath = presentation.userAvatar, userAvatarColor = presentation.userColor, userDisplayName = presentation.userName,
+                                    bookmarkedMessageIds = emptySet(), senderLabel = meta.senderLabel, showSenderHeader = meta.showSenderHeader, timeText = meta.timeText,
+                                    onAction = {}, onSelectSwipeVersion = { _, _ -> }, readOnly = true)
+                            }
+                        }
+                    }
+                }
+            }
         }
         Column(Modifier.align(Alignment.CenterEnd).padding(end = 8.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.shapes.large), horizontalAlignment = Alignment.CenterHorizontally) { IconButton(enabled = index > 0 && !state.searching, onClick = { vm.navigateHit(sessionId, branchId, -1) }) { Icon(Icons.Default.KeyboardArrowUp, "上一个") }; Text("$current/${state.totalMatches ?: state.hits.size}", style = MaterialTheme.typography.labelSmall); IconButton(enabled = index >= 0 && (index < state.hits.lastIndex || state.hasOlder) && !state.searching, onClick = { vm.navigateHit(sessionId, branchId, 1) }) { Icon(Icons.Default.KeyboardArrowDown, "下一个") } }
     }
 }
 
-@Composable private fun ContextMessage(message: MessageEntity, query: String, focused: Boolean) { Surface(Modifier.fillMaxWidth(), color = if (focused) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow) { Column(Modifier.padding(14.dp)) { Text(formatDate(message.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); HighlightedText(ChatMessageTextFormat.visibleBody(message.content, message.speakerType), query) } } }
-
-@Composable private fun HighlightedText(text: String, query: String) { val q = query.trim(); val highlight = MaterialTheme.colorScheme.tertiaryContainer; val foreground = MaterialTheme.colorScheme.onTertiaryContainer; val annotated = remember(text, q, highlight, foreground) { buildAnnotatedString { if (q.isBlank()) append(text) else { var end = 0; Regex(Regex.escape(q), RegexOption.IGNORE_CASE).findAll(text).forEach { m -> append(text.substring(end, m.range.first)); withStyle(SpanStyle(background = highlight, color = foreground)) { append(m.value) }; end = m.range.last + 1 }; append(text.substring(end)) } } }; Text(annotated, style = MaterialTheme.typography.bodyMedium) }
+@Composable private fun HighlightedText(text: String, query: String) {
+    val annotated = remember(text, query) { highlightedMessageText(text, messageSearchRanges(text, query)) }
+    Text(annotated, style = MaterialTheme.typography.bodyMedium)
+}
 
 private fun formatDate(epoch: Long): String = if (epoch == 0L) "" else Instant.ofEpochMilli(epoch).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyy年MM月dd日 HH:mm"))

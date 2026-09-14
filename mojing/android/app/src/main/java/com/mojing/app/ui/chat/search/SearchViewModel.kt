@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 /** Only the snippet and identifying fields survive after a result page is read. */
 data class SearchHit(val message: MessageEntity, val snippet: String)
 data class SearchState(
+    val presentation: SearchPresentation = SearchPresentation(),
     val query: String = "", val completedQuery: String = "", val exactMatch: Boolean = false,
     val searching: Boolean = false, val error: String? = null,
     val hits: List<SearchHit> = emptyList(), val totalMatches: Int? = null,
@@ -26,7 +27,7 @@ data class SearchState(
 )
 
 @HiltViewModel
-class SearchViewModel @Inject constructor(application: Application, private val messageDao: MessageDao) : AndroidViewModel(application) {
+class SearchViewModel @Inject constructor(application: Application, private val messageDao: MessageDao, private val presentationLoader: SearchPresentationLoader) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(SearchState())
     val state = _state.asStateFlow()
     private var revision = 0L
@@ -138,8 +139,10 @@ class SearchViewModel @Inject constructor(application: Application, private val 
                     else messageDao.getVisibleMessagesBefore(sessionId, branchId, messageId, CONTEXT_SIDE)
                 val after = if (branchId == "main") messageDao.getMainMessagesAfter(sessionId, messageId, CONTEXT_SIDE)
                     else messageDao.getVisibleMessagesAfter(sessionId, branchId, messageId, CONTEXT_SIDE)
+                val context = (before.asReversed() + target + after).distinctBy(MessageEntity::id)
+                val presentation = presentationLoader.load(sessionId, context)
                 if (token == revision && detailToken == detailRevision)
-                    _state.update { it.copy(searching = false, contextMessages = (before.asReversed() + target + after).distinctBy(MessageEntity::id)) }
+                    _state.update { it.copy(searching = false, contextMessages = context, presentation = presentation) }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { if (token == revision && detailToken == detailRevision)
                 _state.update { it.copy(searching = false, error = "无法打开消息，请重试") } }

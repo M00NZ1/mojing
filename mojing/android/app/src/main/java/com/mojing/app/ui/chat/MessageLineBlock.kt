@@ -51,6 +51,7 @@ fun MessageLineBlock(
     currentBranchId: String = "main",
     branchAnchors: List<BranchAnchor> = emptyList(),
     canReturnToMain: Boolean = false,
+    readOnly: Boolean = false,
 ) {
     val d = LocalChatDensityMetrics.current
     val headerMsg = line.selectedMessage()
@@ -133,6 +134,7 @@ fun MessageLineBlock(
             ) { page ->
                 val msg = line.variants[page]
                 MessageBubble(
+                    readOnly = readOnly,
                     message = msg,
                     attachments = messageAttachments[msg.id].orEmpty(),
                     avatarPath = avatarPath,
@@ -169,6 +171,7 @@ fun MessageLineBlock(
         } else {
             val msg = line.variants.firstOrNull() ?: return
             MessageBubble(
+                    readOnly = readOnly,
                 message = msg,
                 attachments = messageAttachments[msg.id].orEmpty(),
                 avatarPath = avatarPath,

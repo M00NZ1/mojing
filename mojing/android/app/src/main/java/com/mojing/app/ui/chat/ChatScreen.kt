@@ -198,7 +198,6 @@ fun ChatScreen(
     var readingMode by rememberSaveable(sessionId) { mutableStateOf(false) }
     var latestRequested by remember(sessionId) { mutableStateOf(false) }
     var latestLoadAttempted by remember(sessionId) { mutableStateOf(false) }
-    var showContextUsage by remember { mutableStateOf(false) }
     var showContents by remember { mutableStateOf(false) }
     var showSearchDialog by remember { mutableStateOf(false) }
     var isImportingChat by remember(sessionId) { mutableStateOf(false) }
@@ -543,11 +542,7 @@ fun ChatScreen(
         onDismiss = { showContents = false },
     )
 
-    if (showContextUsage) {
-        AlertDialog(onDismissRequest = { showContextUsage = false }, title = { Text("上下文用量") },
-            text = { ChatContextUsageStrip(state.conversationTokenEstimate, state.displayContextTokenLimit) },
-            confirmButton = { TextButton(onClick = { showContextUsage = false }) { Text("关闭") } })
-    }
+
 
 
     DisposableEffect(viewModel) { onDispose { viewModel.stopSpeaking() } }
@@ -700,8 +695,13 @@ fun ChatScreen(
                 Column(Modifier.fillMaxWidth()) {
                     TopAppBar(
                         title = {
-                            Text(stableSessionTitle.ifBlank { "对话" }, maxLines = 1,
-                                overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
+                            Column {
+                                Text(stableSessionTitle.ifBlank { "对话" }, maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
+                                Text("已加载约 ${state.conversationTokenEstimate} Token",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                            }
                         },
                         navigationIcon = {
                             IconButton(onClick = {
@@ -771,9 +771,6 @@ fun ChatScreen(
                                             showSearchDialog = true
                                         },
                                     )
-                                    DropdownMenuItem(text = { Text("上下文用量") }, onClick = {
-                                        topActionsMenuExpanded = false; showContextUsage = true
-                                    })
                                     DropdownMenuItem(text = { Text("停止朗读") }, onClick = {
                                         topActionsMenuExpanded = false; viewModel.stopSpeaking()
                                     })
@@ -984,7 +981,8 @@ fun ChatScreen(
             val densityMetrics = if (readingMode) ChatDensityMode.Reader.toMetrics().copy(
                 rowHorizontal = 12.dp, narratorHorizontal = 12.dp, bubbleMaxWidth = 720.dp,
             ) else ChatDensityMode.fromStorage(state.chatDensity).toMetrics()
-            CompositionLocalProvider(LocalChatDensityMetrics provides densityMetrics, LocalBillingCurrencyState provides billingState) {
+            CompositionLocalProvider(LocalChatDensityMetrics provides densityMetrics, LocalBillingCurrencyState provides billingState,
+                LocalReplyUsageLookup provides remember(billingViewModel) { { id -> billingViewModel.observeRecord(id) } }) {
             val initialLoadError = state.initialLoadError
             if (initialLoadError != null) {
                 Box(

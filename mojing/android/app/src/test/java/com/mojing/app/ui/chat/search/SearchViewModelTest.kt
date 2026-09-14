@@ -39,7 +39,9 @@ class SearchViewModelTest {
         every { preferences.getLong(any(), any()) } returns 0L
         every { preferences.edit() } returns editor
         dao = mockk(relaxed = true)
-        viewModel = SearchViewModel(application, dao)
+        val presentation = io.mockk.mockk<SearchPresentationLoader>()
+        io.mockk.coEvery { presentation.load(any(), any()) } returns SearchPresentation()
+        viewModel = SearchViewModel(application, dao, presentation)
         viewModel.initialize(1L, "main")
     }
 

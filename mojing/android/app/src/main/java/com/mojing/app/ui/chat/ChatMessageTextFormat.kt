@@ -21,7 +21,7 @@ object ChatMessageTextFormat {
         if (text.isEmpty()) return "（无正文）"
         val size = maxChars.coerceAtLeast(2)
         val needle = query.trim().replace(Regex("\\s+"), " ")
-        val hit = if (needle.isEmpty()) 0 else text.indexOf(needle, ignoreCase = true).coerceAtLeast(0)
+        val hit = if (needle.isEmpty()) 0 else messageSearchRanges(text, needle).firstOrNull()?.first ?: 0
         var start = (hit - size / 4).coerceAtLeast(0)
         if (start > 0 && text[start].isLowSurrogate() && text[start - 1].isHighSurrogate()) start++
         var end = (start + size).coerceAtMost(text.length)
