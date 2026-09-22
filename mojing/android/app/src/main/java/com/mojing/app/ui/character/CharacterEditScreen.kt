@@ -405,7 +405,8 @@ fun CharacterEditScreen(
                 onModelChange = { viewModel.updateModelName(it) },
                 modelHint = ApiVendorModelHint.CHAT,
             )
-            OutlinedTextField(value = state.apiKey, onValueChange = { viewModel.updateApiKey(it) }, label = { Text("API Key（空则用全局）") }, placeholder = { Text("sk-xxx") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            OutlinedTextField(value = state.apiKey, onValueChange = { viewModel.updateApiKey(it) }, label = { Text("角色专用 API Key") }, placeholder = { Text("sk-xxx") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            Text("专用 Key 与接口地址需配套填写；不使用专用线路时可在对话中直接选择平台。", style = MaterialTheme.typography.bodySmall)
             val chatCharCollapsed = ApiProviderPresets.isExactSinglePresetBaseUrl(state.apiBaseUrl)
             CollapsiblePresetUrlModelBlock(
                 collapsedPreset = chatCharCollapsed,
@@ -512,41 +513,20 @@ fun CharacterEditScreen(
 
             HorizontalDivider()
             Text("朗读", style = MaterialTheme.typography.titleMedium)
-            ApiVendorPresetRow(
-                sectionLabel = "朗读快捷线路",
-                currentBaseUrl = state.voiceApiBaseUrl,
-                currentModel = state.voiceModel,
-                onBaseUrlChange = { viewModel.updateVoiceApiBaseUrl(it) },
-                onModelChange = { viewModel.updateVoiceModel(it) },
-                modelHint = ApiVendorModelHint.VOICE_TTS,
-            )
-            OutlinedTextField(
-                value = state.voiceApiKey,
-                onValueChange = { viewModel.updateVoiceApiKey(it) },
-                label = { Text("朗读 API Key（空则用对话 API Key / 全局）") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            val voiceCharCollapsed = ApiProviderPresets.isExactSinglePresetBaseUrl(state.voiceApiBaseUrl)
-            CollapsiblePresetUrlModelBlock(
-                collapsedPreset = voiceCharCollapsed,
-                showManualFields = showManualCharVoiceUrlModel,
-                onExpandManual = { showManualCharVoiceUrlModel = true },
-                onCollapseManual = { showManualCharVoiceUrlModel = false },
-                baseUrl = state.voiceApiBaseUrl,
-                model = state.voiceModel,
-                onBaseChange = { viewModel.updateVoiceApiBaseUrl(it) },
-                onModelChange = { viewModel.updateVoiceModel(it) },
-                baseLabel = "朗读 URL",
-                basePlaceholder = "空则用对话 URL",
-                modelLabel = "朗读模型",
-                modelPlaceholder = "system = 本机免费",
-                baseMultiline = false,
-            )
-            Text(
-                "保存角色后，在对话中点击消息旁的 🔊 试听这条朗读线路。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            var showVoiceChoice by remember { mutableStateOf(false) }
+            val characterVoice = com.mojing.app.data.resolveVoiceChoice(state.voiceProvider, state.voiceModel,
+                com.mojing.app.data.VoiceChoice("inherit"))
+            OutlinedButton(onClick = { showVoiceChoice = true }, modifier = Modifier.fillMaxWidth()) {
+                Text(characterVoice.label())
+            }
+            Text("此角色的回复使用独立引擎与音色；未指定时跟随对话设置。", style = MaterialTheme.typography.bodySmall)
+            if (showVoiceChoice) com.mojing.app.ui.common.VoiceChoicePicker(
+                choice = characterVoice, allowInherit = true,
+                onSelected = { choice ->
+                    viewModel.updateVoiceProvider(choice.engineId)
+                    viewModel.updateVoiceModel(choice.voiceId)
+                    showVoiceChoice = false
+                }, onDismiss = { showVoiceChoice = false },
             )
 
             if (state.probeBusyChannel != null) {

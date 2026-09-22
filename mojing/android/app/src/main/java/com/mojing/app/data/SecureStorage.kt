@@ -186,6 +186,19 @@ class SecureStorage {
         set(value) { prefs?.edit()?.putString("image_model", value)?.apply() }
 
     // Voice API
+    val azureSpeechRegion: String
+        get() = prefs?.getString("azure_speech_region", "eastasia") ?: "eastasia"
+
+    fun saveAzureSpeech(region: String, key: String) {
+        require(region.trim().matches(Regex("[a-zA-Z0-9-]+"))) { "请填写有效的微软语音区域" }
+        check(checkNotNull(prefs).edit().putString("azure_speech_region", region.trim())
+            .putString("azure_speech_key", key.trim()).commit()) { "微软语音配置未保存" }
+    }
+
+    var azureSpeechKey: String
+        get() = prefs?.getString("azure_speech_key", "").orEmpty()
+        set(value) { check(checkNotNull(prefs).edit().putString("azure_speech_key", value).commit()) { "微软语音 Key 未保存" } }
+
     var voiceApiKey: String
         get() = prefs?.getString("voice_api_key", "") ?: ""
         set(value) { prefs?.edit()?.putString("voice_api_key", value)?.apply() }

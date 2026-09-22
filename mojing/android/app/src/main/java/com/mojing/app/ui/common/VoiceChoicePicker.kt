@@ -1,0 +1,224 @@
+package com.mojing.app.ui.common
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.mojing.app.data.VoiceChoice
+import com.mojing.app.data.VoicePreferences
+import com.mojing.app.media.AzureSpeech
+import com.mojing.app.media.VoiceEngineCatalog
+import com.mojing.app.media.VoiceEngineOption
+import com.mojing.app.media.VoiceOption
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** 紧凑的引擎 -> 音色选择器；不在 UI 中伪造引擎或音色。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun VoiceChoicePicker(
+    choice: VoiceChoice,
+    allowInherit: Boolean,
+    onSelected: (VoiceChoice) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val scope = rememberCoroutineScope()
+    val preferences = remember(context) { VoicePreferences(context) }
+    var engines by remember { mutableStateOf<List<VoiceEngineOption>>(emptyList()) }
+    var selectedEngine by remember(choice.engineId) { mutableStateOf(choice.engineId) }
+    var query by remember { mutableStateOf("") }
+    var voices by remember { mutableStateOf<List<VoiceOption>>(emptyList()) }
+    var loading by remember { mutableStateOf(choice.engineId != "inherit") }
+    var engineLoading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var engineError by remember { mutableStateOf<String?>(null) }
+    var azureConfigured by remember { mutableStateOf(false) }
+    var loadGeneration by remember { mutableIntStateOf(0) }
+
+    fun loadEngines() {
+        engineLoading = true
+        engineError = null
+        scope.launch {
+            try {
+                engines = (VoiceEngineCatalog.engines(context) + VoiceEngineOption("azure", "微软 Azure 语音"))
+                    .distinctBy { it.id }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                engineError = "语音引擎列表加载失败"
+            } finally {
+                engineLoading = false
+            }
+        }
+    }
+
+    fun load(engineId: String) {
+        val generation = ++loadGeneration
+        selectedEngine = engineId
+        query = ""
+        loading = true
+        error = null
+        voices = emptyList()
+        scope.launch {
+            try {
+                val result = if (engineId == "azure") {
+                    val (region, key) = withContext(Dispatchers.IO) {
+                        preferences.azureRegion.trim() to preferences.azureKey.trim()
+                    }
+                    if (region.isBlank() || key.isBlank()) {
+                        if (generation == loadGeneration) error = "请先在语音设置填写 Azure 区域和 API Key"
+                        emptyList()
+                    } else withContext(Dispatchers.IO) { AzureSpeech.voices(region, key) }
+                } else {
+                    VoiceEngineCatalog.voices(context, engineId)
+                }
+                if (generation == loadGeneration && selectedEngine == engineId) voices = result
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (generation == loadGeneration && selectedEngine == engineId) error = "音色列表加载失败，请重试"
+            } finally {
+                if (generation == loadGeneration && selectedEngine == engineId) loading = false
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        azureConfigured = withContext(Dispatchers.IO) {
+            preferences.azureRegion.isNotBlank() && preferences.azureKey.isNotBlank()
+        }
+        loadEngines()
+        if (selectedEngine != "inherit") load(selectedEngine)
+    }
+
+    val displayVoices = listOf(VoiceOption("", if (selectedEngine == "azure") "默认 · 晓晓" else "引擎默认")) + voices.filter { it.id.isNotBlank() && (query.isBlank() || it.name.contains(query, true) || it.id.contains(query, true)) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier.fillMaxWidth().heightIn(max = (configuration.screenHeightDp * 0.8f).dp).padding(bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("选择朗读引擎", style = MaterialTheme.typography.titleLarge)
+                    Text("先选引擎，再选择可用音色", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = { loadEngines(); if (selectedEngine != "inherit") load(selectedEngine) }) {
+                    Icon(Icons.Default.Refresh, contentDescription = "刷新引擎和音色")
+                }
+            }
+            if (allowInherit) {
+                TextButton(
+                    onClick = { onSelected(VoiceChoice("inherit", "")) },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                ) { Text(if (choice.engineId == "inherit") "✓ 跟随当前会话" else "跟随当前会话") }
+                HorizontalDivider()
+            }
+            if (engineLoading) {
+                Row(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.Center) {
+                    CircularProgressIndicator()
+                }
+            } else if (engineError != null) {
+                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(engineError!!, color = MaterialTheme.colorScheme.error)
+                    TextButton(onClick = ::loadEngines) { Text("重试") }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    engines.forEach { engine ->
+                        FilterChip(
+                            selected = selectedEngine == engine.id,
+                            onClick = { load(engine.id) },
+                            enabled = engine.id != "azure" || azureConfigured,
+                            label = { Text(engine.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        )
+                    }
+                }
+            }
+            if (selectedEngine != "inherit") {
+                if (loading) {
+                    Row(modifier = Modifier.fillMaxWidth().padding(20.dp), horizontalArrangement = Arrangement.Center) {
+                        CircularProgressIndicator()
+                    }
+                } else if (error != null) {
+                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(error!!, color = MaterialTheme.colorScheme.error)
+                        TextButton(onClick = { load(selectedEngine) }) { Text("重试") }
+                    }
+                } else {
+                    Text("音色", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 20.dp))
+                    if (voices.size > 8) MoJingTextField(
+                        value = query, onValueChange = { query = it }, singleLine = true,
+                        placeholder = { Text("搜索音色") }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    )
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
+                    ) {
+                        items(displayVoices, key = { "${selectedEngine}:${it.id}" }) { voice ->
+                            val selected = selectedEngine == choice.engineId && voice.id == choice.voiceId
+                            Surface(
+                                onClick = { onSelected(VoiceChoice(selectedEngine, voice.id)) },
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+                            ) {
+                                ListItem(
+                                    headlineContent = { Text(voice.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    supportingContent = { if (voice.id.isNotBlank()) Text(voice.id, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    trailingContent = { if (selected) Text("已选", color = MaterialTheme.colorScheme.primary) },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

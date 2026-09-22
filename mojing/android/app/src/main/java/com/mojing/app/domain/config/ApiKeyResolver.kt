@@ -50,43 +50,6 @@ object ApiKeyResolver {
         return parts.all { isPlaceholderApiBase(it) }
     }
 
-    /** 流式角色回复：对话 API Key（世界覆盖 → 角色 → 公共）。 */
-    fun resolveStreamChatApiKey(
-        world: SessionWorldEntity?,
-        character: CharacterEntity,
-        publicApiKey: String,
-    ): String =
-        world?.sessionLlmApiKey?.trim().orEmpty()
-            .ifBlank { character.apiKey.trim() }
-            .ifBlank { publicApiKey.trim() }
-
-    /**
-     * 流式角色回复：对话根地址原始串（多行拆分前）。
-     * 世界非占位 Base → 角色非占位 Base → 公共 Base。
-     */
-    fun resolveStreamChatBaseUrlRaw(
-        world: SessionWorldEntity?,
-        character: CharacterEntity,
-        publicBaseUrl: String,
-    ): String {
-        val wLlmBase = world?.sessionLlmBaseUrl?.trim().orEmpty()
-        val charBase = character.apiBaseUrl.trim()
-        return when {
-            wLlmBase.isNotEmpty() && !isPlaceholderApiBase(wLlmBase) -> wLlmBase
-            charBase.isNotEmpty() && !isPlaceholderApiBase(charBase) -> charBase
-            else -> publicBaseUrl.trim()
-        }
-    }
-
-    /** 旁白：本场对话 Key 覆盖 → 公共。 */
-    fun resolveNarratorApiKey(world: SessionWorldEntity, publicApiKey: String): String =
-        world.sessionLlmApiKey.trim().ifBlank { publicApiKey.trim() }
-
-    /** 旁白：本场 Base 非占位则用世界栏，否则公共根。 */
-    fun resolveNarratorBaseUrlRaw(world: SessionWorldEntity, publicBaseUrl: String): String =
-        world.sessionLlmBaseUrl.trim().takeIf { !isPlaceholderApiBase(it) }
-            ?: publicBaseUrl.trim()
-
     /**
      * 聊天内 AI 生图 Key/Base/Model（与百科等一致）：
      * 角色开启配图且填了生图字段 → 本会话配图覆盖 → 全局配图 → 公共 Key/根地址。

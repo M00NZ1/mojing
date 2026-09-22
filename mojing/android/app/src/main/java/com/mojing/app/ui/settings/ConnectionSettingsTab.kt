@@ -53,6 +53,8 @@ import com.mojing.app.ui.common.ApiVendorModelHint
 import com.mojing.app.ui.common.ApiVendorPresetRow
 import com.mojing.app.ui.common.CollapsiblePresetUrlModelBlock
 import com.mojing.app.ui.common.LlmKeySetupHintCard
+import com.mojing.app.data.VoiceChoice
+import com.mojing.app.data.VoicePreferences
 import com.mojing.app.util.LogExportManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -72,6 +74,23 @@ fun ConnectionSettingsTab(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val voicePreferences = remember(context) { VoicePreferences(context) }
+    var globalVoiceChoice by remember(context) { mutableStateOf(voicePreferences.global()) }
+    var azureRegion by remember(context) { mutableStateOf("") }
+    var azureKey by remember(context) { mutableStateOf("") }
+    var voiceLoading by remember { mutableStateOf(true) }
+    var voiceSaving by remember { mutableStateOf(false) }
+    var voiceError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(context) {
+        try {
+            val stored = withContext(Dispatchers.IO) { voicePreferences.azureRegion to voicePreferences.azureKey }
+            azureRegion = stored.first
+            azureKey = stored.second
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (_: Exception) { voiceError = "语音配置读取失败，请重新进入设置" }
+        finally { voiceLoading = false }
+    }
     var selectedChannelIndex by remember { mutableIntStateOf(0) }
     var showManualChat by remember { mutableStateOf(false) }
     var showManualImage by remember { mutableStateOf(false) }
@@ -183,51 +202,47 @@ fun ConnectionSettingsTab(
                 ) { Text("3. 测试配图连接") }
             }
 
-            ConnectionChannel.VOICE -> ConnectionCard("朗读与语音", "只用本机朗读时选择 system，不需要联网 Key") {
-                ApiVendorPresetRow(
-                    sectionLabel = "1. 选择服务商",
-                    currentBaseUrl = voiceBaseUrl,
-                    currentModel = voiceModel,
-                    onBaseUrlChange = viewModel::updateVoiceBaseUrl,
-                    onModelChange = viewModel::updateVoiceModel,
-                    modelHint = ApiVendorModelHint.VOICE_TTS,
-                )
-                SecretKeyField("2. 朗读 API Key（留空复用对话 Key）", voiceApiKey, viewModel::updateVoiceApiKey)
-                CollapsiblePresetUrlModelBlock(
-                    collapsedPreset = ApiProviderPresets.isExactSinglePresetBaseUrl(voiceBaseUrl),
-                    showManualFields = showManualVoice,
-                    onExpandManual = { showManualVoice = true },
-                    onCollapseManual = { showManualVoice = false },
-                    baseUrl = voiceBaseUrl,
-                    model = voiceModel,
-                    onBaseChange = viewModel::updateVoiceBaseUrl,
-                    onModelChange = viewModel::updateVoiceModel,
-                    baseLabel = "朗读服务地址",
-                    basePlaceholder = "本机朗读可留空",
-                    modelLabel = "朗读模型",
-                    modelPlaceholder = "system = 本机免费",
-                )
-                OutlinedTextField(
-                    value = voiceSpeechVoice,
-                    onValueChange = viewModel::updateVoiceSpeechVoice,
-                    label = { Text("音色") },
-                    placeholder = { Text("如 alloy、alex") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = voicePresetPrefixModel,
-                    onValueChange = viewModel::updateVoicePresetPrefixModel,
-                    label = { Text("音色前缀模型（可选）") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                Text(
-                    "朗读是否可用，以对话消息旁的 🔊 实际播放为准。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            ConnectionChannel.VOICE -> VoiceSettingsCard(
+                choice = globalVoiceChoice,
+                azureRegion = azureRegion,
+                azureKey = azureKey,
+                saving = voiceSaving || voiceLoading,
+                error = voiceError,
+                onChoiceSelected = { selected ->
+                    if (!voiceSaving) {
+                        voiceSaving = true
+                        scope.launch(Dispatchers.IO) {
+                            val result = runCatching { voicePreferences.saveGlobal(selected) }
+                            withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+                                result.onSuccess {
+                                    globalVoiceChoice = selected
+                                    voiceError = null
+                                }.onFailure { voiceError = "语音选择保存失败，请重试" }
+                                voiceSaving = false
+                            }
+                        }
+                    }
+                },
+                onRegionChange = { azureRegion = it; voiceError = null },
+                onKeyChange = { azureKey = it; voiceError = null },
+                onSave = {
+                    if (!voiceSaving) {
+                        voiceSaving = true
+                        voiceError = null
+                        val region = azureRegion.trim()
+                        val key = azureKey
+                        scope.launch(Dispatchers.IO) {
+                            val result = runCatching {
+                                voicePreferences.saveAzure(region, key)
+                            }
+                            withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+                                result.onFailure { voiceError = "Azure 设置保存失败，请重试" }
+                                voiceSaving = false
+                            }
+                        }
+                    }
+                },
+            )
         }
 
         if (selectedChannel == ConnectionChannel.TEXT) {

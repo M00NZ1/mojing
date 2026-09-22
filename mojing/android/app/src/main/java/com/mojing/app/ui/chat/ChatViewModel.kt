@@ -242,6 +242,17 @@ class ChatViewModel @Inject constructor(
 
     private fun requestPlatform(): com.mojing.app.data.ModelPlatform? =
         if (activeGeneration != null) roundPlatform else selectedPlatform()
+    private fun chatConnection(world: SessionWorldEntity?, character: CharacterEntity? = null): com.mojing.app.domain.config.ChatConnection {
+        requestPlatform()?.let {
+            return com.mojing.app.domain.config.ChatConnectionResolver.complete("所选平台", it.apiKey, it.baseUrl)
+        }
+        return com.mojing.app.domain.config.ChatConnectionResolver.resolve(
+            worldKey = world?.sessionLlmApiKey.orEmpty(), worldBase = world?.sessionLlmBaseUrl.orEmpty(),
+            characterKey = character?.apiKey.orEmpty(), characterBase = character?.apiBaseUrl.orEmpty(),
+            publicKey = secureStorage.publicApiKey, publicBase = secureStorage.publicBaseUrl,
+        )
+    }
+
     /** All AI generation entry points share one Job to prevent concurrent writes. */
     private var generationJob: Job? = null
     private var activeGeneration: GenerationContext? = null
@@ -703,88 +714,8 @@ class ChatViewModel @Inject constructor(
             }
         }
         if (w.autoCharacterSpeech && parsed.speechTexts.isNotEmpty()) {
-            val vp = ApiKeyResolver.resolveTtsParams(character, w, secureStorage)
-            for (seg in parsed.speechTexts.take(2)) {
-                var pendingId: Long? = null
-                var generatedPath: String? = null
-                var finalized = false
-                try {
-                    generation.ensureCurrent()
-                    withContext(NonCancellable) {
-                        pendingId = messageDao.insert(
-                            MessageEntity(
-                                sessionId = sessionId,
-                                speakerType = "character",
-                                characterId = character.id,
-                                content = "🔊 语音生成中…",
-                                structuredContentJson = """{"derived_media_version":1,"derived_media_kind":"voice"}""",
-                                branchId = generation.branchId,
-                                parentMessageId = sourceReplyMessageId,
-                                includeInContext = false,
-                            ),
-                        )
-                    }
-                    val insertedId = requireNotNull(pendingId)
-                    refreshMessagesUi()
-                    val t0 = System.currentTimeMillis()
-                    val speechBases = ApiRootLines.splitToOrderedDistinct(vp.baseUrl, HttpTts::normalizeVoiceRoutingBase)
-                        .ifEmpty {
-                            val sole = HttpTts.normalizeVoiceRoutingBase(vp.baseUrl.trim())
-                            if (sole.isNotEmpty()) listOf(sole) else emptyList()
-                        }
-                    for ((si, b) in speechBases.withIndex()) {
-                        generatedPath = HttpTts.synthesizeToMp3File(
-                            appContext,
-                            vp.apiKey,
-                            b,
-                            vp.model,
-                            vp.speechVoice,
-                            vp.presetPrefix,
-                            seg,
-                        )
-                        generation.ensureCurrent()
-                        if (generatedPath != null) {
-                            if (si > 0) maybePromoteVoiceStackField(vp.baseUrl, b)
-                            break
-                        }
-                    }
-                    val elapsed = (System.currentTimeMillis() - t0).toInt()
-                    costRecorder.recordVoiceHttp(
-                        sessionId,
-                        character.id.takeIf { it > 0L },
-                        vp.model,
-                        seg.length,
-                        generatedPath != null,
-                        elapsed,
-                    )
-                    val path = generatedPath
-                    if (path != null) {
-                        messageDao.updateContent(insertedId, "")
-                        attachmentDao.insert(
-                            MessageAttachmentEntity(
-                                messageId = insertedId,
-                                assetType = "audio",
-                                fileName = java.io.File(path).name,
-                                mimeType = "audio/mpeg",
-                                storagePath = path,
-                                generationPrompt = seg.take(200),
-                                generationModel = vp.model,
-                            ),
-                        )
-                    } else {
-                        if (vp.model.equals("system", ignoreCase = true)) {
-                            withContext(Dispatchers.Main) { AndroidTts.speak(seg) }
-                            messageDao.updateContent(insertedId, "🔊（本机已朗读，未生成语音附件）")
-                        } else {
-                            messageDao.updateContent(insertedId, "🔊 语音合成失败（请检查朗读 API Key 与服务地址）")
-                        }
-                    }
-                    finalized = true
-                    refreshMessagesUi()
-                } finally {
-                    if (!finalized) rollbackPendingMedia(pendingId, generatedPath)
-                }
-            }
+            generation.ensureCurrent()
+            speakMessage(parsed.speechTexts.take(2).joinToString("\n"), character.id)
         }
     }
 
@@ -1699,54 +1630,43 @@ class ChatViewModel @Inject constructor(
         com.mojing.app.media.TtsPlayer.stop()
     }
 
+    fun currentVoiceChoice(): com.mojing.app.data.VoiceChoice =
+        com.mojing.app.data.VoicePreferences(appContext).session(sessionId)
+
+    fun selectVoiceChoice(choice: com.mojing.app.data.VoiceChoice, onSaved: () -> Unit) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { com.mojing.app.data.VoicePreferences(appContext).saveSession(sessionId, choice) }
+                stopSpeaking()
+                onSaved()
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { _state.update { it.copy(error = "语音选择未保存，请重试") } }
+        }
+    }
+
     fun speakMessage(text: String, characterId: Long? = null) {
         stopSpeaking()
-        AndroidTts.init(appContext)
         speechJob = viewModelScope.launch {
-          try {
-            val cleaned = TtsSpeakText.normalizeForSpeech(text)
-            if (cleaned.isBlank()) {
-                _state.value = _state.value.copy(error = UserFacingStrings.ttsContentEmptyAfterClean())
-                return@launch
-            }
-            val world = sessionWorldDao.getBySession(sessionId)
-            val char = characterId?.let { characterDao.getById(it) }
-            val vp = ApiKeyResolver.resolveTtsParams(char, world, secureStorage)
-            if (vp.model.equals("system", ignoreCase = true)) {
-                withContext(Dispatchers.Main) { AndroidTts.speak(cleaned) { message -> _state.update { it.copy(error = message) } } }
-                return@launch
-            }
-            val pubVp = ApiKeyResolver.resolveTtsParamsPublicVoice(secureStorage)
-            val t0 = System.currentTimeMillis()
-            var ok = tryHttpTtsAcrossVoiceBases(vp, cleaned)
-            var modelUsed = vp.model
-            if (!ok && vp != pubVp) {
-                UsbSessionLog.w("Tts", "dedicated voice http failed, retry public voice line")
-                ok = tryHttpTtsAcrossVoiceBases(pubVp, cleaned)
-                if (ok) modelUsed = pubVp.model
-            }
-            val elapsed = (System.currentTimeMillis() - t0).toInt()
-            costRecorder.recordVoiceHttp(
-                sessionId,
-                char?.id?.takeIf { it > 0L },
-                modelUsed,
-                cleaned.length,
-                ok,
-                elapsed,
-            )
-            if (!ok) {
-                val fishErr = HttpTts.lastFishAudioError
-                if (fishErr != null) {
-                    _state.value = _state.value.copy(error = fishErr)
-                } else {
-                    withContext(Dispatchers.Main) { AndroidTts.speak(cleaned) { message -> _state.update { it.copy(error = message) } } }
+            try {
+                val cleaned = TtsSpeakText.normalizeForSpeech(text)
+                if (cleaned.isBlank()) {
+                    _state.update { it.copy(error = UserFacingStrings.ttsContentEmptyAfterClean()) }
+                    return@launch
                 }
-            }
-          } catch (e: CancellationException) {
-              throw e
-          } catch (_: Exception) {
-              _state.update { it.copy(error = "朗读失败，请检查语音配置后重试") }
-          }
+                val char = characterId?.let { characterDao.getById(it) }
+                val preferences = com.mojing.app.data.VoicePreferences(appContext)
+                val choice = com.mojing.app.data.resolveVoiceChoice(char?.voiceProvider, char?.voiceModel, preferences.session(sessionId))
+                if (choice.engineId == "azure") {
+                    val (region, key) = withContext(Dispatchers.IO) { preferences.azureRegion to preferences.azureKey }
+                    val ok = com.mojing.app.media.AzureSpeech.speak(appContext, cleaned, region, key, choice.voiceId)
+                    if (!ok) _state.update { it.copy(error = "微软朗读失败，请检查语音设置后重试") }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        AndroidTts.speakWithVoice(appContext, cleaned, choice) { message -> _state.update { it.copy(error = message) } }
+                    }
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { _state.update { it.copy(error = UserFacingStrings.remoteRequestFailed(e)) } }
         }
     }
 
@@ -2063,12 +1983,13 @@ class ChatViewModel @Inject constructor(
         manageGeneratingFlag: Boolean,
     ): Boolean {
         val world = sessionWorldDao.getBySession(sessionId)
-        val apiKey = requestPlatform()?.apiKey ?: ApiKeyResolver.resolveStreamChatApiKey(world, character, secureStorage.publicApiKey)
-        val baseUrlRaw = requestPlatform()?.baseUrl ?: ApiKeyResolver.resolveStreamChatBaseUrlRaw(
-            world,
-            character,
-            secureStorage.publicBaseUrl.trim(),
-        )
+        val connection = chatConnection(world, character)
+        connection.error?.let {
+            _state.update { state -> state.copy(error = it) }
+            return false
+        }
+        val apiKey = connection.apiKey
+        val baseUrlRaw = connection.baseUrl
         val streamBases = ApiRootLines.splitToOrderedDistinct(baseUrlRaw, llmApiService::normalizeOpenAiCompatibleBase)
             .ifEmpty {
                 val sole = llmApiService.normalizeOpenAiCompatibleBase(baseUrlRaw.trim())
@@ -2436,8 +2357,13 @@ class ChatViewModel @Inject constructor(
                 resumeChapter?.let { NovelChapter.number(it.structuredContentJson) } ?: (latest.coerceAtLeast(1) + 1)
             } else null
             val guidanceText = guidance.trim()
-            val apiKey = requestPlatform()?.apiKey ?: ApiKeyResolver.resolveNarratorApiKey(world, secureStorage.publicApiKey)
-            val baseUrlRaw = requestPlatform()?.baseUrl ?: ApiKeyResolver.resolveNarratorBaseUrlRaw(world, secureStorage.publicBaseUrl.trim())
+            val connection = chatConnection(world)
+            connection.error?.let {
+                _state.update { state -> state.copy(error = it) }
+                return@narratorScope
+            }
+            val apiKey = connection.apiKey
+            val baseUrlRaw = connection.baseUrl
             val narrBases = ApiRootLines.splitToOrderedDistinct(baseUrlRaw, llmApiService::normalizeOpenAiCompatibleBase)
                 .ifEmpty {
                     val sole = llmApiService.normalizeOpenAiCompatibleBase(baseUrlRaw.trim())
@@ -3522,8 +3448,10 @@ class ChatViewModel @Inject constructor(
                 characterDao.getById(participant.characterId)
             }
             val resolvedCharacter = firstCharacter ?: CharacterEntity()
-            val apiKey = requestPlatform()?.apiKey ?: ApiKeyResolver.resolveStreamChatApiKey(world, resolvedCharacter, secureStorage.publicApiKey)
-            val baseUrl = requestPlatform()?.baseUrl ?: ApiKeyResolver.resolveStreamChatBaseUrlRaw(world, resolvedCharacter, secureStorage.publicBaseUrl.trim())
+            val connection = chatConnection(world, resolvedCharacter)
+            connection.error?.let { onDone(it); return@launch }
+            val apiKey = connection.apiKey
+            val baseUrl = connection.baseUrl
             val model = resolveMainChatModelId(resolvedCharacter).ifBlank { secureStorage.publicModel.trim() }
             if (apiKey.isBlank() || baseUrl.isBlank() || model.isBlank()) {
                 onDone("当前线路未配置可用对话模型，无法重建记忆")

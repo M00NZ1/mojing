@@ -551,7 +551,7 @@ fun WorldConfigTab(
                 value = llmBase,
                 onValueChange = { llmBase = it },
                 label = { Text("对话 URL") },
-                placeholder = { Text("空则使用角色或设置") },
+                placeholder = { Text("与上方 Key 配套填写；两项均空时继承") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
@@ -577,51 +577,7 @@ fun WorldConfigTab(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
-            TextButton(
-                onClick = { voiceDetailsOpen = !voiceDetailsOpen },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(if (voiceDetailsOpen) "收起" else "朗读覆盖")
-            }
-            if (voiceDetailsOpen) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = voiceKey,
-                        onValueChange = { voiceKey = it },
-                        label = { Text("朗读 API Key") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                    )
-                    OutlinedTextField(
-                        value = voiceBase,
-                        onValueChange = { voiceBase = it },
-                        label = { Text("朗读 URL") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                    )
-                    OutlinedTextField(
-                        value = voiceModel,
-                        onValueChange = { voiceModel = it },
-                        label = { Text("TTS 模型") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                    )
-                    OutlinedTextField(
-                        value = voiceSpeech,
-                        onValueChange = { voiceSpeech = it },
-                        label = { Text("音色 voice") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                    )
-                    OutlinedTextField(
-                        value = voicePreset,
-                        onValueChange = { voicePreset = it },
-                        label = { Text("音色前缀模型") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                    )
-                }
-            }
+            Text("朗读引擎和音色请在对话输入框下方的「语音」中选择。", style = MaterialTheme.typography.bodySmall)
             Button(
                 onClick = { emitSave() },
                 enabled = !isGenerating,

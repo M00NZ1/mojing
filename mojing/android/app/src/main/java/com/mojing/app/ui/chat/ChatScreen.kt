@@ -135,6 +135,13 @@ fun ChatScreen(
     backLabel: String = "返回会话主页",
     viewModel: ChatViewModel = hiltViewModel()
 ) {
+    var voiceChoice by remember(sessionId) { mutableStateOf(viewModel.currentVoiceChoice()) }
+    var showVoicePicker by remember { mutableStateOf(false) }
+    if (showVoicePicker) com.mojing.app.ui.common.VoiceChoicePicker(
+        choice = voiceChoice, allowInherit = false,
+        onSelected = { choice -> viewModel.selectVoiceChoice(choice) { voiceChoice = choice; showVoicePicker = false } },
+        onDismiss = { showVoicePicker = false },
+    )
     val billingViewModel: com.mojing.app.ui.settings.usage.BillingDisplayViewModel = hiltViewModel()
     val billingState by billingViewModel.state.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -430,10 +437,6 @@ fun ChatScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
-        AndroidTts.init(context)
-    }
-
     LaunchedEffect(
         showAddParticipant,
         state.world?.encyclopediaId,
@@ -555,6 +558,7 @@ fun ChatScreen(
     }
 
     LifecycleResumeEffect(sessionId) {
+        voiceChoice = viewModel.currentVoiceChoice()
         viewModel.refreshModelSelection()
         viewModel.refreshParticipantCharacterMeta()
         onPauseOrDispose { }
@@ -901,8 +905,13 @@ fun ChatScreen(
                         }
                         InputBar(
                             modelSelector = {
-                                ChatInputModelSelector(modelLabel, state.isGenerating) {
-                                    dismissKeyboard(); showModelPicker = true
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(Modifier.weight(1f)) {
+                                        ChatInputModelSelector(modelLabel, state.isGenerating) {
+                                            dismissKeyboard(); showModelPicker = true
+                                        }
+                                    }
+                                    TextButton(onClick = { dismissKeyboard(); showVoicePicker = true }) { Text("语音") }
                                 }
                             },
                             narratorGuidance = state.narratorGuidance,
