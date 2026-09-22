@@ -261,7 +261,7 @@ internal fun GenerationTaskCancelConfirmation(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun GenerationTaskDetailSheet(
     task: GenerationTaskEntity,
@@ -281,8 +281,7 @@ internal fun GenerationTaskDetailSheet(
     ModalBottomSheet(onDismissRequest = onDismiss, dragHandle = null,
         containerColor = MaterialTheme.colorScheme.surface,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        BoxWithConstraints(Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(horizontal = 24.dp)) {
-            val actionMaxHeight = maxHeight * 0.5f
+        Box(Modifier.fillMaxWidth().fillMaxHeight(0.9f).padding(horizontal = 24.dp)) {
             Column(Modifier.fillMaxSize()) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("生成详情", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
@@ -332,30 +331,73 @@ internal fun GenerationTaskDetailSheet(
                 Spacer(Modifier.height(8.dp))
             }
             HorizontalDivider()
-            Column(Modifier.fillMaxWidth().heightIn(max = actionMaxHeight).verticalScroll(rememberScrollState())
-                .padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                val actionEnabled = !busy && !retrying && !opening
+                val actionError = retryError ?: openError
+                actionError?.let {
+                    Text(
+                        text = if (retryError != null) "继续生成未完成：${it.lineSequence().firstOrNull().orEmpty()}"
+                        else "打开失败：${it.lineSequence().firstOrNull().orEmpty()}",
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
                 if (task.status == GenerationTaskStatus.FAILED && isRetryableKind(task.taskKind) && onRetry != null) {
-                    Button(onClick = onRetry, enabled = !busy && !retrying && !opening, modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = onRetry, enabled = actionEnabled, modifier = Modifier.fillMaxWidth()) {
                         Text(if (retrying) "重新排队中…" else "继续尝试")
                     }
                 }
-                if (task.progressDone > 0 || task.status == GenerationTaskStatus.COMPLETED) {
+                val hasResultAction = task.progressDone > 0 || task.status == GenerationTaskStatus.COMPLETED
+                val hasCancelAction = task.isActive() && onCancel != null
+                if (hasResultAction || hasCancelAction) {
                     val label = if (opening) "正在打开…" else if (openError != null) "重试打开" else "查看已生成内容"
-                    if (task.status == GenerationTaskStatus.FAILED && isRetryableKind(task.taskKind) && onRetry != null) {
-                        OutlinedButton(onClick = onOpen, enabled = canOpen && !opening && !retrying, modifier = Modifier.fillMaxWidth()) { Text(label) }
-                    } else {
-                        Button(onClick = onOpen, enabled = canOpen && !opening, modifier = Modifier.fillMaxWidth()) { Text(label) }
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        maxItemsInEachRow = 2,
+                    ) {
+                        if (hasResultAction) {
+                            if (task.status == GenerationTaskStatus.FAILED && isRetryableKind(task.taskKind) && onRetry != null) {
+                                OutlinedButton(
+                                    onClick = onOpen,
+                                    enabled = canOpen && !opening && !retrying,
+                                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                                ) { Text(label, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                            } else {
+                                Button(
+                                    onClick = onOpen,
+                                    enabled = canOpen && !opening,
+                                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                                ) { Text(label, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                            }
+                        }
+                        if (hasCancelAction) {
+                            OutlinedButton(
+                                onClick = onCancel!!,
+                                enabled = actionEnabled,
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                            ) { Text("取消生成") }
+                        }
                     }
                 }
-                if (task.isActive() && onCancel != null) {
-                    OutlinedButton(onClick = onCancel, enabled = !busy && !retrying && !opening,
-                        modifier = Modifier.fillMaxWidth()) { Text("取消生成") }
                 }
             }
             }
         }
+        }
     }
-}
 
 @Composable
 internal fun GenerationFeedbackText(text: String) {
