@@ -1,6 +1,7 @@
 package com.mojing.app.ui.settings.usage
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.material3.Surface
@@ -114,6 +115,10 @@ fun UsageScreen(
     var sort by rememberSaveable { mutableStateOf("最近使用") }
     val models = when (sort) { "Token" -> state.models.sortedByDescending { it.tokens }; "请求数" -> state.models.sortedByDescending { it.calls }; else -> state.models }
     UsageContainer(modifier, state.loading, state.error, { state.selectedPlatform?.let(vm::openPlatform) }) {
+        state.selectedPlatform?.takeIf { it.currencies.isNotEmpty() }?.let { platform ->
+            UsageScopeSummary("平台合计", platform.tokens, platform.calls, platform.failed,
+                platform.unknownPrice, platform.currencies, currencyState)
+        }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("最近使用", "Token", "请求数").forEach { option -> FilterChip(selected = sort == option, onClick = { sort = option }, label = { Text(option) }) }
         }
@@ -130,6 +135,11 @@ fun UsageScreen(
 @Composable private fun RequestLevel(state: UsageUiState, currencyState: CurrencyDisplayState, vm: UsageViewModel, modifier: Modifier) {
     val listState = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.foundation.lazy.LazyListState.Saver) { androidx.compose.foundation.lazy.LazyListState() }
     UsageContainer(modifier, state.loading && state.requests.isEmpty(), state.error, vm::loadMoreRequests) {
+        state.selectedModel?.takeIf { it.currencies.isNotEmpty() }?.let { model ->
+            val platformLabel = state.selectedPlatform?.name.orEmpty().takeIf(String::isNotBlank)
+            UsageScopeSummary(platformLabel?.let { "模型合计 · $it" } ?: "模型合计", model.tokens, model.calls,
+                model.failed, model.unknownPrice, model.currencies, currencyState)
+        }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("all" to "全部", "success" to "成功", "failed" to "失败", "cancelled" to "已取消").forEach { (value, label) ->
                 FilterChip(selected = state.requestFilter == value, onClick = { vm.filterRequests(value, state.requestOrder) }, label = { Text(label) })
@@ -142,6 +152,7 @@ fun UsageScreen(
         LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
             items(state.requests, key = { it.record.id }) { item ->
                 val r = item.record
+                var detailsExpanded by rememberSaveable(r.id) { mutableStateOf(false) }
                 Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerLow,
                     shape = RoundedCornerShape(12.dp)) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -163,11 +174,49 @@ fun UsageScreen(
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("耗时 ${formatDuration(r.durationMs)}${if (r.tokenSource == "estimated") " · Token 估算" else ""}",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        TextButton(onClick = { detailsExpanded = !detailsExpanded }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                            Text(if (detailsExpanded) "收起请求信息" else "查看请求信息")
+                        }
+                        AnimatedVisibility(visible = detailsExpanded) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("平台：${r.platformName.ifBlank { "历史记录（未记录平台）" }}",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("模型：${r.modelName.ifBlank { "未记录模型" }}",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("接口格式：${r.provider}", style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                r.sessionId?.let { Text("对话编号：$it", style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                r.characterId?.let { Text("角色编号：$it", style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                if (r.cachedPromptTokens > 0) Text("缓存输入：${count(r.cachedPromptTokens.toLong())} Token",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
                     }
                 }
             }
             if (state.requests.isEmpty() && !state.loading && state.error == null) item { Text("暂无请求记录") }
             if (state.canLoadMore && state.requests.isNotEmpty()) item { TextButton(onClick = vm::loadMoreRequests, enabled = !state.loading, modifier = Modifier.fillMaxWidth()) { Text(if (state.loading) "正在加载…" else "加载更早记录") } }
+        }
+    }
+}
+
+@Composable private fun UsageScopeSummary(label: String, tokens: Long, calls: Int, failed: Int,
+    unknownPrice: Int, currencies: List<UsageCurrencyUi>, currencyState: CurrencyDisplayState) {
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("${count(tokens)} Token", style = MaterialTheme.typography.titleLarge)
+            Text("${count(calls.toLong())} 次请求 · 成功 ${count((calls - failed).coerceAtLeast(0).toLong())} · 失败或取消 ${count(failed.toLong())}",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (unknownPrice > 0) Text("${count(unknownPrice.toLong())} 次待定价", style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.tertiary)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+            CurrencyRows(currencies, currencyState)
         }
     }
 }

@@ -107,6 +107,9 @@ class UsageViewModelTest {
         coEvery { dao.filteredRequestPage("p", "m", any(), any(), 40, "failed", "tokens") } returns listOf(CostRecordEntity(id = 7, platformId = "p", modelName = "m"))
         val vm = UsageViewModel(dao, currency, androidx.lifecycle.SavedStateHandle(mapOf("platformId" to "p", "platformName" to "渠道", "modelName" to "m")))
         advanceUntilIdle()
+        assertEquals(2, vm.state.value.selectedModel?.calls)
+        assertEquals(10L, vm.state.value.selectedModel?.tokens)
+        assertEquals("CNY", vm.state.value.selectedModel?.currencies?.single()?.currency)
         coVerify(exactly = 0) { dao.usageSummary(null, null) }
         coVerify(exactly = 0) { dao.modelUsage(any()) }
         vm.filterRequests("failed", "tokens"); advanceUntilIdle()
@@ -114,6 +117,16 @@ class UsageViewModelTest {
         vm.openDestination("p", "渠道", "m"); advanceUntilIdle()
         assertEquals(before, vm.state.value)
         coVerify(exactly = 1) { dao.filteredRequestPage("p", "m", any(), any(), 40, "failed", "tokens") }
+    }
+
+    @Test fun deepPlatformDestinationLoadsItsOwnTotals() = runTest(dispatcher) {
+        val vm = UsageViewModel(dao, currency, androidx.lifecycle.SavedStateHandle(mapOf("platformId" to "p", "platformName" to "渠道")))
+        advanceUntilIdle()
+        assertEquals("渠道", vm.state.value.selectedPlatform?.name)
+        assertEquals(2, vm.state.value.selectedPlatform?.calls)
+        assertEquals(10L, vm.state.value.selectedPlatform?.tokens)
+        assertEquals("CNY", vm.state.value.selectedPlatform?.currencies?.single()?.currency)
+        coVerify(exactly = 0) { dao.usageSummary(null, null) }
     }
 
     @Test fun reenteringLoadingPlatformDoesNotRestartItsQuery() = runTest(dispatcher) {

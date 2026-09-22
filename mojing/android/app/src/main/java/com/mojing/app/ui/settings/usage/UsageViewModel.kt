@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.local.dao.CostRecordDao
+import com.mojing.app.data.local.dao.UsageCurrencySummary
 import com.mojing.app.domain.billing.BillingCurrencyRepository
 import com.mojing.app.domain.billing.CurrencyDisplayState
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -37,6 +38,11 @@ internal fun mergeUsageRequests(existing: List<UsageRequestUi>, page: List<Usage
     if (replace) return page.distinctBy { it.record.id }
     val ids = existing.asSequence().map { it.record.id }.toHashSet()
     return existing + page.filter { ids.add(it.record.id) }
+}
+
+private fun List<UsageCurrencySummary>.toDisplayRows(): List<UsageCurrencyUi> = map {
+    UsageCurrencyUi(it.currency, it.estimatedCost, it.totalTokens, it.totalCalls.toInt(),
+        it.failedCalls.toInt(), it.unknownCostCalls.toInt())
 }
 
 @HiltViewModel
@@ -83,11 +89,11 @@ class UsageViewModel @Inject constructor(
         loadJob = viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, error = null)
             runCatching {
-                val currencies = dao.usageSummary().map { UsageCurrencyUi(it.currency, it.estimatedCost, it.totalTokens, it.totalCalls.toInt(), it.failedCalls.toInt(), it.unknownCostCalls.toInt()) }
+                val currencies = dao.usageSummary().toDisplayRows()
                 val platforms = dao.platformUsage().map { platform ->
                     val rows = dao.usageSummary(platform.platformId)
                     UsagePlatformUi(platform.platformId, platform.platformName, platform.totalTokens, platform.totalCalls.toInt(), platform.failedCalls.toInt(), rows.sumOf { it.unknownCostCalls }.toInt(),
-                        rows.map { UsageCurrencyUi(it.currency, it.estimatedCost, it.totalTokens, it.totalCalls.toInt(), it.failedCalls.toInt(), it.unknownCostCalls.toInt()) })
+                        rows.toDisplayRows())
                 }
                 currencies to platforms
             }.onSuccess { (currencies, platforms) -> if (token == generation) _state.value = UsageUiState(loading = false, currencies = currencies, platforms = platforms) }
@@ -102,14 +108,20 @@ class UsageViewModel @Inject constructor(
             models = emptyList(), requests = emptyList(), loading = true, error = null)
         loadJob = viewModelScope.launch {
             try {
+                val platformRows = dao.usageSummary(platform.id)
+                val platformSummary = platform.copy(
+                    tokens = platformRows.sumOf { it.totalTokens },
+                    calls = platformRows.sumOf { it.totalCalls }.toInt(),
+                    failed = platformRows.sumOf { it.failedCalls }.toInt(),
+                    unknownPrice = platformRows.sumOf { it.unknownCostCalls }.toInt(),
+                    currencies = platformRows.toDisplayRows(),
+                )
                 val models = dao.modelUsage(platform.id).map { row ->
                     val currencies = dao.usageSummary(platform.id, row.modelName)
                     UsageModelUi(platform.id, row.modelName, row.totalTokens, row.totalCalls.toInt(), row.failedCalls.toInt(),
-                        currencies.sumOf { it.unknownCostCalls }.toInt(), currencies.map {
-                            UsageCurrencyUi(it.currency, it.estimatedCost, it.totalTokens, it.totalCalls.toInt(), it.failedCalls.toInt(), it.unknownCostCalls.toInt())
-                        })
+                        currencies.sumOf { it.unknownCostCalls }.toInt(), currencies.toDisplayRows())
                 }
-                if (token == generation) _state.value = _state.value.copy(loading = false, models = models)
+                if (token == generation) _state.value = _state.value.copy(loading = false, selectedPlatform = platformSummary, models = models)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
                 if (token == generation) _state.value = _state.value.copy(loading = false, error = "平台用量读取失败，请重试")
@@ -151,16 +163,29 @@ class UsageViewModel @Inject constructor(
         val filter = _state.value.requestFilter
         val order = _state.value.requestOrder
         val beforeValue = if (replace) Long.MAX_VALUE else _state.value.requestSortCursor
+        val needsSummary = _state.value.selectedModel?.currencies.isNullOrEmpty()
         _state.value = _state.value.copy(loading = true, error = null)
         loadJob = viewModelScope.launch {
             runCatching {
-                if (filter == "all" && order == "time") dao.requestPage(model.platformId, model.name, beforeId, 40)
+                val rows = if (filter == "all" && order == "time") dao.requestPage(model.platformId, model.name, beforeId, 40)
                 else dao.filteredRequestPage(model.platformId, model.name, beforeId, beforeValue, 40, filter, order)
+                rows to if (needsSummary) dao.usageSummary(model.platformId, model.name) else null
             }
-                .onSuccess { rows ->
+                .onSuccess { (rows, summary) ->
                     val records = rows.map(::UsageRequestUi)
                     val merged = mergeUsageRequests(_state.value.requests, records, replace)
-                    if (token == generation) _state.value = _state.value.copy(loading = false, error = null, requests = merged, requestSortCursor = records.lastOrNull()?.record?.let { if (order == "tokens") it.totalTokens.toLong() else it.id } ?: beforeValue, requestCursor = records.lastOrNull()?.record?.id ?: beforeId, canLoadMore = records.size == 40)
+                    if (token == generation) {
+                        val selectedModel = summary?.let { rows -> model.copy(
+                            tokens = rows.sumOf { it.totalTokens },
+                            calls = rows.sumOf { it.totalCalls }.toInt(),
+                            failed = rows.sumOf { it.failedCalls }.toInt(),
+                            unknownPrice = rows.sumOf { it.unknownCostCalls }.toInt(),
+                            currencies = rows.toDisplayRows(),
+                        ) } ?: _state.value.selectedModel
+                        _state.value = _state.value.copy(loading = false, error = null, selectedModel = selectedModel,
+                            requests = merged, requestSortCursor = records.lastOrNull()?.record?.let { if (order == "tokens") it.totalTokens.toLong() else it.id } ?: beforeValue,
+                            requestCursor = records.lastOrNull()?.record?.id ?: beforeId, canLoadMore = records.size == 40)
+                    }
                 }
                 .onFailure { error -> if (error is CancellationException) throw error; if (token == generation) _state.value = _state.value.copy(loading = false, error = "请求记录读取失败，请重试") }
         }
