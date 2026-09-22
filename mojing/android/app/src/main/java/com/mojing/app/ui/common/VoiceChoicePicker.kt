@@ -91,6 +91,7 @@ fun VoiceChoicePicker(
     var engineGeneration by remember { mutableIntStateOf(0) }
     var previewJob by remember { mutableStateOf<Job?>(null) }
     var previewId by remember { mutableStateOf<String?>(null) }
+    var previewName by remember { mutableStateOf("") }
     var previewError by remember { mutableStateOf<String?>(null) }
     var previewGeneration by remember { mutableIntStateOf(0) }
 
@@ -110,6 +111,7 @@ fun VoiceChoicePicker(
         val generation = previewGeneration
         val engine = selectedEngine
         previewId = voice.id
+        previewName = voice.name
         previewJob = scope.launch {
             try {
                 kotlinx.coroutines.withTimeout(30_000L) {
@@ -230,6 +232,24 @@ fun VoiceChoicePicker(
                 )
             }
             previewError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp)) }
+            if (previewId != null) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                ) {
+                    Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text("试听中", style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer)
+                            Text(previewName, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                        }
+                        TextButton(onClick = ::stopPreview) { Text("停止试听") }
+                    }
+                }
+            }
             if (allowInherit) {
                 TextButton(
                     enabled = !saving,
