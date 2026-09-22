@@ -70,6 +70,7 @@ fun VoiceChoicePicker(
     description: String = "先选引擎，再选择可用音色",
     saving: Boolean = false,
     saveError: String? = null,
+    onPreviewStart: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
@@ -88,6 +89,48 @@ fun VoiceChoicePicker(
     var voiceLoadJob by remember { mutableStateOf<Job?>(null) }
     var engineLoadJob by remember { mutableStateOf<Job?>(null) }
     var engineGeneration by remember { mutableIntStateOf(0) }
+    var previewJob by remember { mutableStateOf<Job?>(null) }
+    var previewId by remember { mutableStateOf<String?>(null) }
+    var previewError by remember { mutableStateOf<String?>(null) }
+    var previewGeneration by remember { mutableIntStateOf(0) }
+
+    fun stopPreview() {
+        previewGeneration++
+        previewJob?.cancel()
+        previewJob = null
+        previewId = null
+        previewError = null
+    }
+
+    fun preview(voice: VoiceOption) {
+        val wasPlaying = previewId == voice.id
+        stopPreview()
+        if (wasPlaying) return
+        onPreviewStart()
+        val generation = previewGeneration
+        val engine = selectedEngine
+        previewId = voice.id
+        previewJob = scope.launch {
+            try {
+                kotlinx.coroutines.withTimeout(30_000L) {
+                    val text = "你好，欢迎来到墨境。这是当前音色的试听。"
+                    if (engine == "azure") {
+                        val credentials = withContext(Dispatchers.IO) { preferences.azureRegion to preferences.azureKey }
+                        if (!AzureSpeech.speak(context.applicationContext, text, credentials.first, credentials.second, voice.id))
+                            throw IllegalStateException("语音播放未完成")
+                    } else com.mojing.app.media.AndroidTts.preview(context.applicationContext, text, VoiceChoice(engine, voice.id))
+                }
+            } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+                if (generation == previewGeneration) previewError = "试听超时，请检查引擎或网络后重试"
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                if (generation == previewGeneration) previewError = if (engine == "azure") AzureSpeech.failureMessage(failure)
+                    else "试听失败，请检查引擎与语音包后重试"
+            } finally {
+                if (generation == previewGeneration) previewId = null
+            }
+        }
+    }
 
     fun loadEngines() {
         val generation = ++engineGeneration
@@ -110,6 +153,7 @@ fun VoiceChoicePicker(
     }
 
     fun load(engineId: String) {
+        stopPreview()
         val generation = ++loadGeneration
         voiceLoadJob?.cancel()
         selectedEngine = engineId
@@ -160,7 +204,7 @@ fun VoiceChoicePicker(
     val sheetState = rememberModalBottomSheetState(
         confirmValueChange = { value -> value != SheetValue.Hidden || !currentSaving },
     )
-    ModalBottomSheet(sheetState = sheetState, onDismissRequest = { if (!saving) onDismiss() }) {
+    ModalBottomSheet(sheetState = sheetState, onDismissRequest = { if (!saving) { stopPreview(); onDismiss() } }) {
         Column(
             modifier = Modifier.fillMaxWidth().heightIn(max = (configuration.screenHeightDp * 0.8f).dp).padding(bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -185,10 +229,11 @@ fun VoiceChoicePicker(
                     modifier = Modifier.padding(horizontal = 20.dp),
                 )
             }
+            previewError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp)) }
             if (allowInherit) {
                 TextButton(
                     enabled = !saving,
-                    onClick = { onSelected(VoiceChoice("inherit", "")) },
+                    onClick = { stopPreview(); onSelected(VoiceChoice("inherit", "")) },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                 ) { Text(if (choice.engineId == "inherit") "✓ $inheritLabel" else inheritLabel) }
                 HorizontalDivider()
@@ -254,7 +299,7 @@ fun VoiceChoicePicker(
                             val selected = selectedEngine == choice.engineId && voice.id == choice.voiceId
                             Surface(
                                 enabled = !saving,
-                                onClick = { onSelected(VoiceChoice(selectedEngine, voice.id)) },
+                                onClick = { stopPreview(); onSelected(VoiceChoice(selectedEngine, voice.id)) },
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp),
                                 shape = RoundedCornerShape(12.dp),
                                 color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
@@ -268,7 +313,14 @@ fun VoiceChoicePicker(
                                     ),
                                     headlineContent = { Text(voice.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                     supportingContent = { if (voice.id.isNotBlank()) Text(voice.id, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                    trailingContent = { if (selected) Text("已选", color = MaterialTheme.colorScheme.primary) },
+                                    trailingContent = {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            if (selected) Text("已选", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
+                                            TextButton(enabled = !saving, onClick = { preview(voice) }) {
+                                                Text(if (previewId == voice.id) "停止" else "试听")
+                                            }
+                                        }
+                                    },
                                 )
                             }
                         }

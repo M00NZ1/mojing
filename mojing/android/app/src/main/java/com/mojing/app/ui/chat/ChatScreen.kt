@@ -144,6 +144,7 @@ fun ChatScreen(
         description = "用于当前对话；已单独配置语音的角色优先使用角色设置",
         saving = state.voiceSelectionSaving,
         saveError = state.voiceSelectionError,
+        onPreviewStart = viewModel::stopSpeaking,
         onSelected = { choice -> viewModel.selectVoiceChoice(choice) { voiceChoice = choice; showVoicePicker = false } },
         onDismiss = { showVoicePicker = false },
     )

@@ -27,6 +27,30 @@ object AndroidTts {
     private var engineToken = 0L
     private var activeEngineId = "system"
     private var activeVoiceId = ""
+    private var lastUtteranceId: String? = null
+    private var previewCompletion: Pair<Long, kotlinx.coroutines.CompletableDeferred<Boolean>>? = null
+
+    /** Uses the same engine owner; cancellation stops only this preview request. */
+    suspend fun preview(context: Context, text: String, choice: VoiceChoice): Boolean =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+            if (TtsSpeakText.normalizeForSpeech(text).isBlank()) return@withContext false
+            val completion = kotlinx.coroutines.CompletableDeferred<Boolean>()
+            val token = synchronized(lock) {
+                speakWithVoice(context, text, choice) { error -> completion.completeExceptionally(IllegalStateException(error)) }
+                requestToken.also { if (!completion.isCompleted) previewCompletion = it to completion }
+            }
+            try { completion.await() }
+            finally {
+                synchronized(lock) {
+                    if (previewCompletion?.first == token) stop()
+                }
+            }
+        }
+
+    private fun finishPreview(success: Boolean) {
+        previewCompletion?.second?.complete(success)
+        previewCompletion = null
+    }
 
     private data class PendingSpeak(val text: String, val choice: VoiceChoice)
 
@@ -74,6 +98,7 @@ object AndroidTts {
         }
         synchronized(lock) {
             appContext = context.applicationContext
+            finishPreview(false)
             requestToken++
             activeSpeakError = onError
             pendingSpeak = PendingSpeak(cleaned, choice)
@@ -98,6 +123,7 @@ object AndroidTts {
         val cleaned = TtsSpeakText.normalizeForSpeech(text).trim()
         if (cleaned.isEmpty()) return
         synchronized(lock) {
+            finishPreview(false)
             requestToken++
             activeSpeakError = onError
             if (isInitialized && tts != null) {
@@ -111,6 +137,7 @@ object AndroidTts {
 
     fun stop() {
         synchronized(lock) {
+            finishPreview(false)
             requestToken++
             pendingSpeak = null
             activeSpeakError = null
@@ -210,7 +237,16 @@ object AndroidTts {
 
     private fun listenerFor(engine: TextToSpeech, token: Long) = object : UtteranceProgressListener() {
         override fun onStart(utteranceId: String?) = Unit
-        override fun onDone(utteranceId: String?) = Unit
+        override fun onDone(utteranceId: String?) {
+            mainHandler.post {
+                synchronized(lock) {
+                    if (tts === engine && engineToken == token && utteranceId == lastUtteranceId) {
+                        finishPreview(true)
+                        activeSpeakError = null
+                    }
+                }
+            }
+        }
         override fun onError(utteranceId: String?) {
             handleError(engine, token, utteranceId, "系统朗读失败，请检查设备朗读引擎")
         }
@@ -223,8 +259,10 @@ object AndroidTts {
 
     private fun enqueue(engine: TextToSpeech, token: Long, text: String) {
         val chunks = SpeechChunks.split(text, TextToSpeech.getMaxSpeechInputLength())
+        val ids = chunks.map { "mojing-$token-${++nextUtteranceId}" }
+        lastUtteranceId = ids.lastOrNull()
         chunks.forEachIndexed { index, chunk ->
-            val id = "mojing-$token-${++nextUtteranceId}"
+            val id = ids[index]
             val result = engine.speak(chunk, if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, id)
             if (result == TextToSpeech.ERROR) {
                 fail(engine, "系统朗读失败，请检查设备朗读引擎", token)
@@ -272,6 +310,8 @@ object AndroidTts {
             isInitializing = false
             pendingSpeak = null
             val listener = activeSpeakError ?: errorListener
+            previewCompletion?.second?.completeExceptionally(IllegalStateException(message))
+            previewCompletion = null
             activeSpeakError = null
             tts = null
             engine.shutdown()
