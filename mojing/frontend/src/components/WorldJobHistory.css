@@ -32,6 +32,24 @@
 .world-history-empty { padding: 48px 20px; text-align: center; color: var(--text-2); }
 .world-history-result > h4 { margin: 28px 0 12px; }
 .world-history-result > p { color: var(--text-2); line-height: 1.7; }
+.world-history-detail { min-width: 0; }
+.world-history-breadcrumb { display: flex; align-items: center; gap: 8px; min-height: 40px; margin: 2px 0 18px; color: var(--text-2); font-size: .82rem; overflow: hidden; }
+.world-history-breadcrumb > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.world-history-result-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.world-history-result-heading > div { min-width: 0; }
+.world-history-result-heading h3 { margin: 12px 0 6px; overflow-wrap: anywhere; }
+.world-history-detail-id { flex: 0 0 auto; padding-top: 9px; color: var(--text-2); font-size: .75rem; }
+.world-history-result-actions { position: sticky; z-index: 2; top: 10px; display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0 26px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: color-mix(in srgb, var(--surface-2) 92%, transparent); box-shadow: 0 10px 24px color-mix(in srgb, var(--bg) 20%, transparent); backdrop-filter: blur(12px); }
+.world-history-result-actions .btn { min-height: 42px; }
+.world-history-section { margin-top: 28px; padding-top: 4px; }
+.world-history-section + .world-history-section { border-top: 1px solid var(--line); }
+.world-history-section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.world-history-section-heading .eyebrow { margin: 0 0 5px; }
+.world-history-section-heading h4 { margin: 0; }
+.world-history-section-heading > span { flex: 0 0 auto; color: var(--text-2); font-size: .78rem; }
+.world-history-muted, .world-history-page-count { color: var(--text-2); font-size: .82rem; }
+.world-history-section .world-history-body { padding-top: 4px; }
+.world-history-quality { margin-top: 26px; }
 .world-history-lore { border-top: 1px solid var(--line); padding: 14px 0; }
 .world-history-lore summary { cursor: pointer; overflow-wrap: anywhere; }
 .world-history-lore .world-history-body { padding: 14px 0 4px; }
@@ -46,6 +64,11 @@
   .world-generation-progress .button-row { display: flex; gap: 12px; }
   .world-generation-progress .button-row > button { flex: 1; }
   .world-history-row { padding: 16px; gap: 12px; }
+  .world-history-result-heading { display: block; }
+  .world-history-detail-id { display: block; padding-top: 8px; }
+  .world-history-result-actions { top: 4px; margin: 16px 0 22px; }
+  .world-history-result-actions .btn { flex: 1 1 160px; }
+  .world-history-section-heading { align-items: flex-start; }
   .world-history-info { width: 100%; }
   .world-history-actions { width: 100%; max-width: none; justify-content: flex-start; }
   .workbench-layout .creation-workspace-toolbar { flex-wrap: wrap; }

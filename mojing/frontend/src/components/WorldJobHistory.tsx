@@ -79,20 +79,32 @@ export default function WorldJobHistory({ onManage, onResume, generationActive =
       </article>)}</div>
       <div className="button-row world-history-pagination"><button type="button" className="btn btn-ghost btn-sm" disabled={cursors.length === 1 || history.isFetching} onClick={() => setCursors((current) => current.slice(0, -1))}>较新记录</button><span>第 {cursors.length} 页</span><button type="button" className="btn btn-ghost btn-sm" disabled={!history.data?.next_cursor || history.isFetching} onClick={() => setCursors((current) => [...current, history.data!.next_cursor!])}>更早记录</button></div>
     </>}
-    {selected && <>
+    {selected && <div className="world-history-detail" aria-label="生成结果详情">
+      <nav className="world-history-breadcrumb" aria-label="当前位置">
+        <span>生成记录</span>
+        <span aria-hidden="true">/</span>
+        <span>{result?.template.label || '生成结果'}</span>
+      </nav>
       {detail.isLoading && <p role="status">正在读取完整结果…</p>}
       {detail.isError && <InlineQueryError message="结果读取失败" error={detail.error} retrying={detail.isFetching} onRetry={() => void detail.refetch()} />}
       {result && <div className="world-history-result">
-        <span className="world-job-status world-job-succeeded">{result.saved_template ? '已保存到世界库' : '结果已保留 · 尚未加入世界库'}</span>
-        <h3>{result.template.label}</h3><p>{result.template.summary}</p>
-        <div className="button-row">{result.saved_template ? <button type="button" className="btn btn-primary" onClick={() => onManage(result)}>管理此世界</button> : <button type="button" className="btn btn-primary" disabled={savingSelected} onClick={() => { if (!savingSelected) save.mutate(selected); }}>{savingSelected ? '正在保存…' : '保存到世界库'}</button>}</div>
+        <div className="world-history-result-heading">
+          <div><span className="world-job-status world-job-succeeded">{result.saved_template ? '已保存到世界库' : '结果已保留 · 尚未加入世界库'}</span><h3>{result.template.label}</h3><p>{result.template.summary}</p></div>
+          <span className="world-history-detail-id">记录 #{selected}</span>
+        </div>
+        <div className="world-history-result-actions" aria-label="结果操作">
+          {result.saved_template ? <button type="button" className="btn btn-primary" onClick={() => onManage(result)}>管理此世界</button> : <button type="button" className="btn btn-primary" disabled={savingSelected} onClick={() => { if (!savingSelected) save.mutate(selected); }}>{savingSelected ? '正在保存…' : '保存到世界库'}</button>}
+          <button type="button" className="btn btn-ghost" onClick={() => selectJob(null)}>返回列表</button>
+        </div>
         {!result.saved_template && latestSave?.status === 'error' && <InlineQueryError message="保存失败，结果仍在记录中" error={latestSave.error} retrying={savingSelected} onRetry={() => save.mutate(selected)} />}
-        <h4>世界设定</h4><WorldResultText key={selected} label="世界设定正文" text={result.template.world_prompt} />
-        <h4>世界条目 · {result.lore_entries.length}</h4>
-        {result.lore_entries.slice(lorePage * 20, (lorePage + 1) * 20).map((entry, index) => <details className="world-history-lore" key={`${selected}-${lorePage}-${index}`}><summary>{entry.title}</summary><WorldResultText label={`${entry.title}正文`} text={entry.content} /></details>)}
-        {result.lore_entries.length > 20 && <div className="button-row"><button className="btn btn-ghost btn-sm" disabled={lorePage === 0} onClick={() => setLorePage((page) => page - 1)}>上一页条目</button><button className="btn btn-ghost btn-sm" disabled={(lorePage + 1) * 20 >= result.lore_entries.length} onClick={() => setLorePage((page) => page + 1)}>下一页条目</button></div>}
-        <details className="world-history-lore"><summary>质量与命名参考</summary><p>{result.quality_report.verdict} · {result.quality_report.score} 分</p><p>{result.quality_report.risks.join('；')}</p><p>人名：{result.names.person_names.join('、') || '无'}</p><p>地名：{result.names.place_names.join('、') || '无'}</p><p>物品：{result.names.item_names.join('、') || '无'}</p></details>
+        <section className="world-history-section" aria-labelledby="world-history-world-heading"><div className="world-history-section-heading"><div><p className="eyebrow">核心设定</p><h4 id="world-history-world-heading">世界设定</h4></div><span>完整正文</span></div><WorldResultText key={selected} label="世界设定正文" text={result.template.world_prompt} /></section>
+        <section className="world-history-section" aria-labelledby="world-history-lore-heading"><div className="world-history-section-heading"><div><p className="eyebrow">可检索内容</p><h4 id="world-history-lore-heading">世界条目</h4></div><span>{result.lore_entries.length} 条</span></div>
+          {result.lore_entries.slice(lorePage * 20, (lorePage + 1) * 20).map((entry, index) => <details className="world-history-lore" key={`${selected}-${lorePage}-${index}`}><summary>{entry.title}</summary><WorldResultText label={`${entry.title}正文`} text={entry.content} /></details>)}
+          {!result.lore_entries.length && <p className="world-history-muted">这次结果没有单独的世界条目。</p>}
+          {result.lore_entries.length > 20 && <div className="button-row"><button className="btn btn-ghost btn-sm" disabled={lorePage === 0} onClick={() => setLorePage((page) => page - 1)}>上一页条目</button><span className="world-history-page-count">第 {lorePage + 1} / {Math.ceil(result.lore_entries.length / 20)} 页</span><button className="btn btn-ghost btn-sm" disabled={(lorePage + 1) * 20 >= result.lore_entries.length} onClick={() => setLorePage((page) => page + 1)}>下一页条目</button></div>}
+        </section>
+        <details className="world-history-lore world-history-quality"><summary>质量与命名参考</summary><p>{result.quality_report.verdict} · {result.quality_report.score} 分</p><p>{result.quality_report.risks.join('；')}</p><p>人名：{result.names.person_names.join('、') || '无'}</p><p>地名：{result.names.place_names.join('、') || '无'}</p><p>物品：{result.names.item_names.join('、') || '无'}</p></details>
       </div>}
-    </>}
+    </div>}
   </section>;
 }

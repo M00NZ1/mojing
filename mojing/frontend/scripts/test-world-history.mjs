@@ -183,6 +183,9 @@ try {
     await page.getByText('已保存到世界库', { exact: true }).waitFor();
     assert.ok(page.url().includes('job=40'));
     if (output) await page.screenshot({ path: path.join(output, `world-result-${width}.png`), fullPage: true });
+    await page.getByText('地方志 20', { exact: true }).scrollIntoViewIfNeeded();
+    const stickyActions = await page.locator('.world-history-result-actions').boundingBox();
+    assert.ok(stickyActions && stickyActions.y >= 0 && stickyActions.y < 180, `detail actions should remain visible during long-result reading: ${JSON.stringify(stickyActions)}`);
     await page.getByRole('button', { name: '返回记录', exact: true }).click();
     await page.getByRole('button', { name: '查看结果', exact: true }).click();
     await page.getByRole('button', { name: '管理此世界', exact: true }).click();
