@@ -318,6 +318,13 @@ export default function CharactersPage() {
     },
     onSuccess: async ({ saved, request }) => {
       const id = saved.id;
+      // 路由切到新角色前先更新列表缓存，避免详情校验读到旧列表而关闭编辑页。
+      queryClient.setQueryData<Character[]>(['characters'], (current) => {
+        if (!current) return [saved];
+        return current.some((character) => character.id === id)
+          ? current.map((character) => character.id === id ? saved : character)
+          : [...current, saved];
+      });
       if (request.route === loadedCharacterRouteRef.current && request.revision === editorRouteRevisionRef.current.revision) {
         if (request.route === 'new' && id) { setSearchText(''); setRevealId(id); }
         setEditing(current => current ? mergeSavedCharacterDraft(current, request.draft, saved) : current);
