@@ -114,6 +114,7 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
     draft?.let { p ->
         PlatformEditorDialog(
             onDismissRequest = ::requestClose,
+            error = error,
             title = { Text(if (platforms.any { it.id == p.id }) "编辑平台" else "添加平台") },
             text = {
                 LazyColumn(contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -171,7 +172,6 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
                             }
                         }
                     }
-                    error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
                 }
             },
             confirmButton = {
@@ -181,6 +181,7 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
                     if (p.name.isBlank() || url == null || p.apiKey.isBlank() || names.isEmpty()) {
                         error = "请填写平台名称、有效地址、Key 和至少一个模型"; return@Button
                     }
+                    error = null
                     busy = true
                     scope.launch {
                         try {
