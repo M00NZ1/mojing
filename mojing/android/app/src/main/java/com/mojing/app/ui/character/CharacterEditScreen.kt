@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -105,7 +108,7 @@ fun CharacterEditScreen(
     }
 
     fun requestExit(destination: String) {
-        focusManager.clearFocus()
+        hideImeKeyboard(keyboardController, focusManager)
         when {
             pageBusy -> scope.launch { snackbarHostState.showSnackbar("正在保存、处理图片或导出，请稍候") }
             state.isDirty -> pendingExit = destination
@@ -181,6 +184,51 @@ fun CharacterEditScreen(
     Box(Modifier.fillMaxSize()) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
+        bottomBar = {
+            if (state.isLoaded && state.loadError == null && !isImeOpen) {
+                Surface(tonalElevation = 3.dp) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().navigationBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        state.saveError?.let { error ->
+                            Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.medium,
+                                modifier = Modifier.fillMaxWidth()) {
+                                Text(error, modifier = Modifier.padding(16.dp),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onErrorContainer)
+                            }
+                        }
+                        Button(
+                            onClick = { viewModel.save(characterId) },
+                            enabled = canSave && !pageBusy && !state.isAiCompleting,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 50.dp),
+                        ) {
+                            if (state.isSaving) {
+                                CircularProgressIndicator(
+                                    Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text("正在保存…")
+                            } else {
+                                Text(
+                                    when {
+                                        !state.isPersisted -> "保存角色"
+                                        state.isDirty -> "保存修改"
+                                        else -> "已保存"
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
         topBar = {
             TopAppBar(
                 title = { Text(if (characterId == 0L && !state.isPersisted) "新建角色" else "编辑角色") },
@@ -190,12 +238,17 @@ fun CharacterEditScreen(
                     }
                 },
                 actions = {
-                    IconButton(
+                    TextButton(
                         onClick = { viewModel.save(characterId) },
                         enabled = state.isLoaded && canSave && !pageBusy && !state.isAiCompleting,
                     ) {
                         if (state.isSaving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Default.Save, if (state.personaRefreshError != null || state.isRefreshingPersona) "等待读取补全结果" else if (canSave) "保存修改" else "已保存")
+                        else Text(when {
+                            state.isRefreshingPersona -> "读取中"
+                            state.personaRefreshError != null -> "待重试"
+                            canSave -> "保存"
+                            else -> "已保存"
+                        })
                     }
                 }
             )
@@ -232,6 +285,7 @@ fun CharacterEditScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .consumeWindowInsets(padding)
                 .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
@@ -671,39 +725,6 @@ fun CharacterEditScreen(
                 }
             }
 
-            state.saveError?.let { error ->
-                Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.medium,
-                    modifier = Modifier.fillMaxWidth()) {
-                    Text(error, modifier = Modifier.padding(16.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onErrorContainer)
-                }
-            }
-            Button(
-                onClick = { viewModel.save(characterId) },
-                enabled = canSave && !pageBusy && !state.isAiCompleting,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp),
-            ) {
-                if (state.isSaving) {
-                    CircularProgressIndicator(
-                        Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("正在保存…")
-                } else {
-                    Text(
-                        when {
-                            !state.isPersisted -> "保存角色"
-                            state.isDirty -> "保存修改"
-                            else -> "已保存"
-                        },
-                    )
-                }
-            }
             Spacer(modifier = Modifier.height(8.dp))
         }
         }
