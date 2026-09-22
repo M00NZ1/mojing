@@ -200,6 +200,12 @@ try {
   await page.goto(`http://127.0.0.1:${port}/chat/1`, { waitUntil: 'domcontentloaded' });
   await page.locator('.chat-model-trigger').click();
   await page.getByRole('dialog').waitFor();
+  const platformFilters = page.getByRole('group', { name: '平台筛选' });
+  await platformFilters.getByRole('button', { name: 'OpenAI 5', exact: true }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.chat-model-virtual-option').length === 5);
+  assert.ok((await page.locator('.chat-model-result-count').textContent()).includes('当前平台 · 5'));
+  assert.equal(await page.locator('.chat-model-virtual-option').filter({ hasText: 'large-model' }).count(), 0);
+  await platformFilters.getByRole('button', { name: '全部平台', exact: true }).click();
   await page.getByPlaceholder('搜索平台或模型名称').fill('manual-b');
   await page.getByRole('button', { name: 'OpenAI manual-b', exact: true }).click();
   await page.getByRole('dialog').waitFor({ state: 'hidden' });
@@ -221,6 +227,10 @@ try {
   await page.locator('.chat-model-virtual-option:focus').evaluate((node) => node.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', isComposing: true, bubbles: true })));
   assert.equal(await page.locator('.chat-model-virtual-option:focus').getAttribute('data-model-index'), '29');
   assert.ok(await page.locator('.chat-model-virtual-option').count() < 30, 'keyboard traversal preserves bounded DOM');
+  await platformFilters.getByRole('button', { name: 'OpenAI 5', exact: true }).click();
+  await page.getByRole('button', { name: 'OpenAI manual-a', exact: true }).waitFor();
+  assert.equal(await page.locator('.chat-model-options').evaluate((node) => node.scrollTop), 0);
+  await platformFilters.getByRole('button', { name: '全部平台', exact: true }).click();
 
   await page.getByPlaceholder('搜索平台或模型名称').fill('large-model-4999');
   selectionFailure = true;

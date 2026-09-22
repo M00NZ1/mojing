@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
 import { Link } from 'react-router-dom';
@@ -126,6 +126,7 @@ export function ChatModelPicker({ sessionId, onBusyChange }: { sessionId: number
   const choiceKey = ['chat-model-choice', sessionId];
   const choice = useQuery({ queryKey: choiceKey, queryFn: () => api.getModelChoice(sessionId) });
   const [search, setSearch] = useState('');
+  const [platformFilter, setPlatformFilter] = useState('');
   const dialog = useRef<HTMLDialogElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const choosingRef = useRef(false);
@@ -141,12 +142,20 @@ export function ChatModelPicker({ sessionId, onBusyChange }: { sessionId: number
     choosingRef.current = true; onBusyChange(true); choose.mutate(selection);
   }
   useEffect(() => { onBusyChange(choice.isPending || choice.isError || choose.isPending); }, [choice.isPending, choice.isError, choose.isPending, onBusyChange]);
-  useEffect(() => { dialog.current?.close(); setSearch(''); choose.reset(); }, [sessionId]);
+  useEffect(() => { dialog.current?.close(); setSearch(''); setPlatformFilter(''); choose.reset(); }, [sessionId]);
   const selection = choice.data?.selection;
   const selectedPlatform = catalog.data?.platforms.find((p) => p.id === selection?.platform_id);
-  const options = (catalog.data?.platforms ?? []).flatMap((platform) => platform.models
-    .filter((model) => `${platform.name} ${model}`.toLowerCase().includes(search.trim().toLowerCase()))
-    .map((model) => ({ platform, model })));
+  const activeFilter = catalog.data?.platforms.some((p) => p.id === platformFilter) ? platformFilter : '';
+  const options = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return (catalog.data?.platforms ?? []).filter((p) => !activeFilter || p.id === activeFilter)
+      .flatMap((platform) => platform.models.filter((model) => `${platform.name} ${model}`.toLowerCase().includes(query))
+        .map((model) => ({ platform, model })));
+  }, [catalog.data, search, activeFilter]);
+  useLayoutEffect(() => {
+    listRef.current?.scrollTo({ top: 0 });
+    setKeyboardIndex(null); focusRequested.current = false;
+  }, [search, activeFilter]);
   const virtualizer = useVirtualizer({ count: options.length, getScrollElement: () => listRef.current, estimateSize: () => 68, overscan: 6,
     rangeExtractor: (range) => [...new Set([...defaultRangeExtractor(range),
       ...(keyboardIndex !== null && keyboardIndex < options.length ? [keyboardIndex] : [])])].sort((a, b) => a - b),
@@ -163,6 +172,14 @@ export function ChatModelPicker({ sessionId, onBusyChange }: { sessionId: number
       <div className="model-platform-heading"><h3 id="chat-model-title">选择对话模型</h3><button className="btn btn-ghost btn-sm" type="button" disabled={choose.isPending} onClick={() => dialog.current?.close()}>关闭</button></div>
       <p hidden={Boolean(search.trim())}>从下一次发送生效，当前回复保持原模型。手动选择会优先于角色独立配置和思考模式。</p>
       <input aria-label="搜索平台或模型" value={search} onChange={(e) => { setSearch(e.target.value); setKeyboardIndex(null); focusRequested.current = false; }} placeholder="搜索平台或模型名称" />
+      <div className="chat-model-platform-filters" role="group" aria-label="平台筛选">
+        <button type="button" aria-pressed={!activeFilter} onClick={() => setPlatformFilter('')}>全部平台</button>
+        {catalog.data?.platforms.map((platform) => <button type="button" key={platform.id} title={platform.name}
+          aria-pressed={activeFilter === platform.id} onClick={(event) => {
+            setPlatformFilter(platform.id); event.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+          }}>{platform.name} <span>{platform.models.length}</span></button>)}
+      </div>
+      <small className="chat-model-result-count" role="status">{activeFilter ? '当前平台' : '全部平台'} · {options.length} 个匹配模型</small>
       {(catalog.isError || choice.isError) && <p role="alert">模型配置加载失败。<button type="button" className="btn btn-sm" onClick={() => { void catalog.refetch(); void choice.refetch(); }}>重试</button></p>}
       {choose.isPending && <p role="status" className="chat-model-saving">正在保存模型选择…</p>}
       {choose.isError && <p role="alert" className="model-platform-error">{errorText(choose.error)}</p>}
@@ -188,7 +205,7 @@ export function ChatModelPicker({ sessionId, onBusyChange }: { sessionId: number
           })}
         </div>
         {catalog.isPending && <p role="status">正在加载平台…</p>}
-        {catalog.data && !catalog.data.platforms.some((p) => p.models.some((m) => `${p.name} ${m}`.toLowerCase().includes(search.trim().toLowerCase()))) && <p>没有可选的匹配模型。请先在模型服务中添加平台和模型。</p>}
+        {catalog.data && options.length === 0 && <p>没有匹配模型，请调整关键词、切换平台或在模型服务中添加模型。</p>}
       </div>
       <Link className="btn btn-ghost" to="/settings?tab=api" onClick={(e) => { if (choose.isPending) e.preventDefault(); else dialog.current?.close(); }}>管理平台与模型</Link>
     </dialog>
