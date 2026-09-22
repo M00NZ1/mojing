@@ -5,8 +5,21 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -15,6 +28,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -46,6 +60,65 @@ private fun InvalidRouteRedirect(
     }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         CircularProgressIndicator()
+    }
+}
+
+@Composable
+private fun InvalidUsageRouteRedirect(
+    navController: NavHostController,
+    notice: String,
+) {
+    LaunchedEffect(navController, notice) {
+        navController.navigate("usage?notice=${android.net.Uri.encode(notice)}") {
+            launchSingleTop = true
+            navController.currentBackStackEntry?.destination?.id?.let { invalidDestinationId ->
+                popUpTo(invalidDestinationId) { inclusive = true }
+            }
+        }
+    }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator()
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun UsageSummaryDestination(
+    navController: NavHostController,
+    notice: String,
+) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("用量汇总") },
+                navigationIcon = {
+                    IconButton(onClick = { navController.navigateToMainTab(Routes.SETTINGS) }) {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回设置")
+                    }
+                },
+            )
+        },
+    ) { paddingValues ->
+        Column(Modifier.fillMaxSize().padding(paddingValues)) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+            ) {
+                Text(
+                    notice,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            Box(Modifier.weight(1f)) {
+                com.mojing.app.ui.settings.usage.UsageScreen(
+                    viewModel = androidx.hilt.navigation.compose.hiltViewModel(),
+                    onBack = { navController.navigateToMainTab(Routes.SETTINGS) },
+                )
+            }
+        }
     }
 }
 
@@ -274,24 +347,43 @@ internal fun NavGraph(
             else WorldSettingsScreen(worldId = worldId, onBack = { navController.popBackStack() })
         }
 
+        composable("usage?notice={notice}", arguments = listOf(
+            navArgument("notice") { type = NavType.StringType; defaultValue = "请重新选择平台或模型。" },
+        )) { entry ->
+            UsageSummaryDestination(
+                navController = navController,
+                notice = entry.arguments?.getString("notice").orEmpty().ifBlank { "请重新选择平台或模型。" },
+            )
+        }
         composable("usage/platform?platformId={platformId}&platformName={platformName}", arguments = listOf(
             navArgument("platformId") { type = NavType.StringType; defaultValue = "" },
             navArgument("platformName") { type = NavType.StringType; defaultValue = "" },
         )) { entry ->
             val platformId = entry.arguments?.getString("platformId").orEmpty()
             val platformName = entry.arguments?.getString("platformName").orEmpty()
-            com.mojing.app.ui.settings.usage.UsageScreen(viewModel = androidx.hilt.navigation.compose.hiltViewModel(),
-                platformId = platformId, platformName = platformName, onBack = { navController.popBackStack() },
-                onModel = { model -> navController.navigate("usage/model?platformId=${android.net.Uri.encode(platformId)}&platformName=${android.net.Uri.encode(platformName)}&modelName=${android.net.Uri.encode(model.name)}") })
+            if (platformId.isBlank()) {
+                InvalidUsageRouteRedirect(navController, "平台信息已失效，请重新选择平台。")
+            } else {
+                com.mojing.app.ui.settings.usage.UsageScreen(viewModel = androidx.hilt.navigation.compose.hiltViewModel(),
+                    platformId = platformId, platformName = platformName, onBack = { navController.popBackStack() },
+                    onModel = { model -> navController.navigate("usage/model?platformId=${android.net.Uri.encode(platformId)}&platformName=${android.net.Uri.encode(platformName)}&modelName=${android.net.Uri.encode(model.name)}") })
+            }
         }
         composable("usage/model?platformId={platformId}&platformName={platformName}&modelName={modelName}", arguments = listOf(
             navArgument("platformId") { type = NavType.StringType; defaultValue = "" },
             navArgument("platformName") { type = NavType.StringType; defaultValue = "" },
             navArgument("modelName") { type = NavType.StringType; defaultValue = "" },
         )) { entry ->
-            com.mojing.app.ui.settings.usage.UsageScreen(viewModel = androidx.hilt.navigation.compose.hiltViewModel(),
-                platformId = entry.arguments?.getString("platformId").orEmpty(), platformName = entry.arguments?.getString("platformName").orEmpty(),
-                modelName = entry.arguments?.getString("modelName").orEmpty(), onBack = { navController.popBackStack() })
+            val platformId = entry.arguments?.getString("platformId").orEmpty()
+            val platformName = entry.arguments?.getString("platformName").orEmpty()
+            val modelName = entry.arguments?.getString("modelName").orEmpty()
+            if (platformId.isBlank() || modelName.isBlank()) {
+                InvalidUsageRouteRedirect(navController, "平台或模型信息已失效，请重新选择。")
+            } else {
+                com.mojing.app.ui.settings.usage.UsageScreen(viewModel = androidx.hilt.navigation.compose.hiltViewModel(),
+                    platformId = platformId, platformName = platformName,
+                    modelName = modelName, onBack = { navController.popBackStack() })
+            }
         }
         composable(Routes.SETTINGS) { entry ->
             val modelRequested by entry.savedStateHandle
