@@ -19,16 +19,7 @@ object UserFacingStrings {
     /** 只用于已经确认发生在远程 API 调用阶段的失败。 */
     fun remoteRequestFailed(e: Throwable?): String {
         val message = when (e) {
-            is com.mojing.app.data.remote.LlmHttpException -> when (e.status) {
-                400, 422 -> "模型或请求参数不受支持，请检查模型配置。"
-                401 -> "API Key 无效、过期或未授权，请检查平台配置。"
-                402 -> "平台额度不足，请检查可用余额。"
-                403 -> "平台拒绝访问，请检查 Key 权限。"
-                404 -> "找不到指定的模型或接口，请检查模型名称和地址。"
-                429 -> "平台限流或额度已用尽，请稍后重试。"
-                in 500..599 -> "平台暂时不可用，请稍后重试。"
-                else -> "平台请求失败（HTTP ${e.status}），请检查模型配置。"
-            }
+            is com.mojing.app.data.remote.LlmHttpException -> httpFailureHint(e.status)
             is com.mojing.app.data.remote.LlmProtocolException -> when (e.reason) {
                 "output_limit" -> "模型输出达到上限，返回内容尚未完成。请缩短本次生成内容后重试。"
                 "unsupported_stream" -> "当前接口不支持流式输出，请更换支持流式输出的模型或平台。"
@@ -42,6 +33,21 @@ object UserFacingStrings {
         }
         return if (message.startsWith("请求失败")) message else "请求失败：$message"
     }
+
+    private fun httpFailureHint(status: Int): String = when (status) {
+        400, 422 -> "模型或请求参数不受支持（HTTP $status），请检查模型配置。"
+        401 -> "平台认证失败（HTTP 401）。请核对本次使用的平台、接口地址和 API Key；跟随设置时也需检查角色及会话中的专用配置。"
+        402 -> "平台额度不足（HTTP 402），请检查可用余额。"
+        403 -> "平台拒绝访问（HTTP 403），请检查 Key 和模型权限。"
+        404 -> "找不到指定的模型或接口（HTTP 404），请检查模型名称和地址。"
+        429 -> "平台限流或额度已用尽（HTTP 429），请检查平台用量或稍后重试。"
+        in 500..599 -> "平台暂时不可用（HTTP $status），请稍后重试。"
+        else -> "平台请求失败（HTTP $status），请检查模型配置。"
+    }
+
+    private fun httpStatus(message: String): Int? =
+        Regex("\\bHTTP\\s+([1-5][0-9]{2})\\b", RegexOption.IGNORE_CASE)
+            .find(message)?.groupValues?.get(1)?.toIntOrNull()
 
     fun localLoadFailed(subject: String): String = "${subject}未能从本机读取，请重试。"
 
@@ -81,14 +87,15 @@ object UserFacingStrings {
     /** 流式/接口错误信息（常见英文/厂商报错映射为中文 + 下一步） */
     fun streamErrorDetail(msg: String?): String {
         val raw = msg?.trim().takeUnless { it.isNullOrEmpty() } ?: return "请求失败，请稍后再试。"
+        httpStatus(raw)?.let { return httpFailureHint(it) }
         val l = raw.lowercase()
         val hint = when {
             "unknownhostexception" in l || "unresolved address" in l -> "无法解析服务器地址。请检查网络或填写的服务根地址是否正确。"
             "connectexception" in l || "socketexception" in l || "eofexception" in l -> "网络连接中断。请检查网络后重试。"
-            "401" in raw || "unauthorized" in l -> "API Key 无效、过期或未授权。请到「设置」或角色资料中检查 Key。"
-            "403" in raw && ("forbidden" in l || "http" in l) -> "接口拒绝访问（403）。请检查 Key 权限或账号策略。"
-            "404" in raw && ("model" in l || "not found" in l || "http" in l) -> "找不到指定的模型或资源。请在设置或角色中核对模型名称。"
-            "429" in raw || "rate limit" in l || "too many requests" in l -> "请求过于频繁，请稍等几秒再试。"
+            Regex("\\b401\\b").containsMatchIn(raw) || "unauthorized" in l -> httpFailureHint(401)
+            Regex("\\b403\\b").containsMatchIn(raw) && ("forbidden" in l || "http" in l) -> "接口拒绝访问（403）。请检查 Key 权限或账号策略。"
+            Regex("\\b404\\b").containsMatchIn(raw) && ("model" in l || "not found" in l || "http" in l) -> "找不到指定的模型或资源。请在设置或角色中核对模型名称。"
+            Regex("\\b429\\b").containsMatchIn(raw) || "rate limit" in l || "too many requests" in l -> "请求过于频繁，请稍等几秒再试。"
             "timeout" in l || (raw.contains("timed", ignoreCase = true) && raw.contains("out", ignoreCase = true)) ->
                 "连接或读取超时。请检查网络或稍后再试。"
             "unknownhost" in l || "unable to resolve" in l -> "无法解析服务器地址。请检查网络或填写的服务根地址是否正确。"
@@ -100,15 +107,11 @@ object UserFacingStrings {
             "socket" in l && "closed" in l -> "网络连接中断。请重试。"
             else -> null
         }
-        val tail = if (raw.length > 120) raw.take(120) + "…" else raw
-        return if (hint != null) "$hint（详情：$tail）" else raw
+        return hint ?: raw
     }
 
-    /** 思考/Max 线路下接口拒绝：多为当前文字模型不支持深度思考；应用不会擅自更换模型 id。 */
-    fun streamErrorThinkMaxRoute(msg: String?): String {
-        val d = msg?.trim().takeUnless { it.isNullOrEmpty() } ?: "请求失败"
-        return "思考/Max：当前使用的文字模型可能不支持该能力（接口已拒绝）。应用不会自动改你的模型名；请换用支持思考/Max 的模型，或关闭思考/Max。\n$d"
-    }
+    /** 思考模式沿用实际错误分类，不将认证、网络或限流误判为能力不支持。 */
+    fun streamErrorThinkMaxRoute(msg: String?): String = "思考/Max：${streamErrorDetail(msg)}"
 
     fun entryTitleRequired(): String = "请填写条目标题（必填）"
 

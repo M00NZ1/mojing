@@ -5,7 +5,9 @@ import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
 import java.util.Locale
+import com.mojing.app.util.UsbSessionLog
 
 object AndroidTts {
     private val lock = Any()
@@ -45,6 +47,10 @@ object AndroidTts {
                         fail(candidate, "系统朗读引擎不支持中文，请安装中文语音数据")
                         return@synchronized
                     }
+                    // setLanguage may leave an engine-selected network voice active. Prefer
+                    // a concrete installed Chinese voice when the engine exposes one.
+                    selectInstalledChineseVoice(candidate)
+                    logVoiceState(candidate, languageResult)
                     isInitialized = true
                     pendingSpeak?.let { q ->
                         pendingSpeak = null
@@ -63,7 +69,8 @@ object AndroidTts {
                     handleError(candidate, candidateToken, utteranceId, "系统朗读失败，请检查设备朗读引擎")
                 }
                 override fun onError(utteranceId: String?, errorCode: Int) {
-                    handleError(candidate, candidateToken, utteranceId, "系统朗读失败（错误码 $errorCode）")
+                    UsbSessionLog.w("SystemTts", "synthesis_error code=$errorCode engineToken=$candidateToken")
+                    handleError(candidate, candidateToken, utteranceId, TtsErrorPolicy.message(errorCode))
                 }
             })
         }
@@ -112,6 +119,35 @@ object AndroidTts {
                 fail(engine, "系统朗读失败，请检查设备朗读引擎", token)
                 return
             }
+        }
+    }
+
+    private fun selectInstalledChineseVoice(engine: TextToSpeech) {
+        val voices = runCatching { engine.voices }.getOrNull() ?: return
+        val selected = TtsVoicePolicy.chooseChineseVoice(
+            voices.map { voice ->
+                TtsVoiceInfo(
+                    name = voice.name,
+                    languageTag = voice.locale.toLanguageTag(),
+                    requiresNetwork = voice.isNetworkConnectionRequired,
+                    quality = voice.quality,
+                    latency = voice.latency,
+                    installed = voice.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) != true,
+                )
+            },
+        ) ?: return
+        voices.firstOrNull { it.name == selected.name }?.let { voice: Voice ->
+            runCatching { engine.setVoice(voice) }
+        }
+    }
+
+    private fun logVoiceState(engine: TextToSpeech, languageResult: Int) {
+        runCatching {
+            val voice = engine.voice
+            val engineName = engine.defaultEngine.orEmpty().take(120).replace('\n', ' ')
+            UsbSessionLog.i("SystemTts", "engine=$engineName languageResult=$languageResult " +
+                "locale=${voice?.locale?.toLanguageTag()} network=${voice?.isNetworkConnectionRequired} " +
+                "notInstalled=${voice?.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)}")
         }
     }
 
