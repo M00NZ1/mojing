@@ -11,6 +11,7 @@
 .message-search-reading-bar { display: flex; align-items: center; gap: 10px; margin-top: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); font-size: .82rem; }
 .message-search-reading-bar > div { min-width: 0; flex: 1; display: grid; gap: 2px; }
 .message-search-reading-bar span { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-search-reading-count { margin-left: 8px; color: var(--accent); font-size: .75rem; font-weight: 650; white-space: nowrap; }
 .message-search-heading, .message-search-pagination, .message-search-index { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .message-search-heading, .message-search-index, .message-search-results p { color: var(--text-2); }
 .message-search-index { line-height: 1.6; margin: 6px 0; padding: 8px 0; }
@@ -20,6 +21,7 @@
 .message-search-results li { border-top: 1px solid var(--line); }
 .message-search-results li > button { width: 100%; text-align: left; padding: 10px 0; border: 0; background: transparent; color: var(--text); cursor: pointer; font-size: .82rem; }
 .message-search-results li > button:hover { background: var(--hover); }
+.message-search-locate-error { margin: 0 0 10px; }
 .message-search-result-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
 .message-search-result-meta strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .message-search-result-meta time { flex-shrink: 0; color: var(--text-2); font-variant-numeric: tabular-nums; }

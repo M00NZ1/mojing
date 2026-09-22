@@ -168,7 +168,7 @@ def search_message_page(db, session_id, keyword, branch_id='main', before_id=Non
     context = resolve_branch_context(db, session_id, branch_id)
     query = normalize_search(keyword.strip())
     if not query:
-        return {'items': [], 'next_cursor': None, 'index': {'ready': True, 'indexed_count': 0}}
+        return {'items': [], 'next_cursor': None, 'total_count': 0, 'index': {'ready': True, 'indexed_count': 0}}
     if len(query) > 256:
         raise ValueError('搜索词最多 256 个字符')
     progress = advance_message_search_index(db, session_id) if advance_index else get_message_search_progress(db, session_id)
@@ -181,9 +181,18 @@ def search_message_page(db, session_id, keyword, branch_id='main', before_id=Non
     stmt = stmt.select_from(fts.join(message, message.id == fts.c.rowid).outerjoin(CharacterModel, CharacterModel.id == message.character_id))
     stmt = stmt.where(text('mojing_message_search_fts MATCH :expression'), message.session_id == session_id,
         _visibility_clause(context, message), func.instr(func.mojing_search_normalize(message.content), query) > 0)
+    total_count = None
+    if progress['ready']:
+        count_stmt = select(func.count()).select_from(
+            fts.join(message, message.id == fts.c.rowid)
+        ).where(
+            text('mojing_message_search_fts MATCH :expression'), message.session_id == session_id,
+            _visibility_clause(context, message), func.instr(func.mojing_search_normalize(message.content), query) > 0,
+        )
+        total_count = db.scalar(count_stmt, {'expression': expression})
     if before_id is not None:
         stmt = stmt.where(fts.c.rowid < before_id)
     limit = min(max(limit, 1), 100)
     rows = list(db.execute(stmt.order_by(fts.c.rowid.desc()).limit(limit + 1), {'expression': expression}).mappings())
     return {'items': [{**{key: value for key, value in row.items() if key != 'content'}, 'snippet': _snippet(row['content'], query)} for row in rows[:limit]],
-        'next_cursor': rows[limit - 1]['id'] if len(rows) > limit else None, 'index': progress}
+        'next_cursor': rows[limit - 1]['id'] if len(rows) > limit else None, 'total_count': total_count, 'index': progress}

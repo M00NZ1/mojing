@@ -17,11 +17,12 @@ function searchResultDate(value: string) {
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
 
-export default function MessageSearchPanel({ sessionId, branchId, value, onChange, inputRef, onSelect, locatingId, locating, branchLabel, open = false, reading = false, selectedHit, onOpen, onClose, onExitReading }: {
+export default function MessageSearchPanel({ sessionId, branchId, value, onChange, inputRef, onSelect, locatingId, locating, branchLabel, open = false, reading = false, selectedHit, locateFailure, onRetryLocate, onOpen, onClose, onExitReading }: {
   sessionId: number; branchId: string; value: string; onChange: (value: string) => void;
   inputRef: RefObject<HTMLInputElement>; onSelect: (hit: MessageSearchHit) => void;
   locatingId: number | null; locating: boolean; branchLabel: (id: string) => string;
   open?: boolean; reading?: boolean; selectedHit?: MessageSearchHit | null;
+  locateFailure?: { hit: MessageSearchHit; message: string } | null; onRetryLocate?: () => void;
   onOpen?: () => void; onClose?: () => void; onExitReading?: () => void;
 }) {
   const [query, setQuery] = useState('');
@@ -76,6 +77,14 @@ export default function MessageSearchPanel({ sessionId, branchId, value, onChang
     void client.invalidateQueries({ queryKey: ['session-message-search'] });
   } });
   const progress = search.data?.index;
+  const selectedPageIndex = selectedHit ? search.data?.items.findIndex((hit) => hit.id === selectedHit.id) : undefined;
+  const selectedPosition = selectedPageIndex !== undefined && selectedPageIndex >= 0
+    ? (cursors.length - 1) * 25 + selectedPageIndex + 1 : null;
+  const totalCount = progress?.ready && typeof search.data?.total_count === 'number' ? search.data.total_count : null;
+  const readingCount = selectedPosition !== null && totalCount !== null
+    ? `第 ${selectedPosition} / ${totalCount} 条命中`
+    : selectedPosition !== null ? `本页第 ${selectedPosition - (cursors.length - 1) * 25} 条 · 索引未完成`
+      : totalCount !== null ? `共 ${totalCount} 条命中` : '匹配数量整理中';
   useEffect(() => {
     if (!open) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -98,7 +107,7 @@ export default function MessageSearchPanel({ sessionId, branchId, value, onChang
         value={value} maxLength={256} onChange={(event) => { onOpen?.(); onChange(event.target.value); }} autoComplete="off" />
     </div>
     {reading ? <div className="message-search-reading-bar" role="status">
-      <div><strong>原文阅读</strong><span>{selectedHit?.snippet || '已定位到搜索命中消息'}</span></div>
+      <div><strong>原文阅读 <small className="message-search-reading-count">{readingCount}</small></strong><span>{selectedHit?.snippet || '已定位到搜索命中消息'}</span></div>
       <button type="button" className="btn btn-ghost btn-sm" onClick={onExitReading}>返回搜索结果</button>
       <button type="button" className="btn btn-ghost btn-sm" onClick={closeSearch} aria-label="关闭搜索">关闭</button>
     </div> : open && <div className="message-search-results" ref={resultsRef}>
@@ -113,9 +122,12 @@ export default function MessageSearchPanel({ sessionId, branchId, value, onChang
         <button type="button" className="btn btn-ghost btn-sm" disabled={stale} onClick={() => { setIndexPaused(!indexPaused); if (indexPaused) void search.refetch(); }}>{indexPaused ? '继续索引' : '暂停索引'}</button></div>}
       {!stale && search.isError && <InlineQueryError message="搜索失败" error={search.error} retrying={search.isFetching} onRetry={() => void search.refetch()} />}
       {!stale && search.isSuccess && !search.data.items.length && <p>{progress?.ready ? '无匹配消息' : '已索引部分暂无匹配消息'}</p>}
+      {locateFailure && !search.data?.items.some((hit) => hit.id === locateFailure.hit.id) && <InlineQueryError message="原文定位失败" error={locateFailure.message} retrying={locating} onRetry={() => onRetryLocate?.()} />}
       <ul ref={listRef}>{search.data?.items.map((hit) => <li key={hit.id}><button type="button" disabled={locating || stale} onClick={() => { rememberQuery(value); onSelect(hit); }}>
         <span className="message-search-result-meta"><strong>{locatingId === hit.id ? '正在定位…' : hit.character_name || ({ user: '玩家', narrator: '旁白' }[hit.speaker_type] || '角色')}{hit.branch_id !== 'main' ? ` · ${branchLabel(hit.branch_id)}` : ''}</strong><time dateTime={hit.created_at}>{searchResultDate(hit.created_at)}</time></span>
-        <span className="message-search-result-snippet"><SearchSnippet text={hit.snippet} query={query} /></span></button></li>)}</ul>
+        <span className="message-search-result-snippet"><SearchSnippet text={hit.snippet} query={query} /></span></button>
+        {locateFailure?.hit.id === hit.id && <div className="message-search-locate-error"><InlineQueryError message="原文定位失败" error={locateFailure.message} retrying={locating} onRetry={() => onRetryLocate?.()} /></div>}
+      </li>)}</ul>
       <div className="message-search-pagination"><button type="button" className="btn btn-ghost btn-sm" disabled={cursors.length === 1 || search.isFetching || stale} onClick={() => setNavigation({ scope, cursors: cursors.slice(0, -1) })}>较新结果</button>
         <span>第 {cursors.length} 页 · {search.data?.items.length ?? 0} 条</span><button type="button" className="btn btn-ghost btn-sm" disabled={!search.data?.next_cursor || search.isFetching || stale || !progress?.ready} onClick={() => setNavigation({ scope, cursors: [...cursors, search.data!.next_cursor!] })}>更早结果</button></div>
       <details className="message-search-tools"><summary>搜索维护</summary><p>可重建本机搜索索引，不会修改原始对话。关闭搜索会暂停尚未完成的整理。</p>

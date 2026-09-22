@@ -77,9 +77,11 @@ def test_bounded_backfill_resume_and_cursor_pagination(store):
     with factory() as db:
         ready = complete(db, '雾港')
         assert ready['index'] == {'ready': True, 'indexed_count': 463}
+        assert ready['total_count'] == 463
         found = ids(ready)
         while ready['next_cursor']:
             ready = search.search_message_page(db, 1, '雾港', before_id=ready['next_cursor'])
+            assert ready['total_count'] == 463
             found.extend(ids(ready))
         assert found == list(range(463, 0, -1))
         assert db.scalar(text('SELECT count(*) FROM mojing_message_search_state')) == 1
@@ -117,8 +119,12 @@ def test_branch_edits_share_visibility_owner(store):
         db.add(SessionBranchModel(session_id=1, branch_id='A', source_message_id=replaced, parent_branch_id='main'))
         edited = add(db, '线索：修订', branch_id='A', regenerated_from_message_id=replaced)
         db.commit()
-        assert ids(complete(db, '线索', branch_id='A')) == [edited, first]
-        assert ids(complete(db, '线索')) == [later, replaced, first]
+        branch_result = complete(db, '线索', branch_id='A')
+        assert ids(branch_result) == [edited, first]
+        assert branch_result['total_count'] == 2
+        main_result = complete(db, '线索')
+        assert ids(main_result) == [later, replaced, first]
+        assert main_result['total_count'] == 3
         with pytest.raises(ValueError):
             complete(db, '线索', branch_id='missing')
 
@@ -189,6 +195,7 @@ def test_pending_imports_can_pause_and_resume_without_reindexing_old_rows(store)
         db.commit()
         paused = search.search_message_page(db, 1, '线索', advance_index=False)
         assert paused['index'] == {'ready': False, 'indexed_count': 1}
+        assert paused['total_count'] is None
         assert ids(paused) == []
         first = search.search_message_page(db, 1, '线索')
         assert not first['index']['ready']

@@ -379,6 +379,18 @@ class MemorySegmentRead(BaseModel):
     created_at: datetime
 
 
+class MessageSearchIndexRead(BaseModel):
+    ready: bool
+    indexed_count: int
+
+
+class MessageSearchPageRead(BaseModel):
+    items: list[MessageSearchHitRead]
+    next_cursor: int | None = None
+    total_count: int | None = None
+    index: MessageSearchIndexRead
+
+
 class SessionMemoryCorrectionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

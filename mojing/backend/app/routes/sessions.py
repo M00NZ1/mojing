@@ -35,6 +35,7 @@ from ..schemas import (
     MessageRead,
     MessageContextUpdate,
     MessageSearchHitRead,
+    MessageSearchPageRead,
     MessagePage,
     MessageWindowPage,
     ParticipantRead,
@@ -443,7 +444,7 @@ def swipe_message(session_id: int, message_id: int):
     )
 
 
-@router.get("/{session_id}/messages/search-page")
+@router.get("/{session_id}/messages/search-page", response_model=MessageSearchPageRead)
 def search_message_results(session_id: int, q: str = "", before: int | None = None, limit: int = 25,
                            branch_id: str = "main", advance_index: bool = True, db: Session = Depends(get_db)):
     from ..services.message_search_service import search_message_page

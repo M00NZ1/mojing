@@ -60,8 +60,10 @@ try {
       else {
         if (query === '慢查询') await new Promise((resolve) => setTimeout(resolve, 700));
         const before = Number(url.searchParams.get('before') || 6001);
-        const hits = history.filter((m) => m.id < before && m.content.includes(query)).reverse();
-        data = { items: hits.slice(0, 25).map((m) => ({ ...m, content: undefined, snippet: `第 ${m.id} 夜 · ${query}：码头留下的旧证词` })), next_cursor: hits.length > 25 ? hits[24].id : null, index: { ready: (url.searchParams.get('advance_index') !== 'false' ? --remaining : remaining) <= 0, indexed_count: Math.min(6000, searchCalls * 200) } };
+        const allHits = history.filter((m) => m.content.includes(query));
+        const hits = allHits.filter((m) => m.id < before).reverse();
+        const ready = (url.searchParams.get('advance_index') !== 'false' ? --remaining : remaining) <= 0;
+        data = { items: hits.slice(0, 25).map((m) => ({ ...m, content: undefined, snippet: `第 ${m.id} 夜 · ${query}：码头留下的旧证词` })), next_cursor: hits.length > 25 ? hits[24].id : null, total_count: ready ? allHits.length : null, index: { ready, indexed_count: Math.min(6000, searchCalls * 200) } };
       }
     } else if (endpoint.endsWith('/messages/search-index/rebuild')) {
       if (rebuildFailure) { status = 500; data = { detail: '重建暂不可用' }; }
@@ -127,6 +129,10 @@ try {
   await page.getByRole('button', { name: '更早结果' }).click();
   await page.getByText(/^第 2 页 ·/).waitFor();
   await results.getByText('第 3500 夜 · 线索：码头留下的旧证词', { exact: true }).waitFor();
+  await results.getByRole('button', { name: /第 3500 夜/ }).click();
+  await page.getByText('第 26 / 60 条命中', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '返回搜索结果', exact: true }).click();
+  await page.getByText(/^第 2 页 ·/).waitFor();
   if (output) { await mkdir(output, { recursive: true }); await page.screenshot({ path: path.join(output, 'search-desktop.png') }); }
   await page.getByRole('button', { name: '更早结果' }).click();
   await page.getByText(/^第 3 页 ·/).waitFor();
@@ -158,13 +164,15 @@ try {
   assert.equal(await oldHit.locator('mark').textContent(), '旧信封');
   locateFailure = true;
   await oldHit.click();
-  await page.locator('.toast-error').filter({ hasText: '定位暂不可用' }).waitFor();
+  const locateError = results.locator('.message-search-locate-error').getByRole('alert');
+  await locateError.filter({ hasText: '定位暂不可用' }).waitFor();
+  assert.equal(await searchInput.inputValue(), '旧信封');
+  assert.equal(await page.getByText(/^第 1 页 ·/).count(), 1);
   locateFailure = false;
-  await page.locator('.toast-error .toast-close').click();
-  await oldHit.click();
+  await locateError.getByRole('button', { name: '重试', exact: true }).click();
   await page.locator('[data-chat-message-id="3"].chat-message-focus').waitFor();
   assert.equal(await searchInput.inputValue(), '旧信封');
-  await page.getByText('原文阅读', { exact: true }).waitFor();
+  await page.getByText('第 1 / 1 条命中', { exact: true }).waitFor();
   assert.ok(await page.locator('.message-search-results').count() === 0, 'reading view hides result layer');
   assert.equal(await page.locator('.chat-inputbar').count(), 0, 'reading view hides chat composer');
   assert.equal(await page.locator('[data-chat-message-id="3"] .chat-msg-tools').count(), 0, 'reading view hides message write actions');

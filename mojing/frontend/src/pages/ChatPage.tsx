@@ -160,6 +160,9 @@ export default function ChatPage() {
   const [sessionSearchDraft, setSessionSearchDraft] = useState('');
   const [searchView, setSearchView] = useState<'closed' | 'results' | 'reading'>('closed');
   const [selectedSearchHit, setSelectedSearchHit] = useState<MessageSearchHit | null>(null);
+  const [searchLocateFailure, setSearchLocateFailure] = useState<{
+    hit: MessageSearchHit; message: string; sessionId: number; branchId: string; query: string;
+  } | null>(null);
   const sessionSearchInputRef = useRef<HTMLInputElement>(null);
   const searchFocusRequestIdRef = useRef(0);
   const pendingBranchMessageFocusRef = useRef<{ branchId: string; messageId: number } | null>(null);
@@ -762,17 +765,24 @@ export default function ChatPage() {
     setShowChatMenu(false);
     // Search is scoped to the selected branch context. Ancestor messages keep
     // their original branch_id but remain visible here, so do not switch away.
+    const ownerSession = sessionId;
+    const ownerBranch = selectedBranchRef.current;
+    const ownerQuery = sessionSearchDraft;
+    setSearchLocateFailure(null);
     setLocatingMessageId(hit.id);
     setSelectedSearchHit(hit);
     try {
       const located = await loadAroundMessage(hit.id);
       if (!located) throw new Error('搜索结果已变化，请重新搜索');
+      if (sessionIdRef.current !== ownerSession || selectedBranchRef.current !== ownerBranch) return;
       focusMessage(hit.id);
       closeRightPanel(false);
       if (showBranchTree) closeBranchTree();
       setSearchView('reading');
     } catch (error) {
-      showToast(toastErrorMessage(error), 'error');
+      if (sessionIdRef.current === ownerSession && selectedBranchRef.current === ownerBranch) {
+        setSearchLocateFailure({ hit, message: toastErrorMessage(error), sessionId: ownerSession, branchId: ownerBranch, query: ownerQuery });
+      }
     } finally {
       setLocatingMessageId(null);
     }
@@ -1534,6 +1544,10 @@ export default function ChatPage() {
   const activeBranchLabel = branchLabel(selectedBranchId);
   const sessionTitle = sessionDetailQuery.data?.title?.trim() || '未命名对话';
 
+  const visibleSearchLocateFailure = searchLocateFailure?.sessionId === sessionId
+    && searchLocateFailure.branchId === selectedBranchId
+    && searchLocateFailure.query === sessionSearchDraft ? searchLocateFailure : null;
+
   return (
     <section className="chat-layout">
       {/* ================= 移动端切换器 ================= */}
@@ -1636,11 +1650,12 @@ export default function ChatPage() {
           </div>
         )}
 
-        <MessageSearchPanel sessionId={sessionId} branchId={selectedBranchId} value={sessionSearchDraft} onChange={setSessionSearchDraft}
+        <MessageSearchPanel sessionId={sessionId} branchId={selectedBranchId} value={sessionSearchDraft} onChange={(value) => { setSessionSearchDraft(value); setSearchLocateFailure(null); }}
           inputRef={sessionSearchInputRef} onSelect={(hit) => { void goToSearchHit(hit); }} locatingId={locatingMessageId} locating={messagesLocating} branchLabel={branchLabel}
           open={searchView !== 'closed'} reading={searchView === 'reading'} selectedHit={selectedSearchHit}
+          locateFailure={visibleSearchLocateFailure} onRetryLocate={() => { if (visibleSearchLocateFailure) void goToSearchHit(visibleSearchLocateFailure.hit); }}
           onOpen={() => setSearchView('results')}
-          onClose={() => { setSearchView('closed'); setSessionSearchDraft(''); setSelectedSearchHit(null); }}
+          onClose={() => { setSearchView('closed'); setSessionSearchDraft(''); setSelectedSearchHit(null); setSearchLocateFailure(null); }}
           onExitReading={() => setSearchView('results')} />
 
         {showChatMenu && (
