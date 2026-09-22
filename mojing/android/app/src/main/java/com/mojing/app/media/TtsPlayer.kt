@@ -33,8 +33,18 @@ object TtsPlayer {
                 finish(handle, false)
                 true
             }
-            candidate.prepare()
-            candidate.start()
+            candidate.setOnPreparedListener {
+                // A stopped/replaced request may still deliver its queued prepared callback.
+                val current = synchronized(this) { active?.handle?.token == handle.token }
+                if (current) {
+                    try {
+                        candidate.start()
+                    } catch (_: Exception) {
+                        finish(handle, false)
+                    }
+                }
+            }
+            candidate.prepareAsync()
             handle
         } catch (_: Exception) {
             finish(handle, false)
@@ -42,7 +52,7 @@ object TtsPlayer {
         }
     }
 
-    /** Backward-compatible fire-and-forget API. */
+    /** Returns whether playback was queued; completion/errors belong to the playback handle. */
     fun play(audioFile: File, deleteWhenFinished: Boolean = false): Boolean =
         playOwned(audioFile, deleteWhenFinished) != null
 
