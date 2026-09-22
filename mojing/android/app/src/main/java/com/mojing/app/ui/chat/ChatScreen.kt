@@ -135,18 +135,20 @@ fun ChatScreen(
     backLabel: String = "返回会话主页",
     viewModel: ChatViewModel = hiltViewModel()
 ) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
     var voiceChoice by remember(sessionId) { mutableStateOf(viewModel.currentVoiceChoice()) }
     var showVoicePicker by remember { mutableStateOf(false) }
     if (showVoicePicker) com.mojing.app.ui.common.VoiceChoicePicker(
         choice = voiceChoice, allowInherit = true,
         inheritLabel = "跟随全局语音设置",
         description = "用于当前对话；已单独配置语音的角色优先使用角色设置",
+        saving = state.voiceSelectionSaving,
+        saveError = state.voiceSelectionError,
         onSelected = { choice -> viewModel.selectVoiceChoice(choice) { voiceChoice = choice; showVoicePicker = false } },
         onDismiss = { showVoicePicker = false },
     )
     val billingViewModel: com.mojing.app.ui.settings.usage.BillingDisplayViewModel = hiltViewModel()
     val billingState by billingViewModel.state.collectAsStateWithLifecycle()
-    val state by viewModel.state.collectAsStateWithLifecycle()
     val modelLabel by viewModel.modelSelectionLabel.collectAsStateWithLifecycle()
     var showModelPicker by remember { mutableStateOf(false) }
     if (showModelPicker) {

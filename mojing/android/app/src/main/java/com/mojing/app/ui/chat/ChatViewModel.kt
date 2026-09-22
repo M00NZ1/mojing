@@ -1665,13 +1665,16 @@ class ChatViewModel @Inject constructor(
         com.mojing.app.data.VoicePreferences(appContext).sessionSelection(sessionId)
 
     fun selectVoiceChoice(choice: com.mojing.app.data.VoiceChoice, onSaved: () -> Unit) {
+        if (_state.value.voiceSelectionSaving) return
+        _state.update { it.copy(voiceSelectionSaving = true, voiceSelectionError = null) }
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) { com.mojing.app.data.VoicePreferences(appContext).saveSession(sessionId, choice) }
                 stopSpeaking()
                 onSaved()
             } catch (e: CancellationException) { throw e }
-            catch (_: Exception) { _state.update { it.copy(error = "语音选择未保存，请重试") } }
+            catch (_: Exception) { _state.update { it.copy(voiceSelectionError = "语音选择未保存，请重试") } }
+            finally { _state.update { it.copy(voiceSelectionSaving = false) } }
         }
     }
 
