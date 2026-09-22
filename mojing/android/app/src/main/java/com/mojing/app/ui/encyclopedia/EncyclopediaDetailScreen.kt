@@ -369,7 +369,7 @@ fun EncyclopediaDetailScreen(
                         showRelDialog = true
                     }
                 }) { Icon(Icons.Default.Link, "添加关系") }
-                EncyclopediaMainTab.ENTRIES -> FloatingActionButton(onClick = { showCreateDialog = true }) {
+                EncyclopediaMainTab.ENTRIES -> FloatingActionButton(onClick = { viewModel.clearCreateEntryError(); showCreateDialog = true }) {
                     Icon(Icons.Default.Add, "新建条目")
                 }
                 EncyclopediaMainTab.TIMELINE,
@@ -1156,11 +1156,12 @@ fun EncyclopediaDetailScreen(
 
     if (showCreateDialog) {
         AlertDialog(
-            onDismissRequest = { showCreateDialog = false },
+            onDismissRequest = { if (!state.entryCreating) showCreateDialog = false },
             title = { Text("新建条目") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedTextField(value = newTitle, onValueChange = { newTitle = it }, label = { Text("标题") }, singleLine = true)
+                    state.createEntryError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+                    OutlinedTextField(value = newTitle, onValueChange = { newTitle = it; viewModel.clearCreateEntryError() }, enabled = !state.entryCreating, label = { Text("标题") }, singleLine = true)
                     Text("类型", style = MaterialTheme.typography.labelMedium)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(ENTRY_TYPES.filter { it.second.isNotEmpty() }.size) { idx ->
@@ -1175,13 +1176,14 @@ fun EncyclopediaDetailScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    viewModel.createEntry(newTitle, newType)
-                    newTitle = ""
-                    showCreateDialog = false
-                }) { Text("创建") }
+                TextButton(enabled = !state.entryCreating && newTitle.isNotBlank(), onClick = {
+                    viewModel.createEntry(newTitle, newType) {
+                        newTitle = ""
+                        showCreateDialog = false
+                    }
+                }) { Text(if (state.entryCreating) "正在创建…" else "创建") }
             },
-            dismissButton = { TextButton(onClick = { showCreateDialog = false }) { Text("取消") } }
+            dismissButton = { TextButton(enabled = !state.entryCreating, onClick = { showCreateDialog = false }) { Text("取消") } }
         )
     }
 }

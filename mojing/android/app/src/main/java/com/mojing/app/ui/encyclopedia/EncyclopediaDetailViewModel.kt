@@ -85,6 +85,8 @@ data class EncyclopediaDetailState(
     val renameError: String? = null,
     val relationSaving: Boolean = false,
     val relationError: String? = null,
+    val entryCreating: Boolean = false,
+    val createEntryError: String? = null,
 ) {
     /** 是否有百科「扩展 meta」批量补全任务在排队或执行（用于禁用重复提交） */
     val isEncyclopediaMetaFillQueued: Boolean
@@ -166,6 +168,8 @@ class EncyclopediaDetailViewModel @Inject constructor(
             renameError = renameState?.renameError,
             relationSaving = _state.value.relationSaving,
             relationError = renameState?.relationError,
+            entryCreating = _state.value.entryCreating,
+            createEntryError = renameState?.createEntryError,
         )
         loadJob = viewModelScope.launch {
             try {
@@ -467,18 +471,47 @@ class EncyclopediaDetailViewModel @Inject constructor(
         return ApiRootLines.splitToOrderedDistinct(trimmed, llmApiService::normalizeOpenAiCompatibleBase)
     }
 
-    fun createEntry(title: String, type: String) {
+    fun clearCreateEntryError() {
+        _state.value = _state.value.copy(createEntryError = null)
+    }
+
+    fun createEntry(title: String, type: String, onCreated: () -> Unit = {}) {
+        if (_state.value.entryCreating) return
+        if (title.isBlank()) {
+            _state.value = _state.value.copy(createEntryError = "请先填写条目标题")
+            return
+        }
+        val targetId = encId
+        val targetPage = pageRevision
+        _state.value = _state.value.copy(entryCreating = true, createEntryError = null)
         viewModelScope.launch {
-            saveCharacterEntry(
-                EncyclopediaEntryEntity(
-                    encyclopediaId = encId,
-                    title = title.ifBlank { "新条目" },
-                    entryType = type
+            val created = try {
+                saveCharacterEntry(
+                    EncyclopediaEntryEntity(
+                        encyclopediaId = targetId,
+                        title = title.trim(),
+                        entryType = type,
+                    )
                 )
-            )
-            refreshEntries()
-            refreshTimelineAndRelations()
-            showSnackbar(UserFacingStrings.entryCreatedListHint())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (pageRevision == targetPage) _state.value = _state.value.copy(createEntryError = "条目创建失败，标题已保留，请重试")
+                null
+            } finally {
+                _state.value = _state.value.copy(entryCreating = false)
+            } ?: return@launch
+            if (pageRevision != targetPage) return@launch
+            onCreated()
+            try {
+                refreshEntries()
+                refreshTimelineAndRelations()
+                showSnackbar(UserFacingStrings.entryCreatedListHint())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                showSnackbar("条目已创建，列表刷新失败，请重新打开百科")
+            }
         }
     }
 
