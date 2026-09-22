@@ -9,6 +9,7 @@ import GlobalLoadingBar from './components/LoadingBar';
 import ChatLandingPage from './pages/ChatLandingPage';
 import UiIcon from './components/UiIcon';
 import { COMPACT_LAYOUT_QUERY, useMediaQuery } from './hooks/useMediaQuery';
+import { StoryGenerationProvider, StoryGenerationStatus, useStoryGeneration } from './contexts/StoryGenerationContext';
 
 const ChatPage = lazy(() => import('./pages/ChatPage'));
 const CharactersPage = lazy(() => import('./pages/CharactersPage'));
@@ -91,7 +92,9 @@ function ValidChatRoute() {
 function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { generation } = useStoryGeneration();
   const isChat = location.pathname.startsWith('/chat');
+  const showStoryGenerationStatus = generation.phase !== 'idle';
   const isChatLanding = location.pathname === '/chat' || location.pathname === '/';
   const isCompactLayout = useMediaQuery(COMPACT_LAYOUT_QUERY);
   const showMobileSessions = isCompactLayout
@@ -214,7 +217,7 @@ function AppLayout() {
   }, [closeMobileSessions, isChat, isCompactLayout, showMobileSessions]);
 
   return (
-    <div className={`app-shell ${isChat && !isChatLanding ? 'in-chat' : ''}`}>
+    <div className={`app-shell ${isChat && !isChatLanding ? 'in-chat' : ''} ${showStoryGenerationStatus ? 'has-story-generation-status' : ''}`}>
       <GlobalLoadingBar />
       <nav className="sidebar" aria-label="主导航">
         <div className="sidebar-logo" aria-hidden="true">墨</div>
@@ -231,36 +234,39 @@ function AppLayout() {
       </nav>
 
       <div className="content-area">
-        <div
-          ref={mobileSessionOverlayRef}
-          className={`session-overlay ${isChat && showMobileSessions ? 'visible' : ''}`}
-          role={isCompactLayout && showMobileSessions ? 'dialog' : undefined}
-          aria-modal={isCompactLayout && showMobileSessions ? true : undefined}
-          aria-label={isCompactLayout && showMobileSessions ? '会话列表' : undefined}
-          tabIndex={isCompactLayout && showMobileSessions ? -1 : undefined}
-        >
-          {isChat && <SessionSidebar />}
+        <StoryGenerationStatus />
+        <div className="content-view">
+          <div
+            ref={mobileSessionOverlayRef}
+            className={`session-overlay ${isChat && showMobileSessions ? 'visible' : ''}`}
+            role={isCompactLayout && showMobileSessions ? 'dialog' : undefined}
+            aria-modal={isCompactLayout && showMobileSessions ? true : undefined}
+            aria-label={isCompactLayout && showMobileSessions ? '会话列表' : undefined}
+            tabIndex={isCompactLayout && showMobileSessions ? -1 : undefined}
+          >
+            {isChat && <SessionSidebar />}
+          </div>
+          <Suspense fallback={<PageLoadingState />}>
+            <Routes>
+              <Route path="/" element={<Navigate to="/chat" replace />} />
+              <Route path="/chat" element={<ChatLandingPage />} />
+              <Route path="/chat/:sessionId" element={<ValidChatRoute />} />
+              <Route path="/create" element={<CreationHubPage />} />
+              <Route path="/characters/*" element={<CharactersPage />} />
+              <Route path="/worlds" element={<WorldLibraryPage />} />
+              <Route path="/encyclopedia/*" element={<EncyclopediaPage />} />
+              <Route path="/workbench/*" element={<WorkbenchPage />} />
+              <Route path="/story-simulation" element={<StorySimulationPage />} />
+              <Route path="/settings/*" element={<SettingsPage />} />
+              <Route path="*" element={<Navigate to="/chat" replace />} />
+            </Routes>
+          </Suspense>
         </div>
-        <Suspense fallback={<PageLoadingState />}>
-          <Routes>
-            <Route path="/" element={<Navigate to="/chat" replace />} />
-            <Route path="/chat" element={<ChatLandingPage />} />
-            <Route path="/chat/:sessionId" element={<ValidChatRoute />} />
-            <Route path="/create" element={<CreationHubPage />} />
-            <Route path="/characters/*" element={<CharactersPage />} />
-            <Route path="/worlds" element={<WorldLibraryPage />} />
-            <Route path="/encyclopedia/*" element={<EncyclopediaPage />} />
-            <Route path="/workbench/*" element={<WorkbenchPage />} />
-            <Route path="/story-simulation" element={<StorySimulationPage />} />
-            <Route path="/settings/*" element={<SettingsPage />} />
-            <Route path="*" element={<Navigate to="/chat" replace />} />
-          </Routes>
-        </Suspense>
       </div>
     </div>
   );
 }
 
 export default function App() {
-  return <ConfirmModalProvider><AppLayout /></ConfirmModalProvider>;
+  return <ConfirmModalProvider><StoryGenerationProvider><AppLayout /></StoryGenerationProvider></ConfirmModalProvider>;
 }

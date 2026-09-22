@@ -5,6 +5,44 @@
   overflow-y: auto;
 }
 
+.story-simulation-working {
+  max-width: 720px;
+  margin: 28px auto 0;
+  padding: clamp(24px, 5vw, 48px);
+  border-block: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.story-simulation-working-kicker {
+  display: block;
+  margin-bottom: 18px;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.story-simulation-working h2 {
+  font-size: clamp(1.45rem, 3vw, 2rem);
+  line-height: 1.3;
+  margin-bottom: 12px;
+}
+
+.story-simulation-working p { color: var(--text-2); max-width: 46ch; }
+.story-simulation-working blockquote {
+  margin-top: 26px;
+  padding-left: 14px;
+  border-left: 2px solid var(--accent);
+  color: var(--text-2);
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 @media (max-width: 768px) {
   .story-simulation-page {
     padding-bottom: calc(104px + env(safe-area-inset-bottom, 0px));

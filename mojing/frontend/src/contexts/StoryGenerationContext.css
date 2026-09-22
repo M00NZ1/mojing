@@ -1,0 +1,61 @@
+.story-generation-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 58px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.story-generation-status-mark {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--active-bg);
+}
+
+.story-generation-status.is-running .story-generation-status-mark {
+  animation: story-status-pulse 1.6s ease-in-out infinite;
+}
+
+.story-generation-status.is-error .story-generation-status-mark { background: var(--accent-3); }
+.story-generation-status.is-stopped .story-generation-status-mark { background: var(--muted); }
+
+.story-generation-status-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.story-generation-status-copy strong { font-size: 0.88rem; font-weight: 650; white-space: nowrap; }
+.story-generation-status-copy span { font-size: 0.78rem; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.story-generation-status-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.story-generation-status-actions .btn { padding: 5px 11px; min-height: 34px; font-size: 0.78rem; }
+.story-generation-status-dismiss {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+@keyframes story-status-pulse { 50% { opacity: 0.45; transform: scale(0.75); } }
+@media (prefers-reduced-motion: reduce) { .story-generation-status.is-running .story-generation-status-mark { animation: none; } }
+
+@media (max-width: 560px) {
+  .story-generation-status { padding: 7px 10px; gap: 9px; }
+  .story-generation-status-copy { display: block; }
+  .story-generation-status-copy strong, .story-generation-status-copy span { display: block; line-height: 1.35; }
+  .story-generation-status-actions .btn { padding: 4px 8px; }
+}
