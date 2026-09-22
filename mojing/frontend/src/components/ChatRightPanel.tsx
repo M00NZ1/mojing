@@ -43,6 +43,7 @@ interface ChatRightPanelProps {
   worldSaveError?: unknown;
   selectedBranchId: string;
   onBranchChange: (branchId: string) => void;
+  branchSwitchDisabled?: boolean;
   branchOptions: { branch_id: string; label?: string; message_count: number }[];
   memoryStateQuery: RefreshableQuery<SessionCharacterState[]>;
   memorySegmentsQuery: RefreshableQuery<MemorySegment[]>;
@@ -99,7 +100,7 @@ export default function ChatRightPanel({
   narratorName, onNarratorNameChange,
   onSaveWorld, worldReady, worldLoading, worldLoadError, onRetryWorldLoad,
   worldSaving, worldDirty, worldSaveError,
-  selectedBranchId, onBranchChange, branchOptions,
+  selectedBranchId, onBranchChange, branchSwitchDisabled = false, branchOptions,
   memoryStateQuery, memorySegmentsQuery, memoryCorrectionsQuery, onLocateMemorySource,
   onCreateMemoryCorrection, onUpdateMemoryCorrection, onDeleteMemoryCorrection,
   promptTraceQuery, tokenUsageQuery, getStorageUrl,
@@ -371,7 +372,17 @@ export default function ChatRightPanel({
               onRetry={onSaveWorld}
             />
           )}
-          <label>故事线<select value={selectedBranchId} onChange={(e) => onBranchChange(e.target.value)}>{branchOptions.map((item) => (<option key={item.branch_id} value={item.branch_id}>{storyLineDisplayLabel(item.branch_id, item.label)} · {item.message_count} 条</option>))}</select></label>
+          <label>故事线
+            <select
+              value={selectedBranchId}
+              disabled={branchSwitchDisabled}
+              aria-describedby={branchSwitchDisabled ? 'chat-branch-switch-hint' : undefined}
+              onChange={(e) => onBranchChange(e.target.value)}
+            >
+              {branchOptions.map((item) => (<option key={item.branch_id} value={item.branch_id}>{storyLineDisplayLabel(item.branch_id, item.label)} · {item.message_count} 条</option>))}
+            </select>
+            {branchSwitchDisabled && <span id="chat-branch-switch-hint" className="hint" role="status" style={{ marginTop: 5 }}>回复生成中，请先停止或等待完成后再切换故事线。</span>}
+          </label>
         </div>
       )}
 

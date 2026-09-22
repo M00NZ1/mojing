@@ -743,11 +743,14 @@ export default function ChatPage() {
       setShowChatMenu(false);
       return;
     }
+    if (generationGateRef.current) {
+      showToast('回复生成中，请先停止或等待完成后再切换故事线', 'warn');
+      return;
+    }
     if (switchingBranchId) {
       showToast('正在打开另一条故事线，请稍候', 'warn');
       return;
     }
-    abortRef.current?.abort();
     const result = await activateBranch(branchId || 'main');
     if (result.ok) {
       if (showBranchTree) closeBranchTree();
@@ -1916,6 +1919,7 @@ export default function ChatPage() {
         worldSaveError={worldSaveError}
         selectedBranchId={selectedBranchId}
         onBranchChange={switchBranch}
+        branchSwitchDisabled={isGenerating}
         branchOptions={branchOptions}
         memoryStateQuery={memoryStateQuery}
         memorySegmentsQuery={memorySegmentsQuery}
