@@ -16,26 +16,24 @@ internal fun ImagePromptDialog(
     onDismiss: () -> Unit,
     onGenerate: () -> Unit,
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("生成配图") },
-        text = {
+    ChatPromptSheet(
+        onDismiss = onDismiss,
+        title = "生成配图",
+        editor = {
             MoJingTextField(
                 value = prompt,
                 onValueChange = onPromptChange,
                 label = { Text("画面描述") },
                 placeholder = { Text("描述人物、场景、光线与画面风格") },
-                modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp),
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 minLines = 3,
-                maxLines = 6,
             )
         },
-        confirmButton = {
+        actions = {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 MoJingButton(onClick = onGenerate, enabled = prompt.isNotBlank() && !busy, modifier = Modifier.fillMaxWidth()) {
                     Text(if (busy) "正在生成，请稍候" else "生成并加入对话")
                 }
-                TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("返回对话") }
             }
         },
     )

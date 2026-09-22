@@ -45,13 +45,15 @@ internal fun MessageEditDialog(
         sheetState = sheetState,
         sheetMaxWidth = 720.dp,
         dragHandle = null,
+        containerColor = MaterialTheme.colorScheme.surface,
         contentWindowInsets = { WindowInsets.safeDrawing },
     ) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.95f).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("编辑消息", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                Text("编辑消息", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                 IconButton(onClick = requestDismiss, enabled = !saving) { Icon(Icons.Default.Close, "关闭消息编辑") }
             }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             if (!WindowInsets.isImeVisible) Text(
                 if (isUser) "保存到新故事线，并重新生成回复。" else "保存到新故事线，保留原故事线。",
                 style = MaterialTheme.typography.bodySmall,
@@ -65,9 +67,13 @@ internal fun MessageEditDialog(
                 label = { Text("消息正文") },
                 textStyle = MaterialTheme.typography.bodyLarge,
             )
-            if (failure != null) Text(failure, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-            MoJingButton(onClick = onSave, enabled = canSave && !saving && !committed, modifier = Modifier.fillMaxWidth()) {
-                Text(if (saving) "正在保存…" else if (committed) "已保存" else "创建编辑分支")
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (failure != null) Text(failure, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    MoJingButton(onClick = onSave, enabled = canSave && !saving && !committed, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (saving) "正在保存…" else if (committed) "已保存" else "创建编辑分支")
+                    }
+                }
             }
         }
     }
