@@ -32,6 +32,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
@@ -154,6 +156,7 @@ class EncyclopediaListViewModel @Inject constructor(
     private val generationTaskDao: GenerationTaskDao,
     private val deleteWorld: com.mojing.app.domain.usecase.DeleteWorldUseCase,
 ) : ViewModel() {
+    private val createMutex = Mutex()
     private val coverGenerationOwner = KeyedOperationOwner<Long>()
     val coverGeneratingEncyclopediaIds: StateFlow<Set<Long>> = coverGenerationOwner.activeKeys
 
@@ -182,13 +185,28 @@ class EncyclopediaListViewModel @Inject constructor(
 
     init {
         syncPublicLlmKeyFromStorage()
-        viewModelScope.launch { _encyclopedias.value = encyclopediaDao.getAll() }
+        viewModelScope.launch { createMutex.withLock { _encyclopedias.value = encyclopediaDao.getAll() } }
     }
 
-    fun createNew() {
-        viewModelScope.launch {
-            encyclopediaDao.upsert(EncyclopediaEntity(name = "新百科库"))
-            _encyclopedias.value = encyclopediaDao.getAll()
+    suspend fun createNew(): Result<Long> = createMutex.withLock {
+        val entity = EncyclopediaEntity(name = "新百科库")
+        try {
+            val id = encyclopediaDao.upsert(entity)
+            if (id <= 0L) return@withLock Result.failure(IllegalStateException("百科创建失败，请重试"))
+            try {
+                _encyclopedias.value = encyclopediaDao.getAll()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // The row already exists; keep it visible if the refresh read fails.
+                _encyclopedias.value = (_encyclopedias.value + entity.copy(id = id))
+                    .distinctBy { it.id }
+            }
+            Result.success(id)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            Result.failure(IllegalStateException("百科创建失败，请重试"))
         }
     }
 
@@ -223,7 +241,7 @@ class EncyclopediaListViewModel @Inject constructor(
     fun refresh() {
         viewModelScope.launch {
             syncPublicLlmKeyFromStorage()
-            _encyclopedias.value = encyclopediaDao.getAll()
+            createMutex.withLock { _encyclopedias.value = encyclopediaDao.getAll() }
         }
     }
 

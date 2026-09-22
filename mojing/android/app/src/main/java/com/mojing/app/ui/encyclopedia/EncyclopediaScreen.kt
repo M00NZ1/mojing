@@ -93,6 +93,8 @@ fun EncyclopediaScreen(
     var coverPendingEncId by remember { mutableStateOf<Long?>(null) }
     var isCoverTaskBusy by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
+    var isCreating by remember { mutableStateOf(false) }
+    var createError by rememberSaveable { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -204,8 +206,21 @@ fun EncyclopediaScreen(
     }
 
     fun createEncyclopedia() {
-        viewModel.createNew()
-        Toast.makeText(context, UserFacingStrings.encyclopediaCreated(), Toast.LENGTH_SHORT).show()
+        if (isCreating) return
+        isCreating = true
+        createError = null
+        scope.launch {
+            val result = viewModel.createNew()
+            isCreating = false
+            result.onSuccess { id ->
+                Toast.makeText(context, UserFacingStrings.encyclopediaCreated(), Toast.LENGTH_SHORT).show()
+                onDetail(id)
+            }.onFailure { error ->
+                val message = error.message ?: "百科创建失败，请重试"
+                createError = message
+                snackbarHostState.showSnackbar(message)
+            }
+        }
     }
 
     Scaffold(
@@ -285,29 +300,53 @@ fun EncyclopediaScreen(
         },
         floatingActionButton = {
             if (encyclopedias.isNotEmpty()) {
-                FloatingActionButton(onClick = ::createEncyclopedia) {
-                    Icon(Icons.Default.Add, "新建百科")
+                FloatingActionButton(onClick = { if (!isCreating) createEncyclopedia() }) {
+                    if (isCreating) {
+                        CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Default.Add, "新建百科")
+                    }
                 }
             }
         }
     ) { padding ->
-        if (encyclopedias.isEmpty()) {
-            EmptyState(
-                icon = Icons.AutoMirrored.Filled.MenuBook,
-                title = "还没有世界百科",
-                message = "创建百科后，可以整理世界规则、地点、势力、事件和人物关系。",
-                actionLabel = "新建百科",
-                onAction = ::createEncyclopedia,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-            )
-        } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-            ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+        ) {
+            if (createError != null) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = MoJingListTokens.rowStart, vertical = 8.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                ) {
+                    Row(
+                        Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            createError.orEmpty(),
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = ::createEncyclopedia, enabled = !isCreating) { Text("重试") }
+                    }
+                }
+            }
+            if (encyclopedias.isEmpty()) {
+                EmptyState(
+                    icon = Icons.AutoMirrored.Filled.MenuBook,
+                    title = "还没有世界百科",
+                    message = "创建百科后，可以整理世界规则、地点、势力、事件和人物关系。",
+                    actionLabel = if (isCreating) "正在创建…" else "新建百科",
+                    onAction = ::createEncyclopedia,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                )
+            } else {
                 if (!hasPublicLlmKey) {
                     LlmKeySetupHintCard(
                         message = "请先在设置填写 API Key",

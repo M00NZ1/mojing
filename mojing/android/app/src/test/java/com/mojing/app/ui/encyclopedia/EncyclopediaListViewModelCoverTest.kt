@@ -218,4 +218,46 @@ class EncyclopediaListViewModelCoverTest {
         assertEquals("封面未能保存到本机，请重试。", message)
         assertFalse(localFile.exists())
     }
+
+    @Test
+    fun createNewReturnsInsertedIdOnlyAfterRoomUpsertAndRefresh() = runTest(dispatcher) {
+        val created = EncyclopediaEntity(id = 42L, name = "新百科库")
+        val encyclopediaDao = mockk<EncyclopediaDao> {
+            coEvery { getAll() } returns listOf(created)
+            coEvery { upsert(any()) } returns 42L
+        }
+        val viewModel = createViewModel(
+            encyclopediaDao,
+            mockk(relaxed = true),
+            mockk(relaxed = true),
+            mockk(relaxed = true),
+        )
+
+        val result = viewModel.createNew()
+
+        assertTrue(result.isSuccess)
+        assertEquals(42L, result.getOrThrow())
+        coVerify(exactly = 1) { encyclopediaDao.upsert(match { it.name == "新百科库" }) }
+        assertEquals(listOf(created), viewModel.encyclopedias.value)
+    }
+
+    @Test
+    fun createNewReturnsVisibleFailureWhenRoomUpsertFails() = runTest(dispatcher) {
+        val encyclopediaDao = mockk<EncyclopediaDao> {
+            coEvery { getAll() } returns emptyList()
+            coEvery { upsert(any()) } throws IllegalStateException("database unavailable")
+        }
+        val viewModel = createViewModel(
+            encyclopediaDao,
+            mockk(relaxed = true),
+            mockk(relaxed = true),
+            mockk(relaxed = true),
+        )
+
+        val result = viewModel.createNew()
+
+        assertTrue(result.isFailure)
+        assertEquals("百科创建失败，请重试", result.exceptionOrNull()?.message)
+        assertTrue(viewModel.encyclopedias.value.isEmpty())
+    }
 }
