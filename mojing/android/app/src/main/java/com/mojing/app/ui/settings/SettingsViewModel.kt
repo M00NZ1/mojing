@@ -69,12 +69,18 @@ class SettingsViewModel @Inject constructor(
     private val _activePlatformId = MutableStateFlow(secureStorage.activeModelPlatformId())
     val activePlatformId: StateFlow<String> = _activePlatformId.asStateFlow()
 
-    suspend fun savePlatform(platform: com.mojing.app.data.ModelPlatform) {
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { secureStorage.saveModelPlatform(platform) }
-        _apiKey.value = platform.apiKey
-        _baseUrl.value = platform.baseUrl
-        _model.value = platform.selectedModel
-        _activePlatformId.value = platform.id
+    suspend fun savePlatform(platform: com.mojing.app.data.ModelPlatform, makeDefault: Boolean = false) {
+        val remainsActive = platform.id == _activePlatformId.value
+        val shouldProjectToDefault = makeDefault || remainsActive
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            secureStorage.saveModelPlatform(platform, makeDefault = shouldProjectToDefault)
+        }
+        if (shouldProjectToDefault) {
+            _apiKey.value = platform.apiKey
+            _baseUrl.value = platform.baseUrl
+            _model.value = platform.selectedModel
+            _activePlatformId.value = platform.id
+        }
     }
 
     suspend fun fetchPlatformModels(base: String, key: String) = systemProbeApi.listModels(base, key)

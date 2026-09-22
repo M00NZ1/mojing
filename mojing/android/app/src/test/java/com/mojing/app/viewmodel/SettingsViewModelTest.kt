@@ -1,6 +1,7 @@
 package com.mojing.app.viewmodel
 
 import com.mojing.app.data.SecureStorage
+import com.mojing.app.data.ModelPlatform
 import com.mojing.app.data.local.dao.CostRecordDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.ModelUsageSummary
@@ -84,6 +85,24 @@ class SettingsViewModelTest {
     fun updateModel() = runTest {
         viewModel.updateModel("gpt-4o")
         assertEquals("gpt-4o", viewModel.model.value)
+    }
+
+    @Test
+    fun savingNonDefaultPlatformDoesNotSwitchActiveCredentials() = runTest {
+        val platform = ModelPlatform(
+            id = "secondary",
+            name = "备用平台",
+            baseUrl = "https://secondary.test/v1",
+            apiKey = "secondary-key",
+            models = listOf("secondary-model"),
+            selectedModel = "secondary-model",
+        )
+
+        viewModel.savePlatform(platform)
+
+        assertEquals("", viewModel.activePlatformId.value)
+        assertEquals("", viewModel.apiKey.value)
+        verify { secureStorage.saveModelPlatform(platform, makeDefault = false) }
     }
 
     @Test

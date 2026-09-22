@@ -99,7 +99,7 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
                         TextButton(enabled = !busy, onClick = {
                             busy = true
                             scope.launch {
-                                try { viewModel.savePlatform(p); snackbar.showSnackbar("默认平台已切换") }
+                                try { viewModel.savePlatform(p, makeDefault = true); snackbar.showSnackbar("默认平台已切换") }
                                 catch (e: CancellationException) { throw e }
                                 catch (_: Exception) { snackbar.showSnackbar("切换未保存，请重试") }
                                 finally { busy = false }
@@ -185,15 +185,19 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
                     busy = true
                     scope.launch {
                         try {
-                            viewModel.savePlatform(p.copy(name = p.name.trim(), baseUrl = p.baseUrl.trim(), apiKey = p.apiKey.trim(), models = names,
-                                selectedModel = p.selectedModel.takeIf { it in names } ?: names.first()))
+                            val isExisting = platforms.any { it.id == p.id }
+                            val normalized = p.copy(name = p.name.trim(), baseUrl = p.baseUrl.trim(), apiKey = p.apiKey.trim(), models = names,
+                                selectedModel = p.selectedModel.takeIf { it in names } ?: names.first())
+                            // Editing an existing non-default platform must not silently switch chat credentials.
+                            // New platforms retain the established creation flow and become the default.
+                            viewModel.savePlatform(normalized, makeDefault = !isExisting)
                             platforms = viewModel.modelPlatforms(); selectedPlatformId = p.id; draft = null
-                            snackbar.showSnackbar("平台已保存，可在聊天中选择模型")
+                            snackbar.showSnackbar(if (isExisting) "平台已保存，可在聊天中选择模型" else "平台已保存并设为默认")
                         } catch (e: CancellationException) { throw e }
                         catch (_: Exception) { error = "保存失败，填写的内容已保留，请重试" }
                         finally { busy = false }
                     }
-                }) { Text(if (busy) "保存中…" else "保存并设为默认") }
+            }) { Text(if (busy) "保存中…" else if (platforms.any { it.id == p.id }) "保存平台" else "保存并设为默认") }
             },
             dismissButton = { TextButton(enabled = !busy && !fetching, onClick = ::requestClose) { Text("取消") } },
         )
