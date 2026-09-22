@@ -961,6 +961,7 @@ fun EncyclopediaDetailScreen(
     }
 
     if (showRelDialog) {
+        val endpointsReady = relFrom != null && relTo != null && relFrom?.id != relTo?.id
         AlertDialog(
             onDismissRequest = { showRelDialog = false },
             title = { Text("添加条目关系") },
@@ -977,6 +978,14 @@ fun EncyclopediaDetailScreen(
                     com.mojing.app.ui.common.MoJingOutlinedButton(
                         onClick = { relMenuTo = true }, modifier = Modifier.fillMaxWidth(),
                     ) { Text("到条目：" + (relTo?.title ?: "请选择"), maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                    if (relFrom != null && relTo != null && relFrom?.id == relTo?.id) {
+                        Text("请选择两个不同的条目", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error)
+                    } else if (relFrom == null || relTo == null) {
+                        Text("选择起点和终点条目后即可添加关系", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    HorizontalDivider()
                     OutlinedTextField(value = relType, onValueChange = { relType = it }, label = { Text("关系类型") }, singleLine = true)
                     OutlinedTextField(value = relLabel, onValueChange = { relLabel = it }, label = { Text("备注（可选）") }, singleLine = true)
                 }
@@ -990,7 +999,7 @@ fun EncyclopediaDetailScreen(
                         showRelDialog = false
                         relLabel = ""
                     }
-                }) { Text("确定") }
+                }, enabled = endpointsReady) { Text("添加关系") }
             },
             dismissButton = { TextButton(onClick = { showRelDialog = false }) { Text("取消") } }
         )

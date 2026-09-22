@@ -3,8 +3,14 @@ package com.mojing.app.ui.encyclopedia
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
@@ -17,6 +23,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun EncyclopediaEntryPicker(encyclopediaId: Long, selectedId: Long?,
     loadPage: suspend (String, Long) -> List<EncyclopediaEntryOption>,
@@ -35,33 +42,99 @@ internal fun EncyclopediaEntryPicker(encyclopediaId: Long, selectedId: Long?,
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { error = "资料读取失败，请重试" }
     }
-    AlertDialog(onDismissRequest = onDismiss,
-        title = { Text("选择条目") },
-        text = { Column(Modifier.fillMaxWidth().heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            MoJingTextField(query, { query = it; cursors = listOf(0L) }, singleLine = true,
-                label = { Text("搜索条目名称") }, modifier = Modifier.fillMaxWidth())
-            when {
-                error != null -> { Text(error.orEmpty(), color = MaterialTheme.colorScheme.error); TextButton({ retry++ }) { Text("重试") } }
-                rows == null -> LinearProgressIndicator(Modifier.fillMaxWidth())
-                rows!!.isEmpty() -> Text("没有匹配条目")
-                else -> LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth().testTag("entry-options")) {
-                    items(rows!!.take(50), key = { it.id }) { entry ->
-                        TextButton({ onSelect(entry) }, modifier = Modifier.fillMaxWidth().testTag("entry-option:${entry.id}").semantics { selected = entry.id == selectedId }) {
-                            Column(Modifier.weight(1f)) {
-                                Text(entry.title.ifBlank { "未命名条目" }, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                Text(ENTRY_TYPE_LABELS[entry.entryType] ?: "其他", style = MaterialTheme.typography.labelSmall)
+    val listState = rememberLazyListState()
+    LaunchedEffect(encyclopediaId, query, cursor) { listState.scrollToItem(0) }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetMaxWidth = 640.dp,
+        dragHandle = null,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentWindowInsets = { WindowInsets.safeDrawing },
+    ) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f)) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("选择条目", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                TextButton(onClick = onDismiss) { Text("关闭") }
+            }
+            MoJingTextField(
+                value = query,
+                onValueChange = { query = it; cursors = listOf(0L) },
+                singleLine = true,
+                label = { Text("搜索条目名称") },
+                leadingIcon = { Icon(Icons.Default.Search, null) },
+                trailingIcon = {
+                    if (query.isNotEmpty()) IconButton(onClick = { query = ""; cursors = listOf(0L) }) {
+                        Icon(Icons.Default.Close, "清空搜索")
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                when {
+                    error != null -> Column(
+                        Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
+                        TextButton(onClick = { retry++ }) { Text("重试") }
+                    }
+                    rows == null -> CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.dp)
+                    rows!!.isEmpty() -> Column(
+                        Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(if (query.isBlank()) "暂无可关联的条目" else "没有匹配条目", style = MaterialTheme.typography.titleSmall)
+                        if (query.isNotBlank()) TextButton(onClick = { query = ""; cursors = listOf(0L) }) {
+                            Text("查看全部条目")
+                        }
+                    }
+                    else -> LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize().testTag("entry-options"),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                    ) {
+                        items(rows!!.take(50), key = { it.id }) { entry ->
+                            val isSelected = entry.id == selectedId
+                            Surface(
+                                onClick = { onSelect(entry) },
+                                color = if (isSelected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
+                                modifier = Modifier.fillMaxWidth().testTag("entry-option:${entry.id}")
+                                    .semantics { selected = isSelected },
+                            ) {
+                                Row(
+                                    Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 12.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(entry.title.ifBlank { "未命名条目" }, style = MaterialTheme.typography.bodyLarge,
+                                            maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        Text(ENTRY_TYPE_LABELS[entry.entryType] ?: "其他", style = MaterialTheme.typography.labelMedium,
+                                            color = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    if (isSelected) Icon(Icons.Default.Check, "已选", Modifier.size(20.dp))
+                                }
                             }
-                            if (entry.id == selectedId) Text("已选", style = MaterialTheme.typography.labelSmall)
+                            HorizontalDivider()
                         }
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton({ cursors = cursors.dropLast(1) }, enabled = cursors.size > 1) { Text("上一页") }
-                Text("第 ${cursors.size} 页", style = MaterialTheme.typography.bodySmall)
-                TextButton({ rows?.getOrNull(49)?.let { cursors = cursors + it.id } }, enabled = error == null && (rows?.size ?: 0) > 50) { Text("下一页") }
+            HorizontalDivider()
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = { cursors = cursors.dropLast(1) }, enabled = cursors.size > 1) { Text("上一页") }
+                    Text("第 ${cursors.size} 页", style = MaterialTheme.typography.labelMedium)
+                    TextButton(onClick = { rows?.getOrNull(49)?.let { cursors = cursors + it.id } },
+                        enabled = error == null && (rows?.size ?: 0) > 50) { Text("下一页") }
+                }
             }
-        } },
-        confirmButton = { TextButton(onDismiss) { Text("关闭") } },
-    )
+        }
+    }
 }
