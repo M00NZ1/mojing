@@ -1136,7 +1136,7 @@ class ChatViewModel @Inject constructor(
         val groupIds = messages.mapNotNull { it.swipeGroupId?.takeIf(String::isNotBlank) }.distinct()
         if (groupIds.isEmpty()) return messages
         return messages.withEffectiveSwipeSelections(
-            messageDao.getBranchSwipeSelectionsForGroups(sessionId, branchId, groupIds),
+            messageDao.getEffectiveSwipeSelectionsForGroups(sessionId, branchId, groupIds),
         )
     }
 

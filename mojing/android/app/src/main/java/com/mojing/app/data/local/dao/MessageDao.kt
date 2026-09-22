@@ -304,15 +304,29 @@ interface MessageDao {
         gid: String,
     ): BranchSwipeSelectionEntity?
 
-    @Query(
-        "SELECT * FROM branch_swipe_selections WHERE sessionId = :sessionId " +
-            "AND branchId = :branchId AND swipeGroupId IN (:groupIds)",
-    )
-    suspend fun getBranchSwipeSelectionsForGroups(
+    // Resolve legacy defaults from the whole visible storyline, never from a paged UI window.
+    @Query("SELECT sessionId, 'main' AS branchId, swipeGroupId, id AS selectedMessageId FROM ($MAIN_CONTEXT_MESSAGES_QUERY) WHERE swipeGroupId IN (:groupIds)")
+    suspend fun getMainEffectiveSwipeSelections(
+        sessionId: Long,
+        groupIds: List<String>,
+    ): List<BranchSwipeSelectionEntity>
+
+    @Query("SELECT sessionId, :branchId AS branchId, swipeGroupId, id AS selectedMessageId FROM ($VISIBLE_CONTEXT_MESSAGES_QUERY) WHERE swipeGroupId IN (:groupIds)")
+    suspend fun getVisibleEffectiveSwipeSelections(
         sessionId: Long,
         branchId: String,
         groupIds: List<String>,
     ): List<BranchSwipeSelectionEntity>
+
+    suspend fun getEffectiveSwipeSelectionsForGroups(
+        sessionId: Long,
+        branchId: String,
+        groupIds: List<String>,
+    ): List<BranchSwipeSelectionEntity> = when {
+        groupIds.isEmpty() -> emptyList()
+        branchId == "main" -> getMainEffectiveSwipeSelections(sessionId, groupIds)
+        else -> getVisibleEffectiveSwipeSelections(sessionId, branchId, groupIds)
+    }
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertBranchSwipeSelectionRaw(entity: BranchSwipeSelectionEntity): Long

@@ -1805,7 +1805,7 @@ class ChatViewModelTest {
         coEvery { messageDao.getMainMessagesForExport(42L, 0L, alternative.id, 256) } returns
             listOf(original, alternative)
         coEvery {
-            messageDao.getBranchSwipeSelectionsForGroups(42L, "main", listOf("reply-export"))
+            messageDao.getEffectiveSwipeSelectionsForGroups(42L, "main", listOf("reply-export"))
         } returns listOf(
             BranchSwipeSelectionEntity(42L, "main", "reply-export", alternative.id),
         )

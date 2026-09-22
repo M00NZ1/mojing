@@ -24,6 +24,14 @@ class BranchSwipeSelectionPolicyTest {
     )
 
     @Test
+    fun selectedReplyOutsideLoadedWindowDoesNotActivateAlternative() {
+        val projected = listOf(alternative).withEffectiveSwipeSelections(
+            listOf(BranchSwipeSelectionEntity(42L, "main", "reply-1", original.id)),
+        )
+        assertFalse(projected.single().includeInContext)
+    }
+
+    @Test
     fun explicitStorylineSelectionOverridesFrozenDefault() {
         val projected = listOf(original, alternative).withEffectiveSwipeSelections(
             listOf(
