@@ -50,8 +50,15 @@ try {
   const waitRequest = async count => { const until = Date.now() + 10000; while (pending.length < count) { if (Date.now() > until) throw new Error('missing request'); await new Promise(r => setTimeout(r, 20)); } };
   await page.goto(`http://127.0.0.1:${port}/encyclopedia?encId=1&category=concept`);
   await page.getByRole('button', { name: '新建条目', exact: true }).first().click();
+  await page.setViewportSize({ width: 390, height: 760 });
+  await page.locator('#encyclopedia-entry-section-extended').scrollIntoViewIfNeeded();
+  const actionBounds = await page.getByRole('region', { name: '条目保存操作' }).boundingBox();
+  assert.ok(actionBounds && actionBounds.y >= 0 && actionBounds.y + actionBounds.height <= 760);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  if (process.env.SMOKE_OUTPUT) await page.screenshot({ path: process.env.SMOKE_OUTPUT });
+  await page.setViewportSize({ width: 1365, height: 900 });
   const title = page.locator('.form-group.full-row input').first();
-  const save = page.getByRole('button', { name: '保存', exact: true });
+  const save = page.getByRole('button', { name: '保存条目', exact: true });
   await title.fill('第一次提交');
   await save.click();
   await waitRequest(1);

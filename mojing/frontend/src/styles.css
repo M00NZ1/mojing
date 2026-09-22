@@ -4509,6 +4509,104 @@ html[data-theme="paper"] .chat-bubble-text hr {
   line-height: 1.7;
 }
 
+.encyclopedia-entry-editor {
+  width: min(900px, 100%);
+  margin-inline: auto;
+  padding-bottom: 92px;
+}
+
+.encyclopedia-entry-editor .secondary-detail-header {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  margin-bottom: 12px;
+  padding: 10px 0;
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.encyclopedia-entry-form-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 14px;
+  padding: 4px;
+  overflow-x: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  scrollbar-width: thin;
+}
+
+.encyclopedia-entry-form-nav a {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: var(--text-2);
+  font-size: 0.78rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.encyclopedia-entry-form-nav a:hover,
+.encyclopedia-entry-form-nav a:focus-visible {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.encyclopedia-entry-form-section {
+  scroll-margin-top: 86px;
+}
+
+.encyclopedia-entry-form-grid {
+  gap: 16px 18px;
+}
+
+.encyclopedia-entry-extended-fields {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 12px;
+}
+
+.encyclopedia-entry-form-actions {
+  position: sticky;
+  bottom: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 18px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(14px);
+}
+
+.encyclopedia-entry-form-actions > div:first-child {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.encyclopedia-entry-form-actions strong {
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.encyclopedia-entry-form-actions span {
+  color: var(--text-2);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.encyclopedia-entry-form-actions .button-row {
+  flex: 0 0 auto;
+}
+
 /* ============================================================
    Settings Page — 标签化设置面板
    ============================================================ */
@@ -6199,6 +6297,17 @@ html[data-theme="paper"] .chat-bubble-text hr {
   .settings-subpage-back { justify-self: start; }
   .settings-subpage-heading h1 { font-size: 1.12rem; }
   .settings-subpage-heading > p:last-child { font-size: 0.78rem; }
+  .encyclopedia-entry-editor { padding-bottom: 132px; }
+  .encyclopedia-entry-editor .secondary-detail-header { padding: 6px 0; }
+  .encyclopedia-entry-form-nav { margin-bottom: 10px; }
+  .encyclopedia-entry-form-actions {
+    align-items: stretch;
+    flex-direction: column;
+    bottom: max(8px, env(safe-area-inset-bottom, 0px));
+    gap: 9px;
+  }
+  .encyclopedia-entry-form-actions .button-row { width: 100%; }
+  .encyclopedia-entry-form-actions .button-row .btn { flex: 1; }
 
   .encyclopedia-layout {
     flex-direction: column;

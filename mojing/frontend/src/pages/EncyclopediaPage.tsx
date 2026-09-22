@@ -1391,6 +1391,23 @@ export default function EncyclopediaPage() {
     focusVisibleDraftReturnTarget(returnSelector);
   }
 
+  function submitEntryForm() {
+    if (saveEntrySubmittingRef.current || hasCurrentEntryCoverRequest()) return;
+    saveEntrySubmittingRef.current = true;
+    if (!selectedEncId) {
+      saveEntrySubmittingRef.current = false;
+      showToast('请先选择百科库', 'warn');
+      return;
+    }
+    saveEntryMutation.mutate({
+      payload: { ...editingEntry },
+      routeKey: routeSnapshotRef.current.key,
+      formRevision: entryFormRevisionRef.current,
+      encyclopediaId: selectedEncId,
+      category: categoryKey,
+    });
+  }
+
   async function requestCloseEncyclopediaForm() {
     if (saveEncyclopediaSubmittingRef.current) {
       showToast('百科库正在保存，请稍候', 'warn');
@@ -1891,43 +1908,23 @@ export default function EncyclopediaPage() {
       {/* ===== 右侧详情区 ===== */}
       <main className="secondary-main">
         {showEntryForm ? (
-          <div>
+          <div className="encyclopedia-entry-editor">
             <div className="secondary-detail-header">
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <button className="btn-icon mobile-only" type="button" disabled={saveEntryMutation.isPending} onClick={() => { void requestCloseEntryForm(); }} style={{ flexShrink: 0 }} aria-label="返回条目列表">←</button>
                 <h2>{editingEntry.id ? '编辑条目' : `新建${category || '条目'}`}</h2>
                 {isEntryFormDirty && <span className="pill pill-accent" role="status">未保存</span>}
               </div>
-              <div className="button-row">
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  disabled={saveEntryMutation.isPending || currentCoverPending}
-                  onClick={() => {
-                    if (saveEntrySubmittingRef.current || hasCurrentEntryCoverRequest()) return;
-                    saveEntrySubmittingRef.current = true;
-                    if (!selectedEncId) {
-                      saveEntrySubmittingRef.current = false;
-                      showToast('请先选择百科库', 'warn');
-                      return;
-                    }
-                    saveEntryMutation.mutate({
-                      payload: { ...editingEntry },
-                      routeKey: routeSnapshotRef.current.key,
-                      formRevision: entryFormRevisionRef.current,
-                      encyclopediaId: selectedEncId,
-                      category: categoryKey,
-                    });
-                  }}
-                >
-                  {saveEntryMutation.isPending ? '保存中...' : currentCoverPending ? '封面生成中…' : '保存'}
-                </button>
-                <button type="button" className="btn btn-ghost btn-sm" disabled={saveEntryMutation.isPending} onClick={() => { void requestCloseEntryForm(); }}>取消</button>
-              </div>
             </div>
-            <div className="form-grid">
-              <div className="form-group full-row"><label className="required">标题</label><input value={editingEntry.title || ''} onChange={(e) => setEditingEntry({ ...editingEntry, title: e.target.value })} maxLength={300} required /></div>
-              <div className="form-group full-row">
+            <nav className="encyclopedia-entry-form-nav" aria-label="条目编辑区段">
+              <a href="#encyclopedia-entry-section-basic">基本信息</a>
+              <a href="#encyclopedia-entry-section-content">正文内容</a>
+              <a href="#encyclopedia-entry-section-rules">触发规则</a>
+              <a href="#encyclopedia-entry-section-extended">扩展字段</a>
+            </nav>
+            <div className="form-grid encyclopedia-entry-form-grid">
+              <div id="encyclopedia-entry-section-basic" className="form-group full-row encyclopedia-entry-form-section"><label className="required">标题</label><input value={editingEntry.title || ''} onChange={(e) => setEditingEntry({ ...editingEntry, title: e.target.value })} maxLength={300} required /></div>
+              <div className="form-group full-row encyclopedia-entry-form-section">
                 <div className="form-section-title">条目封面</div>
                 <p className="hint">
                   封面会出现在列表和网格里；用设置里配好的生图账号出图。
@@ -2079,8 +2076,8 @@ export default function EncyclopediaPage() {
               <div className="form-row full-row">
                 <div className="form-group"><label>标签</label><input value={editingEntry.tags || ''} onChange={(e) => setEditingEntry({ ...editingEntry, tags: e.target.value })} placeholder="多个标签用逗号隔开，比如：江湖,门派,少林" /></div>
               </div>
-              <div className="form-group full-row"><label>一句话简介</label><textarea rows={2} value={editingEntry.summary || ''} onChange={(e) => setEditingEntry({ ...editingEntry, summary: e.target.value })} placeholder="用一句话概括这个条目" /></div>
-              <div className="form-group full-row"><label>详细内容</label><ExpandableTextArea aria-label="详细内容" value={editingEntry.content || ''} onChange={(e) => setEditingEntry({ ...editingEntry, content: e.target.value })} placeholder="填写详细设定，AI 会参考这些内容来回答" maxLength={50000} /></div>
+              <div id="encyclopedia-entry-section-content" className="form-group full-row encyclopedia-entry-form-section"><label>一句话简介</label><textarea rows={2} value={editingEntry.summary || ''} onChange={(e) => setEditingEntry({ ...editingEntry, summary: e.target.value })} placeholder="用一句话概括这个条目" /></div>
+              <div className="form-group full-row encyclopedia-entry-form-section"><label>详细内容</label><ExpandableTextArea aria-label="详细内容" value={editingEntry.content || ''} onChange={(e) => setEditingEntry({ ...editingEntry, content: e.target.value })} placeholder="填写详细设定，AI 会参考这些内容来回答" maxLength={50000} /></div>
 
               {/* AI 智能补全按钮 */}
               <div className="form-group full-row">
@@ -2140,7 +2137,7 @@ export default function EncyclopediaPage() {
                 </div>
               </div>
 
-              <details style={{ marginTop: 8, padding: 8, border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)' }}>
+              <details id="encyclopedia-entry-section-rules" className="encyclopedia-entry-form-section encyclopedia-entry-rules" style={{ marginTop: 8, padding: 8, border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)' }}>
                 <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>触发规则（控制什么时候把这条内容告诉 AI）</summary>
                 <div style={{ marginTop: 8 }}>
                   <div className="form-row">
@@ -2194,6 +2191,7 @@ export default function EncyclopediaPage() {
                 </div>
               </details>
 
+              <div id="encyclopedia-entry-section-extended" className="encyclopedia-entry-form-section encyclopedia-entry-extended-fields">
               {(() => {
                 const schema = ENTRY_SCHEMAS[editingEntry.entry_type as string];
                 if (!schema) return null;
@@ -2207,7 +2205,20 @@ export default function EncyclopediaPage() {
                   );
                 });
               })()}
+              </div>
               <div className="form-group full-row"><label>变更说明</label><input value={editingEntry.change_note || ''} onChange={(e) => setEditingEntry({ ...editingEntry, change_note: e.target.value })} placeholder="改了什么？" /></div>
+            </div>
+            <div className="encyclopedia-entry-form-actions" role="region" aria-label="条目保存操作">
+              <div>
+                <strong>{saveEntryMutation.isPending ? '正在保存条目' : isEntryFormDirty ? '有未保存修改' : editingEntry.id ? '内容已保存' : '待保存条目'}</strong>
+                <span>{currentCoverPending ? '封面生成完成后即可保存。' : '保存后会立即更新百科条目。'}</span>
+              </div>
+              <div className="button-row">
+                <button type="button" className="btn btn-primary" disabled={saveEntryMutation.isPending || currentCoverPending} onClick={submitEntryForm}>
+                  {saveEntryMutation.isPending ? '保存中...' : currentCoverPending ? '封面生成中…' : '保存条目'}
+                </button>
+                <button type="button" className="btn btn-ghost" disabled={saveEntryMutation.isPending} onClick={() => { void requestCloseEntryForm(); }}>取消</button>
+              </div>
             </div>
           </div>
         ) : selectedEncId && encLibraryTool === 'timeline' ? (
