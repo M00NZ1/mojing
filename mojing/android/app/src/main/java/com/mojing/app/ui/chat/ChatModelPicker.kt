@@ -2,19 +2,13 @@ package com.mojing.app.ui.chat
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
@@ -41,8 +35,6 @@ fun ChatModelPicker(
     val names = remember(platform, query) {
         platform?.models.orEmpty().distinct().filter { it.contains(query.trim(), ignoreCase = true) }
     }
-    val tabs = rememberLazyListState(initialFirstVisibleItemIndex =
-        platforms.indexOfFirst { it.id == platform?.id }.coerceAtLeast(0))
     val maxHeight = LocalConfiguration.current.screenHeightDp.dp * 0.78f
     ModalBottomSheet(onDismissRequest = onDismiss, dragHandle = null,
         containerColor = MaterialTheme.colorScheme.surface,
@@ -50,26 +42,10 @@ fun ChatModelPicker(
         Column(Modifier.fillMaxWidth().heightIn(max = maxHeight).padding(horizontal = 12.dp, vertical = 8.dp)) {
             ModelPickerHeader("对话模型", query, { query = it }, onDismiss)
             if (platforms.isNotEmpty()) {
-                LazyRow(state = tabs, horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(horizontal = 4.dp), modifier = Modifier.testTag("chat-model-platforms")) {
-                    items(platforms, key = { it.id }) { item ->
-                        val active = item.id == platform?.id
-                        Surface(onClick = {
-                            platformId = item.id
-                            query = ""
-                        }, shape = RoundedCornerShape(10.dp),
-                            color = if (active) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
-                            contentColor = if (active) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.testTag("chat-platform:${item.id}").semantics { selected = active }) {
-                            Box(Modifier.heightIn(min = 48.dp).padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
-                                Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                                    modifier = Modifier.widthIn(max = 180.dp))
-                            }
-                        }
-                    }
-                }
+                com.mojing.app.ui.common.PlatformTabs(platforms, platform?.id, onSelect = {
+                    platformId = it
+                    query = ""
+                }, modifier = Modifier.testTag("chat-model-platforms"), itemTagPrefix = "chat-platform:")
                 Spacer(Modifier.height(8.dp))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }

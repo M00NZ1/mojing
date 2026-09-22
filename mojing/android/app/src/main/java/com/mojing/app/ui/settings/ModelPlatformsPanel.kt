@@ -1,7 +1,6 @@
 package com.mojing.app.ui.settings
 
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.platform.testTag
@@ -13,6 +12,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -52,37 +53,48 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
             confirmDiscard = true
         } else draft = null
     }
+    val selectedPlatform = platforms.firstOrNull { it.id == selectedPlatformId } ?: platforms.firstOrNull()
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (initialPlatforms.isFailure) {
             Text("平台配置暂时无法读取，原数据已保留。请恢复可用配置后重试。", color = MaterialTheme.colorScheme.error)
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("我的平台", style = MaterialTheme.typography.titleMedium)
-            TextButton(onClick = {
+            TextButton(enabled = !busy, onClick = {
                 draft = ModelPlatform(UUID.randomUUID().toString(), "", "", "", emptyList())
                 originalDraft = draft; confirmDiscard = false
                 modelsText = ""; error = null; discoveryNotice = null
             }) { Text("添加平台") }
         }
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().testTag("settings-platform-tabs")) {
-            items(platforms, key = { it.id }) { platform ->
-                FilterChip(selected = platform.id == (selectedPlatformId.takeIf { id -> platforms.any { it.id == id } } ?: platforms.firstOrNull()?.id),
-                    onClick = { selectedPlatformId = platform.id }, label = { Text(platform.name) })
-            }
+        com.mojing.app.ui.common.PlatformTabs(platforms, selectedPlatform?.id,
+            onSelect = { selectedPlatformId = it }, modifier = Modifier.testTag("settings-platform-tabs"))
+        if (platforms.isEmpty() && initialPlatforms.isSuccess) {
+            Text("添加平台后，在这里管理连接、模型和价格。",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        platforms.filter { it.id == (selectedPlatformId.takeIf { id -> platforms.any { it.id == id } } ?: platforms.firstOrNull()?.id) }.forEach { p ->
-            OutlinedCard(onClick = { draft = p; originalDraft = p; confirmDiscard = false; modelsText = p.models.joinToString("\n"); error = null; discoveryNotice = null },
-                modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(p.name + if (p.id == activeId) " · 默认" else "", style = MaterialTheme.typography.titleMedium)
-                    Text(p.baseUrl, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        selectedPlatform?.let { p ->
+            Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(p.name, style = MaterialTheme.typography.titleMedium)
+                            Text(if (p.id == activeId) "默认平台" else "已保存的平台",
+                                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        TextButton(enabled = !busy, onClick = {
+                            draft = p; originalDraft = p; confirmDiscard = false
+                            modelsText = p.models.joinToString("\n"); error = null; discoveryNotice = null
+                        }) { Text("编辑") }
+                    }
+                    Text(p.baseUrl, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    HorizontalDivider(Modifier.padding(vertical = 4.dp))
                     Text("默认模型", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(p.selectedModel.ifBlank { "待配置模型" }, style = MaterialTheme.typography.bodyMedium)
                     Text("${p.models.size} 个模型 · ${if (p.apiKey.isBlank()) "未填写 Key" else "Key 已保存"}",
                         style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("编辑连接与模型 ›", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     if (p.id != activeId && p.apiKey.isNotBlank() && p.models.isNotEmpty()) {
                         TextButton(enabled = !busy, onClick = {
                             busy = true
