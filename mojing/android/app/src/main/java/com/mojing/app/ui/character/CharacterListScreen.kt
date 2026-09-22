@@ -74,6 +74,7 @@ fun CharacterListScreen(
     val encOptions by viewModel.encyclopedias.collectAsStateWithLifecycle()
     val startingCharacterId by viewModel.startingCharacterId.collectAsStateWithLifecycle()
     val creatingCharacter by viewModel.creatingCharacter.collectAsStateWithLifecycle()
+    val deletingCharacterId by viewModel.deletingCharacterId.collectAsStateWithLifecycle()
     var sortOrder by rememberSaveable { mutableStateOf(CharacterSortOrder.RECOMMENDED) }
     val visibleCharacters by remember {
         derivedStateOf {
@@ -98,6 +99,7 @@ fun CharacterListScreen(
         }
     }
     var deleteTarget by remember { mutableStateOf<CharacterEntity?>(null) }
+    var deleteError by remember { mutableStateOf<String?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var filterMenuExpanded by remember { mutableStateOf(false) }
     var isImportingDocument by remember { mutableStateOf(false) }
@@ -395,7 +397,7 @@ fun CharacterListScreen(
                                 swipeEnabled = true,
                                 isPinned = character.pinnedAt > 0,
                                 onPinToggle = { viewModel.setCharacterPinned(character.id, character.pinnedAt == 0L) },
-                                onDelete = { deleteTarget = character },
+                                onDelete = { deleteError = null; deleteTarget = character },
                                 onClick = { onEdit(character.id) },
                                 menuExtras = {
                                     DropdownMenuItem(
@@ -425,7 +427,7 @@ fun CharacterListScreen(
                                     swipeEnabled = true,
                                     isPinned = character.pinnedAt > 0,
                                     onPinToggle = { viewModel.setCharacterPinned(character.id, character.pinnedAt == 0L) },
-                                    onDelete = { deleteTarget = character },
+                                    onDelete = { deleteError = null; deleteTarget = character },
                                     onClick = { onEdit(character.id) },
                                     menuExtras = {
                                         DropdownMenuItem(
@@ -457,17 +459,36 @@ fun CharacterListScreen(
     }
 
     deleteTarget?.let { c ->
+        val deleting = deletingCharacterId == c.id
         AlertDialog(
-            onDismissRequest = { deleteTarget = null },
+            onDismissRequest = { if (!deleting) deleteTarget = null },
             title = { Text("确认删除") },
             text = {
-                Text(
-                    "确定要删除「${c.name.ifBlank { "未命名角色" }}」吗？\n\n" +
-                        "该角色的本地配置和角色档案会一并删除；已产生的聊天记录不会自动删除。此操作不可撤销。",
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "确定要删除「${c.name.ifBlank { "未命名角色" }}」吗？\n\n" +
+                            "该角色的本地配置和角色档案会一并删除；已产生的聊天记录不会自动删除。此操作不可撤销。",
+                    )
+                    deleteError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
             },
-            confirmButton = { TextButton(onClick = { val deletedName = c.name; viewModel.delete(c.id); deleteTarget = null; Toast.makeText(context, UserFacingStrings.itemDeleted(deletedName.ifBlank { "未命名角色" }), Toast.LENGTH_SHORT).show() }) { Text("删除", color = MaterialTheme.colorScheme.error) } },
-            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } }
+            confirmButton = {
+                TextButton(
+                    enabled = !deleting && deletingCharacterId == null,
+                    onClick = {
+                        viewModel.delete(
+                            c.id,
+                            onDeleted = {
+                                deleteTarget = null
+                                deleteError = null
+                                Toast.makeText(context, UserFacingStrings.itemDeleted(c.name.ifBlank { "未命名角色" }), Toast.LENGTH_SHORT).show()
+                            },
+                            onFailed = { deleteError = it },
+                        )
+                    },
+                ) { Text(if (deleting) "正在删除…" else "删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }, enabled = !deleting) { Text("取消") } }
         )
     }
 }

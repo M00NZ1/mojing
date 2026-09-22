@@ -226,6 +226,9 @@ class CharacterListViewModel @Inject constructor(
     private val _creatingCharacter = MutableStateFlow(false)
     val creatingCharacter: StateFlow<Boolean> = _creatingCharacter.asStateFlow()
 
+    private val _deletingCharacterId = MutableStateFlow<Long?>(null)
+    val deletingCharacterId: StateFlow<Long?> = _deletingCharacterId.asStateFlow()
+
     val characters = _filterEncyclopediaId
         .flatMapLatest { encId ->
             characterDao.observeForCharacterFilter(encId)
@@ -281,8 +284,23 @@ class CharacterListViewModel @Inject constructor(
         }
     }
 
-    fun delete(id: Long) {
-        viewModelScope.launch { deleteCharacter(id) }
+    fun delete(id: Long, onDeleted: () -> Unit = {}, onFailed: (String) -> Unit = {}) {
+        if (_deletingCharacterId.value != null) return
+        _deletingCharacterId.value = id
+        viewModelScope.launch {
+            val deleted = try {
+                deleteCharacter(id)
+                true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                onFailed("删除角色失败，请重试")
+                false
+            } finally {
+                _deletingCharacterId.value = null
+            }
+            if (deleted) onDeleted()
+        }
     }
 
     fun setCharacterPinned(id: Long, pinned: Boolean) {
