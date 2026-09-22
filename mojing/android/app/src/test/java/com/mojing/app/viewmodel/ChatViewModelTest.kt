@@ -190,6 +190,55 @@ class ChatViewModelTest {
 
     private fun validLlmApiService(): LlmApiService = LlmApiService()
 
+    @Test fun novelRenameWaitsForSaveAndIgnoresDuplicateSubmission() = runTest(testDispatcher) {
+        val sessions = existingSessionDao(42L)
+        val gate = CompletableDeferred<Unit>()
+        coEvery { sessions.updateTitle(42L, any(), any()) } coAnswers { gate.await() }
+        val vm = createViewModel(sessionDao = sessions)
+        advanceUntilIdle()
+        var completed = 0
+        vm.renameNovel("新的小说") { completed++ }
+        vm.renameNovel("重复输入") { completed++ }
+        runCurrent()
+        assertTrue(vm.state.value.novelMetadataSaving)
+        assertEquals(0, completed)
+        gate.complete(Unit); advanceUntilIdle()
+        assertEquals(1, completed)
+        assertEquals("新的小说", vm.state.value.sessionTitle)
+        assertFalse(vm.state.value.novelMetadataSaving)
+        coVerify(exactly = 1) { sessions.updateTitle(42L, any(), any()) }
+    }
+
+    @Test fun novelRenameFailureKeepsEditorOpenAndAllowsRetry() = runTest(testDispatcher) {
+        val sessions = existingSessionDao(42L)
+        coEvery { sessions.updateTitle(42L, any(), any()) } throws IllegalStateException("write failed")
+        val vm = createViewModel(sessionDao = sessions)
+        advanceUntilIdle()
+        var completed = 0
+        vm.renameNovel("待保存") { completed++ }; advanceUntilIdle()
+        assertEquals(0, completed)
+        assertNotNull(vm.state.value.novelMetadataError)
+        assertFalse(vm.state.value.novelMetadataSaving)
+        coEvery { sessions.updateTitle(42L, any(), any()) } returns Unit
+        vm.renameNovel("待保存") { completed++ }; advanceUntilIdle()
+        assertEquals(1, completed)
+        assertEquals(null, vm.state.value.novelMetadataError)
+    }
+
+    @Test fun novelRenameChapterRefreshFailureDoesNotReportWriteFailure() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val vm = createViewModel(messageDao = messages)
+        advanceUntilIdle()
+        coEvery { messages.getMainMessageById(42L, 501L) } returns MessageEntity(id = 501L, sessionId = 42L)
+        coEvery { messages.getMainMessagesTail(42L, any()) } throws IllegalStateException("refresh failed")
+        var completed = false
+        vm.renameChapter(501L, "新章名") { completed = true }; advanceUntilIdle()
+        assertTrue(completed)
+        assertEquals(null, vm.state.value.novelMetadataError)
+        assertEquals("章节名称已保存，对话刷新失败，请重新打开对话", vm.state.value.error)
+        assertFalse(vm.state.value.novelMetadataSaving)
+    }
+
     @Test
     fun bookmarkActionsKeepHistoryAndIgnoreDuplicateClicks() = runTest(testDispatcher) {
         val message = MessageEntity(id = 501L, sessionId = 42L, content = "保留当前阅读位置")

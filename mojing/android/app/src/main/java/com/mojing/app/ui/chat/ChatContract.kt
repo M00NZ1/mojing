@@ -75,6 +75,8 @@ object ChatContract {
         val modelSelectionError: String? = null,
         val voiceSelectionSaving: Boolean = false,
         val voiceSelectionError: String? = null,
+        val novelMetadataSaving: Boolean = false,
+        val novelMetadataError: String? = null,
         val memoryCompactionChunk: Int? = null,
         /** 会话创建时配置的展示用上下文上限（tokens），仅用于聊天页统计条 */
         val displayContextTokenLimit: Int = 1_000_000,

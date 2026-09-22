@@ -2672,27 +2672,52 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun renameNovel(title: String) {
-        if (title.isBlank() || _state.value.isGenerating) return
+    fun clearNovelMetadataError() {
+        if (!_state.value.novelMetadataSaving) _state.update { it.copy(novelMetadataError = null) }
+    }
+
+    fun renameNovel(title: String, onSuccess: () -> Unit) {
+        if (_state.value.novelMetadataSaving) return
+        if (title.isBlank() || _state.value.isGenerating) {
+            _state.update { it.copy(novelMetadataError = "请填写名称，并在生成结束后保存") }
+            return
+        }
+        _state.update { it.copy(novelMetadataSaving = true, novelMetadataError = null) }
         viewModelScope.launch {
-            try { sessionDao.updateTitle(sessionId, title.trim().take(100)); _state.update { it.copy(sessionTitle = title.trim().take(100)) } }
+            try {
+                sessionDao.updateTitle(sessionId, title.trim().take(100))
+                _state.update { it.copy(sessionTitle = title.trim().take(100)) }
+                onSuccess()
+            }
             catch (e: CancellationException) { throw e }
-            catch (_: Exception) { _state.update { it.copy(error = "小说标题保存失败，请重试") } }
+            catch (_: Exception) { _state.update { it.copy(novelMetadataError = "小说标题保存失败，请重试") } }
+            finally { _state.update { it.copy(novelMetadataSaving = false) } }
         }
     }
 
     fun renameChapter(messageId: Long, title: String, onSuccess: () -> Unit) {
-        if (title.isBlank() || _state.value.isGenerating) return
+        if (_state.value.novelMetadataSaving) return
+        if (title.isBlank() || _state.value.isGenerating) {
+            _state.update { it.copy(novelMetadataError = "请填写名称，并在生成结束后保存") }
+            return
+        }
+        _state.update { it.copy(novelMetadataSaving = true, novelMetadataError = null) }
         val branch = currentBranchId()
         viewModelScope.launch {
+            var saved = false
             try {
-                getVisibleMessage(branch, messageId) ?: return@launch
-                if (currentBranchId() != branch || _state.value.isGenerating) return@launch
+                check(getVisibleMessage(branch, messageId) != null) { "章节已不存在" }
+                check(currentBranchId() == branch && !_state.value.isGenerating) { "当前故事线状态已变化" }
                 messageDao.renameNovelChapter(messageId, sessionId, title)
-                refreshMessagesUi(branch)
+                saved = true
                 onSuccess()
+                refreshMessagesUi(branch)
             } catch (e: CancellationException) { throw e }
-            catch (_: Exception) { _state.update { it.copy(error = "章节名称保存失败，请重试") } }
+            catch (_: Exception) { _state.update {
+                if (saved) it.copy(error = "章节名称已保存，对话刷新失败，请重新打开对话")
+                else it.copy(novelMetadataError = "章节名称保存失败，请确认章节仍在当前故事线后重试")
+            } }
+            finally { _state.update { it.copy(novelMetadataSaving = false) } }
         }
     }
 

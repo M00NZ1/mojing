@@ -539,6 +539,9 @@ fun ChatScreen(
     com.mojing.app.ui.chat.contents.StoryContentsSheet(
         novelTitle = stableSessionTitle,
         busy = state.isGenerating || isExportingChat,
+        saving = state.novelMetadataSaving,
+        saveError = state.novelMetadataError,
+        onEditStart = viewModel::clearNovelMetadataError,
         onRenameNovel = viewModel::renameNovel,
         onNextChapter = { title, direction -> viewModel.requestNarrator(guidance = direction, nextChapter = true, chapterTitle = title) },
         onRenameChapter = viewModel::renameChapter,
