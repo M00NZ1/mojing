@@ -6,12 +6,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -30,6 +32,7 @@ fun BookmarksTab(
     bookmarkPreviews: Map<Long, String>,
     onJump: (Long) -> Unit,
     onRemove: (Long) -> Unit,
+    busyIds: Set<Long> = emptySet(),
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         if (bookmarks.isEmpty()) {
@@ -60,7 +63,9 @@ fun BookmarksTab(
                                 Text("消息 #${b.messageId}", style = MaterialTheme.typography.labelSmall)
                                 Text(preview, style = MaterialTheme.typography.bodySmall, maxLines = 3)
                             }
-                            IconButton(onClick = { onRemove(b.messageId) }) {
+                            IconButton(onClick = { onRemove(b.messageId) }, enabled = b.messageId !in busyIds) {
+                                if (b.messageId in busyIds) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                else
                                 Icon(Icons.Default.Delete, "取消收藏", tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f))
                             }
                         }

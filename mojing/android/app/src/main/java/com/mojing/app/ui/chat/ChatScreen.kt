@@ -601,6 +601,7 @@ fun ChatScreen(
                     eventNodes = state.eventNodes,
                     characterNames = state.characterNames,
                     bookmarks = state.bookmarks,
+                    bookmarkBusyIds = state.bookmarkBusyIds,
                     bookmarkPreviews = state.bookmarkPreviews,
                     onJumpToBookmark = { mid ->
                         if (state.isGenerating) {
@@ -609,7 +610,7 @@ fun ChatScreen(
                             scope.launch { drawerState.close() }
                         }
                     },
-                    onRemoveBookmark = { mid -> viewModel.toggleBookmark(mid) },
+                    onRemoveBookmark = { mid -> viewModel.removeBookmark(mid) },
                     onToggleMute = { viewModel.toggleMute(it) },
                     onUpdateTalkativeness = { id, value, onResult ->
                         viewModel.updateParticipantTalkativeness(id, value, onResult)

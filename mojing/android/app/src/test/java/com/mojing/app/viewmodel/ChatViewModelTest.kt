@@ -7,6 +7,8 @@ import android.content.Context
 import com.mojing.app.data.ChatDraftSnapshot
 import com.mojing.app.data.ChatDraftStore
 import com.mojing.app.data.SecureStorage
+import com.mojing.app.data.local.dao.BookmarkDao
+import com.mojing.app.data.local.entity.MessageBookmarkEntity
 import com.mojing.app.data.local.dao.AttachmentDao
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.MessageDao
@@ -117,6 +119,7 @@ class ChatViewModelTest {
     private fun createViewModel(
         sessionId: Long = 42L,
         messageDao: MessageDao = mockk(relaxed = true),
+        bookmarkDao: BookmarkDao = mockk(relaxed = true),
         sessionBranchDao: SessionBranchDao = mockk(relaxed = true),
         sessionDao: SessionDao = existingSessionDao(sessionId),
         characterDao: CharacterDao = mockk(relaxed = true),
@@ -164,7 +167,7 @@ class ChatViewModelTest {
         attachmentDao = attachmentDao,
         messageSubmissionTransaction = messageSubmissionTransaction
             ?: submissionTransaction(messageDao, attachmentDao),
-        bookmarkDao = mockk(relaxed = true),
+        bookmarkDao = bookmarkDao,
         imageRepository = imageRepository,
         llmApiService = llmApiService,
         imageApiService = mockk(relaxed = true),
@@ -186,6 +189,63 @@ class ChatViewModelTest {
     }
 
     private fun validLlmApiService(): LlmApiService = LlmApiService()
+
+    @Test
+    fun bookmarkActionsKeepHistoryAndIgnoreDuplicateClicks() = runTest(testDispatcher) {
+        val message = MessageEntity(id = 501L, sessionId = 42L, content = "保留当前阅读位置")
+        val messages = mockk<MessageDao>(relaxed = true)
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(message)
+        val bookmarks = mockk<BookmarkDao>(relaxed = true)
+        var stored: MessageBookmarkEntity? = null
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery { bookmarks.getByMessageId(501L) } answers { stored }
+        coEvery { bookmarks.insert(any()) } coAnswers {
+            release.await()
+            stored = firstArg<MessageBookmarkEntity>().copy(id = 1L)
+            1L
+        }
+        coEvery { bookmarks.deleteByMessageId(501L) } coAnswers { stored = null }
+        val vm = createViewModel(messageDao = messages, bookmarkDao = bookmarks)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.isReady)
+        val history = vm.state.value.messages
+        vm.toggleBookmark(501L)
+        vm.toggleBookmark(501L)
+        assertTrue(501L in vm.state.value.bookmarkBusyIds)
+        release.complete(Unit)
+        vm.state.first { 501L in it.bookmarkedMessageIds && it.bookmarkBusyIds.isEmpty() }
+        coVerify(exactly = 1) { bookmarks.insert(any()) }
+        assertTrue(history === vm.state.value.messages)
+        assertEquals("保留当前阅读位置", vm.state.value.bookmarkPreviews[501L])
+        vm.removeBookmark(501L)
+        advanceUntilIdle()
+        vm.removeBookmark(501L)
+        advanceUntilIdle()
+        assertFalse(501L in vm.state.value.bookmarkedMessageIds)
+        assertTrue(history === vm.state.value.messages)
+        coVerify(exactly = 1) { bookmarks.insert(any()) }
+        coVerify(exactly = 1) { messages.getMainMessagesTail(42L, any()) }
+    }
+
+    @Test
+    fun bookmarkFailureKeepsSelectionAndAllowsRetry() = runTest(testDispatcher) {
+        val mark = MessageBookmarkEntity(id = 1L, sessionId = 42L, messageId = 501L)
+        val bookmarks = mockk<BookmarkDao>(relaxed = true)
+        coEvery { bookmarks.getBySession(42L) } returns listOf(mark)
+        coEvery { bookmarks.getByMessageId(501L) } returns mark
+        coEvery { bookmarks.deleteByMessageId(501L) } throws IllegalStateException("storage unavailable")
+        val vm = createViewModel(bookmarkDao = bookmarks)
+        advanceUntilIdle()
+        vm.removeBookmark(501L)
+        advanceUntilIdle()
+        assertTrue(501L in vm.state.value.bookmarkedMessageIds)
+        assertTrue(vm.state.value.bookmarkBusyIds.isEmpty())
+        assertEquals("取消收藏失败，请重试", vm.state.value.error)
+        coEvery { bookmarks.deleteByMessageId(501L) } returns Unit
+        vm.removeBookmark(501L)
+        advanceUntilIdle()
+        assertFalse(501L in vm.state.value.bookmarkedMessageIds)
+    }
 
     @Test
     fun clearingContextMemoryUpdatesDisplayedMemoryAndKeepsStateOnFailure() = runTest(testDispatcher) {

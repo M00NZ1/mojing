@@ -181,6 +181,7 @@ class ChatViewModel @Inject constructor(
     private val sourceMessageId: Long = savedStateHandle["sourceMessageId"] ?: 0L
     private val sourceBranchId: String = savedStateHandle["sourceBranchId"] ?: ""
     private val _state = MutableStateFlow(ChatContract.State(sessionId = sessionId))
+    private val bookmarkRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     private val eventRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     private val correctionRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     val state: StateFlow<ChatContract.State> = _state.asStateFlow()
@@ -1247,6 +1248,7 @@ class ChatViewModel @Inject constructor(
     }
 
     private suspend fun refreshMessagesUi(requestedBranchId: String = currentBranchId(), anchorMessageId: Long? = null) {
+        val bookmarkRevision = bookmarkRefreshRevision.get()
         val eventRevision = eventRefreshRevision.incrementAndGet()
         val correctionRevision = correctionRefreshRevision.incrementAndGet()
         val branches = sessionBranchDao.getBySession(sessionId)
@@ -1300,9 +1302,9 @@ class ChatViewModel @Inject constructor(
             searchResults = emptyList(),
             isSearchingMessages = false,
             messageAttachments = map,
-            bookmarks = marks,
-            bookmarkedMessageIds = bookmarkIds,
-            bookmarkPreviews = previews,
+            bookmarks = if (bookmarkRefreshRevision.get() == bookmarkRevision) marks else current.bookmarks,
+            bookmarkedMessageIds = if (bookmarkRefreshRevision.get() == bookmarkRevision) bookmarkIds else current.bookmarkedMessageIds,
+            bookmarkPreviews = if (bookmarkRefreshRevision.get() == bookmarkRevision) previews else current.bookmarkPreviews,
             branches = branches,
             branchSourcePreviews = sourcePreviews,
             currentBranchId = branchId,
@@ -3311,15 +3313,52 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun toggleBookmark(messageId: Long) {
+    fun toggleBookmark(messageId: Long) =
+        setBookmark(messageId, messageId !in _state.value.bookmarkedMessageIds)
+
+    fun removeBookmark(messageId: Long) = setBookmark(messageId, false)
+
+    private fun setBookmark(messageId: Long, bookmarked: Boolean) {
+        if (!_state.value.isReady || messageId in _state.value.bookmarkBusyIds) return
+        _state.update { it.copy(bookmarkBusyIds = it.bookmarkBusyIds + messageId) }
+        bookmarkRefreshRevision.incrementAndGet()
         viewModelScope.launch {
-            val existing = bookmarkDao.getByMessageId(messageId)
-            if (existing != null) {
-                bookmarkDao.deleteByMessageId(messageId)
-            } else {
-                bookmarkDao.insert(MessageBookmarkEntity(sessionId = sessionId, messageId = messageId, note = ""))
+            try {
+                val existing = bookmarkDao.getByMessageId(messageId)
+                check(existing == null || existing.sessionId == sessionId)
+                val mark: MessageBookmarkEntity?
+                var preview: String? = null
+                if (bookmarked) {
+                    val message = _state.value.messages.firstOrNull { it.id == messageId }
+                        ?: messageDao.getById(messageId)
+                    check(message?.sessionId == sessionId) { "消息已不存在" }
+                    preview = withContext(Dispatchers.Default) {
+                        ChatMessageTextFormat.preview(message!!.content, message.speakerType, 120, "（无正文）")
+                    }
+                    val entry = existing ?: MessageBookmarkEntity(sessionId = sessionId, messageId = messageId, note = "")
+                    mark = if (existing == null) entry.copy(id = bookmarkDao.insert(entry)) else entry
+                } else {
+                    bookmarkDao.deleteByMessageId(messageId)
+                    mark = null
+                }
+                bookmarkRefreshRevision.incrementAndGet()
+                _state.update { current ->
+                    val marks = (current.bookmarks.filterNot { it.messageId == messageId } + listOfNotNull(mark))
+                        .sortedWith(compareByDescending<MessageBookmarkEntity> { it.createdAt }.thenByDescending { it.id })
+                    current.copy(
+                        bookmarks = marks,
+                        bookmarkedMessageIds = marks.mapTo(mutableSetOf()) { it.messageId },
+                        bookmarkPreviews = if (preview != null) current.bookmarkPreviews + (messageId to preview)
+                            else current.bookmarkPreviews - messageId,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _state.update { it.copy(error = if (bookmarked) "收藏失败，请重试" else "取消收藏失败，请重试") }
+            } finally {
+                _state.update { it.copy(bookmarkBusyIds = it.bookmarkBusyIds - messageId) }
             }
-            refreshMessagesUi()
         }
     }
 
