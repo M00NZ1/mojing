@@ -674,10 +674,9 @@ fun MemoryTab(
                 items(corrections, key = { "correction:${it.id}" }) { correction ->
                     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
                         Column(modifier = Modifier.padding(12.dp)) {
-                            AssistChip(
-                                onClick = {}, enabled = false,
-                                label = { Text(if (correction.branchId == null) "整个对话" else "仅当前故事线") },
-                            )
+                            Text(if (correction.branchId == null) "整个对话" else "仅当前故事线",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.height(4.dp))
                             ExpandableMemoryText(correction.content)
                             correction.sourceMessageId?.let { sourceId ->

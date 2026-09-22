@@ -1334,71 +1334,62 @@ fun ChatScreen(
     }
 
     if (correctionDialogOpen) {
-        AlertDialog(
-            onDismissRequest = { correctionDialogOpen = false },
-            modifier = Modifier.imePadding(),
-            title = { Text(if (correctionEditing == null) "新增用户纠正" else "编辑用户纠正") },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 460.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = correctionScopeBranchId == null,
-                            onClick = { correctionScopeBranchId = null },
-                            label = { Text("整个对话") },
-                        )
-                        FilterChip(
-                            selected = correctionScopeBranchId != null,
-                            onClick = { correctionScopeBranchId = state.currentBranchId },
-                            label = { Text("仅当前故事线") },
-                        )
-                    }
-                    OutlinedTextField(
-                        value = correctionDraft,
-                        onValueChange = { correctionDraft = it.take(2000) },
-                        label = { Text("纠正内容") },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 3,
-                        maxLines = 8,
-                        supportingText = { Text("${correctionDraft.length}/2000") },
-                    )
-                    if (correctionSourceMessageId != null) {
-                        Text(
-                            "已关联原文，可在记忆面板中返回查看。",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+        var correctionSaving by remember { mutableStateOf(false) }
+        var correctionSaveError by remember { mutableStateOf<String?>(null) }
+        ChatPromptSheet(
+            onDismiss = { correctionDialogOpen = false },
+            dismissEnabled = !correctionSaving,
+            title = if (correctionEditing == null) "新增用户纠正" else "编辑用户纠正",
+            editor = {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(enabled = !correctionSaving,
+                        selected = correctionScopeBranchId == null,
+                        onClick = { correctionScopeBranchId = null }, label = { Text("整个对话") })
+                    FilterChip(enabled = !correctionSaving,
+                        selected = correctionScopeBranchId != null,
+                        onClick = { correctionScopeBranchId = state.currentBranchId }, label = { Text("仅当前故事线") })
                 }
+                OutlinedTextField(
+                    value = correctionDraft,
+                    onValueChange = { correctionDraft = it.take(2000) },
+                    enabled = !correctionSaving,
+                    label = { Text("纠正内容") },
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    minLines = 3,
+                    supportingText = { Text("${correctionDraft.length}/2000") },
+                )
+                if (correctionSourceMessageId != null) Text("已关联原文，可在记忆面板中查看。",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             },
-            confirmButton = {
-                TextButton(
-                    enabled = !state.isGenerating,
+            actions = {
+                correctionSaveError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+                if (state.isGenerating) Text("生成结束后可保存纠正", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                com.mojing.app.ui.common.MoJingButton(
+                    enabled = !state.isGenerating && !correctionSaving && correctionDraft.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
                     onClick = {
-                        viewModel.saveMemoryCorrection(
-                            correctionId = correctionEditing?.id,
-                            content = correctionDraft,
-                            branchId = correctionScopeBranchId,
-                            sourceMessageId = correctionSourceMessageId,
-                        ) { success ->
-                            if (success) {
-                                correctionDialogOpen = false
-                                correctionEditing = null
-                                correctionDraft = ""
-                                correctionSourceMessageId = null
-                            } else {
-                                scope.launch { snackbarHostState.showSnackbar("未保存，本轮不会生效") }
+                        if (!correctionSaving) {
+                            correctionSaving = true
+                            correctionSaveError = null
+                            viewModel.saveMemoryCorrection(
+                                correctionId = correctionEditing?.id,
+                                content = correctionDraft,
+                                branchId = correctionScopeBranchId,
+                                sourceMessageId = correctionSourceMessageId,
+                            ) { success ->
+                                correctionSaving = false
+                                if (success) {
+                                    correctionDialogOpen = false
+                                    correctionEditing = null
+                                    correctionDraft = ""
+                                    correctionSourceMessageId = null
+                                } else correctionSaveError = "保存未完成，填写的内容已保留，请重试。"
                             }
                         }
                     },
-                ) { Text("保存") }
+                ) { Text(if (correctionSaving) "正在保存…" else "保存纠正") }
             },
-            dismissButton = { TextButton(onClick = { correctionDialogOpen = false }) { Text("取消") } },
         )
     }
 
