@@ -131,16 +131,13 @@ fun CharacterListScreen(
     }
 
     fun startChat(character: CharacterEntity) {
-        if (character.boundEncyclopediaId <= 0L) {
-            Toast.makeText(context, "请先为角色绑定一个百科", Toast.LENGTH_SHORT).show()
-            onEdit(character.id)
-            return
-        }
         viewModel.startChat(
             characterId = character.id,
             onCreated = onChat,
             onNeedsEncyclopedia = {
-                Toast.makeText(context, "请先为角色绑定一个百科", Toast.LENGTH_SHORT).show()
+                // Keep this callback for older/migrated implementations of the use case.
+                // The current session creator accepts a character without a world binding.
+                Toast.makeText(context, "当前角色需要先选择一个百科", Toast.LENGTH_SHORT).show()
                 onEdit(character.id)
             },
             onFailed = { message -> Toast.makeText(context, message, Toast.LENGTH_SHORT).show() },
@@ -561,7 +558,7 @@ private fun CharacterListRowInner(
                     )
                 } else {
                     Text(
-                        "未绑定百科（聊天前需先绑定）",
+                        "未绑定百科 · 可直接开始对话",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary,
                     )
@@ -582,7 +579,7 @@ private fun CharacterListRowInner(
                 } else {
                     Icon(
                         Icons.AutoMirrored.Filled.Chat,
-                        contentDescription = if (character.boundEncyclopediaId > 0L) "开始对话" else "绑定百科后开始对话",
+                        contentDescription = "开始对话",
                     )
                 }
             }
@@ -675,7 +672,7 @@ private fun CharacterGridCard(
                     )
                 } else {
                     Text(
-                        "未绑定百科（聊天前需先绑定）",
+                        "未绑定百科 · 可直接开始对话",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.tertiary,
                         maxLines = 1,
@@ -700,7 +697,7 @@ private fun CharacterGridCard(
                         Spacer(Modifier.width(6.dp))
                         Text("创建中…")
                     } else {
-                        Text(if (character.boundEncyclopediaId > 0L) "开始对话" else "先绑定百科")
+                        Text("开始对话")
                     }
                 }
             }
