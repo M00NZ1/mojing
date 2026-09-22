@@ -578,6 +578,38 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun correctionSavedButRefreshFailedStillReportsSuccessfulWrite() = runTest(testDispatcher) {
+        val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
+        val vm = createViewModel(memoryCorrectionDao = dao)
+        advanceUntilIdle()
+        coEvery { dao.getVisible(42L, "main") } throws IllegalStateException("read failed")
+        val results = mutableListOf<Boolean>()
+        vm.saveMemoryCorrection(null, "已保存", "main", onResult = { results += it })
+        advanceUntilIdle()
+        assertEquals(listOf(true), results)
+        coVerify(exactly = 1) { dao.insert(any()) }
+        assertTrue(vm.state.value.error.orEmpty().contains("纠正已保存"))
+    }
+
+    @Test
+    fun correctionWriteRejectsDuplicateWhileStorageIsPending() = runTest(testDispatcher) {
+        val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
+        val write = CompletableDeferred<Long>()
+        coEvery { dao.insert(any()) } coAnswers { write.await() }
+        val vm = createViewModel(memoryCorrectionDao = dao)
+        advanceUntilIdle()
+        val results = mutableListOf<Boolean>()
+        vm.saveMemoryCorrection(null, "纠正", "main", onResult = { results += it })
+        runCurrent()
+        vm.saveMemoryCorrection(null, "纠正", "main", onResult = { results += it })
+        assertEquals(listOf(false), results)
+        write.complete(7L)
+        advanceUntilIdle()
+        assertEquals(listOf(false, true), results)
+        coVerify(exactly = 1) { dao.insert(any()) }
+    }
+
+    @Test
     fun correctionRejectsNewMissingSourceButKeepsExistingDeletedSourceEditable() = runTest(testDispatcher) {
         val existing = SessionMemoryCorrectionEntity(
             id = 7L,

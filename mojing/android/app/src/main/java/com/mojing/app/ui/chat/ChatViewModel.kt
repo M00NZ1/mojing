@@ -3021,6 +3021,8 @@ class ChatViewModel @Inject constructor(
 
     private fun normalizedCorrectionContent(content: String): String? = content.trim().takeIf { it.isNotEmpty() && it.length <= 2000 }
 
+    private var correctionWriteInFlight = false
+
     fun saveMemoryCorrection(
         correctionId: Long?,
         content: String,
@@ -3028,6 +3030,10 @@ class ChatViewModel @Inject constructor(
         sourceMessageId: Long? = null,
         onResult: (Boolean) -> Unit = {},
     ) {
+        if (correctionWriteInFlight) {
+            onResult(false)
+            return
+        }
         val normalized = normalizedCorrectionContent(content)
         if (normalized == null) {
             _state.update { it.copy(error = if (content.trim().isEmpty()) "纠正内容不能为空" else "纠正内容最多 2000 字") }
@@ -3039,8 +3045,9 @@ class ChatViewModel @Inject constructor(
             onResult(false)
             return
         }
+        correctionWriteInFlight = true
         viewModelScope.launch {
-            try {
+            val saved = try {
                 val now = System.currentTimeMillis()
                 val existing = correctionId?.let { id ->
                     memoryCorrectionDao.getById(sessionId, id)
@@ -3074,11 +3081,24 @@ class ChatViewModel @Inject constructor(
                         ),
                     )
                 }
-                refreshMemoryCorrectionsOnly()
-                onResult(true)
-            } catch (e: Exception) {
-                _state.update { it.copy(error = "纠正记忆保存失败：${e.message?.takeIf { it.isNotBlank() } ?: "未知错误"}") }
-                onResult(false)
+                true
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _state.update { it.copy(error = "纠正记忆保存失败，请重试") }
+                false
+            } finally {
+                correctionWriteInFlight = false
+            }
+            onResult(saved)
+            if (saved) {
+                try {
+                    refreshMemoryCorrectionsOnly()
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    _state.update { it.copy(error = "纠正已保存，列表刷新失败，请重新打开对话") }
+                }
             }
         }
     }
