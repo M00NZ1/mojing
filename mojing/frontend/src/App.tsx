@@ -17,13 +17,14 @@ const CreationHubPage = lazy(() => import('./pages/CreationHubPage'));
 const EncyclopediaPage = lazy(() => import('./pages/EncyclopediaPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const StorySimulationPage = lazy(() => import('./pages/StorySimulationPage'));
+const UsagePage = lazy(() => import('./pages/UsagePage'));
 const WorkbenchPage = lazy(() => import('./pages/WorkbenchPage'));
 const WorldLibraryPage = lazy(() => import('./pages/WorldLibraryPage'));
 
 const primaryNavigation = [
   { to: '/chat', icon: 'chat', label: '对话', paths: ['/chat'] },
   { to: '/create', icon: 'sparkles', label: '创作', paths: ['/create', '/characters', '/worlds', '/encyclopedia', '/workbench', '/story-simulation'] },
-  { to: '/settings', icon: 'settings', label: '设置', paths: ['/settings'] },
+  { to: '/settings', icon: 'settings', label: '设置', paths: ['/settings', '/usage'] },
 ] as const;
 
 function PageLoadingState() {
@@ -257,6 +258,8 @@ function AppLayout() {
               <Route path="/encyclopedia/*" element={<EncyclopediaPage />} />
               <Route path="/workbench/*" element={<WorkbenchPage />} />
               <Route path="/story-simulation" element={<StorySimulationPage />} />
+              <Route path="/usage/platform" element={<UsagePage level="platform" />} />
+              <Route path="/usage/model" element={<UsagePage level="model" />} />
               <Route path="/settings/*" element={<SettingsPage />} />
               <Route path="*" element={<Navigate to="/chat" replace />} />
             </Routes>

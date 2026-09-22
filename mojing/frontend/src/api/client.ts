@@ -5,6 +5,9 @@ import type {
   ModelChoice,
   AssetItem,
   CostData,
+  UsageModelsResponse,
+  UsageProvidersResponse,
+  UsageRecordsResponse,
   ApiChannel,
   Character,
   CharacterProfile,
@@ -392,6 +395,19 @@ export const api = {
     if (params?.days) search.set('days', String(params.days));
     const suffix = search.toString() ? `?${search.toString()}` : '';
     return request<CostData>(`/costs${suffix}`);
+  },
+  costProviders(params: { days: number; status: 'all' | 'success' | 'failed' }) {
+    const search = new URLSearchParams({ days: String(params.days), status: params.status });
+    return request<UsageProvidersResponse>(`/costs/providers?${search}`);
+  },
+  costModels(provider: string, params: { days: number; status: 'all' | 'success' | 'failed' }) {
+    const search = new URLSearchParams({ days: String(params.days), status: params.status });
+    return request<UsageModelsResponse>(`/costs/providers/${encodeURIComponent(provider)}/models?${search}`);
+  },
+  costModelRecords(provider: string, model: string, params: { days: number; status: 'all' | 'success' | 'failed'; beforeId?: number }) {
+    const search = new URLSearchParams({ days: String(params.days), status: params.status, model, limit: '50' });
+    if (params.beforeId) search.set('before_id', String(params.beforeId));
+    return request<UsageRecordsResponse>(`/costs/providers/${encodeURIComponent(provider)}/records?${search}`);
   },
   updateSession(sessionId: number, payload: { title?: string; think_max_enabled?: boolean }) {
     return request<SessionItem>(`/sessions/${sessionId}`, {

@@ -1,0 +1,60 @@
+.usage-page {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: clamp(18px, 3vw, 36px) clamp(14px, 3vw, 36px) 64px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.usage-breadcrumb { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; color: var(--text-2); font-size: 0.78rem; }
+.usage-breadcrumb a { color: var(--text-2); }
+.usage-breadcrumb strong { color: var(--text); font-weight: 650; }
+.usage-page-header { display: flex; align-items: start; justify-content: space-between; gap: 20px; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+.usage-page-header h1 { max-width: 100%; overflow-wrap: anywhere; margin: 4px 0 8px; font-size: clamp(1.65rem, 3vw, 2.5rem); line-height: 1.2; }
+.usage-page-header p:last-child { color: var(--text-2); font-size: 0.86rem; }
+.usage-page-back { flex-shrink: 0; padding: 7px 0; color: var(--text-2); font-size: 0.84rem; }
+.usage-page-back:hover { color: var(--text); }
+.usage-page > .usage-filters { margin: 20px 0 24px; }
+.usage-request-list { border-top: 1px solid var(--line); }
+.usage-request { border-bottom: 1px solid var(--line); }
+.usage-request summary {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) auto auto 15px;
+  align-items: center;
+  gap: 14px;
+  min-height: 68px;
+  padding: 12px 4px;
+  cursor: pointer;
+  list-style: none;
+}
+.usage-request summary::-webkit-details-marker { display: none; }
+.usage-request summary:hover, .usage-request[open] summary { background: var(--hover); }
+.usage-request-status { border-radius: 5px; padding: 3px 6px; font-size: 0.72rem; text-align: center; }
+.usage-request-status.is-success { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.usage-request-status.is-failed { background: color-mix(in srgb, var(--accent-3) 14%, transparent); color: var(--accent-3); }
+.usage-request-time { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.84rem; }
+.usage-request-tokens { color: var(--text-2); font-size: 0.78rem; white-space: nowrap; }
+.usage-request summary strong { font-size: 0.84rem; font-variant-numeric: tabular-nums; }
+.usage-request[open] .usage-list-arrow { transform: rotate(180deg); }
+.usage-request-detail { padding: 4px 16px 20px 72px; }
+.usage-request-detail dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.usage-request-detail dl > div { min-width: 0; border-top: 1px solid var(--line); padding-top: 8px; }
+.usage-request-detail dt { color: var(--text-2); font-size: 0.75rem; }
+.usage-request-detail dd { margin: 3px 0 0; overflow-wrap: anywhere; font-size: 0.86rem; }
+.usage-more { display: block; width: 100%; margin-top: 15px; padding: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); }
+.usage-more:hover { background: var(--hover); }
+
+@media (max-width: 640px) {
+  .usage-page { padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px)); }
+  .usage-page-header { display: block; }
+  .usage-page-back { display: inline-block; margin-top: 12px; }
+  .usage-request summary { grid-template-columns: 50px minmax(0, 1fr) auto; gap: 6px 10px; }
+  .usage-request-time { grid-column: 2; }
+  .usage-request-tokens { grid-row: 2; grid-column: 2; }
+  .usage-request summary strong { grid-row: 1; grid-column: 3; }
+  .usage-request summary .usage-list-arrow { grid-row: 2; grid-column: 3; justify-self: end; }
+  .usage-request-detail { padding: 4px 4px 20px; }
+  .usage-request-detail dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

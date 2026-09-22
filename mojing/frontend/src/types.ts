@@ -40,6 +40,60 @@ export type StoryWritingResult = {
   status: 'created';
 };
 
+export type UsagePeriod = { days: number; since: string; until: string };
+export type UsageTotals = {
+  cost_usd: number;
+  total_tokens: number;
+  total_calls: number;
+  success_calls: number;
+  failed_calls: number;
+  duration_ms: number;
+};
+export type UsageProvider = {
+  provider: string;
+  calls: number;
+  success_calls: number;
+  failed_calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  duration_ms: number;
+  models_count: number;
+};
+export type UsageModel = {
+  provider: string;
+  model_name: string;
+  calls: number;
+  success_calls: number;
+  failed_calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  duration_ms: number;
+};
+export type UsageProvidersResponse = { period: UsagePeriod; totals: UsageTotals; items: UsageProvider[] };
+export type UsageModelsResponse = { period: UsagePeriod; totals: UsageTotals; provider: string; items: UsageModel[] };
+export type UsageRequest = {
+  id: number;
+  session_id: number | null;
+  character_id: number | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  estimated_cost: number;
+  duration_ms: number;
+  success: boolean;
+  created_at: string;
+};
+export type UsageRecordsResponse = {
+  provider: string;
+  model_name: string;
+  items: UsageRequest[];
+  next_cursor: number | null;
+};
+
 export type StoryRequestState = {
   status: 'missing' | 'draft' | 'saved';
   request_id: string;
