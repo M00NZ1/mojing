@@ -4,6 +4,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -54,11 +56,10 @@ fun ModelPricingPanel(
             val configured by androidx.compose.runtime.produceState<ModelPricing?>(null, platform.id, model, revision) {
                 value = runCatching { prices.price(platform.id, model) }.getOrNull()
             }
-            androidx.compose.material3.Surface(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-            Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            androidx.compose.material3.Surface(modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(model, style = MaterialTheme.typography.bodyMedium)
                     Text(
@@ -71,6 +72,7 @@ fun ModelPricingPanel(
                 TextButton(onClick = { editing = model }) { Text("编辑") }
             }
             }
+            androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
         }
         if (platform.models.isEmpty()) Text("请先添加模型名称。", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -133,27 +135,19 @@ private fun PricingEditor(
     val initialOutput = remember(platformId, model) { output }
     val initialCached = remember(platformId, model) { cached }
     val initialCurrency = remember(platformId, model) { currency }
-    AlertDialog(
+    PlatformEditorDialog(
         onDismissRequest = { if (!saving) onDismiss() },
-        title = { Text("配置 $model 价格") },
+        title = { Text("模型价格") },
+        error = error,
         text = {
-            Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(model, style = MaterialTheme.typography.titleMedium)
+                Text("每百万 Token 的单价", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(enabled = !saving, selected = currency == "CNY", onClick = { currency = "CNY" }, label = { Text("￥ CNY") })
                     FilterChip(enabled = !saving, selected = currency == "USD", onClick = { currency = "USD" }, label = { Text("$ USD") })
                 }
-                if (existing != null || hasPricedHistory) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("同步更新历史费用", style = MaterialTheme.typography.titleSmall)
-                            Text("仅更新当前平台的此模型", style = MaterialTheme.typography.bodySmall)
-                        }
-                        androidx.compose.material3.Switch(checked = syncHistory, onCheckedChange = { syncHistory = it }, enabled = !saving)
-                    }
-                }
-                Text(if (syncHistory) "已计价和未计价的历史记录均按新单价重算。" else if (!hasPricedHistory)
-                    "保存后自动补算当前平台、此模型尚未计价的历史记录。" else "历史费用保持不变，新单价用于之后开始的请求。",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 RateField(input, { input = it }, "输入价格 / 百万 Token", !saving)
                 RateField(output, { output = it }, "输出价格 / 百万 Token", !saving)
                 RateField(cached, { cached = it }, "缓存输入价格 / 百万（可选）", !saving)
@@ -196,16 +190,40 @@ private fun PricingEditor(
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(if (fetching) "取消获取价格" else "通过平台接口获取价格") }
                 fetchNotice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                androidx.compose.material3.HorizontalDivider()
+                if (existing != null || hasPricedHistory) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("同步更新历史费用", style = MaterialTheme.typography.titleSmall)
+                            Text("仅更新当前平台的此模型", style = MaterialTheme.typography.bodySmall)
+                        }
+                        androidx.compose.material3.Switch(checked = syncHistory, onCheckedChange = { syncHistory = it }, enabled = !saving)
+                    }
+                }
+                Text(if (syncHistory) "已计价和未计价的历史记录均按新单价重算。" else if (!hasPricedHistory)
+                    "保存后自动补算当前平台、此模型尚未计价的历史记录。" else "历史费用保持不变，新单价用于之后开始的请求。",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (existing != null) TextButton(enabled = !saving, onClick = {
+                    saving = true
+                    error = null
+                    fetchJob?.cancel()
+                    scope.launch {
+                        try { onRemove() }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { error = "价格清除失败，请重试" }
+                        finally { saving = false }
+                    }
+                }) { Text("清除价格", color = MaterialTheme.colorScheme.error) }
             }
         },
         confirmButton = {
-            TextButton(enabled = !saving, onClick = {
+            com.mojing.app.ui.common.MoJingButton(enabled = !saving, onClick = {
                 val i = input.toDoubleOrNull(); val o = output.toDoubleOrNull()
                 val c = cached.trim().takeIf(String::isNotEmpty)?.toDoubleOrNull()
                 if (i == null || o == null || (cached.isNotBlank() && c == null) || listOf(i, o, c).filterNotNull().any { !it.isFinite() || it < 0 }) {
                     error = "请输入大于等于 0 的有效数字，缓存价格可留空"
                 } else {
+                    error = null
                     saving = true
                     fetchJob?.cancel()
                     scope.launch { try { onSave(ModelPricing(currency, i, o, c, source = if (fetchedPricing?.let { it.currency == currency && it.inputPerMillion == i && it.outputPerMillion == o && it.cachedInputPerMillion == c } == true) "provider" else "manual"), syncHistory) }
@@ -217,20 +235,15 @@ private fun PricingEditor(
             }) { Text(if (saving) "正在保存并更新…" else "保存") }
         },
         dismissButton = {
-            Row {
-                if (existing != null) TextButton(enabled = !saving, onClick = { saving = true; scope.launch {
-                    try { onRemove() } catch (cancelled: CancellationException) { throw cancelled }
-                    catch (_: Exception) { error = "价格清除失败，请重试" } finally { saving = false }
-                } }) { Text("清除价格") }
-                TextButton(enabled = !saving, onClick = onDismiss) { Text("取消") }
-            }
+            TextButton(enabled = !saving, onClick = onDismiss) { Text("取消") }
         },
     )
 }
 
 @Composable
 private fun RateField(value: String, onValueChange: (String) -> Unit, label: String, enabled: Boolean = true) {
-    MoJingTextField(value, onValueChange, label = { Text(label) }, modifier = Modifier.fillMaxWidth(), singleLine = true, enabled = enabled)
+    MoJingTextField(value, onValueChange, label = { Text(label) }, modifier = Modifier.fillMaxWidth(), singleLine = true, enabled = enabled,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
 }
 
 private fun Double.formatRate(): String = "% .6f".format(this).trimEnd('0').trimEnd('.')
