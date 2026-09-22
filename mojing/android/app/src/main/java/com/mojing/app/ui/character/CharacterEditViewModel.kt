@@ -944,27 +944,30 @@ class CharacterEditViewModel @Inject constructor(
         }
     }
 
-    /** 本机直连多候选根地址测试当前角色文字线路（失败且配置了墨境时再走后端中继）。 */
+    /** 使用与对话相同的整组连接解析测试当前角色文字线路。 */
     fun probeTextApi(onMessage: (String) -> Unit) {
         viewModelScope.launch {
             val st = _state.value
-            val base = st.apiBaseUrl.trim().ifBlank { secureStorage.publicBaseUrl.trim() }
+            if (st.probeBusyChannel != null) return@launch
+            val connection = com.mojing.app.domain.config.ChatConnectionResolver.resolve(
+                characterKey = st.apiKey,
+                characterBase = st.apiBaseUrl,
+                publicKey = secureStorage.publicApiKey,
+                publicBase = secureStorage.publicBaseUrl,
+            )
+            connection.error?.let { onMessage(it); return@launch }
+            val base = connection.baseUrl
             if (base.isBlank()) {
                 onMessage(ProbeUiMessages.missingUrl("text"))
                 return@launch
             }
-            val key = st.apiKey.trim().ifBlank { secureStorage.publicApiKey.trim() }
+            val key = connection.apiKey
             if (key.isBlank()) {
                 onMessage(ProbeUiMessages.missingKey("text"))
                 return@launch
             }
-            val main = st.modelName.trim().ifBlank { secureStorage.publicModel.trim() }
-            val model = if (st.thinkMaxEnabled) {
-                val o = st.thinkMaxModelName.trim().ifBlank { secureStorage.thinkMaxModel.trim() }
-                (o.ifBlank { main }).ifBlank { null }
-            } else {
-                main.ifBlank { null }
-            }
+            val model = connection.model(st.modelName, secureStorage.publicModel, st.thinkMaxEnabled,
+                st.thinkMaxModelName, secureStorage.thinkMaxModel).ifBlank { null }
             if (model == null) {
                 onMessage(UserFacingStrings.chatMainModelMissing())
                 return@launch

@@ -406,7 +406,7 @@ fun CharacterEditScreen(
                 modelHint = ApiVendorModelHint.CHAT,
             )
             OutlinedTextField(value = state.apiKey, onValueChange = { viewModel.updateApiKey(it) }, label = { Text("角色专用 API Key") }, placeholder = { Text("sk-xxx") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-            Text("专用 Key 与接口地址需配套填写；不使用专用线路时可在对话中直接选择平台。", style = MaterialTheme.typography.bodySmall)
+            Text("专用线路需填写配套的 Key、接口地址和模型；留空继承公共配置，也可在对话中直接选择平台。", style = MaterialTheme.typography.bodySmall)
             val chatCharCollapsed = ApiProviderPresets.isExactSinglePresetBaseUrl(state.apiBaseUrl)
             CollapsiblePresetUrlModelBlock(
                 collapsedPreset = chatCharCollapsed,

@@ -983,6 +983,42 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun inheritedChatRouteKeepsModelWithResolvedConnection() = runTest(testDispatcher) {
+        for (worldOverride in listOf(false, true)) {
+            val storage = validSecureStorage()
+            every { storage.publicModel } returns "public-model"
+            every { storage.modelPlatforms() } returns emptyList()
+            every { storage.sessionModelSelection(42L) } returns null
+            every { storage.speakerTurnMode } returns "manual"
+            val routes = mutableListOf<List<String>>()
+            val engine = mockk<ChatEngine>(relaxed = true)
+            every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+                routes.add(listOf(args[6] as String, args[7] as String, args[8] as String))
+                flowOf(StreamState.Done("角色回复"))
+            }
+            val world = mockk<SessionWorldDao>(relaxed = true)
+            coEvery { world.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L,
+                sessionLlmApiKey = if (worldOverride) "world-key" else "",
+                sessionLlmBaseUrl = if (worldOverride) "https://world.test/v1" else "")
+            val characters = mockk<CharacterDao>(relaxed = true)
+            coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "角色",
+                apiKey = "character-key", apiBaseUrl = "https://character.test/v1", modelName = "character-model")
+            val participants = mockk<ParticipantDao>(relaxed = true)
+            coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 3L))
+            val vm = createViewModel(secureStorage = storage, sessionWorldDao = world, characterDao = characters,
+                participantDao = participants, chatEngine = engine, llmApiService = validLlmApiService())
+            advanceUntilIdle()
+            vm.setManualReplyCharacterId(3L)
+            vm.updateInput("你好")
+            vm.sendMessage()
+            advanceUntilIdle()
+            val expected = if (worldOverride) listOf("world-key", "https://world.test/v1", "public-model")
+                else listOf("character-key", "https://character.test/v1", "character-model")
+            assertEquals("worldOverride=$worldOverride error=${vm.state.value.error}", listOf(expected), routes)
+        }
+    }
+
+    @Test
     fun modelPickerChangesEngineRouteForCharactersAndNarrator() = runTest(testDispatcher) {
         for (narrator in listOf(false, true)) {
             val a = com.mojing.app.data.ModelPlatform("a", "A", "https://a.test/v1", "fake-a", listOf("a-one", "a-two"))

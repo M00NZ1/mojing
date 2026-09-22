@@ -464,16 +464,9 @@ class ChatViewModel @Inject constructor(
      * 角色未配置 API Key、且未单独指定非占位服务根地址时，实际走的是设置/会话里的线路，
      * 此时应优先用「设置里的公共模型」，避免角色卡默认的 `deepseek-chat` 等与 SiliconFlow 等网关不匹配导致 400。
      */
-    private fun resolveMainChatModelId(character: CharacterEntity): String {
+    private fun resolveMainChatModelId(character: CharacterEntity, connection: com.mojing.app.domain.config.ChatConnection): String {
         requestPlatform()?.let { return it.selectedModel }
-        val pub = secureStorage.publicModel.trim()
-        val charModel = character.modelName.trim()
-        val ownKey = character.apiKey.trim().isNotEmpty()
-        val ownEndpoint = characterUsesOwnChatEndpoint(character)
-        return when {
-            ownKey || ownEndpoint -> charModel.ifBlank { pub }
-            else -> pub.ifBlank { charModel }
-        }.trim()
+        return connection.model(character.modelName, secureStorage.publicModel)
     }
 
     /**
@@ -482,15 +475,11 @@ class ChatViewModel @Inject constructor(
      * - 开启思考/Max：仍用主模型，除非用户在「思考模型覆盖」或设置里填了可选覆盖；**不会**在客户端把模型名改成其它 id。
      *   若当前模型不支持思考/Max，由接口拒绝，再通过 [streamErrorThinkMaxRoute] 提示。
      */
-    private fun resolveChatLlmModel(character: CharacterEntity, sessionThinkMax: Boolean): String? {
+    private fun resolveChatLlmModel(character: CharacterEntity, sessionThinkMax: Boolean, connection: com.mojing.app.domain.config.ChatConnection): String? {
         requestPlatform()?.let { return it.selectedModel }
-        val main = resolveMainChatModelId(character)
-        if (!effectiveThinkMax(character, sessionThinkMax)) {
-            return main.ifBlank { null }
-        }
-        val optionalOverride = character.thinkMaxModelName.trim()
-            .ifBlank { secureStorage.thinkMaxModel.trim() }
-        return (optionalOverride.ifBlank { main }).ifBlank { null }
+        return connection.model(character.modelName, secureStorage.publicModel,
+            effectiveThinkMax(character, sessionThinkMax), character.thinkMaxModelName,
+            secureStorage.thinkMaxModel).ifBlank { null }
     }
 
     /** 单张聊天附件上限（字节），与 Web `max_upload_mb` 对齐 */
@@ -2008,7 +1997,7 @@ class ChatViewModel @Inject constructor(
         val sessionEntity = sessionDao.getById(sessionId)
         val sessionThink = sessionEntity?.thinkMaxEnabled == true
         val thinkRoute = effectiveThinkMax(character, sessionThink)
-        val model = resolveChatLlmModel(character, sessionThink)
+        val model = resolveChatLlmModel(character, sessionThink, connection)
         if (model == null) {
             _state.value = _state.value.copy(
                 error = UserFacingStrings.chatMainModelMissing(),
@@ -2372,7 +2361,7 @@ class ChatViewModel @Inject constructor(
                     val sole = llmApiService.normalizeOpenAiCompatibleBase(baseUrlRaw.trim())
                     if (sole.isNotEmpty()) listOf(sole) else emptyList()
                 }
-            val model = resolveMainChatModelId(CharacterEntity(modelName = "")).ifBlank { secureStorage.publicModel.trim() }
+            val model = resolveMainChatModelId(CharacterEntity(modelName = ""), connection)
             if (apiKey.isEmpty()) {
                 _state.value = _state.value.copy(error = UserFacingStrings.chatApiKeyMissing())
                 return@narratorScope
@@ -3455,7 +3444,7 @@ class ChatViewModel @Inject constructor(
             connection.error?.let { onDone(it); return@launch }
             val apiKey = connection.apiKey
             val baseUrl = connection.baseUrl
-            val model = resolveMainChatModelId(resolvedCharacter).ifBlank { secureStorage.publicModel.trim() }
+            val model = resolveMainChatModelId(resolvedCharacter, connection)
             if (apiKey.isBlank() || baseUrl.isBlank() || model.isBlank()) {
                 onDone("当前线路未配置可用对话模型，无法重建记忆")
                 return@launch

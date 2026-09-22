@@ -29,7 +29,8 @@ data class SessionWorldEntity(
     val sedimentInterval: Int = 20,
     /**
      * 本会话/世界级 API 覆盖（仅本机 Room，加密存储在会话维度）。
-     * 解析顺序：角色卡字段 → 下方会话字段 → 设置里的「主 API / 生图 / 语音」。
+     * 对话连接顺序：已选择平台 → 会话 Key/Base → 角色 Key/Base → 公共配置。
+     * 会话对话覆盖无独立模型字段，沿用公共模型；配图和旧语音字段有各自解析规则。
      * 用于不同会话使用不同 Key，避免多世界串用同一供应商身份。
      */
     val sessionLlmApiKey: String = "",

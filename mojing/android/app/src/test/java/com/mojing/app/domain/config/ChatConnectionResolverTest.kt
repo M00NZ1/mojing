@@ -4,6 +4,25 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ChatConnectionResolverTest {
+    @Test fun dedicatedCharacterNeverBorrowsPublicModels() {
+        val connection = ChatConnectionResolver.complete("角色", "private", "https://character.example")
+        assertEquals("", connection.model("", "public-model"))
+        assertEquals("character-model", connection.model("character-model", "public-model", true, "", "public-thinking"))
+        assertEquals("character-thinking", connection.model("character-model", "public-model", true, "character-thinking", "public-thinking"))
+    }
+
+    @Test fun inheritedPublicConnectionIgnoresOldCharacterDefaultModel() {
+        val connection = ChatConnectionResolver.resolve(characterBase = "https://api.deepseek.com", publicKey = "public", publicBase = "https://public.example")
+        assertEquals("public-model", connection.model("deepseek-chat", "public-model"))
+        assertEquals("public-thinking", connection.model("deepseek-chat", "public-model", true, "character-thinking", "public-thinking"))
+    }
+
+    @Test fun legacySessionOverrideUsesPublicModelNotShadowedCharacterModel() {
+        val connection = ChatConnectionResolver.resolve(worldKey = "world", worldBase = "https://world.example", characterKey = "character", characterBase = "https://character.example", publicKey = "public", publicBase = "https://public.example")
+        assertEquals("public-model", connection.model("character-model", "public-model"))
+        assertEquals("", connection.model("character-model", ""))
+    }
+
     @Test fun publicConnectionIsInheritedOnlyWhenNoOverrideExists() {
         val result = ChatConnectionResolver.resolve(publicKey = "public", publicBase = "https://public.example/v1")
         assertEquals("public", result.apiKey)

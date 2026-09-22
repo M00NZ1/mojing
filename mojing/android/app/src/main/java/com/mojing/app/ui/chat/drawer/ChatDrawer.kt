@@ -540,6 +540,7 @@ fun WorldConfigTab(
         }
         if (routeDetailsOpen) {
             Text("对话 / 旁白 / 记忆", style = MaterialTheme.typography.labelMedium)
+            Text("此处覆盖 Key 和地址，模型使用公共模型设置；需要独立模型时，在输入框下方选择平台和模型。", style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(
                 value = llmKey,
                 onValueChange = { llmKey = it },
