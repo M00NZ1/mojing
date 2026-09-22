@@ -6,6 +6,7 @@ import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.entity.EncyclopediaEntity
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,17 +36,26 @@ class WorldSettingsViewModel @Inject constructor(
     val state: StateFlow<WorldSettingsState> = _state.asStateFlow()
     private var worldId: Long = 0L
     private var savedSnapshot = ""
+    private var loadJob: Job? = null
 
     fun load(id: Long) {
-        if (id <= 0L || worldId == id && !_state.value.loading && _state.value.error == null) return
+        if (_state.value.saving) return
+        if (worldId == id && (loadJob?.isActive == true || !_state.value.loading && _state.value.error == null)) return
+        loadJob?.cancel()
         worldId = id
+        if (id <= 0L) {
+            _state.value = WorldSettingsState(loading = false, error = "世界不存在，请返回世界列表重新选择")
+            return
+        }
         _state.value = WorldSettingsState(loading = true)
-        viewModelScope.launch {
+        loadJob = viewModelScope.launch {
             try {
                 val world = encyclopediaDao.getById(id) ?: error("找不到这个世界")
-                applyLoaded(world)
+                if (worldId == id) applyLoaded(world)
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (e: Exception) { _state.value = WorldSettingsState(loading = false, error = e.message ?: "读取世界失败，请重试") }
+            catch (e: Exception) {
+                if (worldId == id) _state.value = WorldSettingsState(loading = false, error = e.message ?: "读取世界失败，请重试")
+            }
         }
     }
 
