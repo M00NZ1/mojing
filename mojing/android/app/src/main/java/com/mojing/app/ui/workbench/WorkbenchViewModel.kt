@@ -14,6 +14,8 @@ import com.mojing.app.domain.engine.LlmRetry
 import com.mojing.app.domain.usecase.SaveWorldTemplatePackageUseCase
 import com.mojing.app.domain.usecase.PromoteWorldTemplateUseCase
 import com.mojing.app.domain.usecase.SmartImportUseCase
+import com.mojing.app.domain.usecase.DeleteWorldTemplateResult
+import com.mojing.app.domain.usecase.DeleteWorldTemplateUseCase
 import com.mojing.app.data.prefs.UiPreferencesRepository
 import com.mojing.app.ui.util.UserFacingStrings
 import com.mojing.app.ui.util.KeyedOperationOwner
@@ -45,6 +47,12 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 
+data class TemplateDeleteState(
+    val templateId: Long? = null,
+    val isDeleting: Boolean = false,
+    val result: DeleteWorldTemplateResult? = null,
+)
+
 @HiltViewModel
 class WorkbenchViewModel @Inject constructor(
     private val templateDao: WorldTemplateDao,
@@ -57,12 +65,16 @@ class WorkbenchViewModel @Inject constructor(
     private val llmRetry: LlmRetry,
     private val uiPreferencesRepository: UiPreferencesRepository,
     private val saveWorldTemplatePackage: SaveWorldTemplatePackageUseCase,
+    private val deleteWorldTemplateUseCase: DeleteWorldTemplateUseCase,
 ) : ViewModel() {
     private val coverGenerationOwner = KeyedOperationOwner<Long>()
     val coverGeneratingTemplateIds: StateFlow<Set<Long>> = coverGenerationOwner.activeKeys
 
     private val _templates = MutableStateFlow<List<WorldTemplateEntity>>(emptyList())
     val templates: StateFlow<List<WorldTemplateEntity>> = _templates.asStateFlow()
+    private val _deleteTemplateState = MutableStateFlow(TemplateDeleteState())
+    val deleteTemplateState: StateFlow<TemplateDeleteState> = _deleteTemplateState.asStateFlow()
+    private val deletingTemplateIds = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
     val promotedTemplateIds: StateFlow<Map<Long, Long>> = legacyWorldMappingDao.observeAll().map { rows -> rows.associate { it.worldTemplateId to it.encyclopediaId } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
@@ -103,11 +115,27 @@ class WorkbenchViewModel @Inject constructor(
     fun refresh() { viewModelScope.launch { _templates.value = templateDao.getAll() } }
 
     fun deleteTemplate(id: Long) {
+        if (!deletingTemplateIds.add(id)) return
+        _deleteTemplateState.value = TemplateDeleteState(templateId = id, isDeleting = true)
         viewModelScope.launch {
-            if (legacyWorldMappingDao.getByTemplateId(id) != null) return@launch
-            templateDao.delete(id)
-            _templates.value = templateDao.getAll()
+            try {
+                val result = deleteWorldTemplateUseCase(id)
+                if (result is DeleteWorldTemplateResult.Deleted) {
+                    _templates.value = _templates.value.filterNot { it.id == id }
+                }
+                _deleteTemplateState.value = TemplateDeleteState(templateId = id, result = result)
+            } catch (cause: CancellationException) {
+                throw cause
+            } catch (cause: Exception) {
+                _deleteTemplateState.value = TemplateDeleteState(templateId = id, result = DeleteWorldTemplateResult.Failed(cause))
+            } finally {
+                deletingTemplateIds.remove(id)
+            }
         }
+    }
+
+    fun clearTemplateDeleteState() {
+        if (!_deleteTemplateState.value.isDeleting) _deleteTemplateState.value = TemplateDeleteState()
     }
 
     fun setTemplatePinned(id: Long, pinned: Boolean) {

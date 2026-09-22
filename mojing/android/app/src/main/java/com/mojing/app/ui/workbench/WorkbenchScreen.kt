@@ -44,6 +44,7 @@ import androidx.navigation.NavHostController
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.mojing.app.data.local.entity.WorldTemplateEntity
+import com.mojing.app.domain.usecase.DeleteWorldTemplateResult
 import com.mojing.app.media.CharacterCardImageProcessor
 import com.mojing.app.ui.character.components.CardCoverCropSheetHost
 import com.mojing.app.ui.common.EmptyState
@@ -89,6 +90,7 @@ fun WorkbenchScreen(
     val generateSaving by viewModel.generateSaving.collectAsStateWithLifecycle()
     val coverGeneratingTemplateIds by viewModel.coverGeneratingTemplateIds.collectAsStateWithLifecycle()
     val promotedTemplateIds by viewModel.promotedTemplateIds.collectAsStateWithLifecycle()
+    val deleteTemplateState by viewModel.deleteTemplateState.collectAsStateWithLifecycle()
     var deleteTarget by remember { mutableStateOf<WorldTemplateEntity?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var isImportingDocument by remember { mutableStateOf(false) }
@@ -112,6 +114,17 @@ fun WorkbenchScreen(
     var showStopAndContinueDialog by remember { mutableStateOf(false) }
     var showSavingDialog by remember { mutableStateOf(false) }
     var pendingNavigation by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    LaunchedEffect(deleteTemplateState) {
+        val target = deleteTarget ?: return@LaunchedEffect
+        if (target.id == deleteTemplateState.templateId &&
+            deleteTemplateState.result is DeleteWorldTemplateResult.Deleted
+        ) {
+            deleteTarget = null
+            viewModel.clearTemplateDeleteState()
+            Toast.makeText(context, UserFacingStrings.itemDeleted(target.label.ifBlank { "未命名模板" }), Toast.LENGTH_SHORT).show()
+        }
+    }
 
     fun dismissStopDialog() {
         showStopAndContinueDialog = false
@@ -449,7 +462,7 @@ fun WorkbenchScreen(
                                         swipeEnabled = false,
                                         isPinned = template.pinnedAt > 0,
                                         onPinToggle = { viewModel.setTemplatePinned(template.id, template.pinnedAt == 0L) },
-                                        onDelete = { if (template.id !in promotedTemplateIds) deleteTarget = template },
+                                        onDelete = { viewModel.clearTemplateDeleteState(); deleteTarget = template },
                                         onClick = { promotedTemplateIds[template.id]?.let(onOpenCanonical) ?: onEditTemplate(template.id) },
                                         menuExtras = {
                                             DropdownMenuItem(
@@ -506,7 +519,7 @@ fun WorkbenchScreen(
                                             swipeEnabled = true,
                                             isPinned = template.pinnedAt > 0,
                                             onPinToggle = { viewModel.setTemplatePinned(template.id, template.pinnedAt == 0L) },
-                                            onDelete = { if (template.id !in promotedTemplateIds) deleteTarget = template },
+                                            onDelete = { viewModel.clearTemplateDeleteState(); deleteTarget = template },
                                             onClick = { promotedTemplateIds[template.id]?.let(onOpenCanonical) ?: onEditTemplate(template.id) },
                                             menuExtras = {
                                                 DropdownMenuItem(
@@ -843,19 +856,47 @@ fun WorkbenchScreen(
     )
 
     deleteTarget?.let { t ->
+        val canonicalId = promotedTemplateIds[t.id]
+        val currentDelete = deleteTemplateState.takeIf { it.templateId == t.id }
+        val deleting = currentDelete?.isDeleting == true
+        val deleteError = when (currentDelete?.result) {
+            DeleteWorldTemplateResult.Protected -> "该模板已归入百科，请到对应世界中管理。"
+            DeleteWorldTemplateResult.NotFound -> "模板已不存在，请关闭后刷新列表。"
+            is DeleteWorldTemplateResult.Failed -> "删除失败，模板及设定条目已保留，请重试。"
+            else -> null
+        }
         AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            title = { Text("确认删除") },
-            text = { Text("确定要删除「${t.label}」吗？") },
-            confirmButton = {
-                TextButton(onClick = {
-                    val deletedLabel = t.label
-                    viewModel.deleteTemplate(t.id)
-                    deleteTarget = null
-                    Toast.makeText(context, UserFacingStrings.itemDeleted(deletedLabel.ifBlank { "未命名模板" }), Toast.LENGTH_SHORT).show()
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            onDismissRequest = { if (!deleting) deleteTarget = null },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            shape = MaterialTheme.shapes.large,
+            title = { Text("删除工坊模板", style = MaterialTheme.typography.titleLarge) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        if (canonicalId != null) "「${t.label.ifBlank { "未命名模板" }}」已归入百科，请在对应世界中管理。"
+                        else "将删除「${t.label.ifBlank { "未命名模板" }}」及其工坊设定条目，操作不可撤销。",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    if (deleting) Text("正在删除…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (deleteError != null && canonicalId == null) Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.small) {
+                        Text(deleteError, Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer)
+                    }
+                }
             },
-            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } }
+            confirmButton = {
+                if (canonicalId != null) {
+                    Button(onClick = { deleteTarget = null; onOpenCanonical(canonicalId) }, enabled = !deleting) { Text("打开百科") }
+                } else {
+                    Button(
+                        onClick = { viewModel.deleteTemplate(t.id) },
+                        enabled = !deleting && currentDelete?.result !is DeleteWorldTemplateResult.Protected && currentDelete?.result !is DeleteWorldTemplateResult.NotFound,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError),
+                    ) {
+                        Text(if (currentDelete?.result is DeleteWorldTemplateResult.Failed) "重试删除" else if (deleting) "删除中" else "删除")
+                    }
+                }
+            },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }, enabled = !deleting) { Text(if (deleteError != null) "关闭" else "取消") } }
         )
     }
 }

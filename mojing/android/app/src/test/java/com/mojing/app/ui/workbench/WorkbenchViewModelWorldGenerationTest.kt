@@ -188,6 +188,7 @@ class WorkbenchViewModelWorldGenerationTest {
             llmRetry = llmRetry,
             uiPreferencesRepository = preferences,
             saveWorldTemplatePackage = savePackage,
+            deleteWorldTemplateUseCase = mockk(relaxed = true),
         )
     }
 

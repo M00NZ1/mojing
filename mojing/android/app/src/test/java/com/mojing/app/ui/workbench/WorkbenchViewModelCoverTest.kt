@@ -7,6 +7,7 @@ import com.mojing.app.data.prefs.UiPreferencesRepository
 import com.mojing.app.data.remote.BackendWorldsApi
 import com.mojing.app.data.repository.ImageRepository
 import com.mojing.app.domain.engine.LlmRetry
+import com.mojing.app.domain.usecase.DeleteWorldTemplateUseCase
 import com.mojing.app.domain.usecase.SaveWorldTemplatePackageUseCase
 import com.mojing.app.domain.usecase.SmartImportUseCase
 import dagger.Lazy
@@ -61,6 +62,7 @@ class WorkbenchViewModelCoverTest {
             llmRetry = mockk<LlmRetry>(relaxed = true),
             uiPreferencesRepository = preferences,
             saveWorldTemplatePackage = mockk<SaveWorldTemplatePackageUseCase>(relaxed = true),
+            deleteWorldTemplateUseCase = mockk<DeleteWorldTemplateUseCase>(relaxed = true),
         )
     }
 
