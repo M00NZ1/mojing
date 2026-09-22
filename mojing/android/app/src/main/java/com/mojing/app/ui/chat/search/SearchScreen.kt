@@ -27,13 +27,15 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.filled.History
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
-import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.platform.LocalFocusManager
@@ -90,11 +92,7 @@ fun SearchScreen(
     fun submit() { focus.clearFocus(); vm.search(sessionId, branchId) }
     LaunchedEffect(state.completedQuery) { if (state.completedQuery.isNotBlank()) listState.scrollToItem(0) }
     Column(Modifier.fillMaxSize().imePadding()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
-            OutlinedTextField(state.query, vm::setQuery, Modifier.weight(1f).border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp)), shape = RoundedCornerShape(20.dp), singleLine = true, placeholder = { Text("搜索消息") }, leadingIcon = { Icon(Icons.Default.Search, null) }, trailingIcon = { if (state.query.isNotEmpty()) IconButton({ vm.setQuery("") }) { Icon(Icons.Default.Close, "清除") } }, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { submit() }))
-            IconButton(onClick = { submit() }, enabled = !state.searching && state.query.isNotBlank()) { Icon(Icons.Default.Search, "搜索") }
-        }
+        SearchQueryToolbar(state.query, vm::setQuery, onBack, ::submit, !state.searching)
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             FilterChip(selected = state.exactMatch, onClick = {
                 val repeatSearch = state.completedQuery.isNotBlank()
@@ -106,8 +104,21 @@ fun SearchScreen(
         if (state.query.isBlank() && state.history.isEmpty()) {
             SearchEmptyState("查找对话中的内容", "输入角色名、剧情关键词或一段原文，搜索当前故事线。")
         } else if (state.query.isBlank()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.End) { Text("清空", Modifier.clickable { vm.clearHistory(sessionId) }.padding(8.dp), color = MaterialTheme.colorScheme.primary) }
-            LazyColumn(Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp), state = listState) { items(state.history, key = { it }) { query -> Row(Modifier.fillMaxWidth().padding(start = 16.dp)) { Text(query, Modifier.weight(1f).clickable { vm.setQuery(query); submit() }.padding(horizontal = 8.dp, vertical = 16.dp), style = MaterialTheme.typography.bodyLarge); IconButton({ vm.removeHistory(sessionId, query) }) { Icon(Icons.Default.Close, "删除历史") } } } }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { vm.clearHistory(sessionId) }) { Text("清空历史") }
+            }
+            LazyColumn(Modifier.fillMaxWidth().weight(1f), state = listState) {
+                items(state.history, key = { it }) { query ->
+                    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.History, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(query, Modifier.weight(1f).clickable { vm.setQuery(query); submit() }
+                            .heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 14.dp),
+                            style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        IconButton({ vm.removeHistory(sessionId, query) }) { Icon(Icons.Default.Close, "删除历史：$query") }
+                    }
+                    HorizontalDivider(Modifier.padding(start = 52.dp, end = 20.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                }
+            }
         } else {
             if (state.searching) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (state.error != null) Surface(
@@ -131,7 +142,7 @@ fun SearchScreen(
                 if (state.totalMatches == 0) SearchEmptyState("没有找到匹配消息", "试试更短的关键词，或关闭精确匹配。")
                 else if (state.completedQuery.isBlank()) SearchEmptyState("准备搜索", "点击搜索按钮或键盘上的搜索键查看结果。")
             }
-            LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(0.dp)) {
                 items(state.hits, key = { it.message.id }) { hit -> SearchResultCard(hit, state.completedQuery) { focus.clearFocus(); vm.openHit(sessionId, branchId, hit.message.id) } }
                 if (state.hasOlder && state.error == null) item {
                     TextButton(enabled = !state.searching, onClick = { vm.loadOlder(sessionId, branchId) }, modifier = Modifier.fillMaxWidth()) {
@@ -154,12 +165,32 @@ fun SearchScreen(
 }
 
 @Composable private fun SearchResultCard(hit: SearchHit, query: String, onClick: () -> Unit) {
-    Surface(onClick = onClick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(formatDate(hit.message.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(when (hit.message.speakerType) { "user" -> "我"; "narrator" -> "旁白"; else -> "角色" }, style = MaterialTheme.typography.labelLarge)
+    Surface(onClick = onClick, modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
+        Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(when (hit.message.speakerType) { "user" -> "我"; "narrator" -> "旁白"; else -> "角色" },
+                    Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+                Text(formatDate(hit.message.createdAt), Modifier.padding(start = 12.dp),
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             HighlightedText(hit.snippet, query)
         }
+    }
+    HorizontalDivider(Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.outlineVariant)
+}
+
+@Composable private fun SearchQueryToolbar(
+    query: String, onQuery: (String) -> Unit, onBack: () -> Unit,
+    onSearch: () -> Unit, enabled: Boolean,
+) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+        OutlinedTextField(query, onQuery, Modifier.weight(1f), shape = RoundedCornerShape(12.dp),
+            singleLine = true, placeholder = { Text("搜索消息") },
+            trailingIcon = { if (query.isNotEmpty()) IconButton({ onQuery("") }) { Icon(Icons.Default.Close, "清除关键词") } },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { if (enabled && query.isNotBlank()) onSearch() }))
+        IconButton(onClick = onSearch, enabled = enabled && query.isNotBlank()) { Icon(Icons.Default.Search, "搜索") }
     }
 }
 
@@ -177,13 +208,7 @@ fun SearchScreen(
     }
     Box(Modifier.fillMaxSize().imePadding()) {
         Column(Modifier.fillMaxSize().padding(bottom = 64.dp)) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = vm::closeHit) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回搜索结果") }
-                OutlinedTextField(value = readerQuery, onValueChange = { readerQuery = it }, modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(28.dp), singleLine = true, placeholder = { Text("搜索消息") },
-                    trailingIcon = { IconButton(onClick = { readerQuery = "" }) { Icon(Icons.Default.Close, "清除关键词") } },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { submit() }))
-            }
+            SearchQueryToolbar(readerQuery, { readerQuery = it }, vm::closeHit, { submit() }, !state.searching)
             if (state.searching && state.contextMessages.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (!state.searching && state.contextMessages.isEmpty()) {
                 Text(state.error ?: "找不到这条消息", Modifier.padding(20.dp), color = if (state.error == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
@@ -241,7 +266,7 @@ fun SearchScreen(
             }
         }
         Surface(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-            shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 3.dp) {
+            shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 1.dp) {
             Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("$current / ${state.totalMatches?.toString() ?: "${state.hits.size}+"}", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                 TextButton(onClick = vm::closeHit) { Text("以列表显示") }
