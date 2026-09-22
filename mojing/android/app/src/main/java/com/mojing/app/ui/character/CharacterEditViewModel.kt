@@ -610,7 +610,7 @@ class CharacterEditViewModel @Inject constructor(
         }
     }
 
-    fun save(routeCharacterId: Long) {
+    fun save(routeCharacterId: Long, onSaved: () -> Unit = {}) {
         val submittedState = _state.value
         if (submittedState.isSaving || submittedState.isAiCompleting || submittedState.isRefreshingPersona || submittedState.personaRefreshError != null || !submittedState.isLoaded || submittedState.loadError != null) return
         val submittedDraft = submittedState.toDraftSnapshot()
@@ -634,6 +634,7 @@ class CharacterEditViewModel @Inject constructor(
         val previousProfileJson = savedDraft.characterCardJsonRaw
         _state.value = _state.value.copy(isSaving = true, saveError = null)
         viewModelScope.launch {
+            var canLeaveAfterSave = false
             var characterSaved = false
             var savedEntity: CharacterEntity? = null
             try {
@@ -700,6 +701,7 @@ class CharacterEditViewModel @Inject constructor(
                     persisted.copy(snackbar = UserFacingStrings.saveSuccessGeneric())
                 }
                 _state.value = result.copy(isDirty = result.toDraftSnapshot() != savedDraft)
+                canLeaveAfterSave = !_state.value.isDirty
             } catch (cancelled: CancellationException) {
                 _state.value = _state.value.copy(isSaving = false)
                 throw cancelled
@@ -724,6 +726,7 @@ class CharacterEditViewModel @Inject constructor(
                     _state.value = latest.copy(isSaving = false, saveError = "保存失败，编辑内容已保留，请重试。", snackbar = "保存失败，请重试")
                 }
             }
+            if (canLeaveAfterSave) onSaved()
         }
     }
 

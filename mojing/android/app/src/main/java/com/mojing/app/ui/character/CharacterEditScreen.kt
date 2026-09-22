@@ -87,7 +87,7 @@ fun CharacterEditScreen(
     var showMacroSheet by remember { mutableStateOf(false) }
     var routesOpen by rememberSaveable { mutableStateOf(false) }
     var advancedOpen by rememberSaveable { mutableStateOf(false) }
-    var showDiscardDialog by rememberSaveable { mutableStateOf(false) }
+    var pendingExit by rememberSaveable { mutableStateOf<String?>(null) }
     var showManualCharChatUrlModel by rememberSaveable { mutableStateOf(false) }
     var showManualCharImageUrlModel by rememberSaveable { mutableStateOf(false) }
     var showManualCharVoiceUrlModel by rememberSaveable { mutableStateOf(false) }
@@ -100,12 +100,16 @@ fun CharacterEditScreen(
     val pageBusy = state.isSaving || isAvatarImporting || isCardImageProcessing ||
         state.isGeneratingCardImage || state.isPreparingExport || pendingExport != null || isWritingExport
 
-    fun requestBack() {
+    fun leaveEditor(destination: String) {
+        if (destination == "settings") onOpenSettings() else onBack()
+    }
+
+    fun requestExit(destination: String) {
         focusManager.clearFocus()
         when {
             pageBusy -> scope.launch { snackbarHostState.showSnackbar("正在保存、处理图片或导出，请稍候") }
-            state.isDirty -> showDiscardDialog = true
-            else -> onBack()
+            state.isDirty -> pendingExit = destination
+            else -> leaveEditor(destination)
         }
     }
 
@@ -113,7 +117,7 @@ fun CharacterEditScreen(
         if (isImeOpen) {
             hideImeKeyboard(keyboardController, focusManager)
         } else {
-            requestBack()
+            requestExit("back")
         }
     }
 
@@ -181,7 +185,7 @@ fun CharacterEditScreen(
             TopAppBar(
                 title = { Text(if (characterId == 0L && !state.isPersisted) "新建角色" else "编辑角色") },
                 navigationIcon = {
-                    IconButton(onClick = ::requestBack, enabled = !pageBusy) {
+                    IconButton(onClick = { requestExit("back") }, enabled = !pageBusy) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
                     }
                 },
@@ -332,7 +336,7 @@ fun CharacterEditScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    TextButton(onClick = onOpenSettings) { Text("去设置") }
+                    TextButton(onClick = { requestExit("settings") }) { Text("去设置") }
                 }
             }
 
@@ -394,7 +398,7 @@ fun CharacterEditScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    TextButton(onClick = onOpenSettings) { Text("去设置") }
+                    TextButton(onClick = { requestExit("settings") }) { Text("去设置") }
                 }
             }
             ApiVendorPresetRow(
@@ -752,21 +756,28 @@ fun CharacterEditScreen(
         }
     }
 
-    if (showDiscardDialog) {
+    pendingExit?.let { destination ->
         AlertDialog(
-            onDismissRequest = { showDiscardDialog = false },
-            title = { Text("放弃未保存的修改？") },
-            text = { Text("返回后，本次尚未保存的角色修改不会保留。") },
+            onDismissRequest = { pendingExit = null },
+            title = { Text("保存角色修改？") },
+            text = { Text("离开编辑页前，可以保存本次修改，也可以放弃修改。") },
             confirmButton = {
                 TextButton(
+                    enabled = state.isLoaded && canSave && !pageBusy && !state.isAiCompleting,
                     onClick = {
-                        showDiscardDialog = false
-                        onBack()
+                        pendingExit = null
+                        viewModel.save(characterId) { leaveEditor(destination) }
                     },
-                ) { Text("放弃修改", color = MaterialTheme.colorScheme.error) }
+                ) { Text("保存并离开") }
             },
             dismissButton = {
-                TextButton(onClick = { showDiscardDialog = false }) { Text("继续编辑") }
+                Column(horizontalAlignment = Alignment.End) {
+                    TextButton(onClick = { pendingExit = null }) { Text("继续编辑") }
+                    TextButton(
+                        enabled = !pageBusy,
+                        onClick = { pendingExit = null; leaveEditor(destination) },
+                    ) { Text("放弃修改", color = MaterialTheme.colorScheme.error) }
+                }
             },
         )
     }

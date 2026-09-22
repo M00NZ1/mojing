@@ -115,7 +115,9 @@ class CharacterEditViewModelTest {
         assertFalse(viewModel.state.value.isDirty)
 
         viewModel.updateName("林云舟")
-        viewModel.save(7L)
+        var exits = 0
+        viewModel.save(7L) { exits++ }
+        assertEquals(1, exits)
         assertTrue(viewModel.state.value.isPersisted)
         assertFalse(viewModel.state.value.isDirty)
     }
@@ -147,7 +149,9 @@ class CharacterEditViewModelTest {
         vm.updateTemperature("")
         assertEquals("", vm.state.value.temperature)
         assertTrue(vm.state.value.isDirty)
-        vm.save(7L)
+        var exited = false
+        vm.save(7L) { exited = true }
+        assertFalse(exited)
         coVerify(exactly = 0) { save(any()) }
         vm.updateTemperature("0.")
         assertEquals("0.", vm.state.value.temperature)
@@ -242,13 +246,15 @@ class CharacterEditViewModelTest {
 
         viewModel.load(7L)
         viewModel.updateName("林云舟")
-        viewModel.save(7L)
+        var exited = false
+        viewModel.save(7L) { exited = true }
         assertTrue(viewModel.state.value.isSaving)
 
         viewModel.updateName("林云舟·续")
         saveRelease.complete(Unit)
         advanceUntilIdle()
 
+        assertFalse(exited)
         assertEquals("林云舟·续", viewModel.state.value.name)
         assertTrue(viewModel.state.value.isPersisted)
         assertTrue(viewModel.state.value.isDirty)
@@ -323,14 +329,17 @@ class CharacterEditViewModelTest {
         val vm = createSubject(dao, saveCharacterBinding = save).viewModel
         vm.load(0)
         vm.updateName("新角色")
-        vm.save(0)
+        var exits = 0
+        vm.save(0) { exits++ }
+        assertEquals(0, exits)
         assertTrue(vm.state.value.isPersisted)
         assertTrue(vm.state.value.isDirty)
         assertNotNull(vm.state.value.saveError)
         assertEquals("新角色", vm.state.value.name)
         vm.updateName("改名角色")
         coEvery { dao.getById(51) } returns CharacterEntity(id = 51, name = "改名角色")
-        vm.save(0)
+        vm.save(0) { exits++ }
+        assertEquals(1, exits)
         assertEquals(listOf(0L, 51L), savedIds)
         assertFalse(vm.state.value.isDirty)
         assertEquals(null, vm.state.value.saveError)
