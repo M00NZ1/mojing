@@ -53,6 +53,10 @@ fun WorldSettingsScreen(
             state.loading -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = androidx.compose.ui.Alignment.Center) { CircularProgressIndicator() }
             state.error != null -> Column(Modifier.fillMaxSize().padding(padding).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { Text(state.error!!, color = MaterialTheme.colorScheme.error); OutlinedButton(onClick = viewModel::retry) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text("重试") } }
             else -> Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                state.draftError?.let { message ->
+                    Text(message, color = MaterialTheme.colorScheme.error)
+                    if (state.recoverableDraft == null) TextButton(onClick = viewModel::retryDraft, enabled = !state.saving) { Text("重试草稿操作") }
+                }
                 if (state.recoverableDraft != null) {
                     OutlinedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -75,6 +79,6 @@ fun WorldSettingsScreen(
             }
         }
     }
-    if (showDiscard) AlertDialog(onDismissRequest = { showDiscard = false }, title = { Text("离开世界编辑？") }, text = { Text("修改已保留为本地草稿，下次打开可以恢复。") }, confirmButton = { TextButton(onClick = onBack) { Text("保留草稿并离开") } }, dismissButton = { TextButton(onClick = { showDiscard = false }) { Text("继续编辑") } })
+    if (showDiscard) AlertDialog(onDismissRequest = { showDiscard = false }, title = { Text("离开世界编辑？") }, text = { Text(if (state.draftError != null) "最新修改未能暂存，离开可能丢失输入。可继续编辑并重试保存。" else "修改已保留为本地草稿，下次打开可以恢复。") }, confirmButton = { TextButton(onClick = onBack) { Text(if (state.draftError != null) "仍然离开" else "保留草稿并离开") } }, dismissButton = { TextButton(onClick = { showDiscard = false }) { Text("继续编辑") } })
     if (discardStoredDraft) AlertDialog(onDismissRequest = { discardStoredDraft = false }, title = { Text("丢弃世界草稿？") }, text = { Text("将移除未保存的修改，已保存的世界资料不变。") }, confirmButton = { TextButton(onClick = { viewModel.discardDraft(); discardStoredDraft = false }) { Text("丢弃") } }, dismissButton = { TextButton(onClick = { discardStoredDraft = false }) { Text("取消") } })
 }

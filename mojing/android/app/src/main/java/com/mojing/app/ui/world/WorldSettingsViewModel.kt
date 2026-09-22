@@ -31,6 +31,7 @@ data class WorldSettingsState(
     val saveError: String? = null,
     val saved: Boolean = false,
     val recoverableDraft: WorldEditDraft? = null,
+    val draftError: String? = null,
 )
 
 @HiltViewModel
@@ -85,8 +86,17 @@ class WorldSettingsViewModel @Inject constructor(
 
     private fun persistDraft() {
         val current = _state.value
-        if (current.dirty) draftStore.save(worldId, WorldEditDraft(current.name, current.description, current.worldPrompt, current.gameplayMode, current.antiCheatPrompt))
-        else draftStore.clear(worldId)
+        try {
+            if (current.dirty) draftStore.save(worldId, WorldEditDraft(current.name, current.description, current.worldPrompt, current.gameplayMode, current.antiCheatPrompt))
+            else draftStore.clear(worldId)
+            _state.value = _state.value.copy(draftError = null)
+        } catch (_: Exception) {
+            _state.value = _state.value.copy(draftError = if (current.dirty) "草稿暂存失败，输入仍保留在页面中，请重试或保存世界" else "世界资料已保存，但旧草稿清除失败，请重试")
+        }
+    }
+
+    fun retryDraft() {
+        if (!_state.value.saving && !_state.value.loading && _state.value.recoverableDraft == null) persistDraft()
     }
 
     fun restoreDraft() {
@@ -97,8 +107,12 @@ class WorldSettingsViewModel @Inject constructor(
 
     fun discardDraft() {
         if (_state.value.saving) return
-        draftStore.clear(worldId)
-        _state.value = _state.value.copy(recoverableDraft = null)
+        try {
+            draftStore.clear(worldId)
+            _state.value = _state.value.copy(recoverableDraft = null, draftError = null)
+        } catch (_: Exception) {
+            _state.value = _state.value.copy(draftError = "草稿未能丢弃，请重试")
+        }
     }
 
     fun updateName(v: String) = update { it.copy(name = v) }
@@ -124,8 +138,8 @@ class WorldSettingsViewModel @Inject constructor(
                     saved.gameplayMode, saved.antiCheatPrompt, saved.updatedAt,
                 ) == 1) { "世界已更新或删除，请返回后重新打开；当前输入仍保留" }
                 applyLoaded(saved)
-                draftStore.clear(worldId)
                 _state.value = _state.value.copy(saved = true)
+                persistDraft()
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (e: Exception) { _state.value = _state.value.copy(saving = false, saveError = e.message ?: "保存失败，请重试") }
         }
