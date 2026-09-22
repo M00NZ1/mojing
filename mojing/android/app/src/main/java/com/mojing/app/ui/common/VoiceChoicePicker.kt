@@ -1,19 +1,23 @@
 package com.mojing.app.ui.common
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -21,8 +25,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetValue
@@ -41,7 +43,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -204,26 +205,38 @@ fun VoiceChoicePicker(
 
     val currentSaving by rememberUpdatedState(saving)
     val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
         confirmValueChange = { value -> value != SheetValue.Hidden || !currentSaving },
     )
-    ModalBottomSheet(sheetState = sheetState, onDismissRequest = { if (!saving) { stopPreview(); onDismiss() } }) {
+    ModalBottomSheet(
+        sheetState = sheetState,
+        onDismissRequest = { if (!saving) { stopPreview(); onDismiss() } },
+        sheetMaxWidth = 640.dp,
+        dragHandle = null,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentWindowInsets = { WindowInsets.safeDrawing },
+    ) {
         Column(
-            modifier = Modifier.fillMaxWidth().heightIn(max = (configuration.screenHeightDp * 0.8f).dp).padding(bottom = 12.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(max = (configuration.screenHeightDp * 0.85f).dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("选择朗读引擎", style = MaterialTheme.typography.titleLarge)
+                    Text("选择朗读音色", style = MaterialTheme.typography.titleMedium)
                     Text(description, style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
                 }
                 IconButton(enabled = !saving, onClick = { loadEngines(); if (selectedEngine != "inherit") load(selectedEngine) }) {
                     Icon(Icons.Default.Refresh, contentDescription = "刷新引擎和音色")
                 }
+                IconButton(enabled = !saving, onClick = { stopPreview(); onDismiss() }) {
+                    Icon(Icons.Default.Close, contentDescription = "关闭音色选择")
+                }
             }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             if (saving || saveError != null) {
                 Text(
                     if (saving) "正在保存语音选择…" else saveError.orEmpty(),
@@ -251,11 +264,19 @@ fun VoiceChoicePicker(
                 }
             }
             if (allowInherit) {
-                TextButton(
+                val inheritSelected = choice.engineId == "inherit"
+                Surface(
                     enabled = !saving,
                     onClick = { stopPreview(); onSelected(VoiceChoice("inherit", "")) },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                ) { Text(if (choice.engineId == "inherit") "✓ $inheritLabel" else inheritLabel) }
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    color = if (inheritSelected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
+                ) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text(inheritLabel, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                        if (inheritSelected) Icon(Icons.Default.Check, "已选跟随设置", Modifier.size(20.dp))
+                    }
+                }
                 HorizontalDivider()
             }
             if (engineLoading) {
@@ -308,6 +329,7 @@ fun VoiceChoicePicker(
                     )
                     LazyColumn(
                         modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 12.dp),
                     ) {
                         if (displayVoices.isEmpty()) {
                             item {
@@ -320,29 +342,31 @@ fun VoiceChoicePicker(
                             Surface(
                                 enabled = !saving,
                                 onClick = { stopPreview(); onSelected(VoiceChoice(selectedEngine, voice.id)) },
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp),
-                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                                 color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
-                                border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
                             ) {
-                                ListItem(
-                                    colors = ListItemDefaults.colors(
-                                        containerColor = Color.Transparent,
-                                        headlineColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
-                                        supportingColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    ),
-                                    headlineContent = { Text(voice.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                    supportingContent = { if (voice.id.isNotBlank()) Text(voice.id, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                    trailingContent = {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            if (selected) Text("已选", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
-                                            TextButton(enabled = !saving, onClick = { preview(voice) }) {
-                                                Text(if (previewId == voice.id) "停止" else "试听")
-                                            }
-                                        }
-                                    },
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                                        .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(voice.name, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface)
+                                        if (voice.id.isNotBlank()) Text(voice.id, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    if (selected) Icon(Icons.Default.Check, "已选音色", Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                                    TextButton(enabled = !saving, onClick = { preview(voice) }) {
+                                        Text(if (previewId == voice.id) "停止" else "试听")
+                                    }
+                                }
                             }
+                            HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
                         }
                     }
                 }
