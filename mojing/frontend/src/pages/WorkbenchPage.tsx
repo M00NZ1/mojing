@@ -182,6 +182,17 @@ export default function WorkbenchPage() {
   const [templateBaseline, setTemplateBaseline] = useState('');
   const templateFormRevision = useRef(0);
   const templateSaveSubmitting = useRef(false);
+  const templateEditorRef = useRef<HTMLDivElement>(null);
+  const [templateEditorReveal, setTemplateEditorReveal] = useState(0);
+
+  useEffect(() => {
+    if (!templateEditorReveal || activeTab !== 'manage') return;
+    const editor = templateEditorRef.current;
+    if (!editor) return;
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    editor.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
+    editor.focus({ preventScroll: true });
+  }, [activeTab, templateEditorReveal]);
 
   const charactersQuery = useQuery({ queryKey: ['characters'], queryFn: api.listCharacters });
   const worldTemplatesQuery = useQuery({
@@ -548,13 +559,17 @@ export default function WorkbenchPage() {
   }
 
   async function openTemplateForm(template: WorldTemplate) {
-    if (templateEditing?.template_id === template.template_id) return;
+    if (templateEditing?.template_id === template.template_id) {
+      setTemplateEditorReveal((value) => value + 1);
+      return;
+    }
     if (!await confirmTemplateReplacement()) return;
     if (template.encyclopedia_id) {
       navigate(`/encyclopedia?encId=${template.encyclopedia_id}`);
       return;
     }
     fillTemplateForm(template);
+    setTemplateEditorReveal((value) => value + 1);
   }
 
   async function openNewTemplateForm() {
@@ -573,6 +588,7 @@ export default function WorkbenchPage() {
       templateChoices: '',
       templateAntiCheat: '',
     }));
+    setTemplateEditorReveal((value) => value + 1);
   }
 
   async function closeTemplateForm() {
@@ -591,6 +607,7 @@ export default function WorkbenchPage() {
     fillTemplateForm(template);
     setWorldTemplateSearch('');
     setActiveTab('manage');
+    setTemplateEditorReveal((value) => value + 1);
   }
 
   if (!draftReady) return <div className="page-card" role="status">正在恢复创作草稿…</div>;
@@ -845,7 +862,7 @@ export default function WorkbenchPage() {
 
           {/* 编辑/新建模板表单 */}
           {(templateId || templateEditing) && (
-            <div className="page-card" style={{ borderColor: 'var(--accent)' }}>
+            <div ref={templateEditorRef} tabIndex={-1} role="region" aria-label="世界设定编辑" className="page-card" style={{ borderColor: 'var(--accent)', scrollMarginTop: 24 }}>
               <div className="card-header">
                 <div><p className="eyebrow">{templateEditing ? '编辑世界' : '新世界'}</p><h2>{templateEditing ? templateEditing.label : '建立一个空白世界'}</h2><span className="pill" role="status">{isTemplateDirty ? '未保存' : templateEditing ? '已保存' : '待填写'}</span></div>
                 <button type="button" className="btn btn-ghost btn-sm" onClick={() => { void closeTemplateForm(); }}><UiIcon name="close" />关闭</button>

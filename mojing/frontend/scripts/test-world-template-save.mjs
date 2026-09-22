@@ -56,6 +56,11 @@ try {
   const prompt = page.getByLabel('世界背景设定', { exact: true });
   const save = page.getByRole('button', { name: '保存世界设定', exact: true });
   await row('世界1').getByRole('button', { name: '编辑', exact: true }).click();
+  await page.waitForFunction(() => {
+    const editor = document.querySelector('[aria-label="世界设定编辑"]');
+    const rect = editor?.getBoundingClientRect();
+    return editor === document.activeElement && !!rect && rect.top >= 0 && rect.top < window.innerHeight / 2;
+  });
   await save.click();
   await waitRequest(1);
   await prompt.fill('保存期间新补充的设定');
@@ -91,6 +96,7 @@ try {
   await waitRequest(5);
   pending[4](false);
   await save.waitFor();
+  await page.getByText('未保存', { exact: true }).waitFor({ state: 'hidden' });
   assert.equal(await page.getByText('未保存', { exact: true }).count(), 0);
   assert.equal(rows.length, 3);
   await row('世界1').getByRole('button', { name: '删除', exact: true }).click();
