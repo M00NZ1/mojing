@@ -83,6 +83,8 @@ data class EncyclopediaDetailState(
     val renameDraft: String? = null,
     val renameSaving: Boolean = false,
     val renameError: String? = null,
+    val relationSaving: Boolean = false,
+    val relationError: String? = null,
 ) {
     /** 是否有百科「扩展 meta」批量补全任务在排队或执行（用于禁用重复提交） */
     val isEncyclopediaMetaFillQueued: Boolean
@@ -162,6 +164,8 @@ class EncyclopediaDetailViewModel @Inject constructor(
             renameDraft = renameState?.renameDraft,
             renameSaving = renameState?.renameSaving ?: false,
             renameError = renameState?.renameError,
+            relationSaving = _state.value.relationSaving,
+            relationError = renameState?.relationError,
         )
         loadJob = viewModelScope.launch {
             try {
@@ -664,22 +668,50 @@ class EncyclopediaDetailViewModel @Inject constructor(
         }
     }
 
-    fun addRelation(fromEntryId: Long, toEntryId: Long, relationType: String, label: String) {
+    fun clearRelationError() {
+        _state.value = _state.value.copy(relationError = null)
+    }
+
+    fun addRelation(fromEntryId: Long, toEntryId: Long, relationType: String, label: String, onSaved: () -> Unit = {}) {
+        if (_state.value.relationSaving) return
+        if (fromEntryId == toEntryId) {
+            _state.value = _state.value.copy(relationError = UserFacingStrings.relationEndpointsMustDiffer())
+            return
+        }
+        val targetId = encId
+        val targetPage = pageRevision
+        _state.value = _state.value.copy(relationSaving = true, relationError = null)
         viewModelScope.launch {
-            if (fromEntryId == toEntryId) {
-                showSnackbar(UserFacingStrings.relationEndpointsMustDiffer())
-                return@launch
-            }
-            entryRelationDao.upsert(
-                EntryRelationEntity(
-                    encyclopediaId = encId,
-                    fromEntryId = fromEntryId,
-                    toEntryId = toEntryId,
-                    relationType = relationType.ifBlank { "关联" },
-                    label = label.trim()
+            val saved = try {
+                entryRelationDao.upsert(
+                    EntryRelationEntity(
+                        encyclopediaId = targetId,
+                        fromEntryId = fromEntryId,
+                        toEntryId = toEntryId,
+                        relationType = relationType.ifBlank { "关联" },
+                        label = label.trim(),
+                    )
                 )
-            )
-            refreshTimelineAndRelations()
+                true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (pageRevision == targetPage) {
+                    _state.value = _state.value.copy(relationError = "关系保存失败，输入已保留，请重试")
+                }
+                false
+            } finally {
+                _state.value = _state.value.copy(relationSaving = false)
+            }
+            if (!saved || pageRevision != targetPage) return@launch
+            onSaved()
+            try {
+                refreshTimelineAndRelations()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (pageRevision == targetPage) showSnackbar("关系已保存，列表刷新失败，请重新打开百科")
+            }
         }
     }
 

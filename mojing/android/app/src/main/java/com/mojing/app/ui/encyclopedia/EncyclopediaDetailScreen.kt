@@ -365,6 +365,7 @@ fun EncyclopediaDetailScreen(
                     } else {
                         relFrom = null
                         relTo = null
+                        viewModel.clearRelationError()
                         showRelDialog = true
                     }
                 }) { Icon(Icons.Default.Link, "添加关系") }
@@ -669,6 +670,7 @@ fun EncyclopediaDetailScreen(
                                     {
                                         relFrom = null
                                         relTo = null
+                                        viewModel.clearRelationError()
                                         showRelDialog = true
                                     }
                                 } else null,
@@ -963,7 +965,7 @@ fun EncyclopediaDetailScreen(
     if (showRelDialog) {
         val endpointsReady = relFrom != null && relTo != null && relFrom?.id != relTo?.id
         AlertDialog(
-            onDismissRequest = { showRelDialog = false },
+            onDismissRequest = { if (!state.relationSaving) showRelDialog = false },
             title = { Text("添加条目关系") },
             text = {
                 Column(
@@ -973,10 +975,10 @@ fun EncyclopediaDetailScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     com.mojing.app.ui.common.MoJingOutlinedButton(
-                        onClick = { relMenuFrom = true }, modifier = Modifier.fillMaxWidth(),
+                        onClick = { relMenuFrom = true }, enabled = !state.relationSaving, modifier = Modifier.fillMaxWidth(),
                     ) { Text("从条目：" + (relFrom?.title ?: "请选择"), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                     com.mojing.app.ui.common.MoJingOutlinedButton(
-                        onClick = { relMenuTo = true }, modifier = Modifier.fillMaxWidth(),
+                        onClick = { relMenuTo = true }, enabled = !state.relationSaving, modifier = Modifier.fillMaxWidth(),
                     ) { Text("到条目：" + (relTo?.title ?: "请选择"), maxLines = 2, overflow = TextOverflow.Ellipsis) }
                     if (relFrom != null && relTo != null && relFrom?.id == relTo?.id) {
                         Text("请选择两个不同的条目", style = MaterialTheme.typography.bodySmall,
@@ -986,22 +988,30 @@ fun EncyclopediaDetailScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     HorizontalDivider()
-                    OutlinedTextField(value = relType, onValueChange = { relType = it }, label = { Text("关系类型") }, singleLine = true)
-                    OutlinedTextField(value = relLabel, onValueChange = { relLabel = it }, label = { Text("备注（可选）") }, singleLine = true)
+                    OutlinedTextField(enabled = !state.relationSaving, value = relType, onValueChange = { relType = it }, label = { Text("关系类型") }, singleLine = true)
+                    OutlinedTextField(enabled = !state.relationSaving, value = relLabel, onValueChange = { relLabel = it }, label = { Text("备注（可选）") }, singleLine = true)
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    val f = relFrom?.id
-                    val t = relTo?.id
-                    if (f != null && t != null && f != t) {
-                        viewModel.addRelation(f, t, relType, relLabel)
-                        showRelDialog = false
-                        relLabel = ""
+                Column(horizontalAlignment = Alignment.End) {
+                    state.relationError?.let { message ->
+                        Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     }
-                }, enabled = endpointsReady) { Text("添加关系") }
+                    TextButton(onClick = {
+                        val f = relFrom?.id
+                        val t = relTo?.id
+                        if (f != null && t != null && f != t) {
+                            viewModel.addRelation(f, t, relType, relLabel) {
+                                showRelDialog = false
+                                relLabel = ""
+                            }
+                        }
+                    }, enabled = endpointsReady && !state.relationSaving) {
+                        Text(if (state.relationSaving) "正在保存…" else "添加关系")
+                    }
+                }
             },
-            dismissButton = { TextButton(onClick = { showRelDialog = false }) { Text("取消") } }
+            dismissButton = { TextButton(onClick = { showRelDialog = false }, enabled = !state.relationSaving) { Text("取消") } }
         )
     }
 

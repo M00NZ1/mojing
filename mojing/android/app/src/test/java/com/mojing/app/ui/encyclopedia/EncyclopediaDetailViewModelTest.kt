@@ -211,6 +211,61 @@ class EncyclopediaDetailViewModelTest {
         assertFalse(vm.state.value.metaFillSubmitting)
     }
 
+    @Test fun relationWriteFailureKeepsEditorOpenAndAllowsRetry() = runTest(dispatcher) {
+        val dao = mockk<EncyclopediaDao>(relaxed = true)
+        val relations = mockk<EntryRelationDao>(relaxed = true)
+        coEvery { dao.getById(1) } returns EncyclopediaEntity(id = 1, name = "世界")
+        val vm = createViewModel(dao, relationDao = relations)
+        vm.load(1)
+        coEvery { relations.upsert(any()) } throws IllegalStateException("disk full")
+        var saves = 0
+        vm.addRelation(10, 20, "盟友", "备注") { saves++ }
+        assertEquals(0, saves)
+        assertFalse(vm.state.value.relationSaving)
+        assertEquals("关系保存失败，输入已保留，请重试", vm.state.value.relationError)
+        coEvery { relations.upsert(any()) } returns 1L
+        vm.addRelation(10, 20, "盟友", "备注") { saves++ }
+        assertEquals(1, saves)
+        assertEquals(null, vm.state.value.relationError)
+    }
+
+    @Test fun relationRefreshFailureDoesNotReportWriteFailure() = runTest(dispatcher) {
+        val dao = mockk<EncyclopediaDao>(relaxed = true)
+        val relations = mockk<EntryRelationDao>(relaxed = true)
+        coEvery { dao.getById(1) } returns EncyclopediaEntity(id = 1, name = "世界")
+        val vm = createViewModel(dao, relationDao = relations)
+        vm.load(1)
+        coEvery { relations.upsert(any()) } returns 1L
+        coEvery { relations.getByEncyclopedia(1) } throws IllegalStateException("read failed")
+        var saved = false
+        vm.addRelation(10, 20, "盟友", "") { saved = true }
+        assertTrue(saved)
+        assertEquals(null, vm.state.value.relationError)
+        assertEquals("关系已保存，列表刷新失败，请重新打开百科", vm.state.value.snackbar)
+    }
+
+    @Test fun pendingRelationWriteRejectsDuplicatesAndDoesNotCloseAnotherWorldEditor() = runTest(dispatcher) {
+        val dao = mockk<EncyclopediaDao>(relaxed = true)
+        val relations = mockk<EntryRelationDao>(relaxed = true)
+        coEvery { dao.getById(any()) } answers { EncyclopediaEntity(id = firstArg(), name = "世界") }
+        val pending = kotlinx.coroutines.CompletableDeferred<Long>()
+        coEvery { relations.upsert(any()) } coAnswers { pending.await() }
+        val vm = createViewModel(dao, relationDao = relations)
+        vm.load(1)
+        var saves = 0
+        vm.addRelation(10, 20, "盟友", "") { saves++ }
+        vm.addRelation(10, 20, "盟友", "") { saves++ }
+        assertTrue(vm.state.value.relationSaving)
+        vm.load(2)
+        assertTrue(vm.state.value.relationSaving)
+        pending.complete(1L)
+        assertFalse(vm.state.value.relationSaving)
+        assertEquals(0, saves)
+        assertEquals(null, vm.state.value.relationError)
+        io.mockk.coVerify(exactly = 1) { relations.upsert(match { it.encyclopediaId == 1L }) }
+        io.mockk.coVerify(exactly = 0) { relations.upsert(match { it.encyclopediaId == 2L }) }
+    }
+
     private fun createViewModel(
         encyclopediaDao: EncyclopediaDao,
         entryDao: EncyclopediaEntryDao = mockk(relaxed = true),
