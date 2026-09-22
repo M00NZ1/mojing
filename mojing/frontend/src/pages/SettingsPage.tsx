@@ -96,6 +96,7 @@ export default function SettingsPage() {
   const activePersonaQuery = useQuery({ queryKey: ['persona-active'], queryFn: api.getActivePersona });
 
   const [modelPlatformDirty, setModelPlatformDirty] = useState(false);
+  const [modelPlatformEditing, setModelPlatformEditing] = useState(false);
   const [personaName, setPersonaName] = useState('');
   const [personaDesc, setPersonaDesc] = useState('');
   const [personaColor, setPersonaColor] = useState('#53c7a8');
@@ -255,7 +256,7 @@ export default function SettingsPage() {
   }, [isSettingsDirty]));
 
   return (
-    <div className="settings-page">
+    <div className={`settings-page${modelPlatformEditing ? ' is-platform-editing' : ''}`}>
       <div className="settings-header">
         {tab === 'persona' && <h2>设置</h2>}
         <div ref={tabsRef} className="settings-tabs" role="tablist" aria-label="设置分类">
@@ -507,7 +508,7 @@ export default function SettingsPage() {
         />
       )}
       {tab === 'api' && lc && (
-        <div className="page-card">
+        <div className={`page-card settings-api-page${modelPlatformEditing ? ' is-platform-editing' : ''}`}>
           <div className="card-header">
             <div><p className="eyebrow">本机线路</p><h2>模型服务</h2></div>
           </div>
@@ -515,8 +516,8 @@ export default function SettingsPage() {
             开始对话只需先配置文字服务。图片、语音和思考模型都是可选能力，可以稍后再设置。
           </p>
 
-          <div className="settings-api-layout">
-            <ModelPlatformsPanel onDirtyChange={setModelPlatformDirty} />
+          <div className={`settings-api-layout${modelPlatformEditing ? ' is-platform-editing' : ''}`}>
+            <ModelPlatformsPanel onDirtyChange={setModelPlatformDirty} onEditingChange={setModelPlatformEditing} />
 
             <details className="settings-api-docs">
               <summary>填写与测试说明</summary>

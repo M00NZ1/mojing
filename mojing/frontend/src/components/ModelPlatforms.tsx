@@ -13,7 +13,7 @@ const emptyPlatform = (): ModelPlatform => ({ id: crypto.randomUUID(), name: '',
 export const parseModelNames = (text: string) => [...new Set(text.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean))];
 const errorText = (e: unknown) => e instanceof Error ? e.message : '操作失败，请重试。';
 
-export function ModelPlatformsPanel({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => void }) {
+export function ModelPlatformsPanel({ onDirtyChange, onEditingChange }: { onDirtyChange: (dirty: boolean) => void; onEditingChange: (editing: boolean) => void }) {
   const queryClient = useQueryClient();
   const catalog = useQuery({ queryKey: catalogKey, queryFn: api.getModelPlatforms });
   const providers = useQuery({ queryKey: ['providers'], queryFn: api.listProviderCatalog });
@@ -27,8 +27,10 @@ export function ModelPlatformsPanel({ onDirtyChange }: { onDirtyChange: (dirty: 
   const presetChangeRef = useRef<AbortController | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const dirty = draft !== null && JSON.stringify({ ...draft, models: parseModelNames(modelText) }) !== original;
+  const editing = draft !== null;
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
-  useEffect(() => () => { fetchRef.current?.abort(); onDirtyChange(false); }, [onDirtyChange]);
+  useEffect(() => { onEditingChange(editing); }, [editing, onEditingChange]);
+  useEffect(() => () => { fetchRef.current?.abort(); onDirtyChange(false); onEditingChange(false); }, [onDirtyChange, onEditingChange]);
   useEffect(() => () => presetChangeRef.current?.abort(), []);
   function updateSaved(saved: ModelCatalog) {
     queryClient.setQueryData(catalogKey, saved);
@@ -49,6 +51,11 @@ export function ModelPlatformsPanel({ onDirtyChange }: { onDirtyChange: (dirty: 
     fetchRef.current?.abort();
     const value = platform ?? emptyPlatform();
     setDraft(value); setOriginal(JSON.stringify(value)); setModelText(value.models.join('\n')); setError(''); setDiscoveryNotice('');
+  }
+  async function closeEditor() {
+    if (dirty && !await confirmModal('放弃未保存的修改？', '已保存的平台不会受到影响。', 'warning', { confirmLabel: '放弃修改', cancelLabel: '继续编辑' })) return;
+    fetchRef.current?.abort();
+    setDraft(null); setError(''); setDiscoveryNotice('');
   }
   useEffect(() => { if (draft) editorRef.current?.querySelector<HTMLInputElement>('input')?.focus(); }, [draft?.id]);
   function changeAddress(address: string) {
@@ -88,6 +95,7 @@ export function ModelPlatformsPanel({ onDirtyChange }: { onDirtyChange: (dirty: 
   }
   const models = parseModelNames(modelText);
   return <section className="model-platforms">
+    {!draft && <>
     <div className="model-platform-heading"><div><h3>文字对话平台</h3><p>每个平台独立保存 Key 与模型。默认平台用于未单独配置的对话和创作。</p></div>
       <button className="btn btn-primary btn-sm" type="button" disabled={save.isPending || activate.isPending} onClick={() => { void edit(null); }}>添加平台</button></div>
     {catalog.isPending && <p role="status">正在读取已保存的平台…</p>}
@@ -99,24 +107,40 @@ export function ModelPlatformsPanel({ onDirtyChange }: { onDirtyChange: (dirty: 
       <div className="model-platform-actions"><button className="btn btn-sm" type="button" disabled={save.isPending || activate.isPending} onClick={() => { void edit(platform); }}>编辑</button>
         {platform.id !== catalog.data.active_id && <button className="btn btn-ghost btn-sm" type="button" disabled={save.isPending || activate.isPending} onClick={() => activate.mutate(platform.id)}>设为默认</button>}</div>
     </article>)}</div>
-    {error && <p className="model-platform-error" role="alert">{error}</p>}
+    </>}
+    {!draft && error && <p className="model-platform-error" role="alert">{error}</p>}
     {draft && <div className="model-platform-editor" ref={editorRef}>
-      <h4>{catalog.data?.platforms.some((p) => p.id === draft.id) ? '编辑平台' : '添加平台'}</h4>
-      <fieldset disabled={save.isPending}><div className="model-platform-fields">
+      <header className="model-platform-editor-heading">
+        <button type="button" className="model-platform-return" disabled={save.isPending} onClick={() => { void closeEditor(); }}>返回平台列表</button>
+        <div><h3>{catalog.data?.platforms.some((p) => p.id === draft.id) ? (draft.name.trim() || '编辑平台') : '添加平台'}</h3>
+          <p>{draft.id === catalog.data?.active_id ? '当前默认平台' : '每个平台独立保存连接与模型'}</p></div>
+      </header>
+      {error && <p className="model-platform-error" role="alert">{error}</p>}
+      <fieldset disabled={save.isPending}>
+      <section className="model-platform-editor-section" aria-labelledby="model-platform-connection-title">
+        <div className="model-platform-section-heading"><h4 id="model-platform-connection-title">连接信息</h4><p>名称、地址和 Key 只属于此平台。</p></div>
+        <div className="model-platform-fields">
         <label>平台名称<input value={draft.name} maxLength={100} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="例如：我的 DeepSeek" /></label>
         <label>服务商预设<select value="" onChange={(e) => { void applyPreset(e.target.value); }}><option value="">选择预设填写地址</option>{providers.data?.map((p) => <option value={p.provider_id} key={p.provider_id}>{p.label}</option>)}</select></label>
+        {providers.isError && <p className="model-platform-wide model-platform-error" role="alert">服务商预设加载失败，仍可手动填写地址。<button type="button" onClick={() => { void providers.refetch(); }}>重试</button></p>}
         <label className="model-platform-wide">API 地址<input value={draft.base_url} onChange={(e) => changeAddress(e.target.value)} placeholder="https://…/v1" /></label>
         <label className="model-platform-wide">API Key<input type="password" autoComplete="off" value={draft.api_key} onChange={(e) => { fetchRef.current?.abort(); setDraft({ ...draft, api_key: e.target.value }); }} placeholder="填写当前平台的 Key" /><small>更改地址会清空 Key 与模型，请重新填写。</small></label>
         <div className="model-platform-wide model-platform-actions"><button type="button" className="btn btn-sm" disabled={fetching || !draft.api_key || !draft.base_url} onClick={() => { void discover(); }}>{fetching ? '正在获取…' : '获取平台全部模型'}</button>
           {fetching && <button type="button" className="btn btn-ghost btn-sm" onClick={() => fetchRef.current?.abort()}>取消获取</button>}</div>
         {discoveryNotice && <p className="model-platform-wide" role="status">{discoveryNotice}</p>}
+        </div>
+      </section>
+      <section className="model-platform-editor-section" aria-labelledby="model-platform-models-title">
+        <div className="model-platform-section-heading"><h4 id="model-platform-models-title">可用模型</h4><p>获取模型失败时可手动填写；聊天页能在已保存的平台和模型间切换。</p></div>
+        <div className="model-platform-fields">
         <label className="model-platform-wide">模型名称 · {models.length} 个<textarea rows={6} value={modelText} disabled={fetching} onChange={(e) => setModelText(e.target.value)} placeholder="每行一个，也可用逗号分隔；不支持获取时直接填写。" /></label>
         <div className="model-platform-wide model-platform-model-field"><span>默认模型</span><ModelNamePicker models={models} value={draft.selected_model} onChange={(model) => setDraft({ ...draft, selected_model: model })} /></div>
-      </div></fieldset>
-      <div className="model-platform-actions"><button type="button" className="btn btn-primary" disabled={save.isPending || fetching || !draft.name.trim() || !draft.api_key.trim() || !models.includes(draft.selected_model)} onClick={() => save.mutate({ ...draft, models })}>{save.isPending ? '正在保存…' : '保存平台'}</button>
-        <button type="button" className="btn btn-ghost" disabled={save.isPending} onClick={async () => { if (!dirty || await confirmModal('放弃未保存的修改？', '已保存的平台不会受到影响。', 'warning', { confirmLabel: '放弃修改' })) { fetchRef.current?.abort(); setDraft(null); setError(''); } }}>取消</button></div>
+        </div>
+      </section>
+      </fieldset>
+      <div className="model-platform-editor-actions"><span>{dirty ? '有未保存修改' : '暂无修改'}</span><div className="model-platform-actions"><button type="button" className="btn btn-primary" disabled={save.isPending || fetching || !draft.name.trim() || !draft.api_key.trim() || !models.includes(draft.selected_model)} onClick={() => save.mutate({ ...draft, models })}>{save.isPending ? '正在保存…' : '保存平台'}</button>
+        <button type="button" className="btn btn-ghost" disabled={save.isPending} onClick={() => { void closeEditor(); }}>取消</button></div></div>
     </div>}
-    {providers.isError && <p role="alert">服务商预设加载失败，仍可手动填写地址。<button type="button" onClick={() => { void providers.refetch(); }}>重试</button></p>}
   </section>;
 }
 

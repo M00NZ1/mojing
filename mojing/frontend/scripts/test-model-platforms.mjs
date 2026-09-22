@@ -161,12 +161,18 @@ try {
   });
   if (output) await page.screenshot({ path: path.join(output, 'platforms-mobile.png') });
   await page.locator('.model-platform-row').first().getByRole('button', { name: '编辑' }).click();
+  assert.equal(await page.locator('.model-platform-row').count(), 0, 'editing is a separate platform detail view');
+  if (output) await page.screenshot({ path: path.join(output, 'platform-editor-mobile.png') });
   await page.getByLabel('平台名称', { exact: true }).fill('未保存改动');
-  await page.getByRole('tab', { name: '外观', exact: true }).click();
+  await page.getByRole('link', { name: '创作', exact: true }).click();
   await page.getByText('设置修改尚未保存', { exact: true }).waitFor();
   await page.getByRole('button', { name: '取消', exact: true }).last().click();
   assert.equal(await page.getByLabel('平台名称', { exact: true }).inputValue(), '未保存改动');
-  await page.getByRole('button', { name: '取消', exact: true }).first().click();
+  await page.getByRole('button', { name: '返回平台列表', exact: true }).click();
+  await page.getByText('放弃未保存的修改？', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '继续编辑', exact: true }).click();
+  assert.equal(await page.getByLabel('平台名称', { exact: true }).inputValue(), '未保存改动');
+  await page.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('button', { name: '放弃修改', exact: true }).click();
   // Thousands of configured models must not create thousands of DOM buttons.
   catalog.platforms[0].models = Array.from({ length: 5000 }, (_, i) => `large-model-${i}`);
@@ -176,6 +182,7 @@ try {
   await page.locator('.model-platform-row').first().getByRole('button', { name: '编辑', exact: true }).click();
   const defaultTrigger = page.getByRole('button', { name: '默认模型', exact: true });
   await defaultTrigger.click();
+  if (output) await page.screenshot({ path: path.join(output, 'platform-editor-models-mobile.png') });
   const defaultPanel = page.getByRole('region', { name: '默认模型选项' });
   assert.equal(await defaultPanel.locator('.model-name-results button').count(), 10);
   await page.getByRole('button', { name: '下一页模型', exact: true }).click();
