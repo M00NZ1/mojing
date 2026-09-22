@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { MessageSearchHit } from '../types';
@@ -12,12 +12,20 @@ function SearchSnippet({ text, query }: { text: string; query: string }) {
     index % 2 ? <mark key={index}>{part}</mark> : part)}</>;
 }
 
-export default function MessageSearchPanel({ sessionId, branchId, value, onChange, inputRef, onSelect, locatingId, locating, branchLabel }: {
+function searchResultDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+}
+
+export default function MessageSearchPanel({ sessionId, branchId, value, onChange, inputRef, onSelect, locatingId, locating, branchLabel, open = false, reading = false, selectedHit, onOpen, onClose, onExitReading }: {
   sessionId: number; branchId: string; value: string; onChange: (value: string) => void;
   inputRef: RefObject<HTMLInputElement>; onSelect: (hit: MessageSearchHit) => void;
   locatingId: number | null; locating: boolean; branchLabel: (id: string) => string;
+  open?: boolean; reading?: boolean; selectedHit?: MessageSearchHit | null;
+  onOpen?: () => void; onClose?: () => void; onExitReading?: () => void;
 }) {
   const [query, setQuery] = useState('');
+  const [recentQueries, setRecentQueries] = useState<string[]>([]);
   const [composing, setComposing] = useState(false);
   const stale = composing || value.trim() !== query;
   useEffect(() => {
@@ -43,30 +51,77 @@ export default function MessageSearchPanel({ sessionId, branchId, value, onChang
     enabled: Number.isFinite(sessionId) && query.length > 0 && !stale,
     refetchInterval: (state) => !stale && !indexPaused && state.state.status !== 'error' && state.state.data && !state.state.data.index.ready ? 300 : false,
     retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false, gcTime: 30_000 });
+  useEffect(() => {
+    const key = `mojing:message-search-history:${sessionId}:${branchId}`;
+    try {
+      const stored = JSON.parse(localStorage.getItem(key) || '[]');
+      setRecentQueries(Array.isArray(stored) ? stored.filter((item): item is string => typeof item === 'string').slice(0, 8) : []);
+    } catch { setRecentQueries([]); }
+  }, [sessionId, branchId]);
+  const rememberQuery = useCallback((term: string) => {
+    const committed = term.trim();
+    if (!committed) return;
+    setRecentQueries((previous) => {
+      const next = [committed, ...previous.filter((item) => item !== committed)].slice(0, 8);
+      try { localStorage.setItem(`mojing:message-search-history:${sessionId}:${branchId}`, JSON.stringify(next)); } catch { /* storage is optional */ }
+      return next;
+    });
+  }, [sessionId, branchId]);
+  const closeSearch = useCallback(() => {
+    rememberQuery(value);
+    onClose?.();
+  }, [rememberQuery, value, onClose]);
   const rebuilding = useMutation({ mutationFn: () => api.rebuildMessageSearchIndex(sessionId), onSuccess: () => {
     setIndexPaused(false); setNavigation({ scope, cursors: [undefined] });
     void client.invalidateQueries({ queryKey: ['session-message-search'] });
   } });
   const progress = search.data?.index;
-  return <section className="message-search-panel" aria-label="故事线搜索">
-    <input ref={inputRef} type="search" className="chat-message-search" placeholder="搜索当前故事线的消息" aria-label="搜索当前故事线的消息"
-      onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)}
-      value={value} maxLength={256} onChange={(event) => onChange(event.target.value)} autoComplete="off" />
-    {value.trim() && <div className="message-search-results" ref={resultsRef}>
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing || event.keyCode === 229 || event.key !== 'Escape') return;
+      event.preventDefault();
+      if (reading) onExitReading?.();
+      else closeSearch();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [open, reading, closeSearch, onExitReading]);
+
+  return <section className={`message-search-panel${open ? ' is-open' : ''}${reading ? ' is-reading' : ''}`} aria-label="故事线搜索">
+    <div className="message-search-input-row">
+      {open && !reading && <button type="button" className="message-search-back" onClick={closeSearch} aria-label="关闭搜索" title="返回对话">←</button>}
+      <input ref={inputRef} type="search" className="chat-message-search" placeholder="搜索当前故事线的消息" aria-label="搜索当前故事线的消息"
+        onFocus={() => onOpen?.()}
+        onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) rememberQuery(value); }}
+        onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)}
+        value={value} maxLength={256} onChange={(event) => { onOpen?.(); onChange(event.target.value); }} autoComplete="off" />
+    </div>
+    {reading ? <div className="message-search-reading-bar" role="status">
+      <div><strong>原文阅读</strong><span>{selectedHit?.snippet || '已定位到搜索命中消息'}</span></div>
+      <button type="button" className="btn btn-ghost btn-sm" onClick={onExitReading}>返回搜索结果</button>
+      <button type="button" className="btn btn-ghost btn-sm" onClick={closeSearch} aria-label="关闭搜索">关闭</button>
+    </div> : open && <div className="message-search-results" ref={resultsRef}>
       <div className="message-search-heading"><span>当前故事线 · 最近在前</span><button type="button" className="btn btn-ghost btn-sm" disabled={search.isFetching || stale} onClick={() => void search.refetch()}>刷新搜索</button></div>
+      {!value.trim() && <div className="message-search-history" aria-label="最近搜索">
+        <strong>最近搜索</strong>
+        {recentQueries.length ? recentQueries.map((item) => <button type="button" className="message-search-history-item" key={item} onClick={() => { rememberQuery(item); onChange(item); }}>{item}</button>) : <p>暂无搜索记录</p>}
+      </div>}
+      {value.trim() && <>
       {(search.isPending || stale) && <p role="status">搜索中…</p>}
       {progress && !progress.ready && <div className="message-search-index" role="status"><span>{indexPaused ? '索引已暂停' : '正在整理索引'} · 已处理 {progress.indexed_count} 条历史。完成后结果才完整。</span>
         <button type="button" className="btn btn-ghost btn-sm" disabled={stale} onClick={() => { setIndexPaused(!indexPaused); if (indexPaused) void search.refetch(); }}>{indexPaused ? '继续索引' : '暂停索引'}</button></div>}
       {!stale && search.isError && <InlineQueryError message="搜索失败" error={search.error} retrying={search.isFetching} onRetry={() => void search.refetch()} />}
       {!stale && search.isSuccess && !search.data.items.length && <p>{progress?.ready ? '无匹配消息' : '已索引部分暂无匹配消息'}</p>}
-      <ul ref={listRef}>{search.data?.items.map((hit) => <li key={hit.id}><button type="button" disabled={locating || stale} onClick={() => onSelect(hit)}>
-        <strong>{locatingId === hit.id ? '正在定位…' : hit.character_name || ({ user: '玩家', narrator: '旁白' }[hit.speaker_type] || '角色')}{hit.branch_id !== 'main' ? ` · ${branchLabel(hit.branch_id)}` : ''}</strong>
-        <span><SearchSnippet text={hit.snippet} query={query} /></span></button></li>)}</ul>
+      <ul ref={listRef}>{search.data?.items.map((hit) => <li key={hit.id}><button type="button" disabled={locating || stale} onClick={() => { rememberQuery(value); onSelect(hit); }}>
+        <span className="message-search-result-meta"><strong>{locatingId === hit.id ? '正在定位…' : hit.character_name || ({ user: '玩家', narrator: '旁白' }[hit.speaker_type] || '角色')}{hit.branch_id !== 'main' ? ` · ${branchLabel(hit.branch_id)}` : ''}</strong><time dateTime={hit.created_at}>{searchResultDate(hit.created_at)}</time></span>
+        <span className="message-search-result-snippet"><SearchSnippet text={hit.snippet} query={query} /></span></button></li>)}</ul>
       <div className="message-search-pagination"><button type="button" className="btn btn-ghost btn-sm" disabled={cursors.length === 1 || search.isFetching || stale} onClick={() => setNavigation({ scope, cursors: cursors.slice(0, -1) })}>较新结果</button>
         <span>第 {cursors.length} 页 · {search.data?.items.length ?? 0} 条</span><button type="button" className="btn btn-ghost btn-sm" disabled={!search.data?.next_cursor || search.isFetching || stale || !progress?.ready} onClick={() => setNavigation({ scope, cursors: [...cursors, search.data!.next_cursor!] })}>更早结果</button></div>
       <details className="message-search-tools"><summary>搜索维护</summary><p>可重建本机搜索索引，不会修改原始对话。关闭搜索会暂停尚未完成的整理。</p>
         <button type="button" className="btn btn-ghost btn-sm" disabled={rebuilding.isPending || search.isFetching || stale} onClick={() => rebuilding.mutate()}>{rebuilding.isPending ? '正在重建…' : '重建本机索引'}</button>
         {!stale && rebuilding.isError && <InlineQueryError message="重建失败，原始对话未改变" error={rebuilding.error} onRetry={() => rebuilding.mutate()} />}</details>
+      </>}
     </div>}
   </section>;
 }

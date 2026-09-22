@@ -158,6 +158,8 @@ export default function ChatPage() {
   const rightPanelToggleRef = useRef<HTMLButtonElement>(null);
   const rightPanelReturnFocusRef = useRef<HTMLElement | null>(null);
   const [sessionSearchDraft, setSessionSearchDraft] = useState('');
+  const [searchView, setSearchView] = useState<'closed' | 'results' | 'reading'>('closed');
+  const [selectedSearchHit, setSelectedSearchHit] = useState<MessageSearchHit | null>(null);
   const sessionSearchInputRef = useRef<HTMLInputElement>(null);
   const searchFocusRequestIdRef = useRef(0);
   const pendingBranchMessageFocusRef = useRef<{ branchId: string; messageId: number } | null>(null);
@@ -283,6 +285,8 @@ export default function ChatPage() {
     setQuoteState(loadChatQuote(sessionId));
     setFiles([]);
     setSessionSearchDraft('');
+    setSearchView('closed');
+    setSelectedSearchHit(null);
   }, [sessionId]);
 
   // 组件卸载/路由离开时中止 SSE 请求
@@ -756,11 +760,14 @@ export default function ChatPage() {
     // Search is scoped to the selected branch context. Ancestor messages keep
     // their original branch_id but remain visible here, so do not switch away.
     setLocatingMessageId(hit.id);
+    setSelectedSearchHit(hit);
     try {
       const located = await loadAroundMessage(hit.id);
       if (!located) throw new Error('搜索结果已变化，请重新搜索');
       focusMessage(hit.id);
-      setSessionSearchDraft('');
+      closeRightPanel(false);
+      if (showBranchTree) closeBranchTree();
+      setSearchView('reading');
     } catch (error) {
       showToast(toastErrorMessage(error), 'error');
     } finally {
@@ -1534,7 +1541,7 @@ export default function ChatPage() {
       </button>
 
       {/* ================= 中央聊天区 ================= */}
-      <div className="chat-main">
+      <div className={`chat-main${searchView !== 'closed' ? ' is-searching' : ''}`}>
         {/* 顶部栏 */}
         <div className="chat-topbar">
           <button
@@ -1569,12 +1576,13 @@ export default function ChatPage() {
           />
           <div className="chat-topbar-info">
             <div className="chat-topbar-name">{sessionTitle}</div>
-            <ChatModelPicker key={sessionId} sessionId={sessionId} onBusyChange={onModelChoiceBusyChange} />
+            {searchView === 'closed' && <ChatModelPicker key={sessionId} sessionId={sessionId} onBusyChange={onModelChoiceBusyChange} />}
           </div>
           <button
             type="button"
             ref={chatMenuToggleRef}
             className="chat-topbar-menu"
+            disabled={searchView !== 'closed'}
             onClick={() => { if (showChatMenu) closeChatMenu(); else openChatMenu(); }}
             title="更多选项"
             aria-label={showChatMenu ? '关闭会话菜单' : '打开会话菜单'}
@@ -1586,6 +1594,7 @@ export default function ChatPage() {
           <button type="button"
             ref={rightPanelToggleRef}
             className={`chat-topbar-btn ${showRightPanel ? 'active' : ''}`}
+            disabled={searchView !== 'closed'}
             onClick={() => { if (showRightPanel) requestCloseRightPanel(); else openRightPanel(); }}
             title={isCompactLayout ? '会话详情（发言、世界、记忆等）' : '会话详情：发言调度、世界配置、记忆与追踪'}
             aria-label={showRightPanel ? '关闭会话详情' : '打开会话详情'}
@@ -1597,10 +1606,10 @@ export default function ChatPage() {
         </div>
 
         <nav className="chat-contextbar" aria-label="当前会话资料">
-          <button type="button" onClick={openBranchTree} aria-label={`故事线：${activeBranchLabel}`}>
+          <button type="button" disabled={searchView !== 'closed'} onClick={openBranchTree} aria-label={`故事线：${activeBranchLabel}`}>
             <UiIcon name="branch" /><span>{activeBranchLabel}</span>
           </button>
-          <button type="button" onClick={() => openRightPanel('participants')} aria-label="查看参与角色">
+          <button type="button" disabled={searchView !== 'closed'} onClick={() => openRightPanel('participants')} aria-label="查看参与角色">
             <span>{participantsQuery.data?.map((item) => item.character.name).join('、') || '参与角色'}</span>
             <span className="chat-contextbar-count">{participantsQuery.data?.length ?? 0}</span>
           </button>
@@ -1625,7 +1634,11 @@ export default function ChatPage() {
         )}
 
         <MessageSearchPanel sessionId={sessionId} branchId={selectedBranchId} value={sessionSearchDraft} onChange={setSessionSearchDraft}
-          inputRef={sessionSearchInputRef} onSelect={(hit) => { void goToSearchHit(hit); }} locatingId={locatingMessageId} locating={messagesLocating} branchLabel={branchLabel} />
+          inputRef={sessionSearchInputRef} onSelect={(hit) => { void goToSearchHit(hit); }} locatingId={locatingMessageId} locating={messagesLocating} branchLabel={branchLabel}
+          open={searchView !== 'closed'} reading={searchView === 'reading'} selectedHit={selectedSearchHit}
+          onOpen={() => setSearchView('results')}
+          onClose={() => { setSearchView('closed'); setSessionSearchDraft(''); setSelectedSearchHit(null); }}
+          onExitReading={() => setSearchView('results')} />
 
         {showChatMenu && (
           <ChatMenu
@@ -1639,6 +1652,7 @@ export default function ChatPage() {
             removingCharacterId={removeParticipantMutation.isPending ? removeParticipantMutation.variables : undefined}
             onSwitchBranch={switchBranch}
             onSearch={() => {
+              setSearchView('results');
               window.requestAnimationFrame(() => {
                 sessionSearchInputRef.current?.focus();
                 sessionSearchInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -1753,9 +1767,12 @@ export default function ChatPage() {
           expressionMap={expressionMap}
           scrollNudgeKey={messageScrollNudgeKey}
           focusRequest={messageFocusRequest}
+          readOnly={searchView !== 'closed'}
+          searchQuery={searchView === 'reading' ? sessionSearchDraft : undefined}
+          searchHit={searchView === 'reading' ? selectedSearchHit : null}
         />
 
-        {speakerTurnMode === 'manual' && (participantsQuery.data?.length ?? 0) > 0 && (
+        {searchView === 'closed' && speakerTurnMode === 'manual' && (participantsQuery.data?.length ?? 0) > 0 && (
           <div className="manual-speaker-chips">
             {participantsQuery.data?.map((p) => (
               <button
@@ -1771,14 +1788,14 @@ export default function ChatPage() {
             ))}
           </div>
         )}
-        {!isGenerating && roundChoiceOptions.length > 0 && (
+        {searchView === 'closed' && !isGenerating && roundChoiceOptions.length > 0 && (
           <RoundChoicesRow
             choices={roundChoiceOptions}
             onSelect={(choice) => currentChoiceMessage && useChoice(choice, currentChoiceMessage.id)}
           />
         )}
 
-        {!participantsQuery.isLoading
+        {searchView === 'closed' && !participantsQuery.isLoading
           && !participantsQuery.isError
           && (participantsQuery.data?.length ?? 0) === 0
           && gameplayMode !== '小说创作'
@@ -1797,7 +1814,7 @@ export default function ChatPage() {
             </div>
           )}
 
-        <ChatInputBar
+        {searchView === 'closed' && <ChatInputBar
           key={sessionId}
           input={input}
           setInput={updateInput}
@@ -1832,7 +1849,7 @@ export default function ChatPage() {
           inputPlaceholder={gameplayMode === '小说创作' ? '输入下一段剧情走向，发送后由小说作者续写…' : undefined}
           narratorActionLabel={gameplayMode === '小说创作' ? '直接续写下一章' : undefined}
           focusRequestKey={inputFocusRequestKey}
-        />
+        />}
       </div>
 
       {/* ================= 右侧面板 ================= */}

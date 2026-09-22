@@ -51,6 +51,9 @@ type Props = {
     align: 'center' | 'end';
     moveKeyboardFocus?: boolean;
   } | null;
+  readOnly?: boolean;
+  searchQuery?: string;
+  searchHit?: { id: number; snippet: string } | null;
 };
 
 function SegmentBlock({ title, text }: { title: string; text?: string }) {
@@ -195,6 +198,9 @@ export default function MessageList({
   expressionMap,
   scrollNudgeKey,
   focusRequest,
+  readOnly = false,
+  searchQuery = '',
+  searchHit = null,
 }: Props) {
   const { showToast } = useToast();
   const [showMsgMenuId, setShowMsgMenuId] = useState<number | null>(null);
@@ -346,12 +352,13 @@ export default function MessageList({
   }, [showToast]);
 
   const handleTouchStart = useCallback((msgId: number) => {
+    if (readOnly) return;
     if (msgId <= 0) return;
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
     longPressTimerRef.current = setTimeout(() => {
       openMobileMenu(msgId);
     }, 500);
-  }, [openMobileMenu]);
+  }, [openMobileMenu, readOnly]);
 
   const handleTouchEnd = useCallback(() => {
     if (longPressTimerRef.current) {
@@ -361,6 +368,7 @@ export default function MessageList({
   }, []);
 
   const toggleMessageMenu = useCallback((messageId: number) => {
+    if (readOnly) return;
     if (window.matchMedia('(max-width: 768px)').matches) {
       setShowMsgMenuId(null);
       if (mobileMenuId === messageId) closeMobileMenu();
@@ -369,7 +377,7 @@ export default function MessageList({
     }
     setMobileMenuId(null);
     setShowMsgMenuId((current) => current === messageId ? null : messageId);
-  }, [closeMobileMenu, mobileMenuId, openMobileMenu]);
+  }, [closeMobileMenu, mobileMenuId, openMobileMenu, readOnly]);
 
   const reverseMessages = useMemo(() => messages, [messages]);
 
@@ -458,6 +466,15 @@ export default function MessageList({
     const firstSettleTimer = setTimeout(settleFocus, 80);
     const finalSettleTimer = setTimeout(() => {
       settleFocus();
+      if (readOnly && searchQuery.trim() && searchHit?.id === focusRequest.messageId && parentRef.current) {
+        const match = parentRef.current.querySelector<HTMLElement>(`[data-chat-message-id="${focusRequest.messageId}"] mark.message-search-match`);
+        if (match) {
+          const container = parentRef.current;
+          const matchBounds = match.getBoundingClientRect();
+          const containerBounds = container.getBoundingClientRect();
+          container.scrollTop += matchBounds.top - containerBounds.top - (containerBounds.height - matchBounds.height) / 2;
+        }
+      }
       if (focusRequest.moveKeyboardFocus) {
         const editTrigger = document.querySelector<HTMLElement>(
           `[data-message-edit-trigger="${focusRequest.messageId}"]`,
@@ -479,7 +496,7 @@ export default function MessageList({
       clearTimeout(finalSettleTimer);
       clearTimeout(highlightTimer);
     };
-  }, [focusRequest?.requestId]);
+  }, [focusRequest?.requestId, readOnly, searchQuery, searchHit?.id]);
 
   // 新消息到达时，只在用户位于底部时才自动滚下去
   useEffect(() => {
@@ -596,7 +613,7 @@ export default function MessageList({
                 transform: `translateY(${virtualRow.start}px)`,
               }}
             >
-              {(branchAnchors.length > 0 || canReturnToMain) && onSwitchBranch && (
+              {!readOnly && (branchAnchors.length > 0 || canReturnToMain) && onSwitchBranch && (
                 <MessageBranchBar
                   anchors={branchAnchors}
                   activeBranchId={selectedBranchId}
@@ -614,7 +631,7 @@ export default function MessageList({
                     onTouchEnd={handleTouchEnd}
                     onTouchCancel={handleTouchEnd}
                   >
-                    <MarkdownRenderer content={visibleContent} />
+                    <MarkdownRenderer content={visibleContent} highlightQuery={readOnly && searchHit?.id === message.id ? searchQuery : ''} />
                     {choices.length > 0 && !isCurrentChoiceMessage && (
                       <div className="chat-choices">
                         {choices.map((choice) => (
@@ -631,7 +648,7 @@ export default function MessageList({
                       </div>
                     )}
                   </div>
-                  {showNarratorActions && (
+                  {!readOnly && showNarratorActions && (
                     <div className="chat-msg-tools chat-msg-system-tools">
                       {onEditMessage && (
                         <ActionButton disabled={isGenerating} icon="edit" label="编辑旁白" className="chat-tool-btn" iconOnly editTriggerId={message.id} onClick={() => onEditMessage(message)} />
@@ -721,7 +738,9 @@ export default function MessageList({
                       onTouchCancel={handleTouchEnd}
                     >
                       {visibleContent && (
-                        <div className="chat-bubble-text"><MarkdownRenderer content={visibleContent} /></div>
+                        <div className="chat-bubble-text">
+                          <MarkdownRenderer content={visibleContent} highlightQuery={readOnly && searchHit?.id === message.id ? searchQuery : ''} />
+                        </div>
                       )}
                       {choices.length > 0 && !isCurrentChoiceMessage && (
                         <div className="chat-choices" style={{ marginTop: 8 }}>
@@ -741,7 +760,7 @@ export default function MessageList({
                       {showPromptDebug && <DebugBlock debug={structured} />}
                     </div>
 
-                    {showActions && (
+                    {!readOnly && showActions && (
                       <div className="chat-msg-tools">
                         {onEditMessage && (
                           <ActionButton disabled={isGenerating} icon="edit" label="编辑消息" className="chat-tool-btn" iconOnly editTriggerId={message.id} onClick={() => onEditMessage(message)} />
