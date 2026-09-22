@@ -112,7 +112,17 @@ try {
   assert.equal(catalog.platforms[0].models.length, 3);
   const firstId = catalog.platforms[0].id;
   await page.getByRole('button', { name: '编辑', exact: true }).click();
+  await page.getByLabel('平台名称', { exact: true }).fill('未保存平台名');
+  const originalModelText = await page.getByLabel(/模型名称 ·/).inputValue();
+  const originalKeyText = await page.getByLabel('API Key', { exact: false }).inputValue();
   await page.getByLabel('服务商预设').selectOption('openai');
+  await page.getByRole('button', { name: '继续编辑', exact: true }).click();
+  assert.equal(await page.getByLabel('平台名称', { exact: true }).inputValue(), '未保存平台名');
+  assert.equal(await page.getByLabel('API Key', { exact: false }).inputValue(), originalKeyText);
+  assert.equal(await page.getByLabel(/模型名称 ·/).inputValue(), originalModelText);
+  await page.getByLabel('服务商预设').selectOption('openai');
+  await page.getByRole('button', { name: '切换预设', exact: true }).click();
+  assert.equal(catalog.platforms[0].name, 'DeepSeek');
   assert.equal(await page.getByLabel('API Key', { exact: false }).inputValue(), '');
   assert.equal(await page.getByLabel(/模型名称 ·/).inputValue(), '');
   await page.getByLabel('API Key', { exact: false }).fill('fake-second-key');

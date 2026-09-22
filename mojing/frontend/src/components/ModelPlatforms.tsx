@@ -24,10 +24,12 @@ export function ModelPlatformsPanel({ onDirtyChange }: { onDirtyChange: (dirty: 
   const [discoveryNotice, setDiscoveryNotice] = useState('');
   const [fetching, setFetching] = useState(false);
   const fetchRef = useRef<AbortController | null>(null);
+  const presetChangeRef = useRef<AbortController | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const dirty = draft !== null && JSON.stringify({ ...draft, models: parseModelNames(modelText) }) !== original;
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => () => { fetchRef.current?.abort(); onDirtyChange(false); }, [onDirtyChange]);
+  useEffect(() => () => presetChangeRef.current?.abort(), []);
   function updateSaved(saved: ModelCatalog) {
     queryClient.setQueryData(catalogKey, saved);
     void queryClient.invalidateQueries({ queryKey: ['local-config'] });
@@ -52,6 +54,20 @@ export function ModelPlatformsPanel({ onDirtyChange }: { onDirtyChange: (dirty: 
   function changeAddress(address: string) {
     fetchRef.current?.abort();
     setDraft((value) => value && ({ ...value, base_url: address, api_key: '', models: [], selected_model: '' }));
+    setModelText(''); setError(''); setDiscoveryNotice('');
+  }
+  async function applyPreset(providerId: string) {
+    const preset = providers.data?.find((p) => p.provider_id === providerId);
+    if (!preset) return;
+    presetChangeRef.current?.abort();
+    const controller = new AbortController();
+    presetChangeRef.current = controller;
+    const confirmed = !dirty || await confirmModal('切换服务商预设？',
+      '当前未保存的修改将被替换。已保存的平台保持不变，新平台需要重新填写 Key 和模型。', 'warning',
+      { confirmLabel: '切换预设', cancelLabel: '继续编辑', signal: controller.signal });
+    if (controller.signal.aborted || !confirmed) return;
+    fetchRef.current?.abort();
+    setDraft({ ...emptyPlatform(), name: preset.label, base_url: preset.base_url });
     setModelText(''); setError(''); setDiscoveryNotice('');
   }
   async function discover() {
@@ -88,13 +104,7 @@ export function ModelPlatformsPanel({ onDirtyChange }: { onDirtyChange: (dirty: 
       <h4>{catalog.data?.platforms.some((p) => p.id === draft.id) ? '编辑平台' : '添加平台'}</h4>
       <fieldset disabled={save.isPending}><div className="model-platform-fields">
         <label>平台名称<input value={draft.name} maxLength={100} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="例如：我的 DeepSeek" /></label>
-        <label>服务商预设<select value="" onChange={(e) => {
-          const preset = providers.data?.find((p) => p.provider_id === e.target.value);
-          if (!preset) return;
-          fetchRef.current?.abort();
-          // A preset switch starts a new platform, preserving the original Key.
-          setDraft({ ...emptyPlatform(), name: preset.label, base_url: preset.base_url }); setModelText(''); setError(''); setDiscoveryNotice('');
-        }}><option value="">选择预设填写地址</option>{providers.data?.map((p) => <option value={p.provider_id} key={p.provider_id}>{p.label}</option>)}</select></label>
+        <label>服务商预设<select value="" onChange={(e) => { void applyPreset(e.target.value); }}><option value="">选择预设填写地址</option>{providers.data?.map((p) => <option value={p.provider_id} key={p.provider_id}>{p.label}</option>)}</select></label>
         <label className="model-platform-wide">API 地址<input value={draft.base_url} onChange={(e) => changeAddress(e.target.value)} placeholder="https://…/v1" /></label>
         <label className="model-platform-wide">API Key<input type="password" autoComplete="off" value={draft.api_key} onChange={(e) => { fetchRef.current?.abort(); setDraft({ ...draft, api_key: e.target.value }); }} placeholder="填写当前平台的 Key" /><small>更改地址会清空 Key 与模型，请重新填写。</small></label>
         <div className="model-platform-wide model-platform-actions"><button type="button" className="btn btn-sm" disabled={fetching || !draft.api_key || !draft.base_url} onClick={() => { void discover(); }}>{fetching ? '正在获取…' : '获取平台全部模型'}</button>
