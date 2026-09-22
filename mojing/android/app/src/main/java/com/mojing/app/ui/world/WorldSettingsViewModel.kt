@@ -4,9 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.entity.EncyclopediaEntity
+import com.mojing.app.data.WorldEditDraft
+import com.mojing.app.data.WorldEditDraftStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,11 +30,13 @@ data class WorldSettingsState(
     val error: String? = null,
     val saveError: String? = null,
     val saved: Boolean = false,
+    val recoverableDraft: WorldEditDraft? = null,
 )
 
 @HiltViewModel
 class WorldSettingsViewModel @Inject constructor(
     private val encyclopediaDao: EncyclopediaDao,
+    private val draftStore: WorldEditDraftStore,
 ) : ViewModel() {
     private val _state = MutableStateFlow(WorldSettingsState())
     val state: StateFlow<WorldSettingsState> = _state.asStateFlow()
@@ -51,7 +57,11 @@ class WorldSettingsViewModel @Inject constructor(
         loadJob = viewModelScope.launch {
             try {
                 val world = encyclopediaDao.getById(id) ?: error("找不到这个世界")
-                if (worldId == id) applyLoaded(world)
+                val draft = withContext(Dispatchers.IO) { draftStore.load(id) }
+                if (worldId == id) {
+                    applyLoaded(world)
+                    _state.value = _state.value.copy(recoverableDraft = draft)
+                }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (e: Exception) {
                 if (worldId == id) _state.value = WorldSettingsState(loading = false, error = e.message ?: "读取世界失败，请重试")
@@ -67,8 +77,28 @@ class WorldSettingsViewModel @Inject constructor(
     }
 
     private fun update(transform: (WorldSettingsState) -> WorldSettingsState) {
+        if (_state.value.loading || _state.value.saving || _state.value.recoverableDraft != null) return
         val next = transform(_state.value).copy(saved = false, saveError = null)
         _state.value = next.copy(dirty = snapshot(next.name, next.description, next.worldPrompt, next.gameplayMode, next.antiCheatPrompt) != savedSnapshot)
+        persistDraft()
+    }
+
+    private fun persistDraft() {
+        val current = _state.value
+        if (current.dirty) draftStore.save(worldId, WorldEditDraft(current.name, current.description, current.worldPrompt, current.gameplayMode, current.antiCheatPrompt))
+        else draftStore.clear(worldId)
+    }
+
+    fun restoreDraft() {
+        val draft = _state.value.recoverableDraft ?: return
+        _state.value = _state.value.copy(recoverableDraft = null)
+        update { it.copy(name = draft.name, description = draft.description, worldPrompt = draft.prompt, gameplayMode = draft.gameplay, antiCheatPrompt = draft.rules) }
+    }
+
+    fun discardDraft() {
+        if (_state.value.saving) return
+        draftStore.clear(worldId)
+        _state.value = _state.value.copy(recoverableDraft = null)
     }
 
     fun updateName(v: String) = update { it.copy(name = v) }
@@ -80,7 +110,7 @@ class WorldSettingsViewModel @Inject constructor(
     fun save() {
         val current = _state.value
         val world = current.world ?: return
-        if (!current.dirty || current.saving || current.name.isBlank()) return
+        if (!current.dirty || current.saving || current.name.isBlank() || current.recoverableDraft != null) return
         _state.value = current.copy(saving = true, saveError = null)
         viewModelScope.launch {
             try {
@@ -94,6 +124,7 @@ class WorldSettingsViewModel @Inject constructor(
                     saved.gameplayMode, saved.antiCheatPrompt, saved.updatedAt,
                 ) == 1) { "世界已更新或删除，请返回后重新打开；当前输入仍保留" }
                 applyLoaded(saved)
+                draftStore.clear(worldId)
                 _state.value = _state.value.copy(saved = true)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (e: Exception) { _state.value = _state.value.copy(saving = false, saveError = e.message ?: "保存失败，请重试") }
