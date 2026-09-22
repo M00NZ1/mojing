@@ -21,6 +21,7 @@ data class SearchState(
     val query: String = "", val completedQuery: String = "", val exactMatch: Boolean = false,
     val searching: Boolean = false, val error: String? = null,
     val hits: List<SearchHit> = emptyList(), val totalMatches: Int? = null,
+    val counting: Boolean = false, val countError: String? = null,
     val hasOlder: Boolean = false, val selectedMessageId: Long? = null,
     val contextMessages: List<MessageEntity> = emptyList(), val history: List<String> = emptyList(),
 )
@@ -35,6 +36,7 @@ class SearchViewModel @Inject constructor(application: Application, private val 
     private var detailRevision = 0L
     private var beforeId = Long.MAX_VALUE
     private var searchJob: Job? = null
+    private var countJob: Job? = null
     private var detailJob: Job? = null
     private var activeSessionId: Long? = null
     private var activeBranchId = "main"
@@ -72,23 +74,43 @@ class SearchViewModel @Inject constructor(application: Application, private val 
         beforeId = Long.MAX_VALUE
         saveHistory(sessionId, listOf(q) + history(sessionId).filterNot { it == q })
         _state.update { it.copy(searching = true, error = null, hits = emptyList(), totalMatches = null,
+            counting = false, countError = null,
             completedQuery = q, hasOlder = false, selectedMessageId = null, contextMessages = emptyList()) }
         searchJob = viewModelScope.launch {
             try {
                 val page = loadPage(sessionId, branchId, q, exact, Long.MAX_VALUE)
-                val total = if (branchId == "main") messageDao.countMainMessages(sessionId, q, if (exact) 1 else 0)
-                    else messageDao.countVisibleMessages(sessionId, branchId, q, if (exact) 1 else 0)
                 val hits = resultFormatter.format(page, q)
                 if (token != revision) return@launch
                 beforeId = page.lastOrNull()?.id ?: Long.MAX_VALUE
                 _state.update { it.copy(searching = false, hits = hits,
-                    totalMatches = total, hasOlder = page.size < total && page.isNotEmpty()) }
+                    totalMatches = if (page.size < PAGE_SIZE) page.size else null,
+                    hasOlder = page.size == PAGE_SIZE) }
+                if (page.size == PAGE_SIZE) countMatches(sessionId, branchId)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { if (token == revision) _state.update { it.copy(searching = false, error = "搜索未完成，请重试") } }
         }
     }
 
     fun loadOlder(sessionId: Long, branchId: String) = loadOlderAndOpen(sessionId, branchId, false)
+
+    fun countMatches(sessionId: Long, branchId: String) {
+        val current = state.value
+        if (current.counting || current.completedQuery.isBlank() || current.totalMatches != null) return
+        val token = revision
+        _state.update { it.copy(counting = true, countError = null) }
+        countJob = viewModelScope.launch {
+            try {
+                val total = if (branchId == "main") messageDao.countMainMessages(sessionId, current.completedQuery, if (current.exactMatch) 1 else 0)
+                    else messageDao.countVisibleMessages(sessionId, branchId, current.completedQuery, if (current.exactMatch) 1 else 0)
+                if (token == revision) _state.update {
+                    it.copy(counting = false, totalMatches = total, hasOlder = it.hasOlder && it.hits.size < total)
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (token == revision) _state.update { it.copy(counting = false, countError = "匹配总数统计失败") }
+            }
+        }
+    }
 
     private fun loadOlderAndOpen(sessionId: Long, branchId: String, openNext: Boolean) {
         val current = state.value
@@ -105,7 +127,7 @@ class SearchViewModel @Inject constructor(application: Application, private val 
                 beforeId = page.lastOrNull()?.id ?: beforeId
                 val hits = (state.value.hits + formatted).distinctBy { it.message.id }
                 _state.update { it.copy(searching = false, hits = hits,
-                    hasOlder = page.isNotEmpty() && hits.size < (it.totalMatches ?: Int.MAX_VALUE)) }
+                    hasOlder = page.size == PAGE_SIZE && hits.size < (it.totalMatches ?: Int.MAX_VALUE)) }
                 if (openNext && detailToken == detailRevision) {
                     page.firstOrNull()?.let { openHit(sessionId, branchId, it.id) }
                 }
@@ -163,6 +185,7 @@ class SearchViewModel @Inject constructor(application: Application, private val 
     private fun cancelSearch() {
         revision++; detailRevision++
         searchJob?.cancel(); detailJob?.cancel()
+        countJob?.cancel(); countJob = null
         searchJob = null; detailJob = null
     }
 

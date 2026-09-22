@@ -106,6 +106,11 @@ fun SearchScreen(
             if (state.searching) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (state.error != null) Text(state.error, Modifier.padding(20.dp), color = MaterialTheme.colorScheme.error)
             state.totalMatches?.let { Text("共 $it 条匹配消息", Modifier.padding(horizontal = 20.dp, vertical = 8.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            if (state.counting) Text("已加载 ${state.hits.size} 条 · 正在统计总数…", Modifier.padding(horizontal = 20.dp, vertical = 8.dp), style = MaterialTheme.typography.labelMedium)
+            if (state.countError != null) Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(state.countError, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = { vm.countMatches(sessionId, branchId) }) { Text("重新统计") }
+            }
             if (!state.searching && state.error == null && state.hits.isEmpty() && state.totalMatches == 0) Text("没有找到匹配消息", Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.hits, key = { it.message.id }) { hit -> SearchResultCard(hit, state.completedQuery) { focus.clearFocus(); vm.openHit(sessionId, branchId, hit.message.id) } }
@@ -205,7 +210,7 @@ fun SearchScreen(
         Surface(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
             shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 3.dp) {
             Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("$current / ${state.totalMatches ?: state.hits.size}", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                Text("$current / ${state.totalMatches?.toString() ?: "${state.hits.size}+"}", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                 TextButton(onClick = vm::closeHit) { Text("以列表显示") }
             }
         }

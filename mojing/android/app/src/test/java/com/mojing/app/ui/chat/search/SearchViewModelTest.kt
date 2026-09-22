@@ -48,6 +48,51 @@ class SearchViewModelTest {
 
     @After fun tearDown() { Dispatchers.resetMain() }
 
+    @Test fun firstPageCanBeReadWhileTotalCountIsPending() = runTest(dispatcher) {
+        val gate = CompletableDeferred<Int>()
+        val page = (1L..40L).reversed().map { message(it, "hit") }
+        coEvery { dao.searchMainMessages(any(), any(), any(), any(), any()) } returns page
+        coEvery { dao.countMainMessages(any(), any(), any()) } coAnswers { gate.await() }
+        coEvery { dao.getMainMessageById(1L, 40L) } returns page.first()
+        viewModel.setQuery("hit"); viewModel.search(1L, "main"); runCurrent()
+        assertEquals(40, viewModel.state.value.hits.size)
+        assertFalse(viewModel.state.value.searching)
+        assertTrue(viewModel.state.value.counting)
+        viewModel.openHit(1L, "main", 40L); runCurrent()
+        assertEquals(40L, viewModel.state.value.selectedMessageId)
+        gate.complete(60); advanceUntilIdle()
+        assertEquals(60, viewModel.state.value.totalMatches)
+        assertFalse(viewModel.state.value.counting)
+    }
+
+    @Test fun countFailureKeepsResultsAndCanBeRetried() = runTest(dispatcher) {
+        coEvery { dao.searchMainMessages(any(), any(), any(), any(), any()) } returns
+            (1L..40L).reversed().map { message(it, "hit") }
+        coEvery { dao.countMainMessages(any(), any(), any()) } throws IllegalStateException("count failed")
+        viewModel.setQuery("hit"); viewModel.search(1L, "main"); advanceUntilIdle()
+        assertEquals(40, viewModel.state.value.hits.size)
+        assertNull(viewModel.state.value.error)
+        assertEquals("匹配总数统计失败", viewModel.state.value.countError)
+        coEvery { dao.countMainMessages(any(), any(), any()) } returns 40
+        viewModel.countMatches(1L, "main"); advanceUntilIdle()
+        assertEquals(40, viewModel.state.value.totalMatches)
+        assertNull(viewModel.state.value.countError)
+        assertFalse(viewModel.state.value.hasOlder)
+    }
+
+    @Test fun changedQueryCannotReceivePreviousCount() = runTest(dispatcher) {
+        val gate = CompletableDeferred<Int>()
+        coEvery { dao.searchMainMessages(any(), any(), any(), any(), any()) } returns
+            (1L..40L).reversed().map { message(it, "old") }
+        coEvery { dao.countMainMessages(any(), any(), any()) } coAnswers { gate.await() }
+        viewModel.setQuery("old"); viewModel.search(1L, "main"); runCurrent()
+        viewModel.setQuery("new")
+        gate.complete(100); advanceUntilIdle()
+        assertNull(viewModel.state.value.totalMatches)
+        assertFalse(viewModel.state.value.counting)
+        assertTrue(viewModel.state.value.hits.isEmpty())
+    }
+
     @Test fun changingQueryWhileSnippetIsQueuedCannotPublishOldResults() = runTest(dispatcher) {
         val cpu = QueuedSearchDispatcher()
         val presentation = mockk<SearchPresentationLoader>()
