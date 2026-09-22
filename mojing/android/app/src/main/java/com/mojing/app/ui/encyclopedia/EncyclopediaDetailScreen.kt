@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.VerticalDivider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LinearProgressIndicator
