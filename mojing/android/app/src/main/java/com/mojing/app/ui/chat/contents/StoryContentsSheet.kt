@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -39,13 +41,14 @@ fun StoryContentsSheet(
     var editingChapter by remember { mutableStateOf<StoryContentsEntry?>(null) }
     var title by remember { mutableStateOf("") }
     var direction by remember { mutableStateOf("") }
-    val controlsBusy = busy || saving
+    val controlsBusy = busy || saving || state.refreshingId != null
     val currentSaving by rememberUpdatedState(saving)
-    val sheetState = rememberModalBottomSheetState(confirmValueChange = { it != SheetValue.Hidden || !currentSaving })
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true,
+        confirmValueChange = { it != SheetValue.Hidden || !currentSaving })
     if (editingNovel || creatingChapter || editingChapter != null) AlertDialog(
         onDismissRequest = { if (!saving) { editingNovel = false; creatingChapter = false; editingChapter = null } },
         title = { Text(if (creatingChapter) "生成下一章" else if (editingNovel) "小说标题" else "章节名称") },
-        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        text = { Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             com.mojing.app.ui.common.MoJingTextField(value = title, onValueChange = { title = it.take(100) }, singleLine = true,
                 enabled = !saving,
                 label = { Text(if (creatingChapter) "章节名（可由模型生成）" else "名称") })
@@ -59,15 +62,19 @@ fun StoryContentsSheet(
                 editingNovel -> onRenameNovel(title) { editingNovel = false }
                 else -> editingChapter?.let { entry -> onRenameChapter(entry.messageId, title) {
                     editingChapter = null
-                    viewModel.load(sessionId, branchId)
+                    viewModel.refreshEntry(entry.messageId)
                 } }
             }
         }) { Text(if (saving) "保存中…" else if (creatingChapter) "开始生成" else "保存") } },
         dismissButton = { TextButton(enabled = !saving, onClick = { editingNovel = false; creatingChapter = false; editingChapter = null }) { Text("取消") } },
     )
-    ModalBottomSheet(sheetState = sheetState, onDismissRequest = { if (!saving) onDismiss() }) {
+    ModalBottomSheet(sheetState = sheetState, onDismissRequest = { if (!saving) onDismiss() },
+        dragHandle = null, containerColor = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-            Text("小说目录", style = MaterialTheme.typography.headlineSmall)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("小说目录", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                IconButton(onClick = onDismiss, enabled = !saving) { Icon(Icons.Default.Close, "关闭小说目录") }
+            }
             TextButton(enabled = !controlsBusy, onClick = { onEditStart(); title = novelTitle; editingNovel = true }) {
                 Text(novelTitle.ifBlank { "设置小说标题" }, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
@@ -76,6 +83,12 @@ fun StoryContentsSheet(
                 TextButton(enabled = !controlsBusy && state.entries.isNotEmpty(), onClick = onExport) { Text("导出小说 TXT") }
             }
             Spacer(Modifier.height(12.dp))
+            if (state.refreshingId != null) LinearProgressIndicator(Modifier.fillMaxWidth())
+            state.refreshFailedId?.let { messageId ->
+                TextButton(onClick = { viewModel.refreshEntry(messageId) }) {
+                    Text("名称已保存，点击重试刷新目录", color = MaterialTheme.colorScheme.error)
+                }
+            }
         }
         when {
             state.isLoading -> Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -91,15 +104,17 @@ fun StoryContentsSheet(
                             if (onOpenMessage(entry.messageId)) onDismiss()
                         },
                         trailingContent = { TextButton(enabled = !controlsBusy, onClick = { onEditStart(); title = entry.title; editingChapter = entry }) { Text("命名") } },
-                        leadingContent = { Icon(Icons.Default.MenuBook, contentDescription = null) },
-                        headlineContent = { Text(entry.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
+                        headlineContent = { Text(entry.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
                         supportingContent = {
                             Column {
-                                Text(entry.dateLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                Text(entry.dateLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (entry.incomplete) Text("未完成", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                                 if (entry.preview.isNotBlank()) Text(entry.preview, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                         },
                     )
+                    HorizontalDivider(Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.outlineVariant)
                 }
                 if (state.hasMore) item(key = "more") {
                     TextButton(onClick = viewModel::loadMore, enabled = !state.isLoadingMore, modifier = Modifier.fillMaxWidth()) {

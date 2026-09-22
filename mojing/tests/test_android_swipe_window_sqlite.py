@@ -46,3 +46,37 @@ def test_effective_selection_is_independent_of_loaded_window():
         db.execute("UPDATE branch_visibility_segments SET maxMessageId=1 WHERE targetBranchId='B' AND sourceBranchId='main'")
         db.execute("DELETE FROM messages WHERE id=701")
         assert selected('B') == [(42, 'B', 'reply', 1)]
+
+
+def test_directory_single_entry_refresh_preserves_visibility_and_projection():
+    with sqlite3.connect(":memory:") as db:
+        db.executescript("""
+            CREATE TABLE messages(id INTEGER PRIMARY KEY, sessionId INTEGER, branchId TEXT,
+                swipeGroupId TEXT, includeInContext INTEGER, createdAt INTEGER, regeneratedFromMessageId INTEGER,
+                speakerType TEXT, structuredContentJson TEXT, content TEXT);
+            CREATE TABLE branch_visibility_segments(sessionId INTEGER,targetBranchId TEXT,sourceBranchId TEXT,maxMessageId INTEGER);
+            CREATE TABLE branch_swipe_selections(sessionId INTEGER,branchId TEXT,swipeGroupId TEXT,selectedMessageId INTEGER);
+            INSERT INTO messages VALUES(1,42,'main','chapter',1,1,NULL,'narrator','{}','第一章'),
+                (2,42,'A','chapter',0,2,NULL,'narrator','{}','分支章节'),
+                (3,99,'main',NULL,1,3,NULL,'narrator','{}','另一会话'),
+                (4,42,'main',NULL,1,4,NULL,'user','{}','用户输入');
+            INSERT INTO branch_visibility_segments VALUES(42,'A','main',1),(42,'A','A',2);
+            INSERT INTO branch_swipe_selections VALUES(42,'A','chapter',2);
+        """)
+        def entry(branch, message_id):
+            method = 'getMainStoryContentsEntry' if branch == 'main' else 'getBranchStoryContentsEntry'
+            return db.execute(selection_sql(method), dict(sessionId=42, branchId=branch, messageId=message_id)).fetchone()
+        assert entry('main', 1)[0] == 1
+        assert entry('A', 1) is None
+        assert entry('A', 2)[0] == 2
+        assert entry('main', 2) is None
+        assert entry('main', 3) is None
+        assert entry('main', 4) is None
+        db.execute('UPDATE messages SET structuredContentJson=?,content=? WHERE id=2',
+                   ('{"chapter_title":"新名称"}', '正文' * 500))
+        refreshed = entry('A', 2)
+        assert refreshed[4] == '{"chapter_title":"新名称"}'
+        assert len(refreshed[5]) == 180
+        assert len(refreshed) == 6
+        db.execute('DELETE FROM messages WHERE id=2')
+        assert entry('A', 2) is None

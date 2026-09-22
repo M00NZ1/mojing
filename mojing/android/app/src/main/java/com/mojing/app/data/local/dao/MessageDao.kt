@@ -178,6 +178,14 @@ interface MessageDao {
         if (branchId == "main") getMainStoryContentsBefore(sessionId, beforeMessageId, limit)
         else getBranchStoryContentsBefore(sessionId, branchId, beforeMessageId, limit)
 
+    @Query("SELECT id, speakerType, branchId, createdAt, structuredContentJson, substr(content, 1, 180) AS contentPreview " +
+        "FROM ($MAIN_CONTEXT_MESSAGES_QUERY) WHERE id = :messageId AND speakerType IN ('narrator', 'character') LIMIT 1")
+    suspend fun getMainStoryContentsEntry(sessionId: Long, messageId: Long): StoryContentsMessageProjection?
+
+    @Query("SELECT id, speakerType, branchId, createdAt, structuredContentJson, substr(content, 1, 180) AS contentPreview " +
+        "FROM ($VISIBLE_CONTEXT_MESSAGES_QUERY) WHERE id = :messageId AND speakerType IN ('narrator', 'character') LIMIT 1")
+    suspend fun getBranchStoryContentsEntry(sessionId: Long, branchId: String, messageId: Long): StoryContentsMessageProjection?
+
     @Query("SELECT * FROM messages WHERE sessionId = :sessionId AND branchId = 'main' ORDER BY createdAt ASC")
     suspend fun getMainBranchMessages(sessionId: Long): List<MessageEntity>
 

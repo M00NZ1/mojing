@@ -15,6 +15,8 @@ data class StoryContentsState(
     val isLoadingMore: Boolean = false,
     val hasMore: Boolean = true,
     val error: String? = null,
+    val refreshingId: Long? = null,
+    val refreshFailedId: Long? = null,
 )
 
 @HiltViewModel
@@ -47,6 +49,29 @@ class StoryContentsViewModel @Inject constructor(
     fun loadMore() {
         if (_state.value.isLoading || _state.value.isLoadingMore || !_state.value.hasMore) return
         fetch(reset = false, requestToken)
+    }
+
+    fun refreshEntry(messageId: Long) {
+        if (_state.value.refreshingId != null || _state.value.entries.none { it.messageId == messageId }) return
+        val token = requestToken
+        val session = sessionId
+        val branch = branchId
+        _state.value = _state.value.copy(refreshingId = messageId, refreshFailedId = null)
+        viewModelScope.launch {
+            try {
+                val row = if (branch == "main") messageDao.getMainStoryContentsEntry(session, messageId)
+                    else messageDao.getBranchStoryContentsEntry(session, branch, messageId)
+                if (token != requestToken) return@launch
+                val replacement = row?.toContentsEntry()
+                _state.value = _state.value.copy(
+                    entries = _state.value.entries.mapNotNull { entry -> if (entry.messageId == messageId) replacement else entry },
+                    refreshingId = null,
+                )
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (token == requestToken) _state.value = _state.value.copy(refreshingId = null, refreshFailedId = messageId)
+            }
+        }
     }
 
     private fun fetch(reset: Boolean, token: Long) = viewModelScope.launch {
