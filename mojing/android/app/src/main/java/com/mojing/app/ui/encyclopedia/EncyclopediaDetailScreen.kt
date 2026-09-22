@@ -16,6 +16,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -120,7 +122,7 @@ private val WorldInfoImportMimeTypes = arrayOf(
     "*/*",
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun EncyclopediaDetailScreen(
     encyclopediaId: Long,
@@ -905,11 +907,12 @@ fun EncyclopediaDetailScreen(
                     label = { Text("文件内容") },
                     enabled = !state.worldInfoImportBusy,
                 )
-                Row(
+                FlowRow(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 12.dp, bottom = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     TextButton(
                         onClick = { viewModel.dismissWorldInfoReview() },
@@ -1073,7 +1076,10 @@ fun EncyclopediaDetailScreen(
             onDismissRequest = { timelineDetailTarget = null },
             title = { Text(event.title.ifBlank { "时间线事件" }) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     Text("时间：${event.eventTime.ifBlank { "未标注" }}")
                     Text("排序：${event.sortOrder}")
                     if (event.description.isNotBlank()) Text(event.description)
