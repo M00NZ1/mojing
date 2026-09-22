@@ -147,6 +147,7 @@ fun SettingsScreen(
                             if (profileName.trim() == name) profileName = name
                         },
                     )
+                    4 -> AppUpdateTab()
                     3 -> UsageScreen(viewModel = hiltViewModel(), onPlatform = { platform ->
                         navController.navigate("usage/platform?platformId=${android.net.Uri.encode(platform.id)}&platformName=${android.net.Uri.encode(platform.name)}")
                     })

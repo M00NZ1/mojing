@@ -22,7 +22,7 @@ internal fun SettingsSections(
         }
     }
     PrimaryScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 0.dp) {
-        listOf("模型", "创作", "个性化", "用量").forEachIndexed { index, title ->
+        listOf("模型", "创作", "个性化", "用量", "关于与更新").forEachIndexed { index, title ->
             Tab(selected = selectedTab == index,
                 onClick = { if (selectedTab != index) requestNavigation { selectedTab = index } },
                 text = { Text(title) })
