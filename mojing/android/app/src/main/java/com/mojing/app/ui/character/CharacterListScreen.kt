@@ -9,6 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -22,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +38,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import java.text.Collator
+import java.util.Locale
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavHostController
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -53,6 +57,8 @@ import com.mojing.app.util.ContentDocumentWriter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
+private enum class CharacterSortOrder { RECOMMENDED, RECENT, NAME }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CharacterListScreen(
@@ -67,6 +73,29 @@ fun CharacterListScreen(
     val filterEnc by viewModel.filterEncyclopediaId.collectAsStateWithLifecycle()
     val encOptions by viewModel.encyclopedias.collectAsStateWithLifecycle()
     val startingCharacterId by viewModel.startingCharacterId.collectAsStateWithLifecycle()
+    var sortOrder by rememberSaveable { mutableStateOf(CharacterSortOrder.RECOMMENDED) }
+    val visibleCharacters by remember {
+        derivedStateOf {
+            when (sortOrder) {
+                CharacterSortOrder.RECOMMENDED -> characters
+                CharacterSortOrder.RECENT -> characters.sortedWith(
+                    compareByDescending<CharacterEntity> { it.pinnedAt > 0 }
+                        .thenByDescending { it.createdAt }
+                        .thenByDescending { it.id },
+                )
+                CharacterSortOrder.NAME -> {
+                    val collator = Collator.getInstance(Locale.getDefault())
+                    characters.sortedWith { left, right ->
+                        when {
+                            (left.pinnedAt > 0) != (right.pinnedAt > 0) -> if (left.pinnedAt > 0) -1 else 1
+                            else -> collator.compare(left.name.trim(), right.name.trim()).takeIf { it != 0 }
+                                ?: left.id.compareTo(right.id)
+                        }
+                    }
+                }
+            }
+        }
+    }
     var deleteTarget by remember { mutableStateOf<CharacterEntity?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var filterMenuExpanded by remember { mutableStateOf(false) }
@@ -139,6 +168,7 @@ fun CharacterListScreen(
                     val msg = viewModel.importFromDocument(bytes, uri.lastPathSegment)
                     // Room Flow 会自动刷新列表；清除旧筛选，确保新角色立即可见。
                     viewModel.setEncyclopediaFilter(null)
+                    if (!msg.startsWith("导入异常")) sortOrder = CharacterSortOrder.RECENT
                     val message = UserFacingStrings.appendAndroidIfNeeded(msg)
                     Toast.makeText(
                         context,
@@ -280,9 +310,21 @@ fun CharacterListScreen(
                     }
                 }
             }
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                item { Text("排序", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                item { FilterChip(sortOrder == CharacterSortOrder.RECOMMENDED, { sortOrder = CharacterSortOrder.RECOMMENDED }, label = { Text("推荐") }) }
+                item { FilterChip(sortOrder == CharacterSortOrder.RECENT, { sortOrder = CharacterSortOrder.RECENT }, label = { Text("最近添加") }) }
+                item { FilterChip(sortOrder == CharacterSortOrder.NAME, { sortOrder = CharacterSortOrder.NAME }, label = { Text("名称") }) }
+                item { Text("${characters.size} 个角色", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
             Box(modifier = Modifier.weight(1f)) {
-                if (characters.isEmpty()) {
+                if (visibleCharacters.isEmpty()) {
                     val selectedEncyclopedia = filterEnc?.let(encNameById::get)
                     EmptyState(
                         icon = Icons.Default.PersonAdd,
@@ -308,7 +350,7 @@ fun CharacterListScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        items(characters, key = { it.id }) { character ->
+                        items(visibleCharacters, key = { it.id }) { character ->
                             SwipeRevealListRow(
                                 swipeEnabled = true,
                                 isPinned = character.pinnedAt > 0,
@@ -337,7 +379,7 @@ fun CharacterListScreen(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(vertical = 0.dp),
                     ) {
-                        itemsIndexed(characters, key = { _, c -> c.id }) { index, character ->
+                        itemsIndexed(visibleCharacters, key = { _, c -> c.id }) { index, character ->
                             Column(Modifier.fillMaxWidth()) {
                                 SwipeRevealListRow(
                                     swipeEnabled = true,
@@ -360,7 +402,7 @@ fun CharacterListScreen(
                                         onStartChat = { startChat(character) },
                                     )
                                 }
-                                if (index < characters.lastIndex) {
+                                if (index < visibleCharacters.lastIndex) {
                                     HorizontalDivider(
                                         modifier = Modifier.padding(start = MoJingListTokens.dividerInset),
                                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
