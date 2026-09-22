@@ -17,6 +17,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.hideImeKeyboard
 import com.mojing.app.ui.common.isImeKeyboardOpen
+import com.mojing.app.ui.common.MoJingLongTextField
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,9 +53,9 @@ fun WorldSettingsScreen(
             else -> Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 OutlinedTextField(state.name, viewModel::updateName, Modifier.fillMaxWidth(), enabled = !state.saving, label = { Text("世界名称") }, singleLine = true, isError = state.name.isBlank())
                 OutlinedTextField(state.description, viewModel::updateDescription, Modifier.fillMaxWidth(), enabled = !state.saving, label = { Text("简介") }, minLines = 2, maxLines = 4)
-                OutlinedTextField(state.worldPrompt, viewModel::updateWorldPrompt, Modifier.fillMaxWidth(), enabled = !state.saving, label = { Text("世界提示词") }, minLines = 5, maxLines = 12)
+                MoJingLongTextField(state.worldPrompt, viewModel::updateWorldPrompt, "世界提示词", "描述世界背景、运行规则与叙事风格", Modifier.fillMaxWidth(), enabled = !state.saving)
                 OutlinedTextField(state.gameplayMode, viewModel::updateGameplayMode, Modifier.fillMaxWidth(), enabled = !state.saving, label = { Text("玩法模式") }, singleLine = true)
-                OutlinedTextField(state.antiCheatPrompt, viewModel::updateAntiCheatPrompt, Modifier.fillMaxWidth(), enabled = !state.saving, label = { Text("防越界规则") }, minLines = 4, maxLines = 10)
+                MoJingLongTextField(state.antiCheatPrompt, viewModel::updateAntiCheatPrompt, "防越界规则", "描述角色能力、信息范围与剧情约束", Modifier.fillMaxWidth(), enabled = !state.saving)
                 state.saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 if (state.saved) Text("已保存", color = MaterialTheme.colorScheme.primary)
             }
