@@ -1,21 +1,23 @@
 package com.mojing.app.ui.chat.drawer
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.BookmarkRemove
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -43,13 +45,15 @@ fun BookmarksTab(
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         if (bookmarks.isEmpty()) {
-            Text(
-                "长按消息可选「收藏」，在此快速跳转。",
-                modifier = Modifier.padding(24.dp),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-            )
+            Column(Modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Default.BookmarkBorder, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("还没有收藏", style = MaterialTheme.typography.titleMedium)
+                Text("长按消息选择「收藏」，以后可在这里回到原文。",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         } else {
+            Text("${bookmarks.size} 条收藏", Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyColumn(modifier = Modifier.fillMaxWidth()) {
                 items(bookmarks, key = { it.id }) { b ->
                     val preview = bookmarkPreviews[b.messageId] ?: "…"
@@ -57,31 +61,29 @@ fun BookmarksTab(
                         Instant.ofEpochMilli(b.createdAt).atZone(ZoneId.systemDefault())
                             .format(DateTimeFormatter.ofPattern("yyyy/M/d HH:mm", Locale.getDefault()))
                     }
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
-                            .clickable(enabled = locatingId == null && b.messageId !in busyIds) { onJump(b.messageId) },
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.PushPin, null, tint = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(8.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(if (locatingId == b.messageId) "正在定位原文…" else "收藏于 $savedAt", style = MaterialTheme.typography.labelSmall,
+                    Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Surface(onClick = { onJump(b.messageId) },
+                            enabled = locatingId == null && b.messageId !in busyIds,
+                            modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.surface) {
+                            Column(Modifier.fillMaxWidth().heightIn(min = 72.dp).padding(horizontal = 12.dp, vertical = 14.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("收藏于 $savedAt", style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(preview, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                            }
-                            IconButton(onClick = { onRemove(b.messageId) }, enabled = b.messageId !in busyIds && locatingId != b.messageId) {
-                                if (b.messageId in busyIds) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                                else
-                                Icon(Icons.Default.Delete, "取消收藏", tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f))
+                                if (locatingId == b.messageId) Row(verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                                    Text("正在定位原文…", Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                }
                             }
                         }
+                        IconButton(onClick = { onRemove(b.messageId) }, enabled = b.messageId !in busyIds && locatingId != b.messageId) {
+                            if (b.messageId in busyIds) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            else Icon(Icons.Default.BookmarkRemove, "取消收藏", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
+                    HorizontalDivider(Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.outlineVariant)
                 }
             }
         }
