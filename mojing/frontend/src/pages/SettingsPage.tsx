@@ -33,6 +33,16 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; icon: UiIconName }>
   { id: 'costs', label: '成本统计', icon: 'summary' },
 ];
 
+const SETTINGS_TAB_META: Record<SettingsTab, { eyebrow: string; title: string; description: string }> = {
+  persona: { eyebrow: '设置首页', title: '个人资料', description: '管理对话中使用的称呼、简介与头像颜色。' },
+  appearance: { eyebrow: '界面体验', title: '外观与阅读', description: '调整主题配色与聊天内容的显示密度。' },
+  defaults: { eyebrow: '新会话', title: '默认配置', description: '设置新建故事时自动带入的世界和对话行为。' },
+  api: { eyebrow: '连接与模型', title: '模型服务', description: '管理平台、密钥和图片、语音等可选线路。' },
+  data: { eyebrow: '本地数据', title: '记录转移', description: '导出或导入一段完整故事，继续在其他设备使用。' },
+  rules: { eyebrow: '输出控制', title: '输出规则', description: '设置模型回复的格式与内容边界。' },
+  costs: { eyebrow: '使用记录', title: '成本统计', description: '查看按平台和模型整理的 Token 与费用明细。' },
+};
+
 function isSettingsTab(value: string | null): value is SettingsTab {
   return SETTINGS_TABS.some((item) => item.id === value);
 }
@@ -247,8 +257,8 @@ export default function SettingsPage() {
   return (
     <div className="settings-page">
       <div className="settings-header">
-        <h2>设置</h2>
-        <div ref={tabsRef} className="settings-tabs" style={{ marginTop: 12 }} role="tablist" aria-label="设置分类">
+        {tab === 'persona' && <h2>设置</h2>}
+        <div ref={tabsRef} className="settings-tabs" role="tablist" aria-label="设置分类">
           {SETTINGS_TABS.map((item) => (
             <button
               key={item.id}
@@ -266,6 +276,25 @@ export default function SettingsPage() {
           ))}
         </div>
       </div>
+
+      {tab !== 'persona' && (
+        <div className="settings-subpage-header">
+          <button
+            type="button"
+            className="settings-subpage-back"
+            onClick={() => selectTab('persona')}
+            aria-label="返回设置首页"
+          >
+            <UiIcon name="back" />
+            <span>设置首页</span>
+          </button>
+          <div className="settings-subpage-heading">
+            <p className="eyebrow">{SETTINGS_TAB_META[tab].eyebrow}</p>
+            <h1>{SETTINGS_TAB_META[tab].title}</h1>
+            <p>{SETTINGS_TAB_META[tab].description}</p>
+          </div>
+        </div>
+      )}
 
       <div
         id={`settings-panel-${tab}`}

@@ -4529,6 +4529,62 @@ html[data-theme="paper"] .chat-bubble-text hr {
   gap: 12px;
 }
 
+.settings-subpage-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
+  padding: 16px 18px 17px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface) 92%, var(--accent-soft));
+}
+
+.settings-subpage-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 7px 10px 7px 7px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  background: var(--surface-2);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.settings-subpage-back:hover,
+.settings-subpage-back:focus-visible {
+  color: var(--text);
+  border-color: var(--accent-2);
+  background: var(--surface);
+}
+
+.settings-subpage-back .ui-icon {
+  width: 17px;
+  height: 17px;
+}
+
+.settings-subpage-heading .eyebrow {
+  margin: 0 0 3px;
+}
+
+.settings-subpage-heading h1 {
+  margin: 0;
+  color: var(--text);
+  font-size: clamp(1.15rem, 2vw, 1.45rem);
+  line-height: 1.25;
+}
+
+.settings-subpage-heading > p:last-child {
+  margin: 5px 0 0;
+  color: var(--text-2);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
 .settings-header h2 {
   font-size: 1.1rem;
   font-weight: 700;
@@ -6135,6 +6191,14 @@ html[data-theme="paper"] .chat-bubble-text hr {
   /* ── 极小屏页面容器 ── */
   .settings-page .form-grid label { display: flex; flex-direction: column; gap: 4px; }
   .settings-page .form-grid select { width: 100%; }
+  .settings-subpage-header {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 13px 14px 14px;
+  }
+  .settings-subpage-back { justify-self: start; }
+  .settings-subpage-heading h1 { font-size: 1.12rem; }
+  .settings-subpage-heading > p:last-child { font-size: 0.78rem; }
 
   .encyclopedia-layout {
     flex-direction: column;
