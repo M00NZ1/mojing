@@ -100,6 +100,7 @@ fun CharacterListScreen(
     var showMoreMenu by remember { mutableStateOf(false) }
     var filterMenuExpanded by remember { mutableStateOf(false) }
     var isImportingDocument by remember { mutableStateOf(false) }
+    var importResult by remember { mutableStateOf<CharacterImportResult?>(null) }
     var isExportingDocument by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -162,27 +163,19 @@ fun CharacterListScreen(
                         ContentDocumentReader.CHARACTER_IMPORT_MAX_BYTES,
                     )
                     if (bytes.isEmpty()) {
-                        Toast.makeText(context, UserFacingStrings.importReadFailed(), Toast.LENGTH_SHORT).show()
+                        importResult = CharacterImportResult(UserFacingStrings.importReadFailed(), hasFailure = true)
                         return@launch
                     }
-                    val msg = viewModel.importFromDocument(bytes, uri.lastPathSegment)
-                    // Room Flow 会自动刷新列表；清除旧筛选，确保新角色立即可见。
-                    viewModel.setEncyclopediaFilter(null)
-                    if (!msg.startsWith("导入异常")) sortOrder = CharacterSortOrder.RECENT
-                    val message = UserFacingStrings.appendAndroidIfNeeded(msg)
-                    Toast.makeText(
-                        context,
-                        message,
-                        if (msg.startsWith("导入异常")) Toast.LENGTH_LONG else Toast.LENGTH_SHORT,
-                    ).show()
+                    val result = viewModel.importFromDocument(bytes, uri.lastPathSegment)
+                    importResult = result
+                    if (result.importedIds.isNotEmpty()) {
+                        viewModel.setEncyclopediaFilter(null)
+                        sortOrder = CharacterSortOrder.RECENT
+                    }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
-                } catch (e: Exception) {
-                    Toast.makeText(
-                        context,
-                        e.message ?: UserFacingStrings.importReadFailed(),
-                        Toast.LENGTH_LONG,
-                    ).show()
+                } catch (_: Exception) {
+                    importResult = CharacterImportResult(UserFacingStrings.importReadFailed(), hasFailure = true)
                 } finally {
                     isImportingDocument = false
                 }
@@ -321,6 +314,39 @@ fun CharacterListScreen(
                 item { FilterChip(sortOrder == CharacterSortOrder.RECENT, { sortOrder = CharacterSortOrder.RECENT }, label = { Text("最近添加") }) }
                 item { FilterChip(sortOrder == CharacterSortOrder.NAME, { sortOrder = CharacterSortOrder.NAME }, label = { Text("名称") }) }
                 item { Text("${characters.size} 个角色", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+            importResult?.let { result ->
+                Surface(
+                    color = if (result.hasFailure) MaterialTheme.colorScheme.errorContainer
+                        else MaterialTheme.colorScheme.surfaceContainerLow,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    shape = MaterialTheme.shapes.small,
+                ) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                    ) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                result.message,
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (result.hasFailure) MaterialTheme.colorScheme.onErrorContainer
+                                    else MaterialTheme.colorScheme.onSurface,
+                            )
+                            IconButton(onClick = { importResult = null }) {
+                                Icon(Icons.Default.Close, "关闭导入结果")
+                            }
+                        }
+                        result.importedIds.lastOrNull()?.let { importedId ->
+                            TextButton(
+                                onClick = { importResult = null; onEdit(importedId) },
+                                modifier = Modifier.align(Alignment.End),
+                            ) {
+                                Text(if (result.importedIds.size == 1) "编辑角色" else "编辑最近角色")
+                            }
+                        }
+                    }
+                }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
             Box(modifier = Modifier.weight(1f)) {

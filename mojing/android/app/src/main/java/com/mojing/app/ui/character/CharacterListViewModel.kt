@@ -42,6 +42,12 @@ internal fun CharacterDao.observeForCharacterFilter(filterEncyclopediaId: Long?)
 internal fun newCharacterDraft(encyclopediaId: Long = 0L): CharacterEntity =
     CharacterEntity(name = "新角色", boundEncyclopediaId = encyclopediaId)
 
+data class CharacterImportResult(
+    val message: String,
+    val importedIds: List<Long> = emptyList(),
+    val hasFailure: Boolean = false,
+)
+
 internal object CharacterExportCodec {
     data class ExportedCharacter(
         val name: String,
@@ -307,7 +313,7 @@ class CharacterListViewModel @Inject constructor(
         }
     }
 
-    suspend fun importFromDocument(bytes: ByteArray, fileHint: String?): String {
+    suspend fun importFromDocument(bytes: ByteArray, fileHint: String?): CharacterImportResult {
         importTavernPngIfApplicable(bytes, fileHint)?.let { return it }
         tryImportPortable(bytes, fileHint)?.let { return it }
         val text = withContext(Dispatchers.Default) {
@@ -320,14 +326,14 @@ class CharacterListViewModel @Inject constructor(
     fun importJson(text: String, onResult: (String) -> Unit) {
         viewModelScope.launch {
             tryImportPortableText(text)?.let {
-                onResult(it)
+                onResult(it.message)
                 return@launch
             }
-            onResult(performImport(text))
+            onResult(performImport(text).message)
         }
     }
 
-    private suspend fun tryImportPortable(bytes: ByteArray, hint: String?): String? {
+    private suspend fun tryImportPortable(bytes: ByteArray, hint: String?): CharacterImportResult? {
         val lower = hint?.lowercase() ?: ""
         val text = withContext(Dispatchers.Default) {
             when {
@@ -341,7 +347,7 @@ class CharacterListViewModel @Inject constructor(
         return text?.let { tryImportPortableText(it) }
     }
 
-    private suspend fun tryImportPortableText(text: String): String? {
+    private suspend fun tryImportPortableText(text: String): CharacterImportResult? {
         val parsed = withContext(Dispatchers.Default) {
             runCatching {
                 val obj: JsonObject = if (text.trimStart().startsWith("{")) {
@@ -361,7 +367,7 @@ class CharacterListViewModel @Inject constructor(
     }
 
     /** 自 PNG 内嵌 JSON 导入角色与档案。 */
-    private suspend fun importTavernPngIfApplicable(bytes: ByteArray, fileHint: String?): String? {
+    private suspend fun importTavernPngIfApplicable(bytes: ByteArray, fileHint: String?): CharacterImportResult? {
         if (!CharacterCardPngCodec.isPng(bytes)) return null
         val fname = fileHint?.substringAfterLast('/')?.substringAfterLast('\\')?.ifBlank { null } ?: "character.png"
         val parsed = withContext(Dispatchers.Default) {
@@ -374,7 +380,7 @@ class CharacterListViewModel @Inject constructor(
     private suspend fun persistParsedPortable(
         parsed: CharacterPortableCodec.ParsedPortable,
         portableLabel: String,
-    ): String {
+    ): CharacterImportResult {
         val names = characterDao.getAll().map { it.name }
         val name = CharacterPortableCodec.allocateUniqueName(names, parsed.name.ifBlank { "未命名" })
         val entity = CharacterEntity(
@@ -389,22 +395,35 @@ class CharacterListViewModel @Inject constructor(
             cardImagePath = parsed.cardImagePath?.takeIf { it.isNotBlank() }.orEmpty(),
         )
         val effectiveId = saveCharacterBinding(entity)
+        var profileFailed = false
         parsed.profile?.let { pr ->
-            characterProfileDao.upsert(
-                CharacterProfileEntity(
-                    characterId = effectiveId,
-                    sourceFilename = pr.sourceFilename.take(255),
-                    rawPersonaText = pr.rawPersonaText,
-                    characterCardMarkdown = pr.characterCardMarkdown,
-                    characterCardJson = pr.characterCardJson,
-                ),
-            )
+            try {
+                characterProfileDao.upsert(
+                    CharacterProfileEntity(
+                        characterId = effectiveId,
+                        sourceFilename = pr.sourceFilename.take(255),
+                        rawPersonaText = pr.rawPersonaText,
+                        characterCardMarkdown = pr.characterCardMarkdown,
+                        characterCardJson = pr.characterCardJson,
+                    ),
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                profileFailed = true
+            }
         }
-        return "已导入${portableLabel}「$name」（请在编辑页绑定百科）"
+        return CharacterImportResult(
+            message = if (profileFailed) "已导入${portableLabel}「$name」，附加档案保存失败，请检查角色详情"
+                else "已导入${portableLabel}「$name」（请在编辑页绑定百科）",
+            importedIds = listOf(effectiveId),
+            hasFailure = profileFailed,
+        )
     }
 
-    private suspend fun performImport(text: String): String {
-        var importedCount = 0
+    private suspend fun performImport(text: String): CharacterImportResult {
+        val importedIds = mutableListOf<Long>()
+        var unboundCount = 0
         return try {
             val json = smartImportUseCase.parseToStructuredJson(text, "character")
             val data = withContext(Dispatchers.Default) { CharacterExportCodec.fromJson(json) }
@@ -414,17 +433,22 @@ class CharacterListViewModel @Inject constructor(
                     exported.boundEncyclopediaName,
                     encyclopedias,
                 )
-                saveCharacterBinding(exported.toEntity(boundId))
-                importedCount++
+                importedIds += saveCharacterBinding(exported.toEntity(boundId))
+                if (boundId == 0L) unboundCount++
             }
-            "成功导入 ${data.size} 个角色"
+            if (importedIds.isEmpty()) CharacterImportResult("未找到可导入的角色", hasFailure = true)
+            else CharacterImportResult(
+                "成功导入 ${importedIds.size} 个角色" +
+                    (if (unboundCount > 0) "，其中 $unboundCount 个待绑定百科" else ""),
+                importedIds.toList(),
+            )
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {
-            if (importedCount > 0) {
-                "已导入 $importedCount 个角色，其余导入失败: ${e.message}"
+            if (importedIds.isNotEmpty()) {
+                CharacterImportResult("已导入 ${importedIds.size} 个角色，其余导入失败，请检查文件或重试", importedIds.toList(), hasFailure = true)
             } else {
-                "导入异常: ${e.message}"
+                CharacterImportResult("导入失败，请检查文件格式后重试", hasFailure = true)
             }
         }
     }
