@@ -50,6 +50,7 @@ fun ChatDrawer(
     characterNames: Map<Long, String> = emptyMap(),
     bookmarks: List<MessageBookmarkEntity> = emptyList(),
     bookmarkBusyIds: Set<Long> = emptySet(),
+    bookmarkLocatingId: Long? = null,
     bookmarkPreviews: Map<Long, String> = emptyMap(),
     onJumpToBookmark: (Long) -> Unit,
     onRemoveBookmark: (Long) -> Unit,
@@ -146,7 +147,7 @@ fun ChatDrawer(
                 onDeleteEventNode,
                 onJumpToMemorySource,
             )
-            4 -> BookmarksTab(bookmarks, bookmarkPreviews, onJumpToBookmark, onRemoveBookmark, bookmarkBusyIds)
+            4 -> BookmarksTab(bookmarks, bookmarkPreviews, onJumpToBookmark, onRemoveBookmark, bookmarkBusyIds, bookmarkLocatingId)
         }
     }
     pendingTab?.let { target ->

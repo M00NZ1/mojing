@@ -2297,6 +2297,70 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun bookmarkNavigationSwitchesToSourceBranchBeforeClosingPanel() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        coEvery { dao.getMainMessageById(42, 500) } returns null
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId = 42, branchId = "source", sourceMessageId = 1))
+        val target = MessageEntity(id = 500, sessionId = 42, branchId = "source", content = "收藏的原文")
+        coEvery { dao.getByIdInSession(500, 42) } returns target
+        val release = CompletableDeferred<MessageEntity?>()
+        coEvery { dao.getVisibleMessageById(42, "source", 500) } coAnswers { release.await() }
+        val preferences = uiPreferences()
+        val vm = createViewModel(messageDao = dao, sessionBranchDao = branches, uiPreferencesRepository = preferences)
+        advanceUntilIdle()
+        var opened = false
+        vm.openBookmarkedMessage(500) { opened = true }
+        runCurrent()
+        assertFalse(opened)
+        assertEquals(500L, vm.state.value.bookmarkLocatingId)
+        assertEquals("main", vm.state.value.currentBranchId)
+        release.complete(target)
+        advanceUntilIdle()
+        assertTrue(opened)
+        assertEquals("source", vm.state.value.currentBranchId)
+        assertEquals(500L, vm.state.value.focusedMessageId)
+        assertEquals(null, vm.state.value.bookmarkLocatingId)
+        coVerify { preferences.setLastChatBranch(42, "source") }
+    }
+
+    @Test
+    fun bookmarkNavigationFailureKeepsPanelAndCanRetry() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        coEvery { dao.getMainMessageById(42, 500) } throws IllegalStateException("read failed")
+        val vm = createViewModel(messageDao = dao)
+        advanceUntilIdle()
+        var opened = false
+        vm.openBookmarkedMessage(500) { opened = true }
+        advanceUntilIdle()
+        assertFalse(opened)
+        assertEquals(null, vm.state.value.bookmarkLocatingId)
+        assertEquals("main", vm.state.value.currentBranchId)
+        assertEquals("收藏原文定位失败，请重试", vm.state.value.error)
+        coEvery { dao.getMainMessageById(42, 500) } returns MessageEntity(id = 500, sessionId = 42, content = "原文")
+        vm.openBookmarkedMessage(500) { opened = true }
+        advanceUntilIdle()
+        assertTrue(opened)
+        assertEquals(500L, vm.state.value.focusedMessageId)
+    }
+
+    @Test
+    fun bookmarkNavigationDoesNotCloseForDeletedSource() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        coEvery { dao.getMainMessageById(42, 500) } returns null
+        coEvery { dao.getByIdInSession(500, 42) } returns null
+        val vm = createViewModel(messageDao = dao)
+        advanceUntilIdle()
+        var opened = false
+        vm.openBookmarkedMessage(500) { opened = true }
+        advanceUntilIdle()
+        assertFalse(opened)
+        assertEquals(null, vm.state.value.bookmarkLocatingId)
+        assertEquals("main", vm.state.value.currentBranchId)
+        assertEquals("收藏原文已删除或所在故事线已不可用", vm.state.value.error)
+    }
+
+    @Test
     fun historyJumpReportsBusyAndAcceptsRetryAfterCurrentLoad() = runTest(testDispatcher) {
         val dao = mockk<MessageDao>(relaxed = true)
         val release = CompletableDeferred<MessageEntity?>()

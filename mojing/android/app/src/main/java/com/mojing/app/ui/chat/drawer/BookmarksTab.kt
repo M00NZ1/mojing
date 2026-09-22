@@ -39,6 +39,7 @@ fun BookmarksTab(
     onJump: (Long) -> Unit,
     onRemove: (Long) -> Unit,
     busyIds: Set<Long> = emptySet(),
+    locatingId: Long? = null,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         if (bookmarks.isEmpty()) {
@@ -60,7 +61,7 @@ fun BookmarksTab(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 4.dp)
-                            .clickable { onJump(b.messageId) },
+                            .clickable(enabled = locatingId == null && b.messageId !in busyIds) { onJump(b.messageId) },
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         Row(
@@ -70,11 +71,11 @@ fun BookmarksTab(
                             Icon(Icons.Default.PushPin, null, tint = MaterialTheme.colorScheme.primary)
                             Spacer(Modifier.width(8.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("收藏于 $savedAt", style = MaterialTheme.typography.labelSmall,
+                                Text(if (locatingId == b.messageId) "正在定位原文…" else "收藏于 $savedAt", style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(preview, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
                             }
-                            IconButton(onClick = { onRemove(b.messageId) }, enabled = b.messageId !in busyIds) {
+                            IconButton(onClick = { onRemove(b.messageId) }, enabled = b.messageId !in busyIds && locatingId != b.messageId) {
                                 if (b.messageId in busyIds) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                                 else
                                 Icon(Icons.Default.Delete, "取消收藏", tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f))

@@ -581,118 +581,126 @@ fun ChatScreen(
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet {
-                if (state.isLoadingHistory) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                    Text("正在加载历史消息…", modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                        style = MaterialTheme.typography.bodySmall)
-                }
-                ChatDrawer(
-                    participants = state.participants,
-                    world = state.world,
-                    memorySegments = state.memorySegments,
-                    contextMemoryText = state.contextMemoryText,
-                    contextMemoryStatus = state.contextMemoryStatus,
-                    encyclopediaFoundation = state.encyclopediaFoundation,
-                    memoryOperationRunning = state.memoryOperationRunning,
-                    memoryCorrections = state.memoryCorrections,
-                    memoryCorrectionPromptTrace = state.lastMemoryCorrectionPromptTrace,
-                    currentBranchId = state.currentBranchId,
-                    isGenerating = state.isGenerating,
-                    eventNodes = state.eventNodes,
-                    characterNames = state.characterNames,
-                    bookmarks = state.bookmarks,
-                    bookmarkBusyIds = state.bookmarkBusyIds,
-                    bookmarkPreviews = state.bookmarkPreviews,
-                    onJumpToBookmark = { mid ->
-                        if (state.isGenerating) {
-                            showGenerationLockedMessage()
-                        } else if (viewModel.openMessageInHistory(mid)) {
-                            scope.launch { drawerState.close() }
+                Box(Modifier.fillMaxSize()) {
+                    Column {
+                        if (state.isLoadingHistory) {
+                            LinearProgressIndicator(Modifier.fillMaxWidth())
+                            Text("正在加载历史消息…", modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                style = MaterialTheme.typography.bodySmall)
                         }
-                    },
-                    onRemoveBookmark = { mid -> viewModel.removeBookmark(mid) },
-                    onToggleMute = { viewModel.toggleMute(it) },
-                    onUpdateTalkativeness = { id, value, onResult ->
-                        viewModel.updateParticipantTalkativeness(id, value, onResult)
-                    },
-                    speakerTurnMode = speakerTurnMode,
-                    onSpeakerTurnModeChange = { mode ->
-                        if (viewModel.updateSpeakerTurnMode(mode)) {
-                            speakerTurnMode = mode
-                        }
-                    },
-                    onRemoveParticipant = { viewModel.removeParticipant(it) },
-                    onAddParticipant = {
-                        isLoadingParticipants = true
-                        participantLoadError = null
-                        showAddParticipant = true
-                    },
-                    onClose = { scope.launch { drawerState.close() } },
-                    onWorldSettingChanged = { key, value -> viewModel.updateWorldSetting(key, value) },
-                    onSaveSessionWorldCredentials = { draft ->
-                        viewModel.saveSessionWorldCredentials(draft) { saved ->
-                            if (saved) {
-                                worldCredentialFieldsDirty = false
-                                scope.launch { snackbarHostState.showSnackbar("已保存本场线路覆盖") }
+                        ChatDrawer(
+                            participants = state.participants,
+                            world = state.world,
+                            memorySegments = state.memorySegments,
+                            contextMemoryText = state.contextMemoryText,
+                            contextMemoryStatus = state.contextMemoryStatus,
+                            encyclopediaFoundation = state.encyclopediaFoundation,
+                            memoryOperationRunning = state.memoryOperationRunning,
+                            memoryCorrections = state.memoryCorrections,
+                            memoryCorrectionPromptTrace = state.lastMemoryCorrectionPromptTrace,
+                            currentBranchId = state.currentBranchId,
+                            isGenerating = state.isGenerating,
+                            eventNodes = state.eventNodes,
+                            characterNames = state.characterNames,
+                            bookmarks = state.bookmarks,
+                            bookmarkBusyIds = state.bookmarkBusyIds,
+                            bookmarkLocatingId = state.bookmarkLocatingId,
+                            bookmarkPreviews = state.bookmarkPreviews,
+                            onJumpToBookmark = { mid ->
+                                if (state.isGenerating) {
+                                    showGenerationLockedMessage()
+                                } else {
+                                    viewModel.openBookmarkedMessage(mid) {
+                                        scope.launch { drawerState.close() }
+                                    }
+                                }
+                            },
+                            onRemoveBookmark = { mid -> viewModel.removeBookmark(mid) },
+                            onToggleMute = { viewModel.toggleMute(it) },
+                            onUpdateTalkativeness = { id, value, onResult ->
+                                viewModel.updateParticipantTalkativeness(id, value, onResult)
+                            },
+                            speakerTurnMode = speakerTurnMode,
+                            onSpeakerTurnModeChange = { mode ->
+                                if (viewModel.updateSpeakerTurnMode(mode)) {
+                                    speakerTurnMode = mode
+                                }
+                            },
+                            onRemoveParticipant = { viewModel.removeParticipant(it) },
+                            onAddParticipant = {
+                                isLoadingParticipants = true
+                                participantLoadError = null
+                                showAddParticipant = true
+                            },
+                            onClose = { scope.launch { drawerState.close() } },
+                            onWorldSettingChanged = { key, value -> viewModel.updateWorldSetting(key, value) },
+                            onSaveSessionWorldCredentials = { draft ->
+                                viewModel.saveSessionWorldCredentials(draft) { saved ->
+                                    if (saved) {
+                                        worldCredentialFieldsDirty = false
+                                        scope.launch { snackbarHostState.showSnackbar("已保存本场线路覆盖") }
+                                    }
+                                }
+                            },
+                            onWorldCredentialFieldsDirty = { worldCredentialFieldsDirty = it },
+                            worldCredentialFieldsDirty = worldCredentialFieldsDirty,
+                            onToggleEventResolved = { viewModel.toggleEventNodeResolved(it) },
+                            onDeleteEventNode = { viewModel.deleteEventNode(it) },
+                            onJumpToMemorySource = { messageId ->
+                                if (state.isGenerating) {
+                                    showGenerationLockedMessage()
+                                } else if (viewModel.openMessageInHistory(messageId)) {
+                                    scope.launch { drawerState.close() }
+                                }
+                            },
+                            onAddMemoryCorrection = { content, sourceId ->
+                                correctionEditing = null
+                                correctionDraft = content
+                                correctionSourceMessageId = sourceId
+                                correctionScopeBranchId = state.currentBranchId
+                                correctionDialogOpen = true
+                            },
+                            onEditMemoryCorrection = { correction ->
+                                correctionEditing = correction
+                                correctionDraft = correction.content
+                                correctionSourceMessageId = correction.sourceMessageId
+                                correctionScopeBranchId = correction.branchId
+                                correctionDialogOpen = true
+                            },
+                            onDeleteMemoryCorrection = { correction ->
+                                if (state.isGenerating) showGenerationLockedMessage()
+                                else correctionPendingDelete = correction
+                            },
+                            onRebuildContextMemory = {
+                                if (state.isGenerating) {
+                                    showGenerationLockedMessage()
+                                } else {
+                                    viewModel.rebuildCurrentContextMemory { msg ->
+                                        scope.launch { snackbarHostState.showSnackbar(msg) }
+                                    }
+                                }
+                            },
+                            onClearContextMemory = {
+                                if (state.isGenerating) {
+                                    showGenerationLockedMessage()
+                                } else {
+                                    viewModel.clearCurrentContextMemory { msg ->
+                                        scope.launch { snackbarHostState.showSnackbar(msg) }
+                                    }
+                                }
+                            },
+                            allowSessionThinkMax = state.allowSessionThinkMax,
+                            sessionThinkMaxEnabled = state.sessionThinkMaxEnabled,
+                            characterForcesThinkMax = state.characterForcesThinkMax,
+                            onSessionThinkMax = { enabled ->
+                                viewModel.setSessionThinkMax(enabled) { msg ->
+                                    scope.launch { snackbarHostState.showSnackbar(msg) }
+                                }
                             }
-                        }
-                    },
-                    onWorldCredentialFieldsDirty = { worldCredentialFieldsDirty = it },
-                    worldCredentialFieldsDirty = worldCredentialFieldsDirty,
-                    onToggleEventResolved = { viewModel.toggleEventNodeResolved(it) },
-                    onDeleteEventNode = { viewModel.deleteEventNode(it) },
-                    onJumpToMemorySource = { messageId ->
-                        if (state.isGenerating) {
-                            showGenerationLockedMessage()
-                        } else if (viewModel.openMessageInHistory(messageId)) {
-                            scope.launch { drawerState.close() }
-                        }
-                    },
-                    onAddMemoryCorrection = { content, sourceId ->
-                        correctionEditing = null
-                        correctionDraft = content
-                        correctionSourceMessageId = sourceId
-                        correctionScopeBranchId = state.currentBranchId
-                        correctionDialogOpen = true
-                    },
-                    onEditMemoryCorrection = { correction ->
-                        correctionEditing = correction
-                        correctionDraft = correction.content
-                        correctionSourceMessageId = correction.sourceMessageId
-                        correctionScopeBranchId = correction.branchId
-                        correctionDialogOpen = true
-                    },
-                    onDeleteMemoryCorrection = { correction ->
-                        if (state.isGenerating) showGenerationLockedMessage()
-                        else correctionPendingDelete = correction
-                    },
-                    onRebuildContextMemory = {
-                        if (state.isGenerating) {
-                            showGenerationLockedMessage()
-                        } else {
-                            viewModel.rebuildCurrentContextMemory { msg ->
-                                scope.launch { snackbarHostState.showSnackbar(msg) }
-                            }
-                        }
-                    },
-                    onClearContextMemory = {
-                        if (state.isGenerating) {
-                            showGenerationLockedMessage()
-                        } else {
-                            viewModel.clearCurrentContextMemory { msg ->
-                                scope.launch { snackbarHostState.showSnackbar(msg) }
-                            }
-                        }
-                    },
-                    allowSessionThinkMax = state.allowSessionThinkMax,
-                    sessionThinkMaxEnabled = state.sessionThinkMaxEnabled,
-                    characterForcesThinkMax = state.characterForcesThinkMax,
-                    onSessionThinkMax = { enabled ->
-                        viewModel.setSessionThinkMax(enabled) { msg ->
-                            scope.launch { snackbarHostState.showSnackbar(msg) }
-                        }
+                        )
                     }
-                )
+                    SnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter).padding(12.dp))
+                }
             }
         }
     ) {

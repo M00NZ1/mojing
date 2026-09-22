@@ -953,21 +953,25 @@ class ChatViewModel @Inject constructor(
     private suspend fun messagePreviews(
         messageIds: Set<Long>,
         maxChars: Int,
-    ): Map<Long, String> = withContext(Dispatchers.Default) {
-        if (messageIds.isEmpty()) return@withContext emptyMap()
+    ): Map<Long, String> {
+        if (messageIds.isEmpty()) return emptyMap()
         val previews = mutableMapOf<Long, String>()
         for (batch in messageIds.chunked(32)) {
-            for (message in messageDao.getPreviewSourcesInSession(sessionId, batch)) {
-                currentCoroutineContext().ensureActive()
-                previews[message.id] = ChatMessageTextFormat.preview(
-                    raw = message.content,
-                    speakerType = message.speakerType,
-                    maxChars = maxChars,
-                    emptyText = "（无正文）",
-                )
-            }
+            val sources = messageDao.getPreviewSourcesInSession(sessionId, batch)
+            if (sources.isEmpty()) continue
+            previews.putAll(withContext(Dispatchers.Default) {
+                sources.associate { message ->
+                    currentCoroutineContext().ensureActive()
+                    message.id to ChatMessageTextFormat.preview(
+                        raw = message.content,
+                        speakerType = message.speakerType,
+                        maxChars = maxChars,
+                        emptyText = "（无正文）",
+                    )
+                }
+            })
         }
-        previews
+        return previews
     }
 
     /** 从数据库重新拉取参与者对应角色的头像/名称（编辑角色后返回聊天页时调用） */
@@ -1455,6 +1459,39 @@ class ChatViewModel @Inject constructor(
                 _state.update { it.copy(error = "该消息已删除或不在当前故事线") }
             }
         }
+
+    fun openBookmarkedMessage(messageId: Long, onOpened: () -> Unit = {}) {
+        if (!_state.value.isReady) return
+        val launched = launchBranchTransition {
+            _state.update { it.copy(bookmarkLocatingId = messageId) }
+            var opened = false
+            try {
+                val currentBranch = currentBranchId()
+                val visible = getVisibleMessage(currentBranch, messageId)
+                if (visible != null) {
+                    opened = loadMessageWindow(currentBranch, messageId)
+                } else {
+                    val target = messageDao.getByIdInSession(messageId, sessionId)
+                    val branches = sessionBranchDao.getBySession(sessionId)
+                    if (target != null && (target.branchId == "main" || branches.any { it.branchId == target.branchId }) &&
+                        getVisibleMessage(target.branchId, messageId) != null) {
+                        refreshMessagesUi(target.branchId, anchorMessageId = messageId)
+                        opened = _state.value.currentBranchId == target.branchId && _state.value.focusedMessageId == messageId
+                        if (opened) persistCurrentBranchSelection()
+                    }
+                }
+                if (!opened) _state.update { it.copy(error = "收藏原文已删除或所在故事线已不可用") }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _state.update { it.copy(error = "收藏原文定位失败，请重试") }
+            } finally {
+                _state.update { it.copy(bookmarkLocatingId = null) }
+            }
+            if (opened) onOpened()
+        }
+        if (!launched) _state.update { it.copy(error = "当前正在生成或切换故事线，请稍后再定位收藏") }
+    }
 
     private suspend fun loadMessageWindow(branchId: String, messageId: Long): Boolean {
         val target = getVisibleMessage(branchId, messageId) ?: return false
