@@ -30,7 +30,7 @@ fun VoiceSettingsCard(
     azureKey: String,
     saving: Boolean,
     error: String?,
-    onChoiceSelected: (VoiceChoice) -> Unit,
+    onChoiceSelected: (VoiceChoice, () -> Unit) -> Unit,
     onRegionChange: (String) -> Unit,
     onKeyChange: (String) -> Unit,
     onSave: () -> Unit,
@@ -78,11 +78,13 @@ fun VoiceSettingsCard(
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         }
     }
-    if (pickerVisible && !saving) {
+    if (pickerVisible) {
         VoiceChoicePicker(
             choice = choice,
             allowInherit = false,
-            onSelected = { selected -> pickerVisible = false; onChoiceSelected(selected) },
+            saving = saving,
+            saveError = error,
+            onSelected = { selected -> onChoiceSelected(selected) { pickerVisible = false } },
             onDismiss = { pickerVisible = false },
         )
     }

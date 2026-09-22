@@ -208,15 +208,17 @@ fun ConnectionSettingsTab(
                 azureKey = azureKey,
                 saving = voiceSaving || voiceLoading,
                 error = voiceError,
-                onChoiceSelected = { selected ->
+                onChoiceSelected = { selected, onSaved ->
                     if (!voiceSaving) {
                         voiceSaving = true
+                        voiceError = null
                         scope.launch(Dispatchers.IO) {
                             val result = runCatching { voicePreferences.saveGlobal(selected) }
                             withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
                                 result.onSuccess {
                                     globalVoiceChoice = selected
                                     voiceError = null
+                                    onSaved()
                                 }.onFailure { voiceError = "语音选择保存失败，请重试" }
                                 voiceSaving = false
                             }

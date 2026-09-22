@@ -25,6 +25,8 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SheetValue
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -35,6 +37,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
@@ -65,6 +68,8 @@ fun VoiceChoicePicker(
     onDismiss: () -> Unit,
     inheritLabel: String = "跟随当前会话",
     description: String = "先选引擎，再选择可用音色",
+    saving: Boolean = false,
+    saveError: String? = null,
 ) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
@@ -151,7 +156,11 @@ fun VoiceChoicePicker(
     val displayVoices = (listOf(VoiceOption("", if (selectedEngine == "azure") "默认 · 晓晓" else "引擎默认")) + voices.filter { it.id.isNotBlank() })
         .filter { searchQuery.isBlank() || it.name.contains(searchQuery, true) || it.id.contains(searchQuery, true) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    val currentSaving by rememberUpdatedState(saving)
+    val sheetState = rememberModalBottomSheetState(
+        confirmValueChange = { value -> value != SheetValue.Hidden || !currentSaving },
+    )
+    ModalBottomSheet(sheetState = sheetState, onDismissRequest = { if (!saving) onDismiss() }) {
         Column(
             modifier = Modifier.fillMaxWidth().heightIn(max = (configuration.screenHeightDp * 0.8f).dp).padding(bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -165,12 +174,20 @@ fun VoiceChoicePicker(
                     Text(description, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                IconButton(onClick = { loadEngines(); if (selectedEngine != "inherit") load(selectedEngine) }) {
+                IconButton(enabled = !saving, onClick = { loadEngines(); if (selectedEngine != "inherit") load(selectedEngine) }) {
                     Icon(Icons.Default.Refresh, contentDescription = "刷新引擎和音色")
                 }
             }
+            if (saving || saveError != null) {
+                Text(
+                    if (saving) "正在保存语音选择…" else saveError.orEmpty(),
+                    color = if (saving) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                )
+            }
             if (allowInherit) {
                 TextButton(
+                    enabled = !saving,
                     onClick = { onSelected(VoiceChoice("inherit", "")) },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                 ) { Text(if (choice.engineId == "inherit") "✓ $inheritLabel" else inheritLabel) }
@@ -194,7 +211,7 @@ fun VoiceChoicePicker(
                         FilterChip(
                             selected = selectedEngine == engine.id,
                             onClick = { if (selectedEngine != engine.id) load(engine.id) },
-                            enabled = engine.id != "azure" || azureConfigured,
+                            enabled = !saving && (engine.id != "azure" || azureConfigured),
                             label = { Text(engine.name, modifier = Modifier.widthIn(max = 180.dp), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         )
                     }
@@ -236,6 +253,7 @@ fun VoiceChoicePicker(
                         items(displayVoices, key = { "${selectedEngine}:${it.id}" }) { voice ->
                             val selected = selectedEngine == choice.engineId && voice.id == choice.voiceId
                             Surface(
+                                enabled = !saving,
                                 onClick = { onSelected(VoiceChoice(selectedEngine, voice.id)) },
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp),
                                 shape = RoundedCornerShape(12.dp),
