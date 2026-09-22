@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -99,8 +100,8 @@ fun GenerationTaskListScreen(
             if (!browsingHistory && (tasks.isNotEmpty() || (!loading && loadError == null))) item {
                 Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(20.dp)) {
                     Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(if (paused) if (tasks.any { it.status == GenerationTaskStatus.RUNNING }) "正在完成当前步骤" else "生成已暂停" else if (active > 0) "正在为你的世界添笔" else "每一次灵感，都有迹可循",
-                            style = MaterialTheme.typography.titleLarge)
+                        Text(if (paused) if (tasks.any { it.status == GenerationTaskStatus.RUNNING }) "正在完成当前步骤" else "生成已暂停" else if (active > 0) "生成队列运行中" else "暂无进行中的任务",
+                            style = MaterialTheme.typography.titleMedium)
                         Text(if (paused) "当前步骤保存后停下。已保存的内容不会丢失，继续时从原进度接上。"
                             else "$active 项待完成 · $failed 项需要处理。离开此页后，生成会继续。",
                             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -277,11 +278,17 @@ internal fun GenerationTaskDetailSheet(
 ) {
     val detailScroll = rememberScrollState()
     LaunchedEffect(openError, retryError) { if (openError != null || retryError != null) detailScroll.scrollTo(0) }
-    ModalBottomSheet(onDismissRequest = onDismiss,
+    ModalBottomSheet(onDismissRequest = onDismiss, dragHandle = null,
+        containerColor = MaterialTheme.colorScheme.surface,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         BoxWithConstraints(Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(horizontal = 24.dp)) {
             val actionMaxHeight = maxHeight * 0.5f
             Column(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("生成详情", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "关闭生成详情") }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Column(Modifier.weight(1f).verticalScroll(detailScroll),
                 verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 retryError?.let { error ->
@@ -302,7 +309,12 @@ internal fun GenerationTaskDetailSheet(
                 }
                 Text("${kindLabel(task.taskKind)} · ${statusLabel(task.status)}",
                     style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                SelectionContainer { Text(task.title, style = MaterialTheme.typography.headlineSmall) }
+                SelectionContainer { Text(task.title, style = MaterialTheme.typography.titleLarge) }
+                val createdAt = remember(task.createdAt) {
+                    SimpleDateFormat("yyyy年M月d日 HH:mm", Locale.getDefault()).format(Date(task.createdAt))
+                }
+                Text("创建于 $createdAt", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (task.progressTotal > 0) {
                     LinearProgressIndicator(
                         progress = { (task.progressDone.toFloat() / task.progressTotal).coerceIn(0f, 1f) },
@@ -328,15 +340,17 @@ internal fun GenerationTaskDetailSheet(
                     }
                 }
                 if (task.progressDone > 0 || task.status == GenerationTaskStatus.COMPLETED) {
-                    Button(onClick = onOpen, enabled = canOpen && !opening, modifier = Modifier.fillMaxWidth()) {
-                        Text(if (opening) "正在打开…" else if (openError != null) "重试打开" else "查看已生成内容")
+                    val label = if (opening) "正在打开…" else if (openError != null) "重试打开" else "查看已生成内容"
+                    if (task.status == GenerationTaskStatus.FAILED && isRetryableKind(task.taskKind) && onRetry != null) {
+                        OutlinedButton(onClick = onOpen, enabled = canOpen && !opening && !retrying, modifier = Modifier.fillMaxWidth()) { Text(label) }
+                    } else {
+                        Button(onClick = onOpen, enabled = canOpen && !opening, modifier = Modifier.fillMaxWidth()) { Text(label) }
                     }
                 }
                 if (task.isActive() && onCancel != null) {
                     OutlinedButton(onClick = onCancel, enabled = !busy && !retrying && !opening,
                         modifier = Modifier.fillMaxWidth()) { Text("取消生成") }
                 }
-                TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("关闭") }
             }
             }
         }

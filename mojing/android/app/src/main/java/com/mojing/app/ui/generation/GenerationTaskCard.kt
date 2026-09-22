@@ -45,15 +45,13 @@ internal fun GenerationTaskCard(
     Card(
         onClick = onDetail,
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Surface(color = colors.secondaryContainer, shape = RoundedCornerShape(12.dp)) {
-                    Icon(icon, null, Modifier.padding(10.dp).size(20.dp), tint = colors.onSecondaryContainer)
-                }
+                Icon(icon, null, Modifier.size(22.dp), tint = colors.onSurfaceVariant)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(kindLabel(task.taskKind), style = MaterialTheme.typography.labelMedium,
                         color = colors.onSurfaceVariant)
