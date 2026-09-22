@@ -19,6 +19,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -106,6 +108,9 @@ fun MessageLineBlock(
                 initialPage = initial,
                 pageCount = { line.variants.size }
             )
+            val latestLine by rememberUpdatedState(line)
+            val latestSelectionCallback by rememberUpdatedState(onSelectSwipeVersion)
+            val selectionLocked by rememberUpdatedState(isGenerating || readOnly)
             LaunchedEffect(line.selectedIndex, line.stableKey, isGenerating) {
                 val target = line.selectedIndex.coerceIn(0, lastIdx)
                 if (pagerState.currentPage != target) {
@@ -116,13 +121,13 @@ fun MessageLineBlock(
                 snapshotFlow { pagerState.settledPage }
                     .distinctUntilChanged()
                     .collect { page ->
-                        val gid = line.swipeGroupId ?: return@collect
-                        val safePage = page.coerceIn(0, lastIdx)
-                        val mid = line.variants.getOrNull(safePage)?.id ?: return@collect
-                        val selIdx = line.selectedIndex.coerceIn(0, lastIdx)
-                        val expectedId = line.variants[selIdx].id
+                        if (selectionLocked) return@collect
+                        val currentLine = latestLine
+                        val gid = currentLine.swipeGroupId ?: return@collect
+                        val mid = currentLine.variants.getOrNull(page)?.id ?: return@collect
+                        val expectedId = currentLine.selectedMessage().id
                         if (mid != expectedId) {
-                            onSelectSwipeVersion(gid, mid)
+                            latestSelectionCallback(gid, mid)
                         }
                     }
             }
