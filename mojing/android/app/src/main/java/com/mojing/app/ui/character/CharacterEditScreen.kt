@@ -41,6 +41,8 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -88,6 +90,7 @@ fun CharacterEditScreen(
     var isAvatarImporting by remember { mutableStateOf(false) }
     var isCardImageProcessing by remember { mutableStateOf(false) }
     var showMacroSheet by remember { mutableStateOf(false) }
+    var appearanceOpen by rememberSaveable { mutableStateOf(false) }
     var routesOpen by rememberSaveable { mutableStateOf(false) }
     var advancedOpen by rememberSaveable { mutableStateOf(false) }
     var pendingExit by rememberSaveable { mutableStateOf<String?>(null) }
@@ -186,7 +189,7 @@ fun CharacterEditScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             if (state.isLoaded && state.loadError == null && !isImeOpen) {
-                Surface(tonalElevation = 3.dp) {
+                Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
                     Column(
                         modifier = Modifier.fillMaxWidth().navigationBarsPadding()
                             .padding(horizontal = 16.dp, vertical = 10.dp),
@@ -231,14 +234,14 @@ fun CharacterEditScreen(
         },
         topBar = {
             TopAppBar(
-                title = { Text(if (characterId == 0L && !state.isPersisted) "新建角色" else "编辑角色") },
+                title = { Text(if (characterId == 0L && !state.isPersisted) "新建角色" else "编辑角色", style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
                     IconButton(onClick = { requestExit("back") }, enabled = !pageBusy) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
                     }
                 },
                 actions = {
-                    TextButton(
+                    if (isImeOpen) TextButton(
                         onClick = { viewModel.save(characterId) },
                         enabled = state.isLoaded && canSave && !pageBusy && !state.isAiCompleting,
                     ) {
@@ -291,7 +294,10 @@ fun CharacterEditScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("角色设定", style = MaterialTheme.typography.titleMedium)
+            if (isImeOpen) state.saveError?.let { error ->
+                Text(error, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+            }
+            Text("基本资料", style = MaterialTheme.typography.titleMedium)
 
             OutlinedTextField(value = state.name, onValueChange = { viewModel.updateName(it) }, label = { Text("角色名") }, placeholder = { Text("如：林云") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
             var encBindExpanded by remember { mutableStateOf(false) }
@@ -336,6 +342,8 @@ fun CharacterEditScreen(
                     }
                 }
             }
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            Text("人设与表达", style = MaterialTheme.typography.titleMedium)
             if (state.personaRefreshError != null || state.isRefreshingPersona) {
                 Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.medium,
                     modifier = Modifier.fillMaxWidth()) {
@@ -356,18 +364,18 @@ fun CharacterEditScreen(
                 Text("插入宏变量")
             }
 
-            Button(
+            OutlinedButton(
                 onClick = { viewModel.aiCompletePersona() },
                 enabled = state.isPersisted && !state.isDirty && !state.isAiCompleting && !state.isRefreshingPersona && state.personaRefreshError == null && !pageBusy,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp),
+                    .heightIn(min = 48.dp),
             ) {
                 if (state.isAiCompleting) {
                     CircularProgressIndicator(
                         Modifier.size(20.dp),
                         strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary,
+                        color = MaterialTheme.colorScheme.primary,
                     )
                     Spacer(Modifier.width(8.dp))
                 }
@@ -387,6 +395,7 @@ fun CharacterEditScreen(
                 ) {
                     Text(
                         "补全人设前需要配置 API Key",
+                        modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -395,52 +404,76 @@ fun CharacterEditScreen(
             }
 
             HorizontalDivider()
-            Text("角色形象", style = MaterialTheme.typography.titleMedium)
-            AvatarEditor(
-                avatarImagePath = state.avatarImagePath,
-                avatarColor = state.avatarColor,
-                onImageSelected = { path -> viewModel.updateAvatarImagePath(path) },
-                onColorChanged = { viewModel.updateAvatarColor(it) },
-                onImportingChanged = { isAvatarImporting = it },
-                onOpenBuiltinLibrary = if (hasBuiltinPresets) {
-                    { focusManager.clearFocus(); showBuiltinAvatarSheet = true }
-                } else {
-                    null
-                },
-            )
-
-            CardImageEditor(
-                cardImagePath = state.cardImagePath,
-                avatarImagePath = state.avatarImagePath,
-                onCardImagePathChanged = { viewModel.updateCardImagePath(it) },
-                onDuplicateFromAvatar = { viewModel.duplicateAvatarToCardImage() },
-                onOpenBuiltinLibrary = if (hasBuiltinPresets) {
-                    { focusManager.clearFocus(); showBuiltinCardSheet = true }
-                } else {
-                    null
-                },
-                isGeneratingCardImage = state.isGeneratingCardImage,
-                onGenerateWithBackend = { viewModel.generateCardImageViaBackend() },
-                onProcessingChanged = { isCardImageProcessing = it },
-            )
-            ColorPickerField(selectedColor = state.avatarColor, onColorSelected = { viewModel.updateAvatarColor(it) })
-
-            OutlinedButton(
-                onClick = { routesOpen = !routesOpen },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-            ) {
-                Text(if (routesOpen) "收起线路与模型" else "线路与模型")
+            Text("朗读", style = MaterialTheme.typography.titleMedium)
+            var showVoiceChoice by remember { mutableStateOf(false) }
+            val characterVoice = com.mojing.app.data.resolveVoiceChoice(state.voiceProvider, state.voiceModel,
+                com.mojing.app.data.VoiceChoice("inherit"))
+            OutlinedButton(onClick = { showVoiceChoice = true }, modifier = Modifier.fillMaxWidth()) {
+                Text(characterVoice.label())
             }
+            Text("此角色的回复使用独立引擎与音色；未指定时跟随对话设置。", style = MaterialTheme.typography.bodySmall)
+            if (showVoiceChoice) com.mojing.app.ui.common.VoiceChoicePicker(
+                choice = characterVoice, allowInherit = true,
+                onSelected = { choice ->
+                    viewModel.updateVoiceProvider(choice.engineId)
+                    viewModel.updateVoiceModel(choice.voiceId)
+                    showVoiceChoice = false
+                }, onDismiss = { showVoiceChoice = false },
+            )
+
+            HorizontalDivider()
+            CharacterEditorSectionHeader(
+                title = "角色形象",
+                summary = "头像、封面与代表色",
+                expanded = appearanceOpen,
+                enabled = !isAvatarImporting && !isCardImageProcessing,
+                onClick = { focusManager.clearFocus(); appearanceOpen = !appearanceOpen },
+            )
+            if (appearanceOpen) {
+                AvatarEditor(
+                    avatarImagePath = state.avatarImagePath,
+                    avatarColor = state.avatarColor,
+                    onImageSelected = { path -> viewModel.updateAvatarImagePath(path) },
+                    onColorChanged = { viewModel.updateAvatarColor(it) },
+                    onImportingChanged = { isAvatarImporting = it },
+                    onOpenBuiltinLibrary = if (hasBuiltinPresets) {
+                        { focusManager.clearFocus(); showBuiltinAvatarSheet = true }
+                    } else {
+                        null
+                    },
+                )
+
+                CardImageEditor(
+                    cardImagePath = state.cardImagePath,
+                    avatarImagePath = state.avatarImagePath,
+                    onCardImagePathChanged = { viewModel.updateCardImagePath(it) },
+                    onDuplicateFromAvatar = { viewModel.duplicateAvatarToCardImage() },
+                    onOpenBuiltinLibrary = if (hasBuiltinPresets) {
+                        { focusManager.clearFocus(); showBuiltinCardSheet = true }
+                    } else {
+                        null
+                    },
+                    isGeneratingCardImage = state.isGeneratingCardImage,
+                    onGenerateWithBackend = { viewModel.generateCardImageViaBackend() },
+                    onProcessingChanged = { isCardImageProcessing = it },
+                )
+                ColorPickerField(selectedColor = state.avatarColor, onColorSelected = { viewModel.updateAvatarColor(it) })
+
+            }
+            HorizontalDivider()
+            CharacterEditorSectionHeader(
+                title = "线路与模型",
+                summary = "对话模型、连接配置与配图",
+                expanded = routesOpen,
+                onClick = { focusManager.clearFocus(); routesOpen = !routesOpen },
+            )
 
             if (routesOpen) {
                 Column(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-            HorizontalDivider()
-            Text("线路与模型", style = MaterialTheme.typography.titleMedium)
+            Text("对话线路", style = MaterialTheme.typography.titleSmall)
             if (!state.hasPublicTextKey && state.apiKey.isBlank()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -449,6 +482,7 @@ fun CharacterEditScreen(
                 ) {
                     Text(
                         "未配置 API Key，不影响保存角色",
+                        modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -569,24 +603,6 @@ fun CharacterEditScreen(
                 modifier = Modifier.fillMaxWidth()
             ) { Text("测试配图线路") }
 
-            HorizontalDivider()
-            Text("朗读", style = MaterialTheme.typography.titleMedium)
-            var showVoiceChoice by remember { mutableStateOf(false) }
-            val characterVoice = com.mojing.app.data.resolveVoiceChoice(state.voiceProvider, state.voiceModel,
-                com.mojing.app.data.VoiceChoice("inherit"))
-            OutlinedButton(onClick = { showVoiceChoice = true }, modifier = Modifier.fillMaxWidth()) {
-                Text(characterVoice.label())
-            }
-            Text("此角色的回复使用独立引擎与音色；未指定时跟随对话设置。", style = MaterialTheme.typography.bodySmall)
-            if (showVoiceChoice) com.mojing.app.ui.common.VoiceChoicePicker(
-                choice = characterVoice, allowInherit = true,
-                onSelected = { choice ->
-                    viewModel.updateVoiceProvider(choice.engineId)
-                    viewModel.updateVoiceModel(choice.voiceId)
-                    showVoiceChoice = false
-                }, onDismiss = { showVoiceChoice = false },
-            )
-
             if (state.probeBusyChannel != null) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp))
                 if (state.probeStreamHint.isNotBlank()) {
@@ -607,14 +623,13 @@ fun CharacterEditScreen(
                 }
             }
 
-            OutlinedButton(
-                onClick = { advancedOpen = !advancedOpen },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-            ) {
-                Text(if (advancedOpen) "收起导出与高级设置" else "导出与高级设置")
-            }
+            HorizontalDivider()
+            CharacterEditorSectionHeader(
+                title = "导出与高级设置",
+                summary = "便携包、扩展设定与采样参数",
+                expanded = advancedOpen,
+                onClick = { focusManager.clearFocus(); advancedOpen = !advancedOpen },
+            )
 
             if (advancedOpen) {
                 Column(
@@ -801,5 +816,33 @@ fun CharacterEditScreen(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun CharacterEditorSectionHeader(
+    title: String,
+    summary: String,
+    expanded: Boolean,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        color = MaterialTheme.colorScheme.surface,
+        modifier = Modifier.fillMaxWidth().semantics { stateDescription = if (expanded) "已展开" else "已收起" },
+    ) {
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
+        }
     }
 }
