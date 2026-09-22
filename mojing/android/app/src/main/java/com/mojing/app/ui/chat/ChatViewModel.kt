@@ -1659,13 +1659,16 @@ class ChatViewModel @Inject constructor(
                 if (choice.engineId == "azure") {
                     val (region, key) = withContext(Dispatchers.IO) { preferences.azureRegion to preferences.azureKey }
                     val ok = com.mojing.app.media.AzureSpeech.speak(appContext, cleaned, region, key, choice.voiceId)
-                    if (!ok) _state.update { it.copy(error = "微软朗读失败，请检查语音设置后重试") }
+                    if (!ok) _state.update { it.copy(error = "语音播放未完成，请重新朗读") }
                 } else {
                     withContext(Dispatchers.Main) {
                         AndroidTts.speakWithVoice(appContext, cleaned, choice) { message -> _state.update { it.copy(error = message) } }
                     }
                 }
             } catch (e: CancellationException) { throw e }
+            catch (e: com.mojing.app.media.AzureSpeech.SpeechException) {
+                _state.update { it.copy(error = com.mojing.app.media.AzureSpeech.failureMessage(e)) }
+            }
             catch (e: Exception) { _state.update { it.copy(error = UserFacingStrings.remoteRequestFailed(e)) } }
         }
     }

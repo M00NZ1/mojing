@@ -6,6 +6,17 @@ import javax.xml.parsers.DocumentBuilderFactory
 import java.io.ByteArrayInputStream
 
 class AzureSpeechTest {
+    @Test fun speechFailuresKeepActionableCategoryWithoutRawProviderText() {
+        val unauthorized = AzureSpeech.failureMessage(com.mojing.app.data.remote.LlmHttpException(401))
+        assertTrue(unauthorized.contains("Speech Key"))
+        assertTrue(unauthorized.contains("区域"))
+        assertTrue(AzureSpeech.failureMessage(com.mojing.app.data.remote.LlmHttpException(429)).contains("配额"))
+        assertTrue(AzureSpeech.failureMessage(java.net.SocketTimeoutException()).contains("超时"))
+        assertFalse(AzureSpeech.failureMessage(java.io.IOException("private response body")).contains("private"))
+        val preserved = AzureSpeech.SpeechException("请填写区域")
+        assertEquals("请填写区域", AzureSpeech.failureMessage(preserved))
+    }
+
     @Test fun ssmlPreservesTextAndEscapesMarkup() {
         val text = "你好 <tag> & \"hello\" '世界'"
         val xml = AzureSpeech.buildSsml("zh-CN-XiaoxiaoNeural", text)

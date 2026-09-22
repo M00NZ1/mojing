@@ -17,6 +17,25 @@ import org.json.JSONArray
 
 /** Small Azure Speech REST adapter. Audio is played locally and is never persisted. */
 object AzureSpeech {
+    class SpeechException(message: String) : Exception(message)
+
+    /** Only locally defined descriptions reach the UI; never expose provider bodies or keys. */
+    fun failureMessage(error: Exception): String = when (error) {
+        is SpeechException -> error.message ?: "微软语音失败，请重试"
+        is LlmHttpException -> when (error.status) {
+            401 -> "微软语音认证失败，请检查 Speech Key 是否有效，以及区域是否与密钥所属资源一致（401）"
+            403 -> "微软语音访问被拒绝，请检查资源权限和可用额度（403）"
+            429 -> "微软语音请求受限，请稍后重试并检查资源配额（429）"
+            400 -> "微软语音不接受当前请求，请刷新音色列表后重新选择（400）"
+            404 -> "微软语音地址不可用，请检查区域配置（404）"
+            in 500..599 -> "微软语音服务暂时不可用，请稍后重试（${error.status}）"
+            else -> "微软语音请求失败，请检查配置后重试（${error.status}）"
+        }
+        is java.net.SocketTimeoutException -> "微软语音请求超时，请检查网络后重试"
+        is java.io.IOException -> "无法连接微软语音，请检查网络和区域设置"
+        is IllegalArgumentException -> "请在语音设置填写有效的 Azure 区域和 Speech Key"
+        else -> "微软语音处理失败，请重试"
+    }
     private const val DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural"
     private const val MAX_SSML_TEXT = 2_400
     private val client = OkHttpClient.Builder()
@@ -46,12 +65,12 @@ object AzureSpeech {
         } catch (e: LlmHttpException) {
             throw e
         } catch (e: Exception) {
-            throw IllegalStateException("无法读取 Azure 音色列表，请检查区域和 Key", e)
+            throw SpeechException(failureMessage(e))
         }
         try {
             parseVoices(body)
         } catch (e: Exception) {
-            throw IllegalStateException("Azure 音色列表格式无效", e)
+            throw SpeechException("微软返回的音色列表格式无效，请稍后刷新")
         }
     }
 
@@ -62,16 +81,18 @@ object AzureSpeech {
         key: String,
         voiceId: String,
     ): Boolean {
-        val normalizedRegion = normalizeRegion(region) ?: return false
+        val normalizedRegion = normalizeRegion(region)
+            ?: throw SpeechException("请在语音设置填写有效的 Azure 区域")
         val apiKey = key.trim()
         val cleaned = TtsSpeakText.normalizeForSpeech(text)
-        if (apiKey.isEmpty() || cleaned.isBlank()) return false
+        if (apiKey.isEmpty()) throw SpeechException("请在语音设置填写 Azure Speech Key")
+        if (cleaned.isBlank()) return false
         val voice = voiceId.trim().ifBlank { DEFAULT_VOICE }
         val chunks = SpeechChunks.split(cleaned, MAX_SSML_TEXT)
         if (chunks.isEmpty()) return false
         return try {
             for (chunk in chunks) {
-                val bytes = synthesize(normalizedRegion, apiKey, voice, chunk) ?: return false
+                val bytes = synthesize(normalizedRegion, apiKey, voice, chunk)
                 var file: java.io.File? = null
                 try {
                     withContext(Dispatchers.IO) {
@@ -86,8 +107,8 @@ object AzureSpeech {
             true
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Exception) {
-            false
+        } catch (e: Exception) {
+            throw SpeechException(failureMessage(e))
         }
     }
 
@@ -116,7 +137,7 @@ object AzureSpeech {
         }
     }
 
-    private suspend fun synthesize(region: String, key: String, voice: String, text: String): ByteArray? =
+    private suspend fun synthesize(region: String, key: String, voice: String, text: String): ByteArray =
         withContext(Dispatchers.IO) {
             val request = Request.Builder()
                 .url("https://$region.tts.speech.microsoft.com/cognitiveservices/v1")
@@ -126,14 +147,10 @@ object AzureSpeech {
                 .header("User-Agent", "MoJing/1.0")
                 .post(buildSsml(voice, text).toRequestBody("application/ssml+xml; charset=utf-8".toMediaType()))
                 .build()
-            try {
-                client.executeCancellable(request) { response ->
-                    if (!response.isSuccessful) null else response.body?.bytes()
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                null
+            client.executeCancellable(request) { response ->
+                if (!response.isSuccessful) throw LlmHttpException(response.code)
+                response.body?.bytes()?.takeIf { it.isNotEmpty() }
+                    ?: throw SpeechException("微软未返回语音内容，请重试")
             }
         }
 

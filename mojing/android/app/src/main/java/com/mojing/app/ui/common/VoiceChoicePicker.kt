@@ -114,8 +114,11 @@ fun VoiceChoicePicker(
                 if (generation == loadGeneration && selectedEngine == engineId) voices = result
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
-                if (generation == loadGeneration && selectedEngine == engineId) error = "音色列表加载失败，请重试"
+            } catch (failure: Exception) {
+                if (generation == loadGeneration && selectedEngine == engineId) {
+                    error = if (engineId == "azure") AzureSpeech.failureMessage(failure)
+                    else "音色列表加载失败，请检查引擎和语音包后重试"
+                }
             } finally {
                 if (generation == loadGeneration && selectedEngine == engineId) loading = false
             }
