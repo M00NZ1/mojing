@@ -46,6 +46,7 @@ try {
   let searchCalls = 0, windows = 0;
   const pageSizes = [];
   const searchScopes = [];
+  const searchQueries = [];
   await context.route('http://127.0.0.1:18001/api/**', async (route) => {
     const url = new URL(route.request().url());
     const endpoint = url.pathname.replace('/api', '');
@@ -53,6 +54,7 @@ try {
     if (endpoint.endsWith('/messages/search-page')) {
       searchCalls++;
       const query = url.searchParams.get('q');
+      searchQueries.push(query);
       searchScopes.push(url.searchParams.get('branch_id'));
       if (searchFailure) { status = 500; data = { detail: '临时搜索故障' }; }
       else {
@@ -94,7 +96,13 @@ try {
   await page.locator('[data-chat-message-id="6000"]').waitFor();
   const initialNodes = await page.locator('[data-chat-message-id]').count();
   assert.ok(initialNodes < 40, `initial rendered nodes ${initialNodes}`);
+  // Input-method preedit must never trigger a search or advance the index.
+  await searchInput.dispatchEvent('compositionstart');
+  await searchInput.fill('xian');
+  await page.waitForTimeout(400);
+  assert.equal(searchCalls, 0, 'IME preedit must not query');
   await searchInput.fill('线索');
+  await searchInput.dispatchEvent('compositionend');
   await page.getByRole('button', { name: '暂停索引', exact: true }).click();
   await page.getByText(/索引已暂停/).waitFor();
   await page.waitForTimeout(450); // Allow the one already in-flight batch to finish.
@@ -127,6 +135,14 @@ try {
   await page.getByRole('button', { name: '刷新搜索' }).click();
   await page.waitForFunction(() => ![...document.querySelectorAll('button')].find((b) => b.textContent === '刷新搜索').disabled);
   assert.equal(await results.locator('ul').evaluate((list) => list.scrollTop), 80);
+  // Fast edits coalesce to one query; old hits cannot be selected while waiting.
+  const queriesBeforeTyping = searchQueries.length;
+  await searchInput.fill('旧');
+  assert.ok(await results.locator('li button').first().isDisabled());
+  await searchInput.fill('旧信');
+  await searchInput.fill('旧信封');
+  await results.getByRole('button', { name: /第 3 夜/ }).waitFor();
+  assert.deepEqual(searchQueries.slice(queriesBeforeTyping), ['旧信封']);
   // Unloaded old message, transient location failure, then successful focus.
   await searchInput.fill('旧信封');
   const oldHit = results.getByRole('button', { name: /第 3 夜/ });
