@@ -15,6 +15,13 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import com.mojing.app.data.local.search.MessageSearchTokenizer
 
+/** Preview inputs omit search indexes and structured metadata; keep full body for tag parsing. */
+data class MessagePreviewSource(
+    val id: Long,
+    val speakerType: String,
+    val content: String,
+)
+
 data class MessageSearchRebuildBatchResult(
     val indexedThroughMessageId: Long,
     val indexedCount: Int,
@@ -212,6 +219,9 @@ interface MessageDao {
             "WHERE messageId IN (:messageIds) AND storagePath <> ''",
     )
     suspend fun getAttachmentStoragePaths(messageIds: List<Long>): List<String>
+
+    @Query("SELECT id, speakerType, content FROM messages WHERE sessionId = :sessionId AND id IN (:messageIds)")
+    suspend fun getPreviewSourcesInSession(sessionId: Long, messageIds: List<Long>): List<MessagePreviewSource>
 
     @Query("SELECT * FROM messages WHERE sessionId = :sessionId AND id IN (:messageIds)")
     suspend fun getByIdsInSession(sessionId: Long, messageIds: List<Long>): List<MessageEntity>

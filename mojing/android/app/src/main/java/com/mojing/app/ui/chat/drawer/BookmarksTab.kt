@@ -20,10 +20,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import com.mojing.app.data.local.entity.MessageBookmarkEntity
 
 @Composable
@@ -46,6 +52,10 @@ fun BookmarksTab(
             LazyColumn(modifier = Modifier.fillMaxWidth()) {
                 items(bookmarks, key = { it.id }) { b ->
                     val preview = bookmarkPreviews[b.messageId] ?: "…"
+                    val savedAt = remember(b.createdAt) {
+                        Instant.ofEpochMilli(b.createdAt).atZone(ZoneId.systemDefault())
+                            .format(DateTimeFormatter.ofPattern("yyyy/M/d HH:mm", Locale.getDefault()))
+                    }
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -60,8 +70,9 @@ fun BookmarksTab(
                             Icon(Icons.Default.PushPin, null, tint = MaterialTheme.colorScheme.primary)
                             Spacer(Modifier.width(8.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("消息 #${b.messageId}", style = MaterialTheme.typography.labelSmall)
-                                Text(preview, style = MaterialTheme.typography.bodySmall, maxLines = 3)
+                                Text("收藏于 $savedAt", style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(preview, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
                             }
                             IconButton(onClick = { onRemove(b.messageId) }, enabled = b.messageId !in busyIds) {
                                 if (b.messageId in busyIds) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)

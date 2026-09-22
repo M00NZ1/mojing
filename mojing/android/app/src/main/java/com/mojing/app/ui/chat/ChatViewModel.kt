@@ -74,6 +74,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -951,11 +953,12 @@ class ChatViewModel @Inject constructor(
     private suspend fun messagePreviews(
         messageIds: Set<Long>,
         maxChars: Int,
-    ): Map<Long, String> {
-        if (messageIds.isEmpty()) return emptyMap()
+    ): Map<Long, String> = withContext(Dispatchers.Default) {
+        if (messageIds.isEmpty()) return@withContext emptyMap()
         val previews = mutableMapOf<Long, String>()
-        for (batch in messageIds.chunked(400)) {
-            for (message in messageDao.getByIdsInSession(sessionId, batch)) {
+        for (batch in messageIds.chunked(32)) {
+            for (message in messageDao.getPreviewSourcesInSession(sessionId, batch)) {
+                currentCoroutineContext().ensureActive()
                 previews[message.id] = ChatMessageTextFormat.preview(
                     raw = message.content,
                     speakerType = message.speakerType,
@@ -964,7 +967,7 @@ class ChatViewModel @Inject constructor(
                 )
             }
         }
-        return previews
+        previews
     }
 
     /** 从数据库重新拉取参与者对应角色的头像/名称（编辑角色后返回聊天页时调用） */
