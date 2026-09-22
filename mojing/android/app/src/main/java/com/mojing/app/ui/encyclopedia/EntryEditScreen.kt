@@ -92,6 +92,13 @@ fun EntryEditScreen(
     val canSave = state.loadError == null && (!state.isPersisted || state.isDirty)
     val blockingBusy = state.isSaving || state.isGeneratingCover || isCoverImporting
     val pageBusy = blockingBusy || state.isAiCompleting
+    val saveEnabled = state.isLoaded && canSave && !pageBusy && !state.isLoadingVersions
+    val saveLabel = when {
+        state.isSaving -> "正在保存…"
+        !state.isPersisted -> "保存条目"
+        state.isDirty -> "保存修改"
+        else -> "已保存"
+    }
 
     fun requestBack() {
         focusManager.clearFocus()
@@ -162,22 +169,33 @@ fun EntryEditScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text(if (entryId == 0L && !state.isPersisted) "新建条目" else "编辑条目") },
+                title = { Text(if (entryId == 0L && !state.isPersisted) "新建条目" else "编辑条目", style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
                     IconButton(onClick = ::requestBack, enabled = !blockingBusy) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
                     }
                 },
                 actions = {
-                    IconButton(
-                        onClick = { viewModel.save() },
-                        enabled = state.isLoaded && canSave && !pageBusy && !state.isLoadingVersions,
-                    ) {
-                        if (state.isSaving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Default.Save, if (canSave) "保存修改" else "已保存")
+                    if (isImeOpen) {
+                        TextButton(onClick = { viewModel.save() }, enabled = saveEnabled) {
+                            Text(saveLabel)
+                        }
                     }
                 }
             )
+        },
+        bottomBar = {
+            if (!isImeOpen && state.isLoaded && state.loadError == null) {
+                Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                    Column(Modifier.navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
+                        Button(
+                            onClick = { viewModel.save() },
+                            enabled = saveEnabled,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        ) { Text(saveLabel) }
+                    }
+                }
+            }
         }
     ) { padding ->
         if (state.loadError != null) {
@@ -200,7 +218,7 @@ fun EntryEditScreen(
                 }
             }
         } else {
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+        Column(modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
             ScrollableTabRow(
                 selectedTabIndex = subTab.ordinal,
                 edgePadding = 12.dp,
@@ -224,12 +242,11 @@ fun EntryEditScreen(
                         .weight(1f)
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp)
-                        .imePadding()
                         .verticalScroll(editScroll)
-                        .padding(bottom = 16.dp),
+                        .padding(top = 16.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("条目内容", style = MaterialTheme.typography.titleMedium)
+                    Text("基本资料", style = MaterialTheme.typography.titleMedium)
                     EntryConfidenceSelector(state.confidence, viewModel::updateConfidence, enabled = !pageBusy)
                     if (state.hasSourceMessage) {
                         OutlinedButton(onClick = viewModel::openSourcePreview) { Text("查看对话原文") }
@@ -265,6 +282,8 @@ fun EntryEditScreen(
                         }
                     }
 
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    Text("正文与摘要", style = MaterialTheme.typography.titleMedium)
                     if (state.isAiCompleting) {
                         EntryAiCompleteSkeletonBlock()
                     } else {
@@ -284,16 +303,16 @@ fun EntryEditScreen(
                         )
                     }
 
-                    Button(
+                    OutlinedButton(
                         onClick = { viewModel.aiComplete() },
                         enabled = state.title.isNotBlank() && !pageBusy,
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                     ) {
                         if (state.isAiCompleting) {
                             CircularProgressIndicator(
                                 Modifier.size(20.dp),
                                 strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary,
+                                color = MaterialTheme.colorScheme.primary,
                             )
                             Spacer(Modifier.width(8.dp))
                         }
@@ -366,7 +385,7 @@ fun EntryEditScreen(
 
                     OutlinedButton(
                         onClick = { advancedOpen = !advancedOpen },
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                     ) {
                         Text(if (advancedOpen) "收起高级设置" else "高级设置")
                     }
@@ -399,22 +418,7 @@ fun EntryEditScreen(
                     }
                     }
 
-                    Spacer(Modifier.height(8.dp))
 
-                    Button(
-                        onClick = { viewModel.save() },
-                        enabled = canSave && !pageBusy,
-                        modifier = Modifier.fillMaxWidth().height(50.dp)
-                    ) {
-                        if (state.isSaving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
-                        else Text(
-                            when {
-                                !state.isPersisted -> "保存条目"
-                                state.isDirty -> "保存修改"
-                                else -> "已保存"
-                            },
-                        )
-                    }
                 }
 
                 EntryEditSubTab.VERSIONS -> Column(
@@ -423,7 +427,7 @@ fun EntryEditScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp)
                         .verticalScroll(versionScroll)
-                        .padding(bottom = 16.dp),
+                        .padding(top = 16.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
