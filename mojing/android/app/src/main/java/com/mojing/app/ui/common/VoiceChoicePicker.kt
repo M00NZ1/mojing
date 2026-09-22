@@ -35,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -47,6 +48,7 @@ import com.mojing.app.media.VoiceEngineOption
 import com.mojing.app.media.VoiceOption
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -73,32 +75,39 @@ fun VoiceChoicePicker(
     var engineError by remember { mutableStateOf<String?>(null) }
     var azureConfigured by remember { mutableStateOf(false) }
     var loadGeneration by remember { mutableIntStateOf(0) }
+    var voiceLoadJob by remember { mutableStateOf<Job?>(null) }
+    var engineLoadJob by remember { mutableStateOf<Job?>(null) }
+    var engineGeneration by remember { mutableIntStateOf(0) }
 
     fun loadEngines() {
+        val generation = ++engineGeneration
+        engineLoadJob?.cancel()
         engineLoading = true
         engineError = null
-        scope.launch {
+        engineLoadJob = scope.launch {
             try {
-                engines = (VoiceEngineCatalog.engines(context) + VoiceEngineOption("azure", "微软 Azure 语音"))
+                val result = (VoiceEngineCatalog.engines(context) + VoiceEngineOption("azure", "微软 Azure 语音"))
                     .distinctBy { it.id }
+                if (generation == engineGeneration) engines = result
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                engineError = "语音引擎列表加载失败"
+                if (generation == engineGeneration) engineError = "语音引擎列表加载失败"
             } finally {
-                engineLoading = false
+                if (generation == engineGeneration) engineLoading = false
             }
         }
     }
 
     fun load(engineId: String) {
         val generation = ++loadGeneration
+        voiceLoadJob?.cancel()
         selectedEngine = engineId
         query = ""
         loading = true
         error = null
         voices = emptyList()
-        scope.launch {
+        voiceLoadJob = scope.launch {
             try {
                 val result = if (engineId == "azure") {
                     val (region, key) = withContext(Dispatchers.IO) {
@@ -133,7 +142,9 @@ fun VoiceChoicePicker(
         if (selectedEngine != "inherit") load(selectedEngine)
     }
 
-    val displayVoices = listOf(VoiceOption("", if (selectedEngine == "azure") "默认 · 晓晓" else "引擎默认")) + voices.filter { it.id.isNotBlank() && (query.isBlank() || it.name.contains(query, true) || it.id.contains(query, true)) }
+    val searchQuery = query.trim()
+    val displayVoices = (listOf(VoiceOption("", if (selectedEngine == "azure") "默认 · 晓晓" else "引擎默认")) + voices.filter { it.id.isNotBlank() })
+        .filter { searchQuery.isBlank() || it.name.contains(searchQuery, true) || it.id.contains(searchQuery, true) }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -166,7 +177,7 @@ fun VoiceChoicePicker(
                 }
             } else if (engineError != null) {
                 Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(engineError!!, color = MaterialTheme.colorScheme.error)
+                    Text(engineError!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
                     TextButton(onClick = ::loadEngines) { Text("重试") }
                 }
             } else {
@@ -177,12 +188,20 @@ fun VoiceChoicePicker(
                     engines.forEach { engine ->
                         FilterChip(
                             selected = selectedEngine == engine.id,
-                            onClick = { load(engine.id) },
+                            onClick = { if (selectedEngine != engine.id) load(engine.id) },
                             enabled = engine.id != "azure" || azureConfigured,
                             label = { Text(engine.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         )
                     }
                 }
+            }
+            if (!azureConfigured) {
+                Text(
+                    "使用微软语音：在设置 → 朗读中填写 Azure 区域和 Speech Key",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                )
             }
             if (selectedEngine != "inherit") {
                 if (loading) {
@@ -190,8 +209,8 @@ fun VoiceChoicePicker(
                         CircularProgressIndicator()
                     }
                 } else if (error != null) {
-                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(error!!, color = MaterialTheme.colorScheme.error)
+                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
                         TextButton(onClick = { load(selectedEngine) }) { Text("重试") }
                     }
                 } else {
@@ -203,6 +222,12 @@ fun VoiceChoicePicker(
                     LazyColumn(
                         modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
                     ) {
+                        if (displayVoices.isEmpty()) {
+                            item {
+                                Text("没有匹配的音色，请更换关键词", color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
+                            }
+                        }
                         items(displayVoices, key = { "${selectedEngine}:${it.id}" }) { voice ->
                             val selected = selectedEngine == choice.engineId && voice.id == choice.voiceId
                             Surface(
