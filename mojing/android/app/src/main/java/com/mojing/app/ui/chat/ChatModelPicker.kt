@@ -12,6 +12,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
@@ -43,6 +45,7 @@ fun ChatModelPicker(
         platforms.indexOfFirst { it.id == platform?.id }.coerceAtLeast(0))
     val maxHeight = LocalConfiguration.current.screenHeightDp.dp * 0.78f
     ModalBottomSheet(onDismissRequest = onDismiss, dragHandle = null,
+        containerColor = MaterialTheme.colorScheme.surface,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().heightIn(max = maxHeight).padding(horizontal = 12.dp, vertical = 8.dp)) {
             ModelPickerHeader("对话模型", query, { query = it }, onDismiss)
@@ -50,14 +53,25 @@ fun ChatModelPicker(
                 LazyRow(state = tabs, horizontalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(horizontal = 4.dp), modifier = Modifier.testTag("chat-model-platforms")) {
                     items(platforms, key = { it.id }) { item ->
-                        FilterChip(selected = item.id == platform?.id, onClick = {
+                        val active = item.id == platform?.id
+                        Surface(onClick = {
                             platformId = item.id
                             query = ""
-                        }, label = {
-                            Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
-                        }, modifier = Modifier.heightIn(min = 48.dp).testTag("chat-platform:${item.id}"))
+                        }, shape = RoundedCornerShape(10.dp),
+                            color = if (active) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                            contentColor = if (active) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("chat-platform:${item.id}").semantics { selected = active }) {
+                            Box(Modifier.heightIn(min = 48.dp).padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
+                                Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                                    modifier = Modifier.widthIn(max = 180.dp))
+                            }
+                        }
                     }
                 }
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
             if (isSaving) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -76,6 +90,13 @@ fun ChatModelPicker(
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (platform?.apiKey?.isBlank() == true) Text("请先在模型设置中配置此平台的 Key",
                 Modifier.padding(8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(if (query.isBlank()) "可用模型" else "搜索结果", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${names.size}", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             key(platform?.id, query) {
                 LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth().testTag("chat-model-list"),
                     contentPadding = PaddingValues(vertical = 4.dp)) {
