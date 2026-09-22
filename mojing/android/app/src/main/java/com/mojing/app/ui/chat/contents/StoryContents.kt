@@ -20,9 +20,9 @@ internal fun List<StoryContentsMessageProjection>.toContentsEntries(): List<Stor
 
 internal fun StoryContentsMessageProjection.toContentsEntry(): StoryContentsEntry {
     val root = runCatching { JsonParser.parseString(structuredContentJson).asJsonObject }.getOrNull()
-    val number = root?.get("chapter_number")?.takeIf { it.isJsonPrimitive }?.let { runCatching { it.asInt }.getOrNull() }
+    val number = com.mojing.app.domain.story.NovelChapter.number(structuredContentJson)
     val metadataTitle = root?.get("chapter_title")?.takeIf { it.isJsonPrimitive }?.let { runCatching { it.asString.trim() }.getOrNull() }
-    val heading = Regex("(?im)^\\s*(?:[#>]+\\s*)?(?:旁白\\s*[:：]\\s*)?(第\\s*([0-9一二三四五六七八九十百]+)\\s*章[^\\n]*)").find(contentPreview)
+    val heading = Regex("(?im)^\\s*(?:[#>]+\\s*)?(?:旁白\\s*[:：]\\s*)?(第\\s*([0-9零〇一二两三四五六七八九十百千]+)\\s*章[^\\n]*)").find(contentPreview)
     val textTitle = heading?.groupValues?.getOrNull(1)?.trim()
     val textNumber = heading?.groupValues?.getOrNull(2)?.let(::parseChineseChapterNumber)
     val dateLabel = SimpleDateFormat("yyyy年M月d日 HH:mm", Locale.CHINA).format(Date(createdAt))
@@ -41,13 +41,28 @@ internal fun StoryContentsMessageProjection.toContentsEntry(): StoryContentsEntr
 }
 
 private fun parseChineseChapterNumber(value: String): Int? {
-    if (value.all(Char::isDigit)) return value.toIntOrNull()
-    val digits = mapOf('零' to 0, '〇' to 0, '一' to 1, '二' to 2, '三' to 3, '四' to 4, '五' to 5, '六' to 6, '七' to 7, '八' to 8, '九' to 9)
-    if (value == "十") return 10
-    val ten = value.indexOf('十')
-    return if (ten >= 0) {
-        val high = value.substring(0, ten).mapNotNull(digits::get).joinToString("").toIntOrNull() ?: 1
-        val low = value.substring(ten + 1).mapNotNull(digits::get).joinToString("").toIntOrNull() ?: 0
-        high * 10 + low
-    } else value.mapNotNull(digits::get).joinToString("").toIntOrNull()
+    if (value.all(Char::isDigit)) return value.toIntOrNull()?.takeIf { it > 0 }
+    val digits = mapOf('零' to 0, '〇' to 0, '一' to 1, '二' to 2, '两' to 2, '三' to 3, '四' to 4, '五' to 5, '六' to 6, '七' to 7, '八' to 8, '九' to 9)
+    val units = mapOf('十' to 10, '百' to 100, '千' to 1000)
+    if (value.none { it in units }) return value.map { digits[it] ?: return null }
+        .joinToString("").toIntOrNull()?.takeIf { it > 0 }
+    var total = 0
+    var pending: Int? = null
+    var previousUnit = 10_000
+    for ((index, char) in value.withIndex()) {
+        val digit = digits[char]
+        if (digit != null) {
+            if (pending != null && pending != 0) return null
+            pending = digit
+        } else {
+            val unit = units[char] ?: return null
+            if (unit >= previousUnit) return null
+            val multiplier = pending ?: if (index == 0 && unit == 10) 1 else return null
+            if (multiplier == 0) return null
+            total += multiplier * unit
+            previousUnit = unit
+            pending = null
+        }
+    }
+    return (total + (pending ?: 0)).takeIf { it > 0 }
 }

@@ -37,6 +37,28 @@ class StoryContentsTest {
         assertEquals(listOf(40L, 30L), entries.map { it.messageId })
     }
 
+    @Test
+    fun chineseHundredsThousandsAndDigitStyleHeadingsKeepTheirNumber() {
+        mapOf("一百二十三" to 123, "一百零二" to 102, "两百" to 200,
+            "一千零一" to 1001, "九千九百九十九" to 9999, "二〇二四" to 2024,
+            "十" to 10, "二十" to 20, "002" to 2).forEach { (text, expected) ->
+            assertEquals(text, expected, projection("{}", "第${text}章 远行").toContentsEntry().chapterNumber)
+        }
+    }
+
+    @Test
+    fun invalidChapterMetadataFallsBackToHeading() {
+        assertEquals(123, projection("{\"chapter_number\":0}", "第一百二十三章").toContentsEntry().chapterNumber)
+        assertEquals(1001, projection("{\"chapter_number\":-1}", "第一千零一章").toContentsEntry().chapterNumber)
+    }
+
+    @Test
+    fun malformedChineseUnitOrderDoesNotInventAChapterNumber() {
+        listOf("十百", "一百百", "一二十", "零", "0").forEach { text ->
+            assertEquals(text, null, projection("{}", "第${text}章").toContentsEntry().chapterNumber)
+        }
+    }
+
     private fun projection(json: String, content: String) = StoryContentsMessageProjection(
         id = 42L, speakerType = "narrator", branchId = "main", createdAt = 0L,
         structuredContentJson = json, contentPreview = content,
