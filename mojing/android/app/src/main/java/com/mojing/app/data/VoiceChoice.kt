@@ -17,8 +17,15 @@ class VoicePreferences(context: Context) {
     private val secure by lazy { SecureStorage().also { it.init(appContext) } }
     fun global(): VoiceChoice = read("global") ?: VoiceChoice()
     fun saveGlobal(choice: VoiceChoice) = write("global", choice)
-    fun session(id: Long): VoiceChoice = read("session_$id") ?: global()
-    fun saveSession(id: Long, choice: VoiceChoice) = write("session_$id", choice)
+    fun sessionSelection(id: Long): VoiceChoice = read("session_$id") ?: VoiceChoice("inherit")
+    fun session(id: Long): VoiceChoice = sessionSelection(id).takeUnless { it.engineId == "inherit" } ?: global()
+    fun saveSession(id: Long, choice: VoiceChoice) {
+        if (choice.engineId == "inherit") {
+            check(prefs.edit().remove("session_${id}_engine").remove("session_${id}_voice").commit()) {
+                "语音选择未保存，请重试"
+            }
+        } else write("session_$id", choice)
+    }
     val azureRegion: String get() = secure.azureSpeechRegion
     val azureKey: String get() = secure.azureSpeechKey
     fun saveAzure(region: String, key: String) = secure.saveAzureSpeech(region, key)

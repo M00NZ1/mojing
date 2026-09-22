@@ -138,7 +138,9 @@ fun ChatScreen(
     var voiceChoice by remember(sessionId) { mutableStateOf(viewModel.currentVoiceChoice()) }
     var showVoicePicker by remember { mutableStateOf(false) }
     if (showVoicePicker) com.mojing.app.ui.common.VoiceChoicePicker(
-        choice = voiceChoice, allowInherit = false,
+        choice = voiceChoice, allowInherit = true,
+        inheritLabel = "跟随全局语音设置",
+        description = "用于当前对话；已单独配置语音的角色优先使用角色设置",
         onSelected = { choice -> viewModel.selectVoiceChoice(choice) { voiceChoice = choice; showVoicePicker = false } },
         onDismiss = { showVoicePicker = false },
     )

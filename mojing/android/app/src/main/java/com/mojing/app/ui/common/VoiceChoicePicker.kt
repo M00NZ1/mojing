@@ -60,6 +60,8 @@ fun VoiceChoicePicker(
     allowInherit: Boolean,
     onSelected: (VoiceChoice) -> Unit,
     onDismiss: () -> Unit,
+    inheritLabel: String = "跟随当前会话",
+    description: String = "先选引擎，再选择可用音色",
 ) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
@@ -157,7 +159,7 @@ fun VoiceChoicePicker(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("选择朗读引擎", style = MaterialTheme.typography.titleLarge)
-                    Text("先选引擎，再选择可用音色", style = MaterialTheme.typography.bodySmall,
+                    Text(description, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = { loadEngines(); if (selectedEngine != "inherit") load(selectedEngine) }) {
@@ -168,7 +170,7 @@ fun VoiceChoicePicker(
                 TextButton(
                     onClick = { onSelected(VoiceChoice("inherit", "")) },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                ) { Text(if (choice.engineId == "inherit") "✓ 跟随当前会话" else "跟随当前会话") }
+                ) { Text(if (choice.engineId == "inherit") "✓ $inheritLabel" else inheritLabel) }
                 HorizontalDivider()
             }
             if (engineLoading) {

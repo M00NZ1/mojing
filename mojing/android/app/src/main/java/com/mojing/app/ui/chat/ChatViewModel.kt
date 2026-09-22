@@ -1631,7 +1631,7 @@ class ChatViewModel @Inject constructor(
     }
 
     fun currentVoiceChoice(): com.mojing.app.data.VoiceChoice =
-        com.mojing.app.data.VoicePreferences(appContext).session(sessionId)
+        com.mojing.app.data.VoicePreferences(appContext).sessionSelection(sessionId)
 
     fun selectVoiceChoice(choice: com.mojing.app.data.VoiceChoice, onSaved: () -> Unit) {
         viewModelScope.launch {
