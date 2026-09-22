@@ -8,6 +8,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
 object NovelChapter {
+    private val chapterHeading = Regex("^第[\\s0-9零〇一二两三四五六七八九十百千]+章.*")
     /** Rename only the leading heading; matching words in the story remain untouched. */
     fun renameContent(content: String, oldTitle: String, newTitle: String): String {
         val title = newTitle.trim()
@@ -38,7 +39,7 @@ object NovelChapter {
         root.addProperty("chapter_title", title.trim())
         return root.toString()
     }
-    fun heading(number: Int, title: String): String = if (Regex("^第[\\s0-9一二三四五六七八九十百千]+章.*").matches(title.trim())) title.trim() else "第 $number 章 ${title.trim()}".trim()
+    fun heading(number: Int, title: String): String = if (chapterHeading.matches(title.trim())) title.trim() else "第 $number 章 ${title.trim()}".trim()
     fun body(message: MessageEntity): String {
         val text = ConversationMessageText.forUserVisibleText(message.content, message.speakerType).trim()
         val heading = title(message.structuredContentJson)
@@ -48,9 +49,9 @@ object NovelChapter {
         val cleaned = ConversationMessageText.forUserVisibleText(raw, "narrator").trim()
         val first = cleaned.lineSequence().firstOrNull().orEmpty().trim().trimStart('#', ' ')
         val heading = requestedTitle.trim().ifBlank {
-            if (Regex("^第[\\s0-9一二三四五六七八九十百千]+章.*").matches(first)) first else "第 $number 章"
+            if (chapterHeading.matches(first)) first else "第 $number 章"
         }
-        val body = if (first == heading || Regex("^第[\\s0-9一二三四五六七八九十百千]+章.*").matches(first)) cleaned.substringAfter('\n', "").trim() else cleaned
+        val body = if (first == heading || chapterHeading.matches(first)) cleaned.substringAfter('\n', "").trim() else cleaned
         require(body.isNotBlank()) { "章节正文为空，请重试" }
         return heading to "<NARRATION>$heading\n\n$body</NARRATION>"
     }

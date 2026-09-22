@@ -7,6 +7,19 @@ import org.junit.Test
 import java.io.ByteArrayOutputStream
 
 class NovelChapterTest {
+    @Test fun chineseZeroAndDigitHeadingsSurviveGenerationAndExportOnce() = runTest {
+        mapOf("第一百零二章 归途" to 102, "第两百章 来信" to 200, "第二〇二四章 冬日" to 2024).forEach { (title, number) ->
+            val (savedTitle, content) = NovelChapter.generated(number, "", "# $title\n\n正文。")
+            assertEquals(title, savedTitle)
+            val message = MessageEntity(id = 1, sessionId = 1, speakerType = "narrator", content = content,
+                structuredContentJson = NovelChapter.metadata("{}", number, savedTitle))
+            assertEquals("正文。", NovelChapter.body(message))
+            val output = ByteArrayOutputStream()
+            NovelChapter.export(output, "长篇故事", 1) { _, _ -> listOf(message) }
+            assertEquals("长篇故事\n\n$title\n\n正文。\n\n", output.toString("UTF-8").replace("\r\n", "\n"))
+        }
+    }
+
     @Test fun renameOnlyChangesHeadingAndPreservesSameWordsInBody() {
         val original = "<NARRATION>夜雨\n\n她在夜雨中启程。</NARRATION>"
         val renamed = NovelChapter.renameContent(original, "夜雨", "渡口")
