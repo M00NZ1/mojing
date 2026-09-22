@@ -117,11 +117,20 @@ fun SessionListScreen(
     var deleteTargetId by rememberSaveable { mutableStateOf<Long?>(null) }
     var deleteTargetTitle by rememberSaveable { mutableStateOf("") }
     val deletionState by viewModel.deletionState.collectAsStateWithLifecycle()
+    var renameTargetId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var renameTargetTitle by rememberSaveable { mutableStateOf("") }
+    val renameState by viewModel.renameState.collectAsStateWithLifecycle()
     LaunchedEffect(deletionState.sessionId, deletionState.completed) {
         if (deletionState.completed) {
             deleteTargetId = null
             Toast.makeText(context, "对话已删除", Toast.LENGTH_SHORT).show()
             viewModel.clearDeletionResult()
+        }
+    }
+    LaunchedEffect(renameState.sessionId, renameState.completed) {
+        if (renameState.completed && renameTargetId == renameState.sessionId) {
+            renameTargetId = null
+            viewModel.clearRenameResult()
         }
     }
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -464,6 +473,11 @@ fun SessionListScreen(
                             Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
                     }
                     itemsIndexed(filteredSessions, key = { _, r -> r.session.id }) { index, row ->
+                        val openRename = {
+                            viewModel.clearRenameResult()
+                            renameTargetId = row.session.id
+                            renameTargetTitle = row.session.title
+                        }
                         Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
                             .clip(androidx.compose.foundation.shape.RoundedCornerShape(22.dp))) {
                             SwipeRevealListRow(
@@ -472,10 +486,12 @@ fun SessionListScreen(
                                 onPinToggle = { viewModel.setSessionPinned(row.session.id, row.session.pinnedAt == 0L) },
                                 onDelete = { viewModel.clearDeletionResult(); deleteTargetId = row.session.id; deleteTargetTitle = row.session.title },
                                 onClick = { onSessionClick(row.session.id) },
+                                onRename = openRename,
                             ) {
                                 SessionListRowInner(row = row, isGenerating = row.session.id in generatingSessions,
                                     backgroundFailure = backgroundFailures[row.session.id]?.message,
-                                    onStop = { com.mojing.app.ui.chat.RetainedChatSessions.stores.stop(row.session.id) })
+                                    onStop = { com.mojing.app.ui.chat.RetainedChatSessions.stores.stop(row.session.id) },
+                                    onRename = openRename)
                             }
                             if (index < filteredSessions.lastIndex) {
                                 HorizontalDivider(
@@ -498,6 +514,16 @@ fun SessionListScreen(
             error = deletionState.error.takeIf { deletionState.sessionId == id },
             onDelete = { viewModel.deleteSession(id) },
             onDismiss = { deleteTargetId = null; viewModel.clearDeletionResult() },
+        )
+    }
+    renameTargetId?.let { id ->
+        SessionRenameSheet(
+            initialTitle = renameTargetTitle,
+            saving = renameState.sessionId == id && renameState.running,
+            error = renameState.error.takeIf { renameState.sessionId == id },
+            onEdit = viewModel::clearRenameResult,
+            onSave = { title -> viewModel.renameSession(id, title) },
+            onDismiss = { renameTargetId = null; viewModel.clearRenameResult() },
         )
     }
 
@@ -872,7 +898,7 @@ private fun QuickStartGuideSteps(onCharacters: () -> Unit, onCreateSession: () -
 }
 
 @Composable
-fun SessionListRowInner(row: SessionWithListMeta, isGenerating: Boolean = false, onStop: (() -> Unit)? = null, backgroundFailure: String? = null) {
+fun SessionListRowInner(row: SessionWithListMeta, isGenerating: Boolean = false, onStop: (() -> Unit)? = null, backgroundFailure: String? = null, onRename: (() -> Unit)? = null) {
     val session = row.session
     val dateTimeFormat = remember { SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()) }
     val preview = ChatMessageTextFormat.preview(
@@ -896,6 +922,12 @@ fun SessionListRowInner(row: SessionWithListMeta, isGenerating: Boolean = false,
                 if (session.pinnedAt > 0) {
                     Icon(Icons.Default.PushPin, "已置顶", Modifier.padding(start = 6.dp).size(16.dp),
                         tint = MaterialTheme.colorScheme.primary)
+                }
+                if (onRename != null) {
+                    IconButton(onClick = onRename) {
+                        Icon(Icons.Default.Edit, contentDescription = "重命名${session.title.ifBlank { "对话" }}",
+                            modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
             if (isGenerating) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

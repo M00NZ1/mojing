@@ -113,6 +113,7 @@ import com.mojing.app.ui.common.hideImeKeyboard
 import com.mojing.app.ui.common.isImeKeyboardOpen
 import com.mojing.app.ui.chat.drawer.AddParticipantDialog
 import com.mojing.app.ui.chat.drawer.ChatDrawer
+import com.mojing.app.ui.session.SessionRenameSheet
 import com.mojing.app.util.ChatAttachmentFiles
 import com.mojing.app.util.ContentDocumentWriter
 import com.mojing.app.util.UsbSessionLog
@@ -211,6 +212,7 @@ fun ChatScreen(
     var latestRequested by remember(sessionId) { mutableStateOf(false) }
     var latestLoadAttempted by remember(sessionId) { mutableStateOf(false) }
     var showContents by remember { mutableStateOf(false) }
+    var showRenameSession by rememberSaveable(sessionId) { mutableStateOf(false) }
     var showSearchDialog by remember { mutableStateOf(false) }
     var isImportingChat by remember(sessionId) { mutableStateOf(false) }
     var isAddingAttachment by remember(sessionId) { mutableStateOf(false) }
@@ -553,6 +555,23 @@ fun ChatScreen(
         onDismiss = { showContents = false },
     )
 
+    if (showRenameSession) {
+        val isNovel = state.world?.gameplayMode == "小说创作"
+        SessionRenameSheet(
+            initialTitle = state.sessionTitle,
+            saving = state.novelMetadataSaving,
+            error = state.novelMetadataError,
+            onEdit = viewModel::clearNovelMetadataError,
+            onSave = { title ->
+                if (isNovel) viewModel.renameNovel(title) { showRenameSession = false }
+                else viewModel.renameSessionTitle(title) { showRenameSession = false }
+            },
+            onDismiss = { showRenameSession = false; viewModel.clearNovelMetadataError() },
+            heading = if (isNovel) "修改小说标题" else "重命名对话",
+            fieldLabel = if (isNovel) "小说标题" else "对话名称",
+        )
+    }
+
 
 
 
@@ -774,6 +793,16 @@ fun ChatScreen(
                                     expanded = topActionsMenuExpanded,
                                     onDismissRequest = { topActionsMenuExpanded = false },
                                 ) {
+                                    DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.Default.Edit, null) },
+                                        text = { Text(if (state.world?.gameplayMode == "小说创作") "修改小说标题" else "重命名对话") },
+                                        onClick = {
+                                            topActionsMenuExpanded = false
+                                            dismissKeyboard()
+                                            viewModel.clearNovelMetadataError()
+                                            showRenameSession = true
+                                        },
+                                    )
                                     DropdownMenuItem(
                                         text = { Text("故事线") },
                                         leadingIcon = { Icon(Icons.Default.AccountTree, null) },

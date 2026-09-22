@@ -2676,10 +2676,14 @@ class ChatViewModel @Inject constructor(
         if (!_state.value.novelMetadataSaving) _state.update { it.copy(novelMetadataError = null) }
     }
 
-    fun renameNovel(title: String, onSuccess: () -> Unit) {
+    fun renameNovel(title: String, onSuccess: () -> Unit) = renameSessionTitleInternal(title, "小说标题", onSuccess)
+
+    fun renameSessionTitle(title: String, onSuccess: () -> Unit) = renameSessionTitleInternal(title, "对话名称", onSuccess)
+
+    private fun renameSessionTitleInternal(title: String, label: String, onSuccess: () -> Unit) {
         if (_state.value.novelMetadataSaving) return
         if (title.isBlank() || _state.value.isGenerating) {
-            _state.update { it.copy(novelMetadataError = "请填写名称，并在生成结束后保存") }
+            _state.update { it.copy(novelMetadataError = "请填写$label，并在生成结束后保存") }
             return
         }
         _state.update { it.copy(novelMetadataSaving = true, novelMetadataError = null) }
@@ -2690,7 +2694,7 @@ class ChatViewModel @Inject constructor(
                 onSuccess()
             }
             catch (e: CancellationException) { throw e }
-            catch (_: Exception) { _state.update { it.copy(novelMetadataError = "小说标题保存失败，请重试") } }
+            catch (_: Exception) { _state.update { it.copy(novelMetadataError = "${label}保存失败，请重试") } }
             finally { _state.update { it.copy(novelMetadataSaving = false) } }
         }
     }

@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -60,6 +61,7 @@ fun SwipeRevealListRow(
     onDelete: () -> Unit,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onRename: (() -> Unit)? = null,
     menuExtras: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
@@ -178,6 +180,17 @@ fun SwipeRevealListRow(
                         menuExpanded = false
                         offsetPx = 0f
                         onPinToggle()
+                    },
+                )
+            }
+            if (onRename != null) {
+                DropdownMenuItem(
+                    text = { Text("重命名") },
+                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                    onClick = {
+                        menuExpanded = false
+                        offsetPx = 0f
+                        onRename()
                     },
                 )
             }

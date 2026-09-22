@@ -39,6 +39,13 @@ internal data class SessionDeletionState(
     val error: String? = null,
 )
 
+internal data class SessionRenameState(
+    val sessionId: Long? = null,
+    val running: Boolean = false,
+    val completed: Boolean = false,
+    val error: String? = null,
+)
+
 @HiltViewModel
 class SessionViewModel @Inject constructor(
     private val sessionDao: SessionDao,
@@ -211,6 +218,34 @@ class SessionViewModel @Inject constructor(
 
     private val _deletionState = MutableStateFlow(SessionDeletionState())
     internal val deletionState = _deletionState.asStateFlow()
+
+    private val _renameState = MutableStateFlow(SessionRenameState())
+    internal val renameState = _renameState.asStateFlow()
+
+    internal fun clearRenameResult() {
+        if (!_renameState.value.running) _renameState.value = SessionRenameState()
+    }
+
+    fun renameSession(id: Long, title: String) {
+        if (_renameState.value.running) return
+        val nextTitle = title.trim().take(100)
+        if (nextTitle.isBlank()) {
+            _renameState.value = SessionRenameState(id, error = "请填写对话名称")
+            return
+        }
+        _renameState.value = SessionRenameState(id, running = true)
+        viewModelScope.launch {
+            try {
+                check(sessionDao.getById(id) != null) { "对话已不存在" }
+                sessionDao.updateTitle(id, nextTitle)
+                _renameState.value = SessionRenameState(id, completed = true)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _renameState.value = SessionRenameState(id, error = "名称保存失败，请重试")
+            }
+        }
+    }
 
     internal fun clearDeletionResult() {
         if (!_deletionState.value.running) _deletionState.value = SessionDeletionState()
