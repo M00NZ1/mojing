@@ -5,9 +5,10 @@ import com.mojing.app.ui.common.MoJingButton as Button
 import com.mojing.app.ui.common.MoJingTonalButton as FilledTonalButton
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
@@ -166,29 +167,34 @@ fun InputBar(
             )
         }
         Surface(
-            shape = RoundedCornerShape(28.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
-            Column(Modifier.padding(8.dp)) {
-                TextField(
+            Row(
+                Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                BasicTextField(
                     value = value,
                     onValueChange = onValueChange,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 40.dp, max = 128.dp)
+                        .weight(1f)
+                        .heightIn(min = 48.dp, max = 144.dp)
                         .focusRequester(inputFocusRequester)
                         .onFocusChanged { focusState ->
                             if (focusState.isFocused) keyboard?.show()
                         },
-                    placeholder = { Text("输入消息…") },
-                    shape = RoundedCornerShape(16.dp),
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = Color.Transparent,
-                        unfocusedContainerColor = Color.Transparent,
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent,
-                    ),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    decorationBox = { innerTextField ->
+                        Box(Modifier.padding(vertical = 11.dp, horizontal = 2.dp), contentAlignment = Alignment.CenterStart) {
+                            if (value.text.isEmpty()) Text("输入消息…",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            innerTextField()
+                        }
+                    },
                     minLines = 1,
                     maxLines = 4,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
@@ -202,24 +208,25 @@ fun InputBar(
                         },
                     ),
                 )
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { dismissKeyboard(); showActionSheet = true },
-                        enabled = !isGenerating && !isAddingAttachment) {
-                        Icon(Icons.Default.Add, "更多输入工具")
-                    }
-                    Box(Modifier.weight(1f)) { modelSelector?.invoke() }
-                    if (isImeOpen) {
-                        IconButton(onClick = ::dismissKeyboard) { Icon(Icons.Default.KeyboardHide, "收起键盘") }
-                    }
-                    FilledIconButton(
-                        onClick = if (isGenerating) onStop else onSend,
-                        enabled = isGenerating || (!isAddingAttachment && (value.text.isNotBlank() || pendingAttachmentCount > 0)),
-                        modifier = Modifier.size(48.dp),
-                    ) {
-                        if (isGenerating) Icon(Icons.Default.Stop, "停止")
-                        else Icon(Icons.AutoMirrored.Filled.Send, "发送")
-                    }
+                FilledIconButton(
+                    onClick = if (isGenerating) onStop else onSend,
+                    enabled = isGenerating || (!isAddingAttachment && (value.text.isNotBlank() || pendingAttachmentCount > 0)),
+                    modifier = Modifier.size(48.dp),
+                    shape = RoundedCornerShape(14.dp),
+                ) {
+                    if (isGenerating) Icon(Icons.Default.Stop, "停止")
+                    else Icon(Icons.AutoMirrored.Filled.Send, "发送")
                 }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { dismissKeyboard(); showActionSheet = true },
+                enabled = !isGenerating && !isAddingAttachment) {
+                Icon(Icons.Default.Add, "更多输入工具", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Box(Modifier.weight(1f)) { modelSelector?.invoke() }
+            if (isImeOpen) {
+                IconButton(onClick = ::dismissKeyboard) { Icon(Icons.Default.KeyboardHide, "收起键盘") }
             }
         }
     }
