@@ -1,6 +1,12 @@
 package com.mojing.app.ui.settings.usage
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.material3.Surface
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -129,23 +135,36 @@ fun UsageScreen(
                 FilterChip(selected = state.requestFilter == value, onClick = { vm.filterRequests(value, state.requestOrder) }, label = { Text(label) })
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = state.requestOrder == "time", onClick = { vm.filterRequests(state.requestFilter, "time") }, label = { Text("最新记录") })
             FilterChip(selected = state.requestOrder == "tokens", onClick = { vm.filterRequests(state.requestFilter, "tokens") }, label = { Text("Token 最多") })
         }
         LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
             items(state.requests, key = { it.record.id }) { item ->
                 val r = item.record
-                OutlinedCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(formatDate(r.createdAt), style = MaterialTheme.typography.labelMedium)
-                        val statusLabel = when (r.status) { "cancelled" -> "已取消"; "failed" -> "失败"; else -> if (r.success) "成功" else "失败" }
-                        Text(statusLabel, color = if (r.success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+                Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    shape = RoundedCornerShape(12.dp)) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(formatDate(r.createdAt), Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            val statusLabel = when (r.status) { "cancelled" -> "已取消"; "failed" -> "失败"; else -> if (r.success) "成功" else "失败" }
+                            Text(statusLabel, Modifier.padding(start = 12.dp), color = when {
+                                r.status == "cancelled" -> MaterialTheme.colorScheme.onSurfaceVariant
+                                r.success -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.error
+                            }, style = MaterialTheme.typography.labelMedium)
+                        }
+                        val cost = if (r.costKnown) "≈" + formatBillingAmount(r.estimatedCost, r.currency, currencyState) else "价格未配置"
+                        Text(cost, style = MaterialTheme.typography.titleMedium)
+                        Text("${count(r.totalTokens.toLong())} Token", style = MaterialTheme.typography.bodyMedium)
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Text("输入 ${count(r.promptTokens.toLong())} · 输出 ${count(r.completionTokens.toLong())}",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("耗时 ${formatDuration(r.durationMs)}${if (r.tokenSource == "estimated") " · Token 估算" else ""}",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Text("输入 ${count(r.promptTokens.toLong())} · 输出 ${count(r.completionTokens.toLong())} · 共 ${count(r.totalTokens.toLong())} Token", style = MaterialTheme.typography.bodySmall)
-                    val cost = if (r.costKnown) formatBillingAmount(r.estimatedCost, r.currency, currencyState) else "价格未配置"
-                    Text("耗时 ${formatDuration(r.durationMs)} · ${if (r.costKnown) "≈" else ""}$cost${if (r.tokenSource == "estimated") " · Token 估算" else ""}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                } }
+                }
             }
             if (state.requests.isEmpty() && !state.loading && state.error == null) item { Text("暂无请求记录") }
             if (state.canLoadMore && state.requests.isNotEmpty()) item { TextButton(onClick = vm::loadMoreRequests, enabled = !state.loading, modifier = Modifier.fillMaxWidth()) { Text(if (state.loading) "正在加载…" else "加载更早记录") } }
@@ -163,7 +182,10 @@ fun UsageScreen(
 
 @Composable private fun UsageCard(title: String, subtitle: String, detail: String, currencies: List<UsageCurrencyUi>, currencyState: CurrencyDisplayState = CurrencyDisplayState(), onClick: () -> Unit) {
     OutlinedCard(onClick = onClick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Outlined.DataUsage, null, tint = MaterialTheme.colorScheme.primary); Text(title, Modifier.weight(1f).padding(horizontal = 10.dp), fontWeight = FontWeight.SemiBold); Icon(Icons.Outlined.ChevronRight, "查看") }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(title, Modifier.weight(1f).padding(end = 12.dp), style = MaterialTheme.typography.titleMedium)
+            Icon(Icons.Outlined.ChevronRight, "查看明细", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Text(subtitle, style = MaterialTheme.typography.bodyMedium)
         Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         CurrencyRows(currencies, currencyState)
@@ -184,7 +206,7 @@ fun UsageScreen(
     if (editRate) Column {
     TextButton(onClick = vm::refreshCurrency, enabled = !state.loading) { Text("刷新汇率") }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(manual, { manual = it }, Modifier.weight(1f), singleLine = true, label = { Text("USD/CNY 汇率") }, placeholder = { Text("例如 7.20") })
+        OutlinedTextField(manual, { manual = it }, Modifier.weight(1f), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), label = { Text("USD/CNY 汇率") }, placeholder = { Text("例如 7.20") })
         TextButton(onClick = {
             val rate = manual.toDoubleOrNull()
             if (rate == null || !rate.isFinite() || rate <= 0) rateError = "请输入有效的正数汇率"
@@ -195,7 +217,19 @@ fun UsageScreen(
     (rateError ?: state.error)?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
 }
 
-@Composable private fun CurrencyRows(rows: List<UsageCurrencyUi>, state: CurrencyDisplayState) { rows.forEach { row -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("${row.currency} · ${count(row.tokens)} Token", style = MaterialTheme.typography.labelMedium); Text(if (row.unknownPrice == row.calls && row.calls > 0) "价格待配置" else "≈" + formatBillingAmount(row.cost, row.currency, state), style = MaterialTheme.typography.labelMedium) } } }
+@OptIn(ExperimentalLayoutApi::class)
+@Composable private fun CurrencyRows(rows: List<UsageCurrencyUi>, state: CurrencyDisplayState) {
+    rows.forEach { row ->
+        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("${row.currency} · ${count(row.tokens)} Token", style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(if (row.unknownPrice == row.calls && row.calls > 0) "价格待配置"
+                else "≈" + formatBillingAmount(row.cost, row.currency, state),
+                style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}
 private fun count(value: Long) = String.format(Locale.US, "%,d", value)
 private fun formatDate(value: Long) = SimpleDateFormat("yyyy年MM月dd日 HH:mm", Locale.CHINA).format(Date(value))
 private fun formatDuration(value: Int) = if (value < 1000) "${value} ms" else "${value / 1000.0}s"
