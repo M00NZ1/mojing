@@ -21,12 +21,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.mojing.app.data.local.entity.MessageAttachmentEntity
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -49,7 +54,7 @@ fun MessageLineBlock(
     showSenderHeader: Boolean,
     timeText: String,
     onAction: (MessageAction) -> Unit,
-    onSelectSwipeVersion: (swipeGroupId: String, messageId: Long) -> Unit,
+    onSelectSwipeVersion: (swipeGroupId: String, messageId: Long, onResult: (Boolean) -> Unit) -> Unit,
     currentBranchId: String = "main",
     branchAnchors: List<BranchAnchor> = emptyList(),
     canReturnToMain: Boolean = false,
@@ -109,6 +114,7 @@ fun MessageLineBlock(
                 pageCount = { line.variants.size }
             )
             val latestLine by rememberUpdatedState(line)
+            var selectionPending by remember(line.stableKey, currentBranchId) { mutableStateOf(false) }
             val latestSelectionCallback by rememberUpdatedState(onSelectSwipeVersion)
             val selectionLocked by rememberUpdatedState(isGenerating || readOnly)
             LaunchedEffect(line.selectedIndex, line.stableKey, isGenerating) {
@@ -117,7 +123,7 @@ fun MessageLineBlock(
                     pagerState.scrollToPage(target)
                 }
             }
-            LaunchedEffect(line.stableKey, line.swipeGroupId, pagerState) {
+            LaunchedEffect(line.stableKey, line.swipeGroupId, currentBranchId, pagerState) {
                 snapshotFlow { pagerState.settledPage }
                     .distinctUntilChanged()
                     .collect { page ->
@@ -127,14 +133,27 @@ fun MessageLineBlock(
                         val mid = currentLine.variants.getOrNull(page)?.id ?: return@collect
                         val expectedId = currentLine.selectedMessage().id
                         if (mid != expectedId) {
-                            latestSelectionCallback(gid, mid)
+                            selectionPending = true
+                            try {
+                                val saved = suspendCancellableCoroutine<Boolean> { continuation ->
+                                    latestSelectionCallback(gid, mid) { success ->
+                                        if (continuation.isActive) continuation.resume(success)
+                                    }
+                                }
+                                if (!saved) {
+                                    val restored = latestLine
+                                    pagerState.scrollToPage(restored.selectedIndex.coerceIn(0, restored.variants.lastIndex))
+                                }
+                            } finally {
+                                selectionPending = false
+                            }
                         }
                     }
             }
             HorizontalPager(
                 state = pagerState,
                 modifier = Modifier.fillMaxWidth(),
-                userScrollEnabled = !isGenerating,
+                userScrollEnabled = !isGenerating && !selectionPending,
                 verticalAlignment = Alignment.Top
             ) { page ->
                 val msg = line.variants[page]
@@ -168,7 +187,7 @@ fun MessageLineBlock(
                 horizontalArrangement = Arrangement.Center
             ) {
                 Text(
-                    "${pagerState.settledPage + 1} / ${line.variants.size}",
+                    if (selectionPending) "正在切换回复…" else "${pagerState.settledPage + 1} / ${line.variants.size}",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary
                 )

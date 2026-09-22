@@ -1177,9 +1177,11 @@ fun ChatScreen(
                                     }
                                 }
                             },
-                            onSelectSwipeVersion = { gid, mid ->
-                                if (state.isGenerating) showGenerationLockedMessage()
-                                else viewModel.selectSwipeVariant(gid, mid)
+                            onSelectSwipeVersion = { gid, mid, onResult ->
+                                if (state.isGenerating) {
+                                    showGenerationLockedMessage()
+                                    onResult(false)
+                                } else viewModel.selectSwipeVariant(gid, mid, onResult)
                             },
                             currentBranchId = state.currentBranchId,
                             branchAnchors = anchors,

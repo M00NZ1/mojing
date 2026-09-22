@@ -187,7 +187,7 @@ fun SearchScreen(
                                     avatarPath = character?.avatar.orEmpty(), avatarColor = character?.color ?: "#F97316", cardImagePath = character?.card.orEmpty(),
                                     userAvatarImagePath = presentation.userAvatar, userAvatarColor = presentation.userColor, userDisplayName = presentation.userName,
                                     bookmarkedMessageIds = emptySet(), senderLabel = meta.senderLabel, showSenderHeader = meta.showSenderHeader, timeText = meta.timeText,
-                                    onAction = {}, onSelectSwipeVersion = { _, _ -> }, readOnly = true)
+                                    onAction = {}, onSelectSwipeVersion = { _, _, onResult -> onResult(false) }, readOnly = true)
                             }
                         }
                     }
