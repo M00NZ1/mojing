@@ -11,6 +11,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,20 +76,38 @@ fun MoJingLongTextField(
                 if (imeOpen) hideImeKeyboard(keyboard, focus) else expanded = false
             }
             Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(label, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                        TextButton(onClick = { hideImeKeyboard(keyboard, focus); expanded = false }) { Text("完成编辑") }
+                Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { hideImeKeyboard(keyboard, focus); expanded = false }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回编辑表单")
+                        }
+                        Text(label, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f),
+                            maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        TextButton(onClick = { hideImeKeyboard(keyboard, focus); expanded = false }) { Text("完成") }
                     }
-                    Text("修改保留在页面中，返回后点击保存", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 12.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     MoJingTextField(
                         value = value,
                         onValueChange = onValueChange,
                         placeholder = { Text(placeholder) },
                         enabled = enabled,
-                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 4.dp),
+                        shape = RectangleShape,
+                        textStyle = MaterialTheme.typography.bodyLarge,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color.Transparent,
+                            unfocusedBorderColor = Color.Transparent,
+                            disabledBorderColor = Color.Transparent,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            disabledContainerColor = Color.Transparent,
+                        ),
                     )
+                    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                        Text("修改保留在表单中，返回后保存", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp))
+                    }
                 }
             }
         }
