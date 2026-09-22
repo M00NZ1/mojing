@@ -25,6 +25,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.mojing.app.media.CharacterCardImageProcessor
@@ -450,26 +451,24 @@ fun EntryEditScreen(
                         Text("暂无历史快照", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                     } else {
                         state.versions.forEach { v ->
-                            Card(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                            ) {
+                            Column(Modifier.fillMaxWidth()) {
                                 Row(
-                                    Modifier.fillMaxWidth().padding(12.dp),
+                                    Modifier.fillMaxWidth().padding(vertical = 12.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(Modifier.weight(1f)) {
-                                        Text("v${v.version} · ${formatVersionTime(v)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                                        Text(v.title.ifBlank { "(无标题)" }, style = MaterialTheme.typography.titleSmall, maxLines = 1)
+                                        Text("v${v.version} · ${formatVersionTime(v)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(v.title.ifBlank { "(无标题)" }, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                         if (v.summary.isNotBlank()) {
-                                            Text(v.summary, style = MaterialTheme.typography.bodySmall, maxLines = 2, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f))
+                                            Text(v.summary, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
                                     TextButton(onClick = {
                                         if (viewModel.applyVersionToForm(v)) subTab = EntryEditSubTab.EDIT
                                     }, enabled = !pageBusy && !state.isLoadingVersions) { Text("载入") }
                                 }
+                                HorizontalDivider()
                             }
                         }
                     }
