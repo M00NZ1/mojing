@@ -223,6 +223,9 @@ class CharacterListViewModel @Inject constructor(
     private val _startingCharacterId = MutableStateFlow<Long?>(null)
     val startingCharacterId: StateFlow<Long?> = _startingCharacterId.asStateFlow()
 
+    private val _creatingCharacter = MutableStateFlow(false)
+    val creatingCharacter: StateFlow<Boolean> = _creatingCharacter.asStateFlow()
+
     val characters = _filterEncyclopediaId
         .flatMapLatest { encId ->
             characterDao.observeForCharacterFilter(encId)
@@ -255,10 +258,25 @@ class CharacterListViewModel @Inject constructor(
     }
 
     /** 新建角色；百科 ID 为 0 表示暂不绑定。返回新行 id（Room insert 返回值）。 */
-    fun createNew(encyclopediaId: Long = 0L, onCreated: (Long) -> Unit = {}) {
+    fun createNew(
+        encyclopediaId: Long = 0L,
+        onCreated: (Long) -> Unit = {},
+        onFailed: (String) -> Unit = {},
+    ) {
+        if (_creatingCharacter.value) return
+        _creatingCharacter.value = true
         viewModelScope.launch {
-            val row = newCharacterDraft(encyclopediaId)
-            val effectiveId = saveCharacterBinding(row)
+            val effectiveId = try {
+                val row = newCharacterDraft(encyclopediaId)
+                saveCharacterBinding(row)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                onFailed("创建角色失败，请重试")
+                null
+            } finally {
+                _creatingCharacter.value = false
+            } ?: return@launch
             onCreated(effectiveId)
         }
     }

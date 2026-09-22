@@ -73,6 +73,7 @@ fun CharacterListScreen(
     val filterEnc by viewModel.filterEncyclopediaId.collectAsStateWithLifecycle()
     val encOptions by viewModel.encyclopedias.collectAsStateWithLifecycle()
     val startingCharacterId by viewModel.startingCharacterId.collectAsStateWithLifecycle()
+    val creatingCharacter by viewModel.creatingCharacter.collectAsStateWithLifecycle()
     var sortOrder by rememberSaveable { mutableStateOf(CharacterSortOrder.RECOMMENDED) }
     val visibleCharacters by remember {
         derivedStateOf {
@@ -104,6 +105,7 @@ fun CharacterListScreen(
     var isExportingDocument by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) { viewModel.refreshEncyclopediaFilterOptions() }
 
@@ -112,8 +114,18 @@ fun CharacterListScreen(
     }
 
     fun launchCreateCharacter() {
-        viewModel.createNew(filterEnc ?: 0L) { id -> onEdit(id) }
-        Toast.makeText(context, UserFacingStrings.characterDraftCreated(), Toast.LENGTH_SHORT).show()
+        if (creatingCharacter) return
+        viewModel.createNew(
+            encyclopediaId = filterEnc ?: 0L,
+            onCreated = onEdit,
+            onFailed = { message ->
+                scope.launch {
+                    if (snackbarHostState.showSnackbar(message, actionLabel = "重试") == SnackbarResult.ActionPerformed) {
+                        launchCreateCharacter()
+                    }
+                }
+            },
+        )
     }
 
     fun startChat(character: CharacterEntity) {
@@ -184,6 +196,7 @@ fun CharacterListScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("角色管理") },
@@ -244,7 +257,8 @@ fun CharacterListScreen(
         floatingActionButton = {
             if (characters.isNotEmpty() || filterEnc != null) {
                 FloatingActionButton(onClick = { launchCreateCharacter() }) {
-                    Icon(Icons.Default.Add, "新建角色")
+                    if (creatingCharacter) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.Default.Add, "新建角色")
                 }
             }
         }
