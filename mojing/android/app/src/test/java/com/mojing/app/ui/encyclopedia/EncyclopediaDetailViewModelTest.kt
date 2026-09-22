@@ -34,6 +34,26 @@ import org.junit.Test
 class EncyclopediaDetailViewModelTest {
     private val dispatcher = UnconfinedTestDispatcher()
 
+    @Test
+    fun createEntryReturnsPersistedIdAndRefreshesTheCurrentEncyclopedia() = runTest(dispatcher) {
+        val dao = mockk<EncyclopediaDao>(relaxed = true)
+        val entries = mockk<EncyclopediaEntryDao>(relaxed = true)
+        coEvery { dao.getById(1L) } returns EncyclopediaEntity(id = 1L, name = "世界")
+        val saved = mockk<SaveCharacterEntryUseCase>()
+        val created = EncyclopediaEntryEntity(id = 42L, encyclopediaId = 1L, title = "新角色", entryType = "character")
+        coEvery { saved.invoke(any()) } returns created
+        val vm = createViewModel(dao, entries, saveEntry = saved)
+        vm.load(1L)
+
+        var createdId: Long? = null
+        vm.createEntry("新角色", "character") { createdId = it }
+
+        assertEquals(42L, createdId)
+        assertFalse(vm.state.value.entryCreating)
+        assertEquals(null, vm.state.value.createEntryError)
+        io.mockk.coVerify(exactly = 1) { saved.invoke(match { it.encyclopediaId == 1L && it.title == "新角色" }) }
+    }
+
     @Test fun sedimentPagingIsBoundedAndFilterChangesSupersedePendingPages() = runTest(dispatcher) {
         val dao = mockk<EncyclopediaDao>(relaxed = true)
         val entries = mockk<EncyclopediaEntryDao>(relaxed = true)
@@ -274,6 +294,7 @@ class EncyclopediaDetailViewModelTest {
         savedStateHandle: androidx.lifecycle.SavedStateHandle = androidx.lifecycle.SavedStateHandle(),
         apiKey: String = "",
         queue: GenerationQueueProcessor = mockk(relaxed = true),
+        saveEntry: SaveCharacterEntryUseCase = mockk(relaxed = true),
     ): EncyclopediaDetailViewModel {
         val secureStorage = mockk<SecureStorage>(relaxed = true)
         every { secureStorage.publicApiKey } returns apiKey
@@ -281,7 +302,7 @@ class EncyclopediaDetailViewModelTest {
         return EncyclopediaDetailViewModel(
             encyclopediaDao = encyclopediaDao,
             entryDao = entryDao,
-            saveCharacterEntry = mockk<SaveCharacterEntryUseCase>(relaxed = true),
+            saveCharacterEntry = saveEntry,
             deleteEncyclopediaEntry = mockk<DeleteEncyclopediaEntryUseCase>(relaxed = true),
             entryRelationDao = relationDao,
             timelineEventDao = timelineDao,

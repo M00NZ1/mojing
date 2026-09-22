@@ -1178,9 +1178,10 @@ fun EncyclopediaDetailScreen(
             },
             confirmButton = {
                 TextButton(enabled = !state.entryCreating && newTitle.isNotBlank(), onClick = {
-                    viewModel.createEntry(newTitle, newType) {
+                    viewModel.createEntry(newTitle, newType) { entryId ->
                         newTitle = ""
                         showCreateDialog = false
+                        onEditEntry(entryId)
                     }
                 }) { Text(if (state.entryCreating) "正在创建…" else "创建") }
             },

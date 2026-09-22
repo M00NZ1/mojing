@@ -475,7 +475,7 @@ class EncyclopediaDetailViewModel @Inject constructor(
         _state.value = _state.value.copy(createEntryError = null)
     }
 
-    fun createEntry(title: String, type: String, onCreated: () -> Unit = {}) {
+    fun createEntry(title: String, type: String, onCreated: (Long) -> Unit = {}) {
         if (_state.value.entryCreating) return
         if (title.isBlank()) {
             _state.value = _state.value.copy(createEntryError = "请先填写条目标题")
@@ -502,7 +502,7 @@ class EncyclopediaDetailViewModel @Inject constructor(
                 _state.value = _state.value.copy(entryCreating = false)
             } ?: return@launch
             if (pageRevision != targetPage) return@launch
-            onCreated()
+            onCreated(created.id)
             try {
                 refreshEntries()
                 refreshTimelineAndRelations()
