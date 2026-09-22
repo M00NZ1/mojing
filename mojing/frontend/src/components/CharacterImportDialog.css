@@ -7,6 +7,7 @@
 .character-import-dialog input, .character-import-dialog select { width: 100%; min-width: 0; box-sizing: border-box; }
 .character-import-dialog .hint, .character-import-success p { line-height: 1.7; overflow-wrap: anywhere; color: var(--text-2); }
 .character-import-footer { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 24px; }
+.character-import-progress { flex: 0 0 100%; box-sizing: border-box; padding: 10px 12px; border-left: 2px solid var(--accent); background: var(--surface-2); color: var(--text-2); font-size: .875rem; line-height: 1.6; }
 .character-import-success h3 { overflow-wrap: anywhere; }
 .character-library-actions { display: flex; gap: 8px; padding: 0 16px 8px; }
 .character-library-actions > button { flex: 1; }
