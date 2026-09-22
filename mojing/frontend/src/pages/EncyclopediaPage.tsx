@@ -665,12 +665,14 @@ export default function EncyclopediaPage() {
   const [showEntryForm, setShowEntryForm] = useState(false);
   const [editingEntry, setEditingEntry] = useState<EncyclopediaEntryDraft>({});
   const [entryFormBaseline, setEntryFormBaseline] = useState('');
+  const [entrySaveError, setEntrySaveError] = useState<string | null>(null);
   const saveEntrySubmittingRef = useRef(false);
   const entryFormRevisionRef = useRef(0);
   const entryCoverSubmittingRef = useRef<{ routeKey: string; formRevision: number } | null>(null);
   const focusEntryAfterSaveRef = useRef(false);
   const [showEncForm, setShowEncForm] = useState(false);
   const [encyclopediaFormBaseline, setEncyclopediaFormBaseline] = useState('');
+  const [encyclopediaSaveError, setEncyclopediaSaveError] = useState<string | null>(null);
   const saveEncyclopediaSubmittingRef = useRef(false);
   const encyclopediaFormRevisionRef = useRef(0);
   const [editingEncId, setEditingEncId] = useState<number | null>(null);
@@ -988,7 +990,14 @@ export default function EncyclopediaPage() {
       }
       showToast('条目已保存', 'success');
     },
-    onError: (e) => showToast(String(e), 'error'),
+    onError: (e, request) => {
+      const message = e instanceof Error ? e.message : '条目保存失败，请重试';
+      if (routeSnapshotRef.current.key === request.routeKey && entryFormRevisionRef.current === request.formRevision) {
+        setEntrySaveError(message);
+      } else {
+        showToast(message, 'error');
+      }
+    },
     onSettled: () => {
       saveEntrySubmittingRef.current = false;
     },
@@ -1021,7 +1030,14 @@ export default function EncyclopediaPage() {
       }
       showToast(request.editingId ? '百科库已更新' : '百科库已创建', 'success');
     },
-    onError: (e) => showToast(String(e), 'error'),
+    onError: (e, request) => {
+      const message = e instanceof Error ? e.message : '百科库保存失败，请重试';
+      if (routeSnapshotRef.current.key === request.routeKey && encyclopediaFormRevisionRef.current === request.formRevision) {
+        setEncyclopediaSaveError(message);
+      } else {
+        showToast(message, 'error');
+      }
+    },
     onSettled: () => {
       saveEncyclopediaSubmittingRef.current = false;
     },
@@ -1333,6 +1349,7 @@ export default function EncyclopediaPage() {
 
   function discardEntryForm() {
     entryFormRevisionRef.current += 1;
+    setEntrySaveError(null);
     setShowEntryForm(false);
     setEntryFormBaseline('');
     setEntryCoverHint('');
@@ -1340,6 +1357,7 @@ export default function EncyclopediaPage() {
 
   function discardEncyclopediaForm() {
     encyclopediaFormRevisionRef.current += 1;
+    setEncyclopediaSaveError(null);
     setShowEncForm(false);
     setEncyclopediaFormBaseline('');
     resetEncyclopediaForm();
@@ -1393,6 +1411,7 @@ export default function EncyclopediaPage() {
 
   function submitEntryForm() {
     if (saveEntrySubmittingRef.current || hasCurrentEntryCoverRequest()) return;
+    setEntrySaveError(null);
     saveEntrySubmittingRef.current = true;
     if (!selectedEncId) {
       saveEntrySubmittingRef.current = false;
@@ -1473,6 +1492,7 @@ export default function EncyclopediaPage() {
       showToast('请填写百科库名称（必填）', 'warn');
       return;
     }
+    setEncyclopediaSaveError(null);
     saveEncyclopediaSubmittingRef.current = true;
     saveEncyclopediaMutation.mutate({
       payload: {
@@ -1588,6 +1608,7 @@ export default function EncyclopediaPage() {
   if (selectedEncId) mobileLevel = 2;
   if (category) mobileLevel = 3;
   if (selectedEntryId || showEntryForm || encLibraryTool) mobileLevel = 4;
+  if (showEncForm) mobileLevel = 1;
 
   const encLayoutStyle =
     !isCompactLayout
@@ -1625,9 +1646,10 @@ export default function EncyclopediaPage() {
             <label><span>故事方式</span><input value={newEncGameplayMode} onChange={(e) => setNewEncGameplayMode(e.target.value)} placeholder="例如：自由剧情" /></label>
             <label><span>世界补充设定</span><textarea value={newEncWorldPrompt} onChange={(e) => setNewEncWorldPrompt(e.target.value)} placeholder="会作为对话中的世界规则" rows={4} /></label>
             <label><span>玩法边界</span><textarea value={newEncAntiCheatPrompt} onChange={(e) => setNewEncAntiCheatPrompt(e.target.value)} placeholder="约束角色能力与世界规则" rows={3} /></label>
+            {encyclopediaSaveError && <p className="encyclopedia-save-error" role="alert">保存失败：{encyclopediaSaveError}</p>}
             <div style={{ display: 'flex', gap: 6 }}>
               <button type="button" className="btn btn-primary btn-sm" disabled={saveEncyclopediaMutation.isPending} onClick={saveEncyclopediaForm}>
-                {saveEncyclopediaMutation.isPending ? '保存中…' : editingEncId ? '保存' : '创建'}
+                {saveEncyclopediaMutation.isPending ? '保存中…' : encyclopediaSaveError ? '重试保存' : editingEncId ? '保存' : '创建'}
               </button>
               <button type="button" className="btn btn-ghost btn-sm" disabled={saveEncyclopediaMutation.isPending} onClick={() => { void requestCloseEncyclopediaForm(); }}>
                 取消
@@ -2210,12 +2232,12 @@ export default function EncyclopediaPage() {
             </div>
             <div className="encyclopedia-entry-form-actions" role="region" aria-label="条目保存操作">
               <div>
-                <strong>{saveEntryMutation.isPending ? '正在保存条目' : isEntryFormDirty ? '有未保存修改' : editingEntry.id ? '内容已保存' : '待保存条目'}</strong>
-                <span>{currentCoverPending ? '封面生成完成后即可保存。' : '保存后会立即更新百科条目。'}</span>
+                <strong>{saveEntryMutation.isPending ? '正在保存条目' : entrySaveError ? '条目保存失败' : isEntryFormDirty ? '有未保存修改' : editingEntry.id ? '内容已保存' : '待保存条目'}</strong>
+                {entrySaveError ? <span className="encyclopedia-save-error" role="alert">{entrySaveError}</span> : <span>{currentCoverPending ? '封面生成完成后即可保存。' : '保存后会立即更新百科条目。'}</span>}
               </div>
               <div className="button-row">
                 <button type="button" className="btn btn-primary" disabled={saveEntryMutation.isPending || currentCoverPending} onClick={submitEntryForm}>
-                  {saveEntryMutation.isPending ? '保存中...' : currentCoverPending ? '封面生成中…' : '保存条目'}
+                  {saveEntryMutation.isPending ? '保存中...' : currentCoverPending ? '封面生成中…' : entrySaveError ? '重试保存' : '保存条目'}
                 </button>
                 <button type="button" className="btn btn-ghost" disabled={saveEntryMutation.isPending} onClick={() => { void requestCloseEntryForm(); }}>取消</button>
               </div>

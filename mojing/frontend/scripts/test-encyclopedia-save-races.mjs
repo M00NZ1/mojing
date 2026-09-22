@@ -58,7 +58,7 @@ try {
   if (process.env.SMOKE_OUTPUT) await page.screenshot({ path: process.env.SMOKE_OUTPUT });
   await page.setViewportSize({ width: 1365, height: 900 });
   const title = page.locator('.form-group.full-row input').first();
-  const save = page.getByRole('button', { name: '保存条目', exact: true });
+  const save = page.getByRole('region', { name: '条目保存操作' }).getByRole('button', { name: /^(保存条目|重试保存)$/ });
   await title.fill('第一次提交');
   await save.click();
   await waitRequest(1);
@@ -73,7 +73,8 @@ try {
   assert.equal(requests[1].payload.id, 99);
   assert.equal(requests[1].payload.title, '保存期间的新标题');
   pending[1](true);
-  await save.waitFor();
+  await page.getByRole('region', { name: '条目保存操作' }).getByRole('alert').getByText('暂时无法保存').waitFor();
+  assert.equal(await save.textContent(), '重试保存');
   assert.equal(await title.inputValue(), '保存期间的新标题');
   await save.click();
   await waitRequest(3);
@@ -99,8 +100,26 @@ try {
   pending[4](false);
   await page.waitForURL('**encId=2');
   assert.equal(libraries.length, 2);
+
+  await page.getByRole('button', { name: '编辑稍后修改的百科名称' }).click();
+  await page.setViewportSize({ width: 390, height: 760 });
+  assert.equal(await page.locator('.encyclopedia-layout').getAttribute('data-mobile-level'), '1');
+  await name.waitFor({ state: 'visible' });
+  await name.fill('窄屏继续编辑的百科名称');
+  await librarySave.click();
+  await waitRequest(6);
+  pending[5](true);
+  await page.locator('.encyclopedia-library-form').getByRole('alert').getByText('暂时无法保存').waitFor();
+  const retryLibrary = page.locator('.encyclopedia-library-form').getByRole('button', { name: '重试保存' });
+  await retryLibrary.click();
+  await waitRequest(7);
+  assert.equal(requests[6].payload.id, 2);
+  assert.equal(requests[6].payload.name, '窄屏继续编辑的百科名称');
+  pending[6](false);
+  await page.setViewportSize({ width: 1365, height: 900 });
+  await page.getByRole('button', { name: '编辑窄屏继续编辑的百科名称' }).waitFor();
   assert.deepEqual(errors, []);
-  console.log('PASS: late entry/library edits survive save, subsequent saves reuse created IDs, failed retry retains edits and image generation is blocked during save.');
+  console.log('PASS: entry/library late edits, visible failed retries, mobile library edit, saved ID reuse and cover-generation lock.');
 } finally {
   await browser?.close();
   if (child.exitCode === null) { child.kill(); await once(child, 'exit'); }

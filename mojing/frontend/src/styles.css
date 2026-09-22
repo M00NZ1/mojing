@@ -952,6 +952,22 @@ input[type="range"]::-moz-range-thumb {
   resize: vertical;
 }
 
+.encyclopedia-save-error,
+.encyclopedia-entry-form-actions .encyclopedia-save-error {
+  margin: 0;
+  color: var(--accent-3);
+  font-size: 0.76rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.character-save-actions { flex-wrap: wrap; }
+.character-save-error {
+  flex-basis: 100%;
+  color: var(--accent-3);
+  font-size: 0.8rem;
+}
+
 .encyclopedia-library-row {
   display: flex;
   align-items: center;
@@ -6193,6 +6209,8 @@ html[data-theme="paper"] .chat-bubble-text hr {
   .secondary-detail-header .button-row .btn { flex: 1; min-width: 0; text-align: center; }
   .secondary-detail-title { min-width: 0; }
   .secondary-detail-title h2 { font-size: 1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .character-save-actions { margin-bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+  .character-save-actions .btn { min-height: 44px; }
   
   /* ── 角色/百科 tabs 横向滚动 ── */
   .secondary-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; flex-wrap: nowrap; gap: 0; position: sticky; top: 0; z-index: 10; background: var(--bg); padding-top: 4px; }

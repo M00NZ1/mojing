@@ -340,7 +340,7 @@ export default function CharactersPage() {
       await queryClient.invalidateQueries({ queryKey: ['characters'] });
       showToast('角色已保存', 'success');
     },
-    onError: (e) => showToast(String(e), 'error'),
+    onError: (e) => showToast(e instanceof Error ? e.message : '角色保存失败，请重试', 'error'),
     onSettled: () => { savingCharacterRouteRef.current = null; },
   });
 
@@ -499,8 +499,7 @@ export default function CharactersPage() {
     allowCharacterNavigationRef.current = true;
     setCharacterRoute(null, true);
   }
-  function handleSubmit(e: FormEvent) {
-    e.preventDefault();
+  function saveCurrentCharacter() {
     if (savingCharacterRouteRef.current !== null) return;
     if (!editing?.name?.trim()) {
       showToast('请填写角色名字（必填）', 'warn');
@@ -508,6 +507,10 @@ export default function CharactersPage() {
     }
     savingCharacterRouteRef.current = loadedCharacterRouteRef.current;
     saveMutation.mutate({ draft: { ...editing }, route: loadedCharacterRouteRef.current, revision: editorRouteRevisionRef.current.revision });
+  }
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    saveCurrentCharacter();
   }
 
   const currentProvider = useMemo(() => {
@@ -524,6 +527,10 @@ export default function CharactersPage() {
     { id: 'image', label: '图片' },
     { id: 'advanced', label: '更多设置' },
   ];
+
+  const currentSaveError = saveMutation.isError
+    && saveMutation.variables?.route === loadedCharacterRouteRef.current
+    && saveMutation.variables.revision === editorRouteRevisionRef.current.revision;
 
   return (
     <div className={`page-layout with-secondary-nav characters-layout ${!editing ? 'is-empty-main' : ''}`} data-mobile-level={editing ? 2 : 1}>
@@ -696,6 +703,14 @@ export default function CharactersPage() {
                 )}
               </div>
             </div>
+            {currentSaveError && (
+              <InlineQueryError
+                message="角色保存失败"
+                error={saveMutation.error}
+                retrying={saveMutation.isPending}
+                onRetry={saveCurrentCharacter}
+              />
+            )}
 
             <div className="secondary-tabs" role="tablist" aria-label="角色资料分页">
               {DETAIL_TABS.map((tab) => (
@@ -1318,9 +1333,10 @@ export default function CharactersPage() {
               )}
             </div>
 
-            <div className="button-row full-row" style={{ marginTop: 16, padding: '12px 0', borderTop: '1px solid var(--line)' }}>
+            <div className="button-row full-row character-save-actions" style={{ marginTop: 16, padding: '12px 0', borderTop: '1px solid var(--line)' }}>
+              {currentSaveError && <span className="character-save-error" role="status">保存失败，修改仍在。请重试保存。</span>}
               <button className="btn btn-primary" type="submit" disabled={saveMutation.isPending}>
-                {saveMutation.isPending ? '保存中...' : editing.id ? '保存修改' : '创建角色'}
+                {saveMutation.isPending ? '保存中...' : currentSaveError ? '重试保存' : editing.id ? '保存修改' : '创建角色'}
               </button>
               <button className="btn btn-ghost" type="button" onClick={() => { void closeEditor(); }}>取消</button>
             </div>
