@@ -23,6 +23,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mojing.app.data.ModelPlatform
 import com.mojing.app.data.repository.BillingPreferences
@@ -30,7 +31,7 @@ import com.mojing.app.domain.billing.ModelPricing
 import com.mojing.app.domain.billing.ModelPricingDiscovery
 import com.mojing.app.domain.billing.PriceUnavailableException
 import com.mojing.app.ui.common.MoJingOutlinedButton
-import androidx.compose.material3.OutlinedTextField as MoJingTextField
+import com.mojing.app.ui.common.MoJingTextField
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -60,13 +61,16 @@ fun ModelPricingPanel(
                 color = MaterialTheme.colorScheme.surface) {
             Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(model, style = MaterialTheme.typography.bodyMedium)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(model, style = MaterialTheme.typography.bodyMedium, maxLines = 2,
+                        overflow = TextOverflow.Ellipsis)
                     Text(
                         configured?.let { "输入 ${it.inputPerMillion.formatRate()} · 输出 ${it.outputPerMillion.formatRate()} ${it.currency}" }
                             ?: "未配置价格",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
                 TextButton(onClick = { editing = model }) { Text("编辑") }
@@ -141,7 +145,8 @@ private fun PricingEditor(
         error = error,
         text = {
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(model, style = MaterialTheme.typography.titleMedium)
+                Text(model, style = MaterialTheme.typography.titleMedium,
+                    maxLines = 3, overflow = TextOverflow.Ellipsis)
                 Text("每百万 Token 的单价", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -246,6 +251,6 @@ private fun RateField(value: String, onValueChange: (String) -> Unit, label: Str
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
 }
 
-private fun Double.formatRate(): String = "% .6f".format(this).trimEnd('0').trimEnd('.')
+private fun Double.formatRate(): String = if (isFinite()) toPlainString() else "—"
 
 private fun Double.toPlainString(): String = java.math.BigDecimal.valueOf(this).stripTrailingZeros().toPlainString()
