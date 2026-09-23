@@ -1,6 +1,12 @@
 package com.mojing.app.ui.settings
 
-import androidx.compose.material3.OutlinedTextField
+import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
+import com.mojing.app.ui.common.MoJingButton as Button
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.platform.testTag
@@ -112,6 +118,7 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
         }
     }
     draft?.let { p ->
+        var showKey by remember(p.id) { mutableStateOf(false) }
         PlatformEditorDialog(
             onDismissRequest = ::requestClose,
             error = error,
@@ -120,7 +127,10 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
                 LazyColumn(contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     item {
                         Box {
-                            TextButton(onClick = { presetMenu = true }, enabled = !busy && !fetching) { Text("选择服务商预设") }
+                            OutlinedButton(onClick = { presetMenu = true }, enabled = !busy && !fetching, modifier = Modifier.fillMaxWidth()) {
+                                Text("服务商 · ${ApiProviderPresets.labelForBaseUrl(p.baseUrl)}", Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Icon(Icons.Outlined.ExpandMore, "选择服务商预设")
+                            }
                             DropdownMenu(expanded = presetMenu, onDismissRequest = { presetMenu = false }) {
                                 ApiProviderPresets.LINES.filter { it.supportsChat }.forEach { preset ->
                                     DropdownMenuItem(text = { Text(preset.label) }, onClick = {
@@ -134,13 +144,16 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
                             }
                         }
                     }
-                    item { Text("连接配置", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary) }
+                    item { Text("连接配置", style = MaterialTheme.typography.titleMedium) }
                     item { OutlinedTextField(p.name, { draft = p.copy(name = it) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), label = { Text("平台名称") }, enabled = !busy && !fetching, singleLine = true) }
                     item { OutlinedTextField(p.baseUrl, { draft = p.copy(baseUrl = it, apiKey = "", models = emptyList(), selectedModel = ""); modelsText = ""; discoveryNotice = null }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), label = { Text("服务地址") }, enabled = !busy && !fetching, singleLine = true) }
-                    item { OutlinedTextField(p.apiKey, { draft = p.copy(apiKey = it) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), label = { Text("API Key") }, visualTransformation = PasswordVisualTransformation(), enabled = !busy && !fetching, singleLine = true) }
-                    item { HorizontalDivider(); Spacer(Modifier.height(16.dp)); Text("模型目录", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary) }
+                    item { OutlinedTextField(p.apiKey, { draft = p.copy(apiKey = it) }, modifier = Modifier.fillMaxWidth(), label = { Text("API Key") },
+                        visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = { IconButton(onClick = { showKey = !showKey }) { Icon(if (showKey) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, if (showKey) "隐藏 Key" else "显示 Key") } },
+                        enabled = !busy && !fetching, singleLine = true) }
+                    item { HorizontalDivider(); Spacer(Modifier.height(16.dp)); Text("模型目录", style = MaterialTheme.typography.titleMedium) }
                     item {
-                        OutlinedButton(enabled = !busy && p.apiKey.isNotBlank() && p.baseUrl.isNotBlank(), onClick = {
+                        OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = !busy && p.apiKey.isNotBlank() && p.baseUrl.isNotBlank(), onClick = {
                             if (fetching) { fetchJob?.cancel(); return@OutlinedButton }
                             fetching = true; error = null; discoveryNotice = null
                             fetchJob = scope.launch {
@@ -155,15 +168,22 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
                                 catch (_: Exception) { error = "未能获取模型。请检查地址与 Key，或在下方手动填写；已有模型已保留。" }
                                 finally { fetching = false }
                             }
-                        }) { Text(if (fetching) "取消获取" else "通过 Key 获取全部模型") }
+                        }) {
+                            if (fetching) { CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }
+                            Text(if (fetching) "取消获取" else "通过 Key 获取全部模型")
+                        }
                     }
                     discoveryNotice?.let { message -> item { Text(message, style = MaterialTheme.typography.bodySmall) } }
-                    item { OutlinedTextField(modelsText, { modelsText = it; discoveryNotice = null }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), label = { Text("模型名称") }, supportingText = { Text("每行一个，也可用逗号分隔。默认模型可在下方选择。") }, minLines = 3, maxLines = 8, enabled = !busy && !fetching) }
+                    item { OutlinedTextField(modelsText, { modelsText = it; discoveryNotice = null }, modifier = Modifier.fillMaxWidth(), label = { Text("模型名称 · ${ModelPlatformCodec.modelNames(modelsText).size}") }, supportingText = { Text("每行一个，也可用逗号分隔。支持手动填写。") }, minLines = 3, maxLines = 5, enabled = !busy && !fetching) }
                     item {
                         val names = ModelPlatformCodec.modelNames(modelsText)
                         Box {
-                            OutlinedButton(enabled = names.isNotEmpty() && !busy && !fetching, onClick = { modelMenu = true }) {
-                                Text("默认模型：${p.selectedModel.takeIf { it in names } ?: names.firstOrNull().orEmpty()} ▾")
+                            OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = names.isNotEmpty() && !busy && !fetching, onClick = { modelMenu = true }) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text("默认模型", style = MaterialTheme.typography.labelSmall)
+                                    Text(p.selectedModel.takeIf { it in names } ?: names.firstOrNull() ?: "先添加模型", maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                }
+                                Icon(Icons.Outlined.ExpandMore, "选择默认模型")
                             }
                             if (modelMenu) {
                                 ModelNamePicker(names, p.selectedModel.takeIf { it in names } ?: names.firstOrNull().orEmpty(),

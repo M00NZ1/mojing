@@ -19,10 +19,10 @@ internal fun PlatformEditorDialog(onDismissRequest: () -> Unit, title: @Composab
     error: String? = null) {
     Dialog(onDismissRequest, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.widthIn(max = 640.dp).fillMaxWidth().fillMaxHeight(0.96f).imePadding(),
-            shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
+            shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
             Column {
-                Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp)) {
-                    ProvideTextStyle(MaterialTheme.typography.titleLarge) { title() }
+                Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
+                    ProvideTextStyle(MaterialTheme.typography.titleMedium) { title() }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Box(Modifier.weight(1f).padding(horizontal = 20.dp)) { text() }
