@@ -494,4 +494,15 @@ object Migrations {
         }
     }
 
+    val MIGRATION_22_23 = object : Migration(22, 23) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE session_character_states ADD COLUMN branchId TEXT NOT NULL DEFAULT 'main'")
+            db.execSQL("ALTER TABLE session_character_states ADD COLUMN lastSnapshotAttemptUserMessageId INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE session_character_states ADD COLUMN snapshotIsValid INTEGER NOT NULL DEFAULT 1")
+            // Old snapshots have no branch provenance. Keep the row, but never inject it into a story line.
+            db.execSQL("UPDATE session_character_states SET branchId = '__legacy_unscoped__', snapshotIsValid = 0")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_session_character_states_sessionId_characterId_branchId ON session_character_states (sessionId, characterId, branchId)")
+        }
+    }
+
 }

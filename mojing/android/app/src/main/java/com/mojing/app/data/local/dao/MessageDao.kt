@@ -481,6 +481,10 @@ interface MessageDao {
     @Query("$MAIN_CONTEXT_MESSAGES_QUERY ORDER BY message.id DESC LIMIT :limit")
     suspend fun getMainContextTail(sessionId: Long, limit: Int): List<MessageEntity>
 
+    @Query("SELECT id FROM ($MAIN_CONTEXT_MESSAGES_QUERY) WHERE id > :afterMessageId " +
+        "AND speakerType = 'user' ORDER BY id DESC LIMIT :limit")
+    suspend fun getRecentMainUserContextIdsAfter(sessionId: Long, afterMessageId: Long, limit: Int): List<Long>
+
     @Query(
         "$MAIN_CONTEXT_MESSAGES_QUERY AND message.id > :afterMessageId " +
             "AND message.speakerType IN ('user', 'character', 'narrator') " +
@@ -635,6 +639,10 @@ interface MessageDao {
         branchId: String,
         limit: Int,
     ): List<MessageEntity>
+
+    @Query("SELECT id FROM ($VISIBLE_CONTEXT_MESSAGES_QUERY) WHERE id > :afterMessageId " +
+        "AND speakerType = 'user' ORDER BY id DESC LIMIT :limit")
+    suspend fun getRecentVisibleUserContextIdsAfter(sessionId: Long, branchId: String, afterMessageId: Long, limit: Int): List<Long>
 
     @Query(
         "$VISIBLE_CONTEXT_MESSAGES_QUERY AND message.id > :afterMessageId " +
@@ -961,6 +969,10 @@ interface MessageDao {
         updatedAt: Long,
     ): Int
 
+    @Query("UPDATE session_character_states SET snapshotIsValid = 0, lastSnapshotAttemptUserMessageId = 0 " +
+        "WHERE sessionId = :sessionId AND branchId = :branchId")
+    suspend fun invalidateCharacterSnapshotsForBranch(sessionId: Long, branchId: String): Int
+
     @Transaction
     suspend fun invalidateContextMemoryForBranch(
         sessionId: Long,
@@ -968,6 +980,7 @@ interface MessageDao {
         updatedAt: Long,
     ): Int {
         if (branchId.isBlank()) return 0
+        invalidateCharacterSnapshotsForBranch(sessionId, branchId)
         val current = getContextMemoryForInvalidation(sessionId, branchId)
         if (current != null) {
             return markExistingContextMemoryInvalid(sessionId, branchId, updatedAt)

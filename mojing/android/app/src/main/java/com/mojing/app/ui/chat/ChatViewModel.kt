@@ -52,6 +52,7 @@ import com.mojing.app.domain.engine.TokenCounter
 import com.mojing.app.domain.engine.TokenBudgetManager
 import com.mojing.app.domain.engine.SlidingWindowBuilder
 import com.mojing.app.domain.engine.CharacterSnapshotExtractor
+import com.mojing.app.domain.engine.CharacterSnapshotCadence
 import com.mojing.app.domain.engine.MemoryCompactor
 import com.mojing.app.domain.engine.ContextBuilder
 import com.mojing.app.domain.engine.SedimentEngine
@@ -2150,19 +2151,35 @@ class ChatViewModel @Inject constructor(
             }
         }
 
-        var snapshot = snapshotExtractor.extract(allMessages, character, apiKey, preStreamBase, model)
-        val currentState = characterStateDao.getBySessionAndCharacter(sessionId, character.id)
-        if (snapshot != null) {
+        val currentState = characterStateDao.getBySessionAndCharacter(sessionId, character.id, branchId)
+        val lastAttemptId = currentState?.lastSnapshotAttemptUserMessageId ?: 0L
+        val recentUserIds = if (branchId == "main") {
+            messageDao.getRecentMainUserContextIdsAfter(sessionId, lastAttemptId, CharacterSnapshotCadence.INTERVAL)
+        } else {
+            messageDao.getRecentVisibleUserContextIdsAfter(sessionId, branchId, lastAttemptId, CharacterSnapshotCadence.INTERVAL)
+        }
+        val attemptUserMessageId = CharacterSnapshotCadence.dueUserMessageId(recentUserIds)
+        var snapshot = attemptUserMessageId?.let {
+            snapshotExtractor.extract(allMessages, character, apiKey, preStreamBase, model)
+        }
+        if (attemptUserMessageId != null) {
+            generation.ensureCurrent()
             val updatedState = currentState?.copy(
-                dynamicStateJson = com.google.gson.Gson().toJson(snapshot),
-                emotionalState = snapshot.mood
+                lastSnapshotAttemptUserMessageId = attemptUserMessageId,
+                snapshotIsValid = snapshot != null || currentState.snapshotIsValid,
+                dynamicStateJson = snapshot?.let { com.google.gson.Gson().toJson(it) } ?: currentState.dynamicStateJson,
+                emotionalState = snapshot?.mood ?: currentState.emotionalState,
+                updatedAt = System.currentTimeMillis(),
             ) ?: com.mojing.app.data.local.entity.SessionCharacterStateEntity(
-                sessionId = sessionId, characterId = character.id,
-                dynamicStateJson = com.google.gson.Gson().toJson(snapshot),
-                emotionalState = snapshot.mood
+                sessionId = sessionId, characterId = character.id, branchId = branchId,
+                lastSnapshotAttemptUserMessageId = attemptUserMessageId,
+                snapshotIsValid = snapshot != null,
+                dynamicStateJson = snapshot?.let { com.google.gson.Gson().toJson(it) } ?: "{}",
+                emotionalState = snapshot?.mood.orEmpty(),
             )
             characterStateDao.upsert(updatedState)
-        } else if (currentState != null && currentState.dynamicStateJson.isNotBlank() && currentState.dynamicStateJson != "{}") {
+        }
+        if (snapshot == null && currentState != null && currentState.snapshotIsValid && currentState.dynamicStateJson.isNotBlank() && currentState.dynamicStateJson != "{}") {
             try {
                 snapshot = com.google.gson.Gson().fromJson(
                     currentState.dynamicStateJson,

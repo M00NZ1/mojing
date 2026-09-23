@@ -45,6 +45,37 @@ class MessageDaoTest {
     @After
     fun teardown() { db.close() }
 
+    @Test fun characterSnapshotCursorUsesVisibleUserIdsAndBranchState() = runBlocking {
+        val sid = sessionDao.insert(SessionEntity(title = "角色状态分支"))
+        val main = (1..20).map { messageDao.insert(MessageEntity(sessionId = sid, speakerType = "user", content = "主线 $it")) }
+        sessionBranchDao.insert(SessionBranchEntity(sessionId = sid, branchId = "branch_a", sourceMessageId = main[9]))
+        val branch = (1..8).map { messageDao.insert(MessageEntity(sessionId = sid, branchId = "branch_a", speakerType = "user", content = "分支 $it")) }
+
+        assertEquals(main.drop(5).reversed(), messageDao.getRecentMainUserContextIdsAfter(sid, main[4], 15))
+        assertEquals(branch.reversed() + main.subList(3, 10).reversed(),
+            messageDao.getRecentVisibleUserContextIdsAfter(sid, "branch_a", 0L, 15))
+        assertTrue(messageDao.setContextExcluded(sid, "branch_a", main[9], true))
+        assertEquals(branch.reversed() + main.subList(8, 9),
+            messageDao.getRecentVisibleUserContextIdsAfter(sid, "branch_a", main[7], 15))
+        assertEquals(main.takeLast(15).reversed(), messageDao.getRecentMainUserContextIdsAfter(sid, 0L, 15))
+
+        val characterId = db.characterDao().upsert(CharacterEntity(name = "林岚"))
+        val states = db.characterStateDao()
+        states.upsert(SessionCharacterStateEntity(sessionId = sid, characterId = characterId,
+            branchId = "main", dynamicStateJson = "主线状态", lastSnapshotAttemptUserMessageId = main.last()))
+        states.upsert(SessionCharacterStateEntity(sessionId = sid, characterId = characterId,
+            branchId = "branch_a", dynamicStateJson = "分支状态", lastSnapshotAttemptUserMessageId = branch.last()))
+        assertEquals("主线状态", states.getBySessionAndCharacter(sid, characterId, "main")?.dynamicStateJson)
+        assertEquals("分支状态", states.getBySessionAndCharacter(sid, characterId, "branch_a")?.dynamicStateJson)
+        messageDao.updateContent(main[8], "主线旧剧情已改")
+        for (branchId in listOf("main", "branch_a")) {
+            val state = states.getBySessionAndCharacter(sid, characterId, branchId)!!
+            assertFalse(state.snapshotIsValid)
+            assertEquals(0L, state.lastSnapshotAttemptUserMessageId)
+            assertTrue(state.dynamicStateJson.endsWith("状态"))
+        }
+    }
+
     @Test fun recallRewindsSummaryTailsAcrossVisibleBranchesAndRollsBackOnFailure() = runBlocking {
         val sid = sessionDao.insert(SessionEntity(title = "摘要尾部"))
         val ids = (1..6).map { messageDao.insert(MessageEntity(sessionId = sid, content = "原文$it")) }

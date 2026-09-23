@@ -5,6 +5,7 @@ import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.remote.ChatMessage
 import com.google.gson.Gson
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 
 data class CharacterSnapshot(
     val mood: String = "",
@@ -14,6 +15,16 @@ data class CharacterSnapshot(
     val knownFacts: List<String> = emptyList(),
     val relationshipChanges: List<String> = emptyList()
 )
+
+/** IDs come from a bounded database query, independent of the model-context window size. */
+object CharacterSnapshotCadence {
+    const val INTERVAL = 15
+
+    fun dueUserMessageId(recentUserIdsDescending: List<Long>, interval: Int = INTERVAL): Long? {
+        require(interval > 0)
+        return recentUserIdsDescending.firstOrNull()?.takeIf { recentUserIdsDescending.size >= interval && it > 0L }
+    }
+}
 
 class CharacterSnapshotExtractor @Inject constructor(
     private val llmRetry: LlmRetry,
@@ -26,10 +37,9 @@ class CharacterSnapshotExtractor @Inject constructor(
         apiKey: String,
         baseUrl: String,
         model: String,
-        triggerInterval: Int = 15
+        triggerInterval: Int = CharacterSnapshotCadence.INTERVAL
     ): CharacterSnapshot? {
-        val userMessages = messages.filter { it.speakerType == "user" }
-        if (userMessages.size % triggerInterval != 0 || messages.isEmpty()) return null
+        if (messages.isEmpty()) return null
         
         val recentText = messages.takeLast(triggerInterval * 2).joinToString("\n") { 
             "${if (it.speakerType == "user") "玩家" else character.name}: ${ConversationMessageText.forDerivedContext(it).take(300)}"
@@ -63,8 +73,9 @@ class CharacterSnapshotExtractor @Inject constructor(
             )
             val json = extractJson(result)
             gson.fromJson(json, CharacterSnapshot::class.java)
-        } catch (e: Exception) {
-            e.printStackTrace()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
             null
         }
     }
