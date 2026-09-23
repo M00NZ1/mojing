@@ -99,8 +99,11 @@ fun UsageScreen(
         LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxSize()) {
             item { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 CurrencyToolbar(currencyState, vm)
-                Text("${count(state.currencies.sumOf { it.calls.toLong() })} 次请求 · ${count(state.currencies.sumOf { it.tokens })} Token", style = MaterialTheme.typography.titleMedium)
+                Text("${count(state.currencies.sumOf { it.tokens })} Token", style = MaterialTheme.typography.headlineMedium)
+                Text("${count(state.currencies.sumOf { it.calls.toLong() })} 次请求", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 CurrencyRows(state.currencies, currencyState)
+                HorizontalDivider(Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                Text("平台 · ${state.platforms.size}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } }
             items(state.platforms, key = { it.id }) { platform ->
                 UsageCard(platform.name.ifBlank { "历史记录（未记录平台）" }, "${count(platform.calls.toLong())} 次请求 · ${count(platform.tokens)} Token", "成功 ${platform.calls - platform.failed} · 失败或取消 ${platform.failed} · 待定价 ${platform.unknownPrice}", platform.currencies, currencyState, onClick = { onPlatform(platform) })
@@ -115,16 +118,18 @@ fun UsageScreen(
     var sort by rememberSaveable { mutableStateOf("最近使用") }
     val models = when (sort) { "Token" -> state.models.sortedByDescending { it.tokens }; "请求数" -> state.models.sortedByDescending { it.calls }; else -> state.models }
     UsageContainer(modifier, state.loading, state.error, { state.selectedPlatform?.let(vm::openPlatform) }) {
-        state.selectedPlatform?.takeIf { it.currencies.isNotEmpty() }?.let { platform ->
-            UsageScopeSummary("平台合计", platform.tokens, platform.calls, platform.failed,
-                platform.unknownPrice, platform.currencies, currencyState)
-        }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("最近使用", "Token", "请求数").forEach { option -> FilterChip(selected = sort == option, onClick = { sort = option }, label = { Text(option) }) }
-        }
-        Text("${state.models.size} 个模型 · ${count(state.models.sumOf { it.tokens })} Token", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxSize()) {
-            items(models, key = { it.name }) { model ->
+            item(key = "model-summary") { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                state.selectedPlatform?.takeIf { it.currencies.isNotEmpty() }?.let { platform ->
+                    UsageScopeSummary("平台合计", platform.tokens, platform.calls, platform.failed,
+                        platform.unknownPrice, platform.currencies, currencyState)
+                }
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("最近使用", "Token", "请求数").forEach { option -> FilterChip(selected = sort == option, onClick = { sort = option }, label = { Text(option) }) }
+                }
+                Text("${state.models.size} 个模型 · ${count(state.models.sumOf { it.tokens })} Token", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } }
+            items(models, key = { "model:${it.name}" }) { model ->
                 UsageCard(model.name.ifBlank { "未记录模型" }, "${count(model.calls.toLong())} 次请求 · ${count(model.tokens)} Token", "成功 ${model.calls - model.failed} · 失败或取消 ${model.failed} · 待定价 ${model.unknownPrice}", model.currencies, currencyState, onClick = { onModel(model) })
             }
             if (state.models.isEmpty() && !state.loading) item { Text("暂无模型用量记录", color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -135,21 +140,23 @@ fun UsageScreen(
 @Composable private fun RequestLevel(state: UsageUiState, currencyState: CurrencyDisplayState, vm: UsageViewModel, modifier: Modifier) {
     val listState = androidx.compose.runtime.saveable.rememberSaveable(saver = androidx.compose.foundation.lazy.LazyListState.Saver) { androidx.compose.foundation.lazy.LazyListState() }
     UsageContainer(modifier, state.loading && state.requests.isEmpty(), state.error, vm::loadMoreRequests) {
-        state.selectedModel?.takeIf { it.currencies.isNotEmpty() }?.let { model ->
-            val platformLabel = state.selectedPlatform?.name.orEmpty().takeIf(String::isNotBlank)
-            UsageScopeSummary(platformLabel?.let { "模型合计 · $it" } ?: "模型合计", model.tokens, model.calls,
-                model.failed, model.unknownPrice, model.currencies, currencyState)
-        }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("all" to "全部", "success" to "成功", "failed" to "失败", "cancelled" to "已取消").forEach { (value, label) ->
-                FilterChip(selected = state.requestFilter == value, onClick = { vm.filterRequests(value, state.requestOrder) }, label = { Text(label) })
-            }
-        }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = state.requestOrder == "time", onClick = { vm.filterRequests(state.requestFilter, "time") }, label = { Text("最新记录") })
-            FilterChip(selected = state.requestOrder == "tokens", onClick = { vm.filterRequests(state.requestFilter, "tokens") }, label = { Text("Token 最多") })
-        }
         LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
+            item(key = "request-filters") { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                state.selectedModel?.takeIf { it.currencies.isNotEmpty() }?.let { model ->
+                    val platformLabel = state.selectedPlatform?.name.orEmpty().takeIf(String::isNotBlank)
+                    UsageScopeSummary(platformLabel?.let { "模型合计 · $it" } ?: "模型合计", model.tokens, model.calls,
+                        model.failed, model.unknownPrice, model.currencies, currencyState)
+                }
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("all" to "全部", "success" to "成功", "failed" to "失败", "cancelled" to "已取消").forEach { (value, label) ->
+                        FilterChip(selected = state.requestFilter == value, onClick = { vm.filterRequests(value, state.requestOrder) }, label = { Text(label) })
+                    }
+                }
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = state.requestOrder == "time", onClick = { vm.filterRequests(state.requestFilter, "time") }, label = { Text("最新记录") })
+                    FilterChip(selected = state.requestOrder == "tokens", onClick = { vm.filterRequests(state.requestFilter, "tokens") }, label = { Text("Token 最多") })
+                }
+            } }
             items(state.requests, key = { it.record.id }) { item ->
                 val r = item.record
                 var detailsExpanded by rememberSaveable(r.id) { mutableStateOf(false) }
@@ -204,13 +211,11 @@ fun UsageScreen(
 
 @Composable private fun UsageScopeSummary(label: String, tokens: Long, calls: Int, failed: Int,
     unknownPrice: Int, currencies: List<UsageCurrencyUi>, currencyState: CurrencyDisplayState) {
-    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+    Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
+        Column(Modifier.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("${count(tokens)} Token", style = MaterialTheme.typography.titleLarge)
+            Text("${count(tokens)} Token", style = MaterialTheme.typography.headlineMedium)
             Text("${count(calls.toLong())} 次请求 · 成功 ${count((calls - failed).coerceAtLeast(0).toLong())} · 失败或取消 ${count(failed.toLong())}",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (unknownPrice > 0) Text("${count(unknownPrice.toLong())} 次待定价", style = MaterialTheme.typography.labelMedium,
@@ -230,14 +235,15 @@ fun UsageScreen(
 }
 
 @Composable private fun UsageCard(title: String, subtitle: String, detail: String, currencies: List<UsageCurrencyUi>, currencyState: CurrencyDisplayState = CurrencyDisplayState(), onClick: () -> Unit) {
-    OutlinedCard(onClick = onClick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+    Surface(onClick = onClick, modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) { Column(Modifier.padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(title, Modifier.weight(1f).padding(end = 12.dp), style = MaterialTheme.typography.titleMedium)
+            Text(title, Modifier.weight(1f).padding(end = 12.dp), style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Icon(Icons.Outlined.ChevronRight, "查看明细", tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Text(subtitle, style = MaterialTheme.typography.bodyMedium)
         Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         CurrencyRows(currencies, currencyState)
+        HorizontalDivider(Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
     } }
 }
 
@@ -245,9 +251,9 @@ fun UsageScreen(
     var editRate by rememberSaveable { mutableStateOf(false) }
     var manual by rememberSaveable { mutableStateOf("") }
     var rateError by rememberSaveable { mutableStateOf<String?>(null) }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        TextButton(onClick = { vm.setDisplayCurrency("CNY") }) { Text(if (state.displayCurrency == "CNY") "✓ CNY ¥" else "CNY ¥") }
-        TextButton(onClick = { vm.setDisplayCurrency("USD") }) { Text(if (state.displayCurrency == "USD") "✓ USD $" else "USD $") }
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(selected = state.displayCurrency == "CNY", onClick = { vm.setDisplayCurrency("CNY") }, label = { Text("人民币 ¥") })
+        FilterChip(selected = state.displayCurrency == "USD", onClick = { vm.setDisplayCurrency("USD") }, label = { Text("美元 $") })
         TextButton(onClick = { editRate = !editRate }) { Text("汇率") }
     }
     Text(state.usdToCny?.let { "1 USD = ${java.math.BigDecimal.valueOf(it).setScale(4, java.math.RoundingMode.HALF_UP)} CNY · ${state.rateDate}" }
