@@ -96,8 +96,10 @@ fun EntryEditScreen(
     val sectionTargets = remember(entryId, encyclopediaId) { List(4) { BringIntoViewRequester() } }
     val sectionLabels = listOf("基本资料", "正文与摘要", "条目封面", "高级设置")
     var showDiscardDialog by rememberSaveable { mutableStateOf(false) }
-    val canSave = state.loadError == null && (!state.isPersisted || state.isDirty)
-    val blockingBusy = state.isSaving || state.isGeneratingCover || isCoverImporting
+    var pendingExit by remember { mutableStateOf("back") }
+    val canSave = state.loadError == null && state.recoverableDraft == null && !state.draftUnreadable &&
+        (!state.isPersisted || state.isDirty)
+    val blockingBusy = state.isSaving || state.isGeneratingCover || isCoverImporting || state.isDiscardingDraft
     val pageBusy = blockingBusy || state.isAiCompleting
     val saveEnabled = state.isLoaded && canSave && !pageBusy && !state.isLoadingVersions
     val saveLabel = when {
@@ -108,17 +110,24 @@ fun EntryEditScreen(
         else -> "已保存"
     }
 
-    fun requestBack() {
+    fun leaveEditor(destination: String) {
+        if (destination == "settings") onOpenSettings() else onBack()
+    }
+
+    fun requestExit(destination: String) {
         focusManager.clearFocus()
         when {
             blockingBusy -> scope.launch { snackbarHostState.showSnackbar("正在保存或处理封面，请稍候") }
-            state.isDirty -> showDiscardDialog = true
-            else -> onBack()
+            state.recoverableDraft != null || state.draftUnreadable ->
+                scope.launch { snackbarHostState.showSnackbar("请先恢复或丢弃本机词条草稿") }
+            state.isDirty -> { pendingExit = destination; showDiscardDialog = true }
+            state.draftError != null -> scope.launch { snackbarHostState.showSnackbar("请先重试清理本机词条草稿") }
+            else -> leaveEditor(destination)
         }
     }
 
     BackHandler {
-        if (isImeOpen) hideImeKeyboard(keyboardController, focusManager) else requestBack()
+        if (isImeOpen) hideImeKeyboard(keyboardController, focusManager) else requestExit("back")
     }
     val coverPickLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null || isCoverImporting) return@rememberLauncherForActivityResult
@@ -154,6 +163,9 @@ fun EntryEditScreen(
         subTab = EntryEditSubTab.EDIT
         if (!viewModel.state.value.isLoaded) viewModel.load(encyclopediaId, entryId)
     }
+    LaunchedEffect(state.recoverableDraft, state.draftUnreadable) {
+        if (state.recoverableDraft != null || state.draftUnreadable) showDiscardDialog = false
+    }
 
     LaunchedEffect(state.snackbar) {
         val m = state.snackbar ?: return@LaunchedEffect
@@ -179,7 +191,7 @@ fun EntryEditScreen(
             TopAppBar(
                 title = { Text(if (entryId == 0L && !state.isPersisted) "新建条目" else "编辑条目", style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
-                    IconButton(onClick = ::requestBack, enabled = !blockingBusy) {
+                    IconButton(onClick = { requestExit("back") }, enabled = !blockingBusy) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
                     }
                 },
@@ -243,6 +255,17 @@ fun EntryEditScreen(
             }
         } else {
         Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(padding).consumeWindowInsets(padding).imePadding()) {
+            state.draftError?.takeIf { !state.draftUnreadable && state.recoverableDraft == null }?.let { draftError ->
+                Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Text(draftError, color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodyMedium)
+                        TextButton(onClick = viewModel::retryDraftSave) {
+                            Text(if (state.isDirty) "重试暂存" else "重试清理")
+                        }
+                    }
+                }
+            }
             val feedback = state.saveError ?: state.versionError
             if (feedback != null) {
                 Surface(color = MaterialTheme.colorScheme.errorContainer) {
@@ -367,7 +390,7 @@ fun EntryEditScreen(
                     if (!state.hasPublicLlmKey) {
                         LlmKeySetupHintCard(
                             message = "补全内容或生成封面前，请先在设置填写 API Key；手动编辑和保存不受影响",
-                            onOpenSettings = onOpenSettings,
+                            onOpenSettings = { requestExit("settings") },
                         )
                     }
 
@@ -548,21 +571,39 @@ fun EntryEditScreen(
         )
     }
 
-    if (showDiscardDialog) {
+    if (showDiscardDialog && state.recoverableDraft == null && !state.draftUnreadable) {
         AlertDialog(
             onDismissRequest = { showDiscardDialog = false },
             title = { Text("放弃未保存的修改？") },
-            text = { Text("返回后，本次尚未保存的词条修改不会保留。") },
+            text = { Text("离开后，本次尚未保存的词条修改不会保留。") },
             confirmButton = {
                 TextButton(
                     onClick = {
                         showDiscardDialog = false
-                        onBack()
+                        viewModel.discardChangesAndLeave { leaveEditor(pendingExit) }
                     },
                 ) { Text("放弃修改", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
                 TextButton(onClick = { showDiscardDialog = false }) { Text("继续编辑") }
+            },
+        )
+    }
+    if (state.recoverableDraft != null || state.draftUnreadable) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text(if (state.draftUnreadable) "词条草稿暂时无法读取" else "发现未保存的词条草稿") },
+            text = { Text(state.draftError ?: "上次编辑的内容保存在此设备。恢复后请检查资料再保存；丢弃只移除草稿，不改已保存词条。") },
+            confirmButton = {
+                TextButton(enabled = !state.isDiscardingDraft,
+                    onClick = if (state.draftUnreadable) viewModel::retryDraftLoad else viewModel::restoreDraft) {
+                    Text(if (state.draftUnreadable) "重新读取" else "恢复草稿")
+                }
+            },
+            dismissButton = {
+                TextButton(enabled = !state.isDiscardingDraft, onClick = viewModel::discardStoredDraft) {
+                    Text(if (state.isDiscardingDraft) "正在丢弃…" else "丢弃草稿")
+                }
             },
         )
     }

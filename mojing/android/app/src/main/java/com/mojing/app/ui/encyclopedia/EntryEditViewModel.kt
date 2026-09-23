@@ -3,6 +3,8 @@ package com.mojing.app.ui.encyclopedia
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.SecureStorage
+import com.mojing.app.data.EntryDraftSnapshot
+import com.mojing.app.data.EntryEditDraftStore
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.EntryVersionDao
 import com.mojing.app.data.local.dao.EncyclopediaEntryDao
@@ -23,6 +25,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 
 data class EntrySourceTarget(val sessionId: Long, val messageId: Long, val branchId: String)
@@ -67,18 +73,10 @@ data class EntryEditState(
     /** 用于按百科题材过滤「类型」选项（名称+简介+标签拼接） */
     val encyclopediaHint: String = "",
     val hasPublicLlmKey: Boolean = false,
-)
-
-private data class EntryDraftSnapshot(
-    val title: String,
-    val entryType: String,
-    val summary: String,
-    val content: String,
-    val tags: String,
-    val confidence: String,
-    val metaJson: String,
-    val isFeatured: Boolean,
-    val coverImagePath: String,
+    val recoverableDraft: EntryDraftSnapshot? = null,
+    val draftError: String? = null,
+    val draftUnreadable: Boolean = false,
+    val isDiscardingDraft: Boolean = false,
 )
 
 private fun EntryEditState.toDraftSnapshot() = EntryDraftSnapshot(
@@ -110,6 +108,18 @@ private fun EntryEditState.withPersistedEntry(entry: EncyclopediaEntryEntity) = 
     isPersisted = true,
 )
 
+private fun EntryEditState.withRecoveredDraft(draft: EntryDraftSnapshot) = copy(
+    title = draft.title,
+    entryType = draft.entryType,
+    summary = draft.summary,
+    content = draft.content,
+    tags = draft.tags,
+    confidence = draft.confidence,
+    metaJson = draft.metaJson,
+    isFeatured = draft.isFeatured,
+    coverImagePath = draft.coverImagePath,
+)
+
 @HiltViewModel
 class EntryEditViewModel @Inject constructor(
     private val entryDao: EncyclopediaEntryDao,
@@ -120,13 +130,20 @@ class EntryEditViewModel @Inject constructor(
     private val secureStorage: SecureStorage,
     private val imageRepository: ImageRepository,
     private val messageDao: com.mojing.app.data.local.dao.MessageDao,
+    private val draftStore: EntryEditDraftStore,
 ) : ViewModel() {
     private val _state = MutableStateFlow(EntryEditState())
     val state: StateFlow<EntryEditState> = _state.asStateFlow()
 
     private var encId: Long = 0
     private var currentEntry: EncyclopediaEntryEntity? = null
+    private var loadRevision = 0L
+    private var loadJob: Job? = null
     private var savedDraft = _state.value.toDraftSnapshot()
+    private var draftEntryId = 0L
+    private val draftWriteMutex = Mutex()
+    private var draftWriteRevision = 0L
+    private var draftWriteJob: Job? = null
     private var sourceJob: kotlinx.coroutines.Job? = null
     private var sourceRevision = 0L
 
@@ -172,8 +189,141 @@ class EntryEditViewModel @Inject constructor(
     }
 
     private fun updateDraft(transform: (EntryEditState) -> EntryEditState) {
+        if (!_state.value.isLoaded || _state.value.loadError != null || _state.value.recoverableDraft != null ||
+            _state.value.draftUnreadable || _state.value.isDiscardingDraft) return
         val next = transform(_state.value)
         _state.value = next.copy(isDirty = next.toDraftSnapshot() != savedDraft, saveError = null)
+        persistCurrentDraft()
+    }
+
+    private fun persistCurrentDraft() {
+        val id = draftEntryId.takeIf { it > 0L && encId > 0L } ?: return
+        val encyclopediaId = encId
+        val snapshot = _state.value.toDraftSnapshot()
+        val dirty = _state.value.isDirty
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        draftWriteJob = viewModelScope.launch {
+            try {
+                draftWriteMutex.withLock {
+                    if (revision != draftWriteRevision || draftEntryId != id || encId != encyclopediaId) return@withLock
+                    if (dirty) draftStore.save(encyclopediaId, id, snapshot)
+                    else draftStore.clear(encyclopediaId, id)
+                }
+                if (revision == draftWriteRevision && draftEntryId == id && encId == encyclopediaId)
+                    _state.update { it.copy(draftError = null) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (revision == draftWriteRevision && draftEntryId == id && encId == encyclopediaId)
+                    _state.update { it.copy(draftError = "词条草稿暂存失败，当前输入仍在页面中；可重试或直接保存") }
+            }
+        }
+    }
+
+    fun retryDraftSave() {
+        if (_state.value.isLoaded && _state.value.recoverableDraft == null && !_state.value.draftUnreadable)
+            persistCurrentDraft()
+    }
+
+    private suspend fun syncDraftAfterSave(encyclopediaId: Long, entryId: Long) {
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        val current = _state.value
+        try {
+            draftWriteMutex.withLock {
+                if (current.isDirty) draftStore.save(encyclopediaId, entryId, current.toDraftSnapshot())
+                else draftStore.clear(encyclopediaId, entryId)
+            }
+            if (revision == draftWriteRevision) _state.update { it.copy(draftError = null) }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) {
+            if (revision == draftWriteRevision) _state.update { it.copy(
+                draftError = if (current.isDirty) "词条已保存，但新的修改暂存失败；请重试"
+                else "词条已保存，但旧草稿清除失败；请重试清理后离开",
+            ) }
+        }
+    }
+
+    private suspend fun readRecoveryDraft(encyclopediaId: Long, entryId: Long) {
+        if (entryId <= 0L) return
+        val draft = try { draftStore.load(encyclopediaId, entryId) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) {
+            if (encId == encyclopediaId && draftEntryId == entryId) _state.update { it.copy(
+                draftUnreadable = true,
+                draftError = "本机词条草稿无法读取，已保留原始草稿。可重试读取或明确丢弃。",
+            ) }
+            return
+        }
+        if (encId != encyclopediaId || draftEntryId != entryId) return
+        _state.update { it.copy(
+            recoverableDraft = draft?.takeIf { candidate -> candidate != savedDraft },
+            draftUnreadable = false,
+            draftError = null,
+        ) }
+        if (draft == savedDraft) {
+            try { draftStore.clear(encyclopediaId, entryId) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (encId == encyclopediaId && draftEntryId == entryId)
+                    _state.update { it.copy(draftError = "已保存词条可用，但旧草稿清除失败；可重试清理") }
+            }
+        }
+    }
+
+    fun retryDraftLoad() {
+        val id = draftEntryId.takeIf { it > 0L } ?: return
+        if (!_state.value.draftUnreadable || _state.value.isDiscardingDraft) return
+        val encyclopediaId = encId
+        viewModelScope.launch { readRecoveryDraft(encyclopediaId, id) }
+    }
+
+    fun restoreDraft() {
+        if (_state.value.isDiscardingDraft) return
+        val draft = _state.value.recoverableDraft ?: return
+        val restored = _state.value.withRecoveredDraft(draft).copy(recoverableDraft = null, draftError = null)
+        _state.value = restored.copy(isDirty = restored.toDraftSnapshot() != savedDraft)
+        persistCurrentDraft()
+    }
+
+    fun discardStoredDraft() {
+        val id = draftEntryId.takeIf { it > 0L } ?: return
+        if (_state.value.isDiscardingDraft) return
+        val encyclopediaId = encId
+        _state.update { it.copy(isDiscardingDraft = true) }
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        viewModelScope.launch {
+            try {
+                draftWriteMutex.withLock { draftStore.clear(encyclopediaId, id) }
+                if (revision == draftWriteRevision && encId == encyclopediaId && draftEntryId == id)
+                    _state.update { it.copy(recoverableDraft = null, draftUnreadable = false, draftError = null, isDiscardingDraft = false) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (revision == draftWriteRevision && encId == encyclopediaId && draftEntryId == id)
+                    _state.update { it.copy(draftError = "未能丢弃词条草稿，请重试", isDiscardingDraft = false) }
+            }
+        }
+    }
+
+    fun discardChangesAndLeave(onDiscarded: () -> Unit) {
+        val id = draftEntryId.takeIf { it > 0L }
+        if (id == null) { onDiscarded(); return }
+        if (_state.value.isDiscardingDraft) return
+        val encyclopediaId = encId
+        _state.update { it.copy(isDiscardingDraft = true) }
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        viewModelScope.launch {
+            try {
+                draftWriteMutex.withLock { draftStore.clear(encyclopediaId, id) }
+                if (revision == draftWriteRevision && encId == encyclopediaId && draftEntryId == id) onDiscarded()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (revision == draftWriteRevision && encId == encyclopediaId && draftEntryId == id)
+                    _state.update { it.copy(draftError = "草稿清除失败，已留在编辑页；可重试后离开", isDiscardingDraft = false) }
+            }
+        }
     }
 
     fun consumeSnackbar() {
@@ -186,11 +336,17 @@ class EntryEditViewModel @Inject constructor(
 
     fun load(encyclopediaId: Long, entryId: Long) {
         closeSourcePreview()
+        loadJob?.cancel()
+        val revision = ++loadRevision
+        draftWriteRevision++
+        draftWriteJob?.cancel()
         encId = encyclopediaId
-        viewModelScope.launch {
+        draftEntryId = entryId
+        loadJob = viewModelScope.launch {
             _state.value = _state.value.copy(isLoaded = false, loadError = null)
             try {
                 val enc = encyclopediaDao.getById(encyclopediaId)
+                if (revision != loadRevision) return@launch
                 if (enc == null) {
                     currentEntry = null
                     val missing = EntryEditState(
@@ -204,6 +360,7 @@ class EntryEditViewModel @Inject constructor(
                 }
                 val hint = "${enc.name} ${enc.description} ${enc.genreTags}"
                 val entry = if (entryId > 0) entryDao.getById(entryId) else null
+                if (revision != loadRevision) return@launch
                 if (entryId > 0 && (entry == null || entry.encyclopediaId != encyclopediaId)) {
                     currentEntry = null
                     val missing = EntryEditState(
@@ -231,11 +388,15 @@ class EntryEditViewModel @Inject constructor(
                     )
                 }
                 savedDraft = loaded.toDraftSnapshot()
-                _state.value = loaded
+                _state.value = if (entry != null) loaded.copy(isLoaded = false) else loaded
+                if (entry != null) readRecoveryDraft(encyclopediaId, entryId)
+                if (revision != loadRevision) return@launch
+                _state.update { it.copy(isLoaded = true) }
                 if (entry != null) loadVersionPage(older = false)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
+                if (revision != loadRevision) return@launch
                 currentEntry = null
                 val failed = EntryEditState(
                     isLoaded = true,
@@ -389,6 +550,7 @@ class EntryEditViewModel @Inject constructor(
     fun save() {
         val submittedState = _state.value
         if (!submittedState.isLoaded || submittedState.loadError != null || submittedState.isSaving || submittedState.isLoadingVersions ||
+            submittedState.isDiscardingDraft || submittedState.recoverableDraft != null || submittedState.draftUnreadable ||
             (submittedState.isPersisted && !submittedState.isDirty)) return
         val submittedDraft = submittedState.toDraftSnapshot()
         if (submittedState.title.isBlank()) {
@@ -420,6 +582,7 @@ class EntryEditViewModel @Inject constructor(
                 )
                 val saved = saveCharacterEntry.saveEdited(toSave)
                 currentEntry = saved
+                draftEntryId = saved.id
                 val latest = _state.value
                 val persisted = latest.withPersistedEntry(saved).copy(
                     isDirty = false,
@@ -436,6 +599,7 @@ class EntryEditViewModel @Inject constructor(
                     persisted.copy(snackbar = UserFacingStrings.entrySaved())
                 }
                 _state.value = result.copy(isDirty = result.toDraftSnapshot() != savedDraft)
+                syncDraftAfterSave(encId, saved.id)
                 // 正文已提交；版本读取失败不能使表单重新变成未保存。
                 try {
                     val versionPage = entryVersionDao.getPage(saved.id, Long.MAX_VALUE, 11)
@@ -457,6 +621,7 @@ class EntryEditViewModel @Inject constructor(
                     isSaving = false,
                     saveError = UserFacingStrings.localSaveFailed("条目"),
                 )
+                persistCurrentDraft()
             } finally {
                 _state.value = _state.value.copy(isSaving = false)
             }
@@ -488,7 +653,8 @@ class EntryEditViewModel @Inject constructor(
     fun applyVersionToForm(v: EntryVersionEntity, replaceDraft: Boolean = false): Boolean {
         val state = _state.value
         if (!state.isLoaded || state.loadError != null || state.isSaving || state.isLoadingVersions ||
-            state.isAiCompleting || state.isGeneratingCover || currentEntry?.id != v.entryId ||
+            state.isAiCompleting || state.isGeneratingCover || state.isDiscardingDraft ||
+            state.recoverableDraft != null || state.draftUnreadable || currentEntry?.id != v.entryId ||
             v !in state.versions) return false
         if (state.isDirty && !replaceDraft) {
             _state.value = state.copy(pendingVersion = v)

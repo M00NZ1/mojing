@@ -1,6 +1,8 @@
 package com.mojing.app.ui.encyclopedia
 
 import com.mojing.app.data.SecureStorage
+import com.mojing.app.data.EntryDraftSnapshot
+import com.mojing.app.data.EntryEditDraftStore
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.EncyclopediaEntryDao
 import com.mojing.app.data.local.dao.EntryVersionDao
@@ -31,6 +33,70 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class EntryEditViewModelTest {
+    @Test fun waitsForRecoveryChoiceBeforeEditing() = runTest(dispatcher) {
+        val entry = EncyclopediaEntryEntity(id = 8L, encyclopediaId = 3L, title = "已保存")
+        val dao = mockk<EncyclopediaEntryDao> { coEvery { getById(8L) } returns entry }
+        val pending = CompletableDeferred<EntryDraftSnapshot?>()
+        val store = mockk<EntryEditDraftStore>(relaxed = true) {
+            coEvery { load(3L, 8L) } coAnswers { pending.await() }
+        }
+        val vm = createViewModel(encyclopediaDao(), dao, draftStore = store)
+        vm.load(3L, 8L)
+        assertFalse(vm.state.value.isLoaded)
+        vm.updateContent("读取期间输入")
+        assertEquals("", vm.state.value.content)
+        pending.complete(EntryDraftSnapshot(title = "未保存", content = "长篇草稿"))
+        advanceUntilIdle()
+        assertTrue(vm.state.value.isLoaded)
+        assertEquals("已保存", vm.state.value.title)
+        assertNotNull(vm.state.value.recoverableDraft)
+        vm.restoreDraft()
+        advanceUntilIdle()
+        assertEquals("未保存", vm.state.value.title)
+        assertEquals("长篇草稿", vm.state.value.content)
+        coVerify { store.save(3L, 8L, match { it.content == "长篇草稿" }) }
+    }
+
+    @Test fun unreadableDraftStaysProtectedUntilExplicitDiscard() = runTest(dispatcher) {
+        val entry = EncyclopediaEntryEntity(id = 8L, encyclopediaId = 3L, title = "已保存")
+        val dao = mockk<EncyclopediaEntryDao> { coEvery { getById(8L) } returns entry }
+        val store = mockk<EntryEditDraftStore>(relaxed = true) {
+            coEvery { load(3L, 8L) } throws IllegalStateException("bad draft")
+        }
+        val vm = createViewModel(encyclopediaDao(), dao, draftStore = store)
+        vm.load(3L, 8L)
+        assertTrue(vm.state.value.draftUnreadable)
+        vm.updateTitle("不可覆盖")
+        assertEquals("已保存", vm.state.value.title)
+        vm.discardStoredDraft()
+        advanceUntilIdle()
+        assertFalse(vm.state.value.draftUnreadable)
+        coVerify(exactly = 1) { store.clear(3L, 8L) }
+    }
+
+    @Test fun saveKeepsOldDraftErrorVisibleUntilCleared() = runTest(dispatcher) {
+        val entry = EncyclopediaEntryEntity(id = 8L, encyclopediaId = 3L, title = "旧标题")
+        val dao = mockk<EncyclopediaEntryDao> { coEvery { getById(8L) } returns entry }
+        val store = mockk<EntryEditDraftStore>(relaxed = true) {
+            coEvery { load(3L, 8L) } returns null
+            coEvery { clear(3L, 8L) } throws IllegalStateException("disk")
+        }
+        val saver = mockk<SaveCharacterEntryUseCase> {
+            coEvery { this@mockk.saveEdited(any()) } answers { firstArg<EncyclopediaEntryEntity>() }
+        }
+        val vm = createViewModel(encyclopediaDao(), dao, saveEntry = saver, draftStore = store)
+        vm.load(3L, 8L)
+        vm.updateTitle("新标题")
+        vm.save()
+        advanceUntilIdle()
+        assertFalse(vm.state.value.isDirty)
+        assertNotNull(vm.state.value.draftError)
+        var left = false
+        vm.discardChangesAndLeave { left = true }
+        advanceUntilIdle()
+        assertFalse(left)
+    }
+
     @Test fun confirmingConversationNoteKeepsSourcesAndRetriesFailedSave() = runTest(dispatcher) {
         val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, title = "雾港线索", confidence = "inferred",
             sourceSessionId = 42, sourceMessageId = 9, metaJson = """{"source_message_ids":[6,9]}""")
@@ -242,6 +308,9 @@ class EntryEditViewModelTest {
         aiCompleter: AiCompleter = mockk(relaxed = true),
         publicKey: String = "",
         messageDao: com.mojing.app.data.local.dao.MessageDao = mockk(relaxed = true),
+        draftStore: EntryEditDraftStore = mockk(relaxed = true) {
+            coEvery { load(any(), any()) } returns null
+        },
     ): EntryEditViewModel {
         val secureStorage = mockk<SecureStorage>(relaxed = true)
         every { secureStorage.publicApiKey } returns publicKey
@@ -254,6 +323,7 @@ class EntryEditViewModelTest {
             secureStorage = secureStorage,
             imageRepository = mockk<ImageRepository>(relaxed = true),
             messageDao = messageDao,
+            draftStore = draftStore,
         )
     }
 
