@@ -26,6 +26,7 @@ from ..models import (
     CharacterModel,
     ChatSessionModel,
     AppSettingModel,
+    MessageAttachmentModel,
     MessageBookmarkModel,
     MessageModel,
     SessionBranchModel,
@@ -956,8 +957,17 @@ def add_user_message_with_files(
         return serialize_message(message)
     except Exception:
         db.rollback()
-        for path in created_paths:
-            path.unlink(missing_ok=True)
+        storage_paths = {path: str(path.relative_to(STORAGE_DIR)).replace("\\", "/") for path in created_paths}
+        try:
+            referenced = set(db.scalars(select(MessageAttachmentModel.storage_path).where(
+                MessageAttachmentModel.storage_path.in_(storage_paths.values())
+            ))) if storage_paths else set()
+        except Exception:
+            # A failed read cannot prove that a committed message is absent.
+            referenced = set(storage_paths.values())
+        for path, storage_path in storage_paths.items():
+            if storage_path not in referenced:
+                path.unlink(missing_ok=True)
         raise
 
 

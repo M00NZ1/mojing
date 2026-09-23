@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from starlette.datastructures import Headers
 
 from backend.app.database import Base
-from backend.app.models import ChatSessionModel, MessageModel
+from backend.app.models import ChatSessionModel, MessageAttachmentModel, MessageModel
 from backend.app.routes import sessions as session_routes
 
 
@@ -114,5 +114,29 @@ def test_retried_attachment_send_reuses_original_file_and_rejects_changed_bytes(
             assert conflict.value.status_code == 409
             assert len(list(upload_dir.iterdir())) == 1
             assert db.scalar(select(func.count()).select_from(MessageModel)) == 1
+    finally:
+        engine.dispose()
+
+
+def test_response_failure_does_not_delete_a_committed_attachment(tmp_path, monkeypatch):
+    engine, Session = _database(tmp_path)
+    storage = tmp_path / "storage"
+    monkeypatch.setattr(session_routes, "STORAGE_DIR", storage)
+    try:
+        with Session() as db:
+            session = ChatSessionModel(title="upload")
+            db.add(session)
+            db.commit()
+            monkeypatch.setattr(session_routes, "serialize_message", lambda _message: (_ for _ in ()).throw(RuntimeError("response failed")))
+
+            with pytest.raises(RuntimeError, match="response failed"):
+                session_routes.add_user_message_with_files(
+                    session.id, "正文", "main", [_upload("scene.png", b"important image")], db, uuid4(),
+                )
+
+            assert db.scalar(select(func.count()).select_from(MessageModel)) == 1
+            attachment = db.scalar(select(MessageAttachmentModel))
+            assert attachment is not None
+            assert (storage / attachment.storage_path).read_bytes() == b"important image"
     finally:
         engine.dispose()
