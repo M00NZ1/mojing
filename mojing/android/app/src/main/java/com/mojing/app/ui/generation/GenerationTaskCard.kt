@@ -1,6 +1,7 @@
 package com.mojing.app.ui.generation
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -14,8 +15,8 @@ import com.mojing.app.data.local.entity.GenerationTaskEntity
 import com.mojing.app.data.local.entity.GenerationTaskKinds
 import com.mojing.app.data.local.entity.GenerationTaskStatus
 import com.mojing.app.ui.common.MoJingButton
-import com.mojing.app.ui.common.MoJingOutlinedButton
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun GenerationTaskCard(
     task: GenerationTaskEntity,
@@ -46,16 +47,17 @@ internal fun GenerationTaskCard(
         onClick = onDetail,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow),
+        colors = CardDefaults.cardColors(containerColor = colors.surface),
+        border = BorderStroke(1.dp, colors.outlineVariant),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Icon(icon, null, Modifier.size(22.dp), tint = colors.onSurfaceVariant)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(kindLabel(task.taskKind), style = MaterialTheme.typography.labelMedium,
-                        color = colors.onSurfaceVariant)
-                    Text(createdLabel, style = MaterialTheme.typography.labelSmall,
+                    Text(task.title, style = MaterialTheme.typography.titleMedium,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text("${kindLabel(task.taskKind)} · $createdLabel", style = MaterialTheme.typography.labelSmall,
                         color = colors.onSurfaceVariant)
                 }
                 if (task.isActive()) {
@@ -73,23 +75,11 @@ internal fun GenerationTaskCard(
                     Icon(Icons.Default.ChevronRight, null, tint = colors.onSurfaceVariant)
                 }
             }
-            Text(task.title, style = MaterialTheme.typography.titleMedium,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Surface(
-                color = when { failed -> colors.errorContainer; running -> colors.primaryContainer; else -> colors.surfaceContainerHighest },
-                contentColor = when { failed -> colors.onErrorContainer; running -> colors.onPrimaryContainer; else -> colors.onSurfaceVariant },
-                shape = RoundedCornerShape(8.dp),
-            ) {
-                Row(Modifier.padding(horizontal = 8.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Icon(when {
-                        failed -> Icons.Default.ErrorOutline
-                        completed -> Icons.Default.CheckCircleOutline
-                        task.status == GenerationTaskStatus.PAUSED -> Icons.Default.Pause
-                        else -> Icons.Default.Schedule
-                    }, null, Modifier.size(14.dp))
-                    Text(if (queuePaused && running) "正在收尾" else statusLabel(task.status),
-                        style = MaterialTheme.typography.labelMedium)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                GenerationTaskStatusLabel(task.status, finishing = queuePaused && running)
+                if (task.progressTotal > 0) {
+                    Text("已完成 ${task.progressDone} / ${task.progressTotal}",
+                        style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                 }
             }
             if (task.progressTotal > 0 && !completed) {
@@ -97,32 +87,48 @@ internal fun GenerationTaskCard(
                     progress = { (task.progressDone.toFloat() / task.progressTotal).coerceIn(0f, 1f) },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Text("已完成 ${task.progressDone} / ${task.progressTotal}",
-                    style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
-            } else if (completed && task.progressTotal > 0) {
-                Text("已完成 ${task.progressDone} / ${task.progressTotal}",
-                    style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
             }
             if (task.errorMessage.isNotBlank()) {
                 Text(task.errorMessage, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodySmall, color = if (failed) colors.error else colors.onSurfaceVariant)
             }
-            if (retryable) {
-                MoJingButton(onClick = onRetry, enabled = !busy && !retrying, modifier = Modifier.fillMaxWidth()) {
-                    if (retrying) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Default.Refresh, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (retrying) "重新排队中…" else "继续尝试")
-                }
-            }
-            if (hasResult) {
-                val label = if (opening) "正在打开…" else if (completed) "查看生成内容" else "查看已保存内容"
-                if (retryable) {
-                    MoJingOutlinedButton(onClick = onOpen, enabled = canOpen && !opening, modifier = Modifier.fillMaxWidth()) { Text(label) }
-                } else {
-                    MoJingButton(onClick = onOpen, enabled = canOpen && !opening, modifier = Modifier.fillMaxWidth()) { Text(label) }
+            if (retryable || hasResult) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (retryable) {
+                        MoJingButton(onClick = onRetry, enabled = !busy && !retrying) {
+                            if (retrying) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            else Icon(Icons.Default.Refresh, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (retrying) "重新排队中…" else "继续尝试")
+                        }
+                    }
+                    if (hasResult) {
+                        val label = if (opening) "正在打开…" else if (completed) "查看生成内容" else "查看已保存内容"
+                        TextButton(onClick = onOpen, enabled = canOpen && !opening) { Text(label) }
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+internal fun GenerationTaskStatusLabel(status: String, finishing: Boolean = false) {
+    val colors = MaterialTheme.colorScheme
+    val tint = when (status) {
+        GenerationTaskStatus.FAILED -> colors.error
+        GenerationTaskStatus.RUNNING -> colors.primary
+        else -> colors.onSurfaceVariant
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        Icon(when (status) {
+            GenerationTaskStatus.FAILED -> Icons.Default.ErrorOutline
+            GenerationTaskStatus.COMPLETED -> Icons.Default.CheckCircleOutline
+            GenerationTaskStatus.PAUSED -> Icons.Default.Pause
+            GenerationTaskStatus.CANCELLED -> Icons.Default.Close
+            else -> Icons.Default.Schedule
+        }, null, Modifier.size(16.dp), tint = tint)
+        Text(if (finishing) "正在收尾" else statusLabel(status),
+            style = MaterialTheme.typography.labelMedium, color = tint)
     }
 }

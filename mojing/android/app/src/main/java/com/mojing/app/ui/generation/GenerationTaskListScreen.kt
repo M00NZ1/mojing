@@ -98,16 +98,16 @@ fun GenerationTaskListScreen(
                 }
             }
             if (!browsingHistory && (tasks.isNotEmpty() || (!loading && loadError == null))) item {
-                Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(20.dp)) {
-                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = MaterialTheme.shapes.medium) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(if (paused) if (tasks.any { it.status == GenerationTaskStatus.RUNNING }) "正在完成当前步骤" else "生成已暂停" else if (active > 0) "生成队列运行中" else "暂无进行中的任务",
                             style = MaterialTheme.typography.titleMedium)
-                        Text(if (paused) "当前步骤保存后停下。已保存的内容不会丢失，继续时从原进度接上。"
-                            else "$active 项待完成 · $failed 项需要处理。离开此页后，生成会继续。",
-                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (paused) "当前步骤保存后暂停，可从原进度继续。"
+                            else "$active 项待完成 · $failed 项需处理 · 后台继续生成",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         if (paused || active > 0) {
-                            Button(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = { if (paused) viewModel.resumeQueue() else viewModel.pauseQueue() }) {
-                                Text(if (busy) "正在处理…" else if (paused) "继续生成" else "暂停生成")
+                            OutlinedButton(enabled = !busy, onClick = { if (paused) viewModel.resumeQueue() else viewModel.pauseQueue() }) {
+                                Text(if (busy) "正在处理…" else if (paused) "继续队列" else "暂停队列")
                             }
                         }
                     }
@@ -288,7 +288,7 @@ internal fun GenerationTaskDetailSheet(
                 IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "关闭生成详情") }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Column(Modifier.weight(1f).verticalScroll(detailScroll),
+            Column(Modifier.weight(1f).verticalScroll(detailScroll).padding(vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 retryError?.let { error ->
                     Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(12.dp)) {
@@ -306,8 +306,11 @@ internal fun GenerationTaskDetailSheet(
                         }
                     }
                 }
-                Text("${kindLabel(task.taskKind)} · ${statusLabel(task.status)}",
-                    style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(kindLabel(task.taskKind), style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    GenerationTaskStatusLabel(task.status)
+                }
                 SelectionContainer { Text(task.title, style = MaterialTheme.typography.titleLarge) }
                 val createdAt = remember(task.createdAt) {
                     SimpleDateFormat("yyyy年M月d日 HH:mm", Locale.getDefault()).format(Date(task.createdAt))
