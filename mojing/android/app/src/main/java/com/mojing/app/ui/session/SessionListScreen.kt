@@ -556,6 +556,7 @@ fun SessionListScreen(
 
     if (showCreateDialog) {
         ModalBottomSheet(
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             onDismissRequest = {
                 if (isCreatingSession) {
                     Toast.makeText(context, "正在创建对话，请稍候", Toast.LENGTH_SHORT).show()
@@ -568,15 +569,11 @@ fun SessionListScreen(
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 560.dp)
-                    .imePadding()
-                    .verticalScroll(newSessionScroll)
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .padding(bottom = 28.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                    .heightIn(max = 640.dp)
+                    .imePadding(),
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -590,13 +587,23 @@ fun SessionListScreen(
                                 tint = MaterialTheme.colorScheme.onPrimaryContainer)
                         }
                     }
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text("新建对话", style = MaterialTheme.typography.titleLarge)
                         Text("设定这一幕，然后开始书写", style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    IconButton(onClick = { closeNewSessionDialog() }, enabled = !isCreatingSession) {
+                        Icon(Icons.Default.Close, contentDescription = "关闭新建对话")
+                    }
                 }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Column(
+                    Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(newSessionScroll)
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                 Text("故事信息", style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary)
                 if (isCreatingSession) {
@@ -844,6 +851,12 @@ fun SessionListScreen(
                         )
                     }
                 }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                 Button(
                     onClick = {
                         val rawCap = displayContextLimitStr.trim()
@@ -877,7 +890,7 @@ fun SessionListScreen(
                             },
                         )
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.weight(1f),
                     enabled = !isCreatingSession && !isLoadingDialogData && dialogLoadError == null &&
                         selectableCharacters.isNotEmpty() && selectedCharacterIds.isNotEmpty(),
                 ) { Text(if (isCreatingSession) "创建中…" else "创建并开始") }
@@ -894,14 +907,10 @@ fun SessionListScreen(
                             },
                         )
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.weight(1f),
                     enabled = !isCreatingSession && !isLoadingDialogData,
-                ) { Text("先进入空白对话") }
-                TextButton(
-                    onClick = { closeNewSessionDialog() },
-                    modifier = Modifier.align(Alignment.End),
-                    enabled = !isCreatingSession,
-                ) { Text("取消") }
+                ) { Text("空白对话") }
+                }
             }
         }
     }
