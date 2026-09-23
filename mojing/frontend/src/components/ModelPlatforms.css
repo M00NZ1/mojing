@@ -80,24 +80,34 @@
 .chat-model-platform-filters button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .model-platform-model-field { display: grid; gap: 8px; font-size: .88rem; }
 .model-price-editor { padding-top: 24px; }
-.model-price-list { display: grid; gap: 12px; }
-.model-price-picker { display: grid; gap: 8px; max-width: 520px; color: var(--text-2); font-size: .78rem; }
-.model-price-row { display: grid; grid-template-columns: minmax(150px, 1.3fr) repeat(4, minmax(100px, .75fr)); gap: 12px; align-items: end; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
-.model-price-row.is-unconfigured { border-style: dashed; }
-.model-price-model { min-width: 0; align-self: center; display: grid; gap: 5px; }
-.model-price-model strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .88rem; }
-.model-price-model span, .model-price-state { color: var(--text-2); font-size: .78rem; }
-.model-price-discovery { grid-column: 2 / -1; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; }
-.model-price-discovery span { color: var(--text-2); font-size: .78rem; overflow-wrap: anywhere; }
-.model-price-discovery span[role="alert"] { color: var(--danger, #b84b4b); }
-.model-price-row label { display: grid; gap: 6px; color: var(--text-2); font-size: .74rem; }
-.model-price-row input, .model-price-row select { width: 100%; box-sizing: border-box; min-height: 40px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2); color: var(--text); font: inherit; }
-.model-price-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: end; gap: 10px; }
-.model-price-sync { display: flex !important; align-items: center; gap: 6px !important; white-space: nowrap; }
-.model-price-sync input { width: auto; min-height: auto; }
-.model-price-success { grid-column: 1 / -1; margin: 0; color: var(--accent); font-size: .78rem; }
+.model-price-list { display: grid; gap: 16px; }
+.model-price-picker { display: grid; gap: 8px; max-width: 520px; color: var(--text-2); font-size: .82rem; }
+.model-price-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, .85fr); gap: 18px 24px; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.model-price-model { min-width: 0; align-self: start; display: grid; gap: 6px; }
+.model-price-model strong { font-size: 1.02rem; line-height: 1.4; overflow-wrap: anywhere; }
+.model-price-model span, .model-price-state { color: var(--text-2); font-size: .8rem; }
+.model-price-row.is-unconfigured .model-price-model span { color: var(--text-2); }
+.model-price-discovery { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.model-price-discovery > span { color: var(--text-2); font-size: .78rem; overflow-wrap: anywhere; }
+.model-price-discovery > span[role="alert"] { color: var(--danger, #b84b4b); }
+.model-price-suggestion { display: grid; gap: 8px; width: 100%; padding: 10px 12px; box-sizing: border-box; border-left: 2px solid var(--accent); background: var(--surface-2); font-size: .8rem; }
+.model-price-suggestion span { line-height: 1.5; overflow-wrap: anywhere; }
+.model-price-suggestion button { justify-self: start; }
+.model-price-fields { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding-top: 18px; border-top: 1px solid var(--line); }
+.model-price-fields label { display: grid; gap: 7px; color: var(--text-2); font-size: .82rem; }
+.model-price-fields input, .model-price-fields select { width: 100%; box-sizing: border-box; min-height: 44px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); color: var(--text); font: inherit; }
+.model-price-fields input:focus-visible, .model-price-fields select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.model-price-actions { grid-column: 1 / -1; display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.model-price-actions > .btn { min-width: 120px; min-height: 44px; }
+.model-price-history { display: grid; gap: 5px; min-width: 0; }
+.model-price-history strong { font-size: .86rem; }
+.model-price-history span { color: var(--text-2); font-size: .78rem; line-height: 1.5; }
+.model-price-sync { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: .86rem; cursor: pointer; }
+.model-price-sync input { width: 18px; height: 18px; accent-color: var(--accent); }
+.model-price-success { grid-column: 1 / -1; margin: 0; color: var(--accent); font-size: .82rem; }
 .model-price-row > .model-platform-error { grid-column: 1 / -1; margin: 0; }
-@media (max-width: 900px) { .model-price-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } .model-price-model, .model-price-discovery, .model-price-actions, .model-price-success, .model-price-row > .model-platform-error { grid-column: 1 / -1; } .model-price-discovery, .model-price-actions { justify-content: space-between; } }
+@media (max-width: 780px) { .model-price-row { grid-template-columns: minmax(0, 1fr); } .model-price-discovery { grid-column: 1; } }
+@media (max-width: 600px) { .model-price-row { padding: 16px; } .model-price-fields { grid-template-columns: minmax(0, 1fr); } .model-price-actions { align-items: stretch; flex-direction: column; } .model-price-actions > .btn { width: 100%; } }
 .model-name-trigger { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 44px; padding: 10px 12px; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
 .model-name-trigger > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-name-trigger:disabled { opacity: .5; cursor: default; }
