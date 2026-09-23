@@ -15,7 +15,7 @@ import { newStoryRequestId, readStoryDraft, saveStoryDraft, type StoryDraftStatu
 
 export default function StorySimulationPage() {
   const navigate = useNavigate();
-  const { generation, start, dismiss, discardUnsaved, consumeCompleted } = useStoryGeneration();
+  const { generation, start, dismiss, discardUnsaved, retryUnsaved, consumeCompleted } = useStoryGeneration();
   const [loadedDraft] = useState(readStoryDraft);
   const [values, setValues] = useState(loadedDraft.values);
   const [draftStatus, setDraftStatus] = useState<StoryDraftStatus | 'saving'>(loadedDraft.status);
@@ -26,7 +26,7 @@ export default function StorySimulationPage() {
   const draftStatusRef = useRef<StoryDraftStatus>(loadedDraft.status);
   const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const lastQueuedValuesRef = useRef<string | null>(
-    (generation.phase === 'running' || generation.phase === 'success')
+    (generation.phase === 'running' || generation.phase === 'success' || Boolean(generation.unsavedText))
       && generation.requestId === loadedDraft.values.request_id
       && loadedDraft.status === 'saved'
       ? JSON.stringify(loadedDraft.values) : null,
@@ -197,7 +197,7 @@ export default function StorySimulationPage() {
       {values.request_id && !generating && requestStateQuery.isError && <InlineQueryError
         message="本次创作结果读取失败" error={requestStateQuery.error} retrying={requestStateQuery.isFetching}
         onRetry={() => { void requestStateQuery.refetch(); }} />}
-      {recovered?.status === 'draft' && <section className="page-card" aria-label="待保存的小说正文">
+      {!generation.unsavedText && recovered?.status === 'draft' && <section className="page-card" aria-label="待保存的小说正文">
         <div className="card-header"><h2>{recovered.title || '小说正文已就绪'}</h2><span>{recovered.chapter_count} 章</span></div>
         <p>正文已保留，继续保存会直接创建会话。</p>
         <WorldResultText key={recovered.request_id} text={recovered.text || ''} label="小说正文" />
@@ -206,17 +206,27 @@ export default function StorySimulationPage() {
           <button type="button" className="btn btn-ghost" disabled={preparing || generating || discardMutation.isPending} onClick={() => { void discardRecoveredDraft(); }}>放弃正文</button>
         </div>
       </section>}
-      {recovered?.status === 'saved' && recovered.session_id && <section className="page-card" aria-label="已保存的创作会话">
+      {!generation.unsavedText && recovered?.status === 'saved' && recovered.session_id && <section className="page-card" aria-label="已保存的创作会话">
         <h2>{recovered.title || '本次创作已保存'}</h2>
         <button type="button" className="btn btn-primary" disabled={preparing || generating} onClick={() => { handleSubmit(); }}>打开已保存会话</button>
       </section>}
       {generation.unsavedText && <section className="page-card" aria-label="未保存的小说正文">
         <div className="card-header"><h2>正文已生成，但尚未写入会话</h2></div>
         <p>{generation.unsavedLocal
-          ? '正文已暂存在此浏览器。请先复制全文；数据库恢复后可以重新创作。'
+          ? generation.unsavedRecovery
+            ? '正文已暂存在此浏览器。数据库恢复后可直接继续保存，不会再次生成；也可以先复制全文。'
+            : '正文已暂存在此浏览器。请先复制全文。'
           : '浏览器暂存也未成功，正文目前只在此页面。请立即复制全文，关闭页面会丢失。'}</p>
         <WorldResultText text={generation.unsavedText} label="未保存的小说正文" />
-        <button type="button" className="btn btn-ghost" onClick={() => { void discardUnsavedResult(); }}>已复制，清除这份正文</button>
+        <div className="world-result-text-actions">
+          {generation.unsavedRecovery && <button type="button" className="btn btn-primary"
+            disabled={generation.savingUnsaved}
+            onClick={() => { void retryUnsaved().then((sessionId) => { if (sessionId) navigate(`/chat/${sessionId}`); }); }}>
+            {generation.savingUnsaved ? '正在保存…' : '继续保存这篇正文'}
+          </button>}
+          <button type="button" className="btn btn-ghost" disabled={generation.savingUnsaved}
+            onClick={() => { void discardUnsavedResult(); }}>已复制，清除这份正文</button>
+        </div>
       </section>}
       {['unavailable', 'conflict', 'unreadable'].includes(draftStatus) && (
         <section className="page-card" role="status" aria-label="草稿保存状态">

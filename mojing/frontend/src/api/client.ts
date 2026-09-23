@@ -63,12 +63,14 @@ import type {
   StoryWritingPayload,
   StoryWritingResult,
   StoryRequestState,
+  GeneratedStoryRecovery,
 } from '../types';
 
 import { friendlyFetchError } from '../utils/userFacingError';
 
 export class GeneratedStoryNotSavedError extends Error {
-  constructor(message: string, readonly requestId: string, readonly text: string) {
+  constructor(message: string, readonly requestId: string, readonly text: string,
+    readonly recovery?: GeneratedStoryRecovery) {
     super(message);
     this.name = 'GeneratedStoryNotSavedError';
   }
@@ -141,16 +143,25 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    if (path === '/story-simulations' && response.status === 503 && payload && typeof payload === 'object') {
+    if ((path === '/story-simulations' || path.endsWith('/save-generated'))
+      && response.status === 503 && payload && typeof payload === 'object') {
       const generated = (payload as { generated_story?: unknown }).generated_story;
       if (generated && typeof generated === 'object'
         && typeof (generated as { request_id?: unknown }).request_id === 'string'
         && typeof (generated as { text?: unknown }).text === 'string'
         && (generated as { text: string }).text.trim()) {
+        const details = generated as Partial<GeneratedStoryRecovery>;
+        const recovery = details.version === 1
+          && details.payload && typeof details.payload === 'object'
+          && details.payload.request_id === details.request_id
+          && details.draft_json && typeof details.draft_json === 'object'
+          && typeof details.context_text === 'string'
+          ? details as GeneratedStoryRecovery : undefined;
         throw new GeneratedStoryNotSavedError(
           formatApiErrorPayload(payload, response.status),
           (generated as { request_id: string }).request_id,
           (generated as { text: string }).text,
+          recovery,
         );
       }
     }
@@ -380,6 +391,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
       signal,
+    });
+  },
+  saveGeneratedStory(recovery: GeneratedStoryRecovery) {
+    return request<StoryWritingResult>(`/story-simulations/requests/${encodeURIComponent(recovery.request_id)}/save-generated`, {
+      method: 'POST', body: JSON.stringify({ version: recovery.version, payload: recovery.payload, text: recovery.text,
+        draft_json: recovery.draft_json, context_text: recovery.context_text }),
     });
   },
   getModelPrices(platformId: string) {

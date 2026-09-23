@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import sessionmaker
 
 from backend.app.database import Base, get_db
@@ -149,10 +149,42 @@ def test_draft_and_session_write_failure_returns_finished_text(local_app, monkey
     assert response.json()["generated_story"]["request_id"] == body["request_id"]
     assert "钟声穿过雾港" in response.json()["generated_story"]["text"]
     assert "门后传来脚步" in response.json()["generated_story"]["text"]
+    recovery = response.json()["generated_story"]
+    assert recovery["version"] == 1
+    assert recovery["payload"]["premise"] == body["premise"]
+    assert len(recovery["draft_json"]["chapters"]) == body["chapter_count"]
+    recovery_body = {
+        "version": recovery["version"], "payload": recovery["payload"], "text": recovery["text"],
+        "draft_json": recovery["draft_json"], "context_text": recovery["context_text"],
+    }
     assert client.calls == 1
     with Session() as db:
         assert db.scalar(select(ChatSessionModel)) is None
         assert db.scalar(select(StoryGenerationDraftModel)) is None
+    with TestClient(app) as http:
+        retry = http.post(f"/api/story-simulations/requests/{body['request_id']}/save-generated", json=recovery_body)
+        assert retry.status_code == 503
+        assert retry.json()["generated_story"]["text"] == recovery["text"]
+        mismatch = http.post("/api/story-simulations/requests/different/save-generated", json=recovery_body)
+        assert mismatch.status_code == 409
+        changed_text = http.post(f"/api/story-simulations/requests/{body['request_id']}/save-generated",
+                                 json={**recovery_body, "text": "不同的正文"})
+        assert changed_text.status_code == 409
+
+    with Session() as db:
+        db.execute(text("DROP TRIGGER reject_story_session"))
+        db.commit()
+    with TestClient(app) as http:
+        saved = http.post(f"/api/story-simulations/requests/{body['request_id']}/save-generated", json=recovery_body)
+        assert saved.status_code == 200
+        repeated = http.post(f"/api/story-simulations/requests/{body['request_id']}/save-generated", json=recovery_body)
+        assert repeated.json() == saved.json()
+    assert client.calls == 1
+    with Session() as db:
+        assert db.scalar(select(func.count()).select_from(ChatSessionModel)) == 1
+        chapters = list(db.scalars(select(MessageModel).where(MessageModel.speaker_type == "narrator")))
+        assert len(chapters) == body["chapter_count"]
+        assert "门后传来脚步" in chapters[-1].content
 
 
 def test_explicit_delete_removes_only_draft_and_is_idempotent(local_app):

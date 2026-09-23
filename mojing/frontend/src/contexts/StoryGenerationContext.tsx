@@ -2,8 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { useQueryClient } from '@tanstack/react-query';
 import { Link, useBeforeUnload, useLocation, useNavigate } from 'react-router-dom';
 import { api, GeneratedStoryNotSavedError } from '../api/client';
-import type { StoryWritingPayload } from '../types';
-import { clearSubmittedStoryDraft } from '../utils/storyDraftStorage';
+import type { GeneratedStoryRecovery, StoryWritingPayload } from '../types';
+import { clearSubmittedStoryDraft, readStoryDraft } from '../utils/storyDraftStorage';
 import { clearUnsavedGeneratedStory, readUnsavedGeneratedStory, saveUnsavedGeneratedStory } from '../utils/generatedStoryStorage';
 import { isAbortError } from '../utils/userFacingError';
 import './StoryGenerationContext.css';
@@ -20,6 +20,8 @@ type StoryGenerationState = {
   stopping: boolean;
   unsavedText?: string;
   unsavedLocal?: boolean;
+  unsavedRecovery?: GeneratedStoryRecovery;
+  savingUnsaved?: boolean;
 };
 
 const idleState: StoryGenerationState = {
@@ -32,6 +34,7 @@ type StoryGenerationContextValue = {
   stop: () => void;
   dismiss: () => void;
   discardUnsaved: () => void;
+  retryUnsaved: () => Promise<number | null>;
   consumeCompleted: (requestId: string) => Promise<number | null>;
 };
 
@@ -44,12 +47,13 @@ export function StoryGenerationProvider({ children }: { children: ReactNode }) {
     return recovered ? {
       ...idleState, phase: 'error', requestId: recovered.requestId,
       error: '正文已生成，但数据库未保存。请先复制全文。',
-      unsavedText: recovered.text, unsavedLocal: true,
+      unsavedText: recovered.text, unsavedLocal: true, unsavedRecovery: recovered.recovery,
     } : idleState;
   });
   const generationRef = useRef(generation);
   const controllerRef = useRef<AbortController | null>(null);
   const consumingRef = useRef(false);
+  const retryingUnsavedRef = useRef(false);
 
   const updateGeneration = useCallback((next: StoryGenerationState) => {
     generationRef.current = next;
@@ -74,9 +78,11 @@ export function StoryGenerationProvider({ children }: { children: ReactNode }) {
       } catch (reason) {
         if (controllerRef.current !== controller) return;
         if (reason instanceof GeneratedStoryNotSavedError && reason.requestId === payload.request_id) {
-          const unsavedLocal = saveUnsavedGeneratedStory({ requestId: reason.requestId, text: reason.text });
+          const unsavedLocal = saveUnsavedGeneratedStory({
+            requestId: reason.requestId, text: reason.text, recovery: reason.recovery,
+          });
           updateGeneration({ ...running, phase: 'error', error: reason.message,
-            unsavedText: reason.text, unsavedLocal });
+            unsavedText: reason.text, unsavedLocal, unsavedRecovery: reason.recovery });
           return;
         }
         updateGeneration(isAbortError(reason)
@@ -102,10 +108,43 @@ export function StoryGenerationProvider({ children }: { children: ReactNode }) {
 
   const discardUnsaved = useCallback(() => {
     const current = generationRef.current;
-    if (controllerRef.current || !current.unsavedText || !current.requestId) return;
+    if (controllerRef.current || current.savingUnsaved || !current.unsavedText || !current.requestId) return;
     clearUnsavedGeneratedStory(current.requestId);
     updateGeneration(idleState);
   }, [updateGeneration]);
+
+  const retryUnsaved = useCallback(async (): Promise<number | null> => {
+    const current = generationRef.current;
+    if (retryingUnsavedRef.current || !current.requestId || !current.unsavedRecovery) return null;
+    retryingUnsavedRef.current = true;
+    updateGeneration({ ...current, savingUnsaved: true, error: '' });
+    try {
+      const result = await api.saveGeneratedStory(current.unsavedRecovery);
+      clearUnsavedGeneratedStory(current.requestId);
+      const input = readStoryDraft();
+      if (input.values.request_id === current.requestId && typeof input.raw === 'string') {
+        await clearSubmittedStoryDraft(input.raw);
+      }
+      updateGeneration({ ...current, phase: 'success', sessionId: result.session_id,
+        unsavedText: undefined, unsavedRecovery: undefined, unsavedLocal: undefined,
+        savingUnsaved: false, error: '' });
+      void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      return result.session_id;
+    } catch (reason) {
+      const recovered = reason instanceof GeneratedStoryNotSavedError
+        && reason.requestId === current.requestId && reason.recovery ? reason.recovery : current.unsavedRecovery;
+      const text = reason instanceof GeneratedStoryNotSavedError
+        && reason.requestId === current.requestId ? reason.text : current.unsavedText;
+      const unsavedLocal = text ? saveUnsavedGeneratedStory({
+        requestId: current.requestId, text, recovery: recovered,
+      }) : current.unsavedLocal;
+      updateGeneration({ ...current, phase: 'error', error: reason instanceof Error ? reason.message : '保存正文失败，请重试',
+        unsavedText: text, unsavedRecovery: recovered, unsavedLocal, savingUnsaved: false });
+      return null;
+    } finally {
+      retryingUnsavedRef.current = false;
+    }
+  }, [queryClient, updateGeneration]);
 
   const consumeCompleted = useCallback(async (requestId: string) => {
     const current = generationRef.current;
@@ -129,7 +168,7 @@ export function StoryGenerationProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => () => { controllerRef.current?.abort(); }, []);
 
-  return <StoryGenerationContext.Provider value={{ generation, start, stop, dismiss, discardUnsaved, consumeCompleted }}>{children}</StoryGenerationContext.Provider>;
+  return <StoryGenerationContext.Provider value={{ generation, start, stop, dismiss, discardUnsaved, retryUnsaved, consumeCompleted }}>{children}</StoryGenerationContext.Provider>;
 }
 
 export function useStoryGeneration(): StoryGenerationContextValue {
@@ -148,7 +187,8 @@ export function StoryGenerationStatus() {
     const sessionId = await consumeCompleted(generation.requestId);
     if (sessionId) navigate(`/chat/${sessionId}`);
   };
-  const title = generation.phase === 'running'
+  const title = generation.savingUnsaved ? '正在保存正文'
+    : generation.phase === 'running'
     ? (generation.stopping ? '正在停止写作' : `正在写作 · ${generation.chapterCount} 章`)
     : generation.phase === 'success' ? '小说已生成'
       : generation.phase === 'stopped' ? '本次生成已停止' : generation.unsavedText ? '正文尚未保存' : '小说生成失败';

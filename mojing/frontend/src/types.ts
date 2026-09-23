@@ -40,6 +40,19 @@ export type StoryWritingResult = {
   status: 'created';
 };
 
+export type GeneratedStoryRecovery = {
+  version: 1;
+  request_id: string;
+  text: string;
+  payload: StoryWritingPayload;
+  draft_json: {
+    title: string;
+    chapters: { number: number; title: string; content: string }[];
+    next_choices: string[];
+  };
+  context_text: string;
+};
+
 export type UsagePeriod = { days: number; since: string; until: string };
 export type UsageTotals = {
   cost_usd: number | null;

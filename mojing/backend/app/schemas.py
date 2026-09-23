@@ -923,6 +923,14 @@ class StoryWritingResult(BaseModel):
     status: Literal["created"] = "created"
 
 
+class StoryGeneratedRecoveryRequest(BaseModel):
+    version: Literal[1]
+    payload: StoryWritingRequest
+    text: str
+    draft_json: dict
+    context_text: str
+
+
 class StoryGenerationRequestStatus(BaseModel):
     status: Literal["missing", "draft", "saved"]
     request_id: str
