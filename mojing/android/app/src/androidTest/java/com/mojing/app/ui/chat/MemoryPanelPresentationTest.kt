@@ -28,6 +28,7 @@ class MemoryPanelPresentationTest {
                         promptTrace = null, currentBranchId = "main", isGenerating = false,
                         onRebuildContextMemory = {}, onClearContextMemory = {}, onJumpToSource = {},
                         onAddCorrection = { _, _ -> }, onEditCorrection = {}, onDeleteCorrection = {},
+                        onContinueStorySummary = {}, onStopStorySummary = {},
                     )
                 }
             }

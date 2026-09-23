@@ -29,7 +29,7 @@ class ChatDrawerNavigationTest {
             MaterialTheme {
                 ChatDrawer(
                     participants = emptyList(), world = world,
-                    onJumpToBookmark = {}, onRemoveBookmark = {}, onToggleMute = {},
+                    onJumpToBookmark = {}, onRemoveBookmark = {}, onLoadMoreBookmarks = {}, onToggleMute = {},
                     onUpdateTalkativeness = { _, _, done -> done(true) },
                     onRemoveParticipant = {}, onAddParticipant = {},
                     onSpeakerTurnModeChange = {}, onClose = {},
@@ -41,6 +41,7 @@ class ChatDrawerNavigationTest {
                     onJumpToMemorySource = {}, onAddMemoryCorrection = { _, _ -> },
                     onEditMemoryCorrection = {}, onDeleteMemoryCorrection = {},
                     onRebuildContextMemory = {}, onClearContextMemory = {},
+                    onContinueStorySummary = {}, onStopStorySummary = {},
                     onSessionThinkMax = {},
                 )
             }
