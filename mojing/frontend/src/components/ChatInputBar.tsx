@@ -20,6 +20,8 @@ interface ChatInputBarProps {
   errorMessage?: string;
   retryReplyAvailable?: boolean;
   onRetryReply?: () => void;
+  onRefreshReplies?: () => void;
+  refreshingReplies?: boolean;
   onSend: (event: FormEvent) => void;
   onStop: () => void;
   onQuickAction: (actionName: string, returnFocusTarget?: HTMLElement | null) => void;
@@ -40,7 +42,7 @@ interface ChatInputBarProps {
 export default function ChatInputBar({
   input, setInput, files, setFiles, fileUrls, submittingFiles = [],
   isGenerating, isPending, isError, errorMessage,
-  retryReplyAvailable, onRetryReply,
+  retryReplyAvailable, onRetryReply, onRefreshReplies, refreshingReplies = false,
   onSend, onStop, onQuickAction, quickActionPendingLabel, canCreateEntryFromMessage,
   settingConflictHint,
   quotingPreview, quotingAuthor, onClearQuote, onRequestNarrator, narratorEnabled, inputPlaceholder, narratorActionLabel,
@@ -400,7 +402,12 @@ export default function ChatInputBar({
         )}
         {retryReplyAvailable && onRetryReply && (
           <div className="chat-inputbar-error chat-inputbar-retry">
-            <span>回复未完成；请先核对对话中已保存的内容。</span>
+            <span>回复未完成。停止后服务端可能仍在保存正文，请先核对对话记录。</span>
+            {onRefreshReplies && (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={onRefreshReplies} disabled={refreshingReplies || isGenerating || isPending}>
+                {refreshingReplies ? '正在读取…' : '重新读取对话'}
+              </button>
+            )}
             <button type="button" className="btn btn-sm" onClick={onRetryReply} disabled={isGenerating || isPending}>
               再生成一条回复
             </button>

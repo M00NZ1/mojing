@@ -7,9 +7,11 @@ from pathlib import Path
 from urllib.parse import quote
 from uuid import uuid4
 
+import anyio
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
+from starlette.concurrency import iterate_in_threadpool
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -93,6 +95,36 @@ from ..services.model_platform_service import (
 router = APIRouter(prefix="/sessions", tags=["会话"])
 BACKUP_ACTION_HEADER = "portable-backup-v1"
 CHAT_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+class _ClosingStreamingResponse(StreamingResponse):
+    """Close the sync SSE generator when its client disconnects.
+
+    Starlette's threadpool adapter stops iterating on disconnect, but does not
+    close the underlying sync generator. Its finally blocks save interrupted
+    replies and release the model stream, so they must run before returning.
+    """
+
+    def __init__(self, content, **kwargs):
+        self._sync_content = content
+        super().__init__(self._iterate_closing(), **kwargs)
+
+    async def _iterate_closing(self):
+        try:
+            async for chunk in iterate_in_threadpool(self._sync_content):
+                yield chunk
+        finally:
+            await self._close_content()
+
+    async def _close_content(self):
+        with anyio.CancelScope(shield=True):
+            await anyio.to_thread.run_sync(self._sync_content.close)
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            await self._close_content()
 
 
 def _raise_branch_http_error(exc: BranchContextError) -> None:
@@ -1074,7 +1106,7 @@ def generate_stream(session_id: int, payload: GenerateRequest, db: Session = Dep
             trigger_memory_compaction_async(session_id, branch_id)
             yield sse_event({"type": "done"})
 
-        return StreamingResponse(narrator_only_stream(), media_type="text/event-stream")
+        return _ClosingStreamingResponse(narrator_only_stream(), media_type="text/event-stream")
 
     if payload.auto_select_speakers:
         target_ids, plan_reason = select_speakers_for_turn(
@@ -1103,7 +1135,7 @@ def generate_stream(session_id: int, payload: GenerateRequest, db: Session = Dep
             yield sse_event({"type": "session", "session_id": session_id})
             yield sse_event({"type": "error", "message": "当前会话还没有绑定人物，请先在角色页添加角色到会话中。"})
             yield sse_event({"type": "done"})
-        return StreamingResponse(empty_error_stream(), media_type="text/event-stream")
+        return _ClosingStreamingResponse(empty_error_stream(), media_type="text/event-stream")
 
     def event_stream():
         yield sse_event({"type": "session", "session_id": session_id})
@@ -1123,7 +1155,7 @@ def generate_stream(session_id: int, payload: GenerateRequest, db: Session = Dep
         trigger_memory_compaction_async(session_id, branch_id)
         yield sse_event({"type": "done"})
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return _ClosingStreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.get("/{session_id}/bookmarks", summary="获取收藏列表")

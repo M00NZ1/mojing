@@ -347,6 +347,52 @@ def test_stream_route_close_releases_active_reply(monkeypatch):
     assert closed == [True]
 
 
+def test_client_disconnect_closes_route_and_saves_received_reply(monkeypatch):
+    provider_closed = []
+
+    def chunks():
+        try:
+            delta = SimpleNamespace(content="<SPEECH>已收到。")
+            yield SimpleNamespace(choices=[SimpleNamespace(delta=delta)], usage=None)
+            yield SimpleNamespace(choices=[], usage=None)
+        finally:
+            provider_closed.append(True)
+
+    db, _, saved, recorded = _interrupted_stream_fixture(monkeypatch, narrator=False, response=chunks())
+    route_db = FakeDb(None, SimpleNamespace(id=3), None)
+    monkeypatch.setattr(session_routes, "get_model_choice", lambda *args: {"selection": None})
+    monkeypatch.setattr(session_routes, "resolve_branch_context", lambda *args: None)
+    response = session_routes.generate_stream(
+        3, GenerateRequest(character_ids=[7], branch_id="story-a"), route_db,
+    )
+
+    async def disconnect_after_delta():
+        delta_sent = asyncio.Event()
+
+        async def receive():
+            await delta_sent.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            if message["type"] == "http.response.body" and b'"type": "delta"' in message.get("body", b""):
+                delta_sent.set()
+                await asyncio.Event().wait()
+
+        await asyncio.wait_for(
+            response({"type": "http", "asgi": {"version": "3.0"}}, receive, send),
+            timeout=3,
+        )
+
+    asyncio.run(disconnect_after_delta())
+    assert len(saved) == 1
+    assert saved[0]["content"] == "已收到。"
+    assert saved[0]["branch_id"] == "story-a"
+    assert saved[0]["structured_content"]["interrupted"] is True
+    assert recorded[0]["success"] is False
+    assert provider_closed == [True]
+    assert db.closed is True
+
+
 def test_interrupted_reply_commits_to_isolated_database(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'partial.db'}")
     Base.metadata.create_all(engine)

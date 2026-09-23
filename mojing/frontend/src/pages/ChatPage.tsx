@@ -1886,6 +1886,8 @@ export default function ChatPage() {
           errorMessage={sendMutation.error?.message}
           retryReplyAvailable={retryReplyBranchId === selectedBranchId}
           onRetryReply={retryLastReply}
+          onRefreshReplies={() => { void reloadMessages(); }}
+          refreshingReplies={messagesLoading}
           onSend={handleSend}
           onStop={() => { abortRef.current?.abort(); }}
           onQuickAction={handleQuickAction}
