@@ -38,7 +38,6 @@ export default function MessageSearchPanel({ sessionId, branchId, value, onChang
   const scope = `${sessionId}:${branchId}:${query}`;
   const [navigation, setNavigation] = useState<{ scope: string; cursors: (number | undefined)[] }>({ scope: '', cursors: [undefined] });
   const [indexPaused, setIndexPaused] = useState(false);
-  const [knownTotal, setKnownTotal] = useState<{ scope: string; count: number } | null>(null);
   const cursors = navigation.scope === scope ? navigation.cursors : [undefined];
   const listRef = useRef<HTMLUListElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -52,6 +51,11 @@ export default function MessageSearchPanel({ sessionId, branchId, value, onChang
     queryFn: ({ signal }) => api.searchMessagePage(sessionId, query, branchId, cursors[cursors.length - 1], signal, !indexPaused),
     enabled: Number.isFinite(sessionId) && query.length > 0 && !stale,
     refetchInterval: (state) => !stale && !indexPaused && state.state.status !== 'error' && state.state.data && !state.state.data.index.ready ? 300 : false,
+    retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false, gcTime: 30_000 });
+  const count = useQuery({ queryKey: ['session-message-search', sessionId, branchId, query, 'total'],
+    queryFn: ({ signal }) => api.searchMessageCount(sessionId, query, branchId, signal),
+    enabled: search.data?.index.ready === true && !stale,
+    refetchInterval: (state) => state.state.status !== 'error' && state.state.data === null ? 300 : false,
     retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false, gcTime: 30_000 });
   useEffect(() => {
     const key = `mojing:message-search-history:${sessionId}:${branchId}`;
@@ -74,23 +78,18 @@ export default function MessageSearchPanel({ sessionId, branchId, value, onChang
     onClose?.();
   }, [rememberQuery, value, onClose]);
   const rebuilding = useMutation({ mutationFn: () => api.rebuildMessageSearchIndex(sessionId), onSuccess: () => {
-    setIndexPaused(false); setKnownTotal(null); setNavigation({ scope, cursors: [undefined] });
+    setIndexPaused(false); setNavigation({ scope, cursors: [undefined] });
     void client.invalidateQueries({ queryKey: ['session-message-search'] });
   } });
   const progress = search.data?.index;
-  useEffect(() => {
-    if (progress?.ready && typeof search.data?.total_count === 'number')
-      setKnownTotal({ scope, count: search.data.total_count });
-  }, [scope, progress?.ready, search.data?.total_count]);
   const selectedPageIndex = selectedHit ? search.data?.items.findIndex((hit) => hit.id === selectedHit.id) : undefined;
   const selectedPosition = selectedPageIndex !== undefined && selectedPageIndex >= 0
     ? (cursors.length - 1) * 25 + selectedPageIndex + 1 : null;
-  const totalCount = progress?.ready
-    ? typeof search.data?.total_count === 'number' ? search.data.total_count : knownTotal?.scope === scope ? knownTotal.count : null
-    : null;
+  const totalCount = progress?.ready && typeof count.data === 'number' ? count.data : null;
   const readingCount = selectedPosition !== null && totalCount !== null
     ? `第 ${selectedPosition} / ${totalCount} 条命中`
-    : selectedPosition !== null ? `本页第 ${selectedPosition - (cursors.length - 1) * 25} 条 · 索引未完成`
+    : selectedPosition !== null && progress?.ready ? `第 ${selectedPosition} 条命中 · 总数${count.isError ? '暂不可用' : '整理中'}`
+      : selectedPosition !== null ? `本页第 ${selectedPosition - (cursors.length - 1) * 25} 条 · 索引未完成`
       : totalCount !== null ? `共 ${totalCount} 条命中` : '匹配数量整理中';
   useEffect(() => {
     if (!open) return;
@@ -118,7 +117,7 @@ export default function MessageSearchPanel({ sessionId, branchId, value, onChang
       <button type="button" className="btn btn-ghost btn-sm" onClick={onExitReading}>返回搜索结果</button>
       <button type="button" className="btn btn-ghost btn-sm" onClick={closeSearch} aria-label="关闭搜索">关闭</button>
     </div> : open && <div className="message-search-results" ref={resultsRef}>
-      <div className="message-search-heading"><span>当前故事线 · 最近在前</span><button type="button" className="btn btn-ghost btn-sm" disabled={search.isFetching || stale} onClick={() => void search.refetch()}>刷新搜索</button></div>
+      <div className="message-search-heading"><span>当前故事线 · 最近在前</span><button type="button" className="btn btn-ghost btn-sm" disabled={search.isFetching || stale} onClick={() => void client.invalidateQueries({ queryKey: ['session-message-search', sessionId, branchId, query] })}>刷新搜索</button></div>
       {!value.trim() && <div className="message-search-history" aria-label="最近搜索">
         <strong>最近搜索</strong>
         {recentQueries.length ? recentQueries.map((item) => <button type="button" className="message-search-history-item" key={item} onClick={() => { rememberQuery(item); onChange(item); }}>{item}</button>) : <p>暂无搜索记录</p>}
@@ -128,6 +127,7 @@ export default function MessageSearchPanel({ sessionId, branchId, value, onChang
       {progress && !progress.ready && <div className="message-search-index" role="status"><span>{indexPaused ? '索引已暂停' : '正在整理索引'} · 已处理 {progress.indexed_count} 条历史。完成后结果才完整。</span>
         <button type="button" className="btn btn-ghost btn-sm" disabled={stale} onClick={() => { setIndexPaused(!indexPaused); if (indexPaused) void search.refetch(); }}>{indexPaused ? '继续索引' : '暂停索引'}</button></div>}
       {!stale && search.isError && <InlineQueryError message="搜索失败" error={search.error} retrying={search.isFetching} onRetry={() => void search.refetch()} />}
+      {!stale && count.isError && <InlineQueryError message="命中总数读取失败，结果仍可浏览" error={count.error} retrying={count.isFetching} onRetry={() => void count.refetch()} />}
       {!stale && search.isSuccess && !search.data.items.length && <p>{progress?.ready ? '无匹配消息' : '已索引部分暂无匹配消息'}</p>}
       {locateFailure && !search.data?.items.some((hit) => hit.id === locateFailure.hit.id) && <InlineQueryError message="原文定位失败" error={locateFailure.message} retrying={locating} onRetry={() => onRetryLocate?.()} />}
       <ul ref={listRef}>{search.data?.items.map((hit) => <li key={hit.id}><button type="button" disabled={locating || stale} onClick={() => { rememberQuery(value); onSelect(hit); }}>

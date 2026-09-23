@@ -493,9 +493,14 @@ export const api = {
     return request<MessageWindowPage>(`/sessions/${sessionId}/messages/window?${search.toString()}`);
   },
   searchMessagePage(sessionId: number, query: string, branchId = 'main', before?: number, signal?: AbortSignal, advanceIndex = true) {
-    const search = new URLSearchParams({ q: query, branch_id: branchId, limit: '25', advance_index: String(advanceIndex), include_total: String(before === undefined) });
+    const search = new URLSearchParams({ q: query, branch_id: branchId, limit: '25', advance_index: String(advanceIndex), include_total: 'false' });
     if (before !== undefined) search.set('before', String(before));
     return request<{ items: MessageSearchHit[]; next_cursor: number | null; total_count: number | null; index: { ready: boolean; indexed_count: number } }>(`/sessions/${sessionId}/messages/search-page?${search}`, { signal });
+  },
+  async searchMessageCount(sessionId: number, query: string, branchId = 'main', signal?: AbortSignal) {
+    const search = new URLSearchParams({ q: query, branch_id: branchId, limit: '1', advance_index: 'true', include_total: 'true' });
+    const page = await request<{ total_count: number | null }>(`/sessions/${sessionId}/messages/search-page?${search}`, { signal });
+    return page.total_count;
   },
   rebuildMessageSearchIndex(sessionId: number) { return request(`/sessions/${sessionId}/messages/search-index/rebuild`, { method: 'POST' }); },
   searchMessages(sessionId: number, query: string, limit = 40, branchId = 'main') {

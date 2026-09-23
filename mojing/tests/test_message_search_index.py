@@ -297,6 +297,14 @@ def test_http_contract_and_errors_without_real_app_startup(store):
         assert response.status_code == 200, response.text
         assert ids(response.json()) == [expected]
         assert isinstance(response.json()['items'][0]['created_at'], str)
+        fast_page = client.get('/sessions/1/messages/search-page', params={'q': '雾港', 'include_total': False})
+        assert fast_page.status_code == 200
+        assert ids(fast_page.json()) == [expected]
+        assert fast_page.json()['total_count'] is None
+        count_page = client.get('/sessions/1/messages/search-page', params={
+            'q': '雾港', 'limit': 1, 'advance_index': True, 'include_total': True})
+        assert count_page.status_code == 200
+        assert count_page.json()['total_count'] == 1
         assert client.get('/sessions/999/messages/search-page', params={'q': '港'}).status_code == 404
         assert client.get('/sessions/1/messages/search-page', params={'q': '港', 'branch_id': 'bad'}).status_code == 400
         assert client.get('/sessions/1/messages/search-page', params={'q': '港' * 257}).status_code == 400
