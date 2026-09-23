@@ -363,6 +363,11 @@ export const api = {
   getModelPrices(platformId: string) {
     return request<ModelPricesResponse>(`/costs/prices?platform_id=${encodeURIComponent(platformId)}`);
   },
+  discoverModelPrice(platformId: string, modelName: string, signal?: AbortSignal) {
+    return request<ModelPrice>('/costs/prices/discover', {
+      method: 'POST', body: JSON.stringify({ platform_id: platformId, model_name: modelName }), signal,
+    });
+  },
   saveModelPrice(platformId: string, price: Omit<ModelPrice, 'source'> & { sync_history: boolean }) {
     return request<SavedModelPriceResponse>('/costs/prices', {
       method: 'PUT',

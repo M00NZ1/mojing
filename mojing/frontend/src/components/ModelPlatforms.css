@@ -87,6 +87,9 @@
 .model-price-model { min-width: 0; align-self: center; display: grid; gap: 5px; }
 .model-price-model strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .88rem; }
 .model-price-model span, .model-price-state { color: var(--text-2); font-size: .78rem; }
+.model-price-discovery { grid-column: 2 / -1; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; }
+.model-price-discovery span { color: var(--text-2); font-size: .78rem; overflow-wrap: anywhere; }
+.model-price-discovery span[role="alert"] { color: var(--danger, #b84b4b); }
 .model-price-row label { display: grid; gap: 6px; color: var(--text-2); font-size: .74rem; }
 .model-price-row input, .model-price-row select { width: 100%; box-sizing: border-box; min-height: 40px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2); color: var(--text); font: inherit; }
 .model-price-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: end; gap: 10px; }
@@ -94,7 +97,7 @@
 .model-price-sync input { width: auto; min-height: auto; }
 .model-price-success { grid-column: 1 / -1; margin: 0; color: var(--accent); font-size: .78rem; }
 .model-price-row > .model-platform-error { grid-column: 1 / -1; margin: 0; }
-@media (max-width: 900px) { .model-price-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } .model-price-model, .model-price-actions, .model-price-success, .model-price-row > .model-platform-error { grid-column: 1 / -1; } .model-price-actions { justify-content: space-between; } }
+@media (max-width: 900px) { .model-price-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } .model-price-model, .model-price-discovery, .model-price-actions, .model-price-success, .model-price-row > .model-platform-error { grid-column: 1 / -1; } .model-price-discovery, .model-price-actions { justify-content: space-between; } }
 .model-name-trigger { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 44px; padding: 10px 12px; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
 .model-name-trigger > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-name-trigger:disabled { opacity: .5; cursor: default; }

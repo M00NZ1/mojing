@@ -19,7 +19,16 @@ function PriceEditor({ platformId, models }: { platformId: string; models: strin
   const [drafts, setDrafts] = useState<Record<string, ModelPrice>>({});
   const [selectedModel, setSelectedModel] = useState(models[0] ?? '');
   const [syncHistory, setSyncHistory] = useState(false);
+  const lookupRef = useRef<AbortController | null>(null);
+  const [lookupModel, setLookupModel] = useState('');
+  const [lookupState, setLookupState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [lookupMessage, setLookupMessage] = useState('');
   useEffect(() => { if (!models.includes(selectedModel)) setSelectedModel(models[0] ?? ''); }, [models, selectedModel]);
+  useEffect(() => {
+    lookupRef.current?.abort();
+    setLookupState('idle'); setLookupMessage('');
+    return () => lookupRef.current?.abort();
+  }, [selectedModel]);
   const save = useMutation({
     mutationFn: ({ price, sync }: { price: ModelPrice; sync: boolean }) => api.saveModelPrice(platformId, { ...price, sync_history: sync }),
     onSuccess: (saved) => {
@@ -39,6 +48,24 @@ function PriceEditor({ platformId, models }: { platformId: string; models: strin
   const price = selectedModel ? priceFor(selectedModel) : null;
   const persistedConfigured = selectedModel ? isPersistedConfigured(selectedModel) : false;
   const saving = save.isPending && save.variables?.price.model_name === selectedModel;
+  async function lookupPrice() {
+    if (!selectedModel) return;
+    lookupRef.current?.abort();
+    const controller = new AbortController();
+    lookupRef.current = controller;
+    setLookupModel(selectedModel); setLookupState('loading'); setLookupMessage('');
+    try {
+      const found = await api.discoverModelPrice(platformId, selectedModel, controller.signal);
+      if (controller.signal.aborted) return;
+      setDrafts((current) => ({ ...current, [selectedModel]: found }));
+      setLookupState('ready'); setLookupMessage('已从平台读取价格，请确认后保存。');
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      setLookupState('error'); setLookupMessage(errorText(error));
+    } finally {
+      if (lookupRef.current === controller) lookupRef.current = null;
+    }
+  }
   return <section className="model-platform-editor-section model-price-editor" aria-labelledby="model-price-title">
     <div className="model-platform-section-heading"><h4 id="model-price-title">模型价格</h4><p>按每百万 Token 填写输入、输出与缓存输入价格。未配置时用量会显示费用未知。</p></div>
     {prices.isPending && <p role="status" className="model-price-state">正在读取价格…</p>}
@@ -49,6 +76,7 @@ function PriceEditor({ platformId, models }: { platformId: string; models: strin
         <div className="model-price-picker"><span>选择模型</span><ModelNamePicker models={models} value={selectedModel} onChange={(model) => { setSelectedModel(model); save.reset(); }} /></div>
         {price && <div className={`model-price-row${persistedConfigured ? '' : ' is-unconfigured'}`}>
           <div className="model-price-model"><strong>{selectedModel}</strong><span>{persistedConfigured ? `${price.currency} · 已配置` : (drafts[selectedModel] ? '有未保存价格草稿' : '尚未配置价格')}</span></div>
+          <div className="model-price-discovery"><button type="button" className="btn btn-sm" disabled={lookupState === 'loading' && lookupModel === selectedModel} onClick={() => { void lookupPrice(); }}>{lookupState === 'loading' && lookupModel === selectedModel ? '正在读取…' : '从平台读取价格'}</button>{lookupMessage && lookupModel === selectedModel && <span role={lookupState === 'error' ? 'alert' : 'status'}>{lookupMessage}</span>}</div>
           <label>币种<select value={price.currency} onChange={(e) => update(selectedModel, { currency: e.target.value })}><option value="USD">USD</option><option value="CNY">CNY</option></select></label>
           <label>输入 / 百万<input type="number" min="0" step="any" value={price.input_per_million} onChange={(e) => update(selectedModel, { input_per_million: Number(e.target.value) })} /></label>
           <label>输出 / 百万<input type="number" min="0" step="any" value={price.output_per_million} onChange={(e) => update(selectedModel, { output_per_million: Number(e.target.value) })} /></label>

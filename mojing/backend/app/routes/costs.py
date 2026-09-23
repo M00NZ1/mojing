@@ -32,6 +32,11 @@ class ModelPricePayload(BaseModel):
         return value
 
 
+class ModelPriceDiscoveryPayload(BaseModel):
+    platform_id: str = Field(..., min_length=1, max_length=120)
+    model_name: str = Field(..., min_length=1, max_length=120)
+
+
 @router.get("", summary="获取成本统计")
 def cost_summary(days: int = Query(30, ge=1, le=365), session_id: int | None = Query(None), db: Session = Depends(get_db)):
     return get_cost_summary(db, session_id=session_id, days=days)
@@ -49,6 +54,27 @@ def cost_prices(platform_id: str = Query(..., min_length=1, max_length=120), db:
          "cached_input_per_million": item.cached_input_per_million}
         for item in rows
     ]}
+
+
+@router.post("/prices/discover", summary="读取平台模型价格")
+async def discover_cost_price(payload: ModelPriceDiscoveryPayload, db: Session = Depends(get_db)):
+    from ..services.crypto_service import decrypt_api_key
+    from ..services.model_platform_service import get_catalog
+    from ..services.model_price_discovery import PriceDiscoveryError, PriceUnavailable, discover_model_price
+
+    platform = next((item for item in get_catalog(db)["platforms"] if item.get("id") == payload.platform_id), None)
+    if not platform or payload.model_name not in platform.get("models", []):
+        raise HTTPException(status_code=404, detail="平台或模型不存在，请先保存平台模型列表。")
+    key = decrypt_api_key(platform["api_key"])
+    if not key:
+        raise HTTPException(status_code=400, detail="当前平台尚未配置 Key。")
+    try:
+        price = await discover_model_price(platform["base_url"], key, payload.model_name)
+    except PriceUnavailable:
+        raise HTTPException(status_code=404, detail="平台未返回明确价格，请手动填写。") from None
+    except PriceDiscoveryError as exc:
+        raise HTTPException(status_code=502, detail=f"读取平台价格失败：{exc}；可手动填写。") from None
+    return {"platform_id": payload.platform_id, "model_name": payload.model_name, **price}
 
 
 @router.put("/prices", summary="保存模型价格")
