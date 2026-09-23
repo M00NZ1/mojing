@@ -88,6 +88,10 @@ fun ChatDrawer(
     sessionThinkMaxEnabled: Boolean = false,
     characterForcesThinkMax: Boolean = false,
     onSessionThinkMax: (Boolean) -> Unit,
+    memorySegmentsHasMore: Boolean = false,
+    memorySegmentsLoadingMore: Boolean = false,
+    memorySegmentsLoadError: String? = null,
+    onLoadMoreMemorySummaries: () -> Unit = {},
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     var pendingTab by remember { mutableStateOf<Int?>(null) }
@@ -155,6 +159,10 @@ fun ChatDrawer(
                 manualCompactionChunk,
                 onContinueStorySummary,
                 onStopStorySummary,
+                hasOlderSummaries = memorySegmentsHasMore,
+                olderSummariesLoading = memorySegmentsLoadingMore,
+                olderSummariesError = memorySegmentsLoadError,
+                onLoadOlderSummaries = onLoadMoreMemorySummaries,
             )
             3 -> TimelineTab(
                 eventNodes,
@@ -659,12 +667,16 @@ fun MemoryTab(
     manualCompactionChunk: Int? = null,
     onContinueStorySummary: () -> Unit,
     onStopStorySummary: () -> Unit,
+    hasOlderSummaries: Boolean = false,
+    olderSummariesLoading: Boolean = false,
+    olderSummariesError: String? = null,
+    onLoadOlderSummaries: () -> Unit = {},
 ) {
     var section by remember(currentBranchId) { mutableIntStateOf(0) }
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("长期记忆", "用户纠正 ${corrections.size}", "自动摘要 ${segments.size}").forEachIndexed { index, label ->
+            listOf("长期记忆", "用户纠正 ${corrections.size}", "自动摘要").forEachIndexed { index, label ->
                 FilterChip(selected = section == index, onClick = { section = index }, label = { Text(label) })
             }
         }
@@ -818,6 +830,12 @@ fun MemoryTab(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 4.dp),
                         )
+                        if (segments.isNotEmpty()) Text(
+                            "已显示 ${segments.size} 段${if (hasOlderSummaries) " · 可继续查看更早摘要" else ""}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -891,6 +909,17 @@ fun MemoryTab(
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+                    if (hasOlderSummaries || olderSummariesLoading || olderSummariesError != null) item {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            if (olderSummariesError != null) Text(olderSummariesError, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error)
+                            TextButton(onClick = onLoadOlderSummaries,
+                                enabled = !olderSummariesLoading && !isGenerating && !memoryOperationRunning,
+                                modifier = Modifier.heightIn(min = 48.dp)) {
+                                Text(if (olderSummariesLoading) "正在读取更早摘要…" else if (olderSummariesError != null) "重试读取" else "查看更早摘要")
                             }
                         }
                     }

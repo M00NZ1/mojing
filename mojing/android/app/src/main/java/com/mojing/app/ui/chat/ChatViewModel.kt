@@ -177,6 +177,7 @@ class ChatViewModel @Inject constructor(
         const val INITIAL_MESSAGE_WINDOW_SIZE = 80
         const val MESSAGE_PAGE_SIZE = 40
         const val BOOKMARK_PAGE_SIZE = 40
+        const val MEMORY_SEGMENT_PAGE_SIZE = 16
         const val MAX_MESSAGE_WINDOW_SIZE = 200
         const val SEARCH_RESULT_LIMIT = 100
         const val MODEL_CONTEXT_MESSAGE_LIMIT = 400
@@ -190,6 +191,7 @@ class ChatViewModel @Inject constructor(
     private val bookmarkMutex = Mutex()
     private val eventRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     private val correctionRefreshRevision = java.util.concurrent.atomic.AtomicLong()
+    private val memorySummaryListRevision = java.util.concurrent.atomic.AtomicLong()
     private var manualCompactionJob: Job? = null
     val state: StateFlow<ChatContract.State> = _state.asStateFlow()
     private var roundPlatform: com.mojing.app.data.ModelPlatform? = null
@@ -842,7 +844,7 @@ class ChatViewModel @Inject constructor(
         if (invalidRememberedBranch) {
             runCatching { uiPreferencesRepository.clearLastChatBranch(sessionId) }
         }
-        val memorySegments = memorySegmentDao.getRecentForBranch(sessionId, initialBranchId)
+        val memoryPage = memorySegmentDao.getRecentForBranch(sessionId, initialBranchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
         val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, initialBranchId)
         val eventNodes = eventNodeDao.getForBranch(sessionId, initialBranchId)
         val initialRows = getMessageTailForBranch(initialBranchId, INITIAL_MESSAGE_WINDOW_SIZE + 1)
@@ -875,7 +877,11 @@ class ChatViewModel @Inject constructor(
             participants = participants, world = world,
             encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world),
             contextMemoryText = universalContextMemoryManager.getFormattedMemory(sessionId, initialBranchId),
-            memorySegments = memorySegments, eventNodes = eventNodes, branches = branches,
+            memorySegments = memoryPage.take(MEMORY_SEGMENT_PAGE_SIZE),
+            memorySegmentsHasMore = memoryPage.size > MEMORY_SEGMENT_PAGE_SIZE,
+            memorySegmentsLoadingMore = false,
+            memorySegmentsLoadError = null,
+            eventNodes = eventNodes, branches = branches,
             memoryCorrections = memoryCorrections,
             currentBranchId = initialBranchId,
             roundChoiceOptions = roundChoices.options,
@@ -1316,7 +1322,7 @@ class ChatViewModel @Inject constructor(
         val displayCap = sess?.displayContextTokenLimit?.takeIf { it > 0 } ?: 1_000_000
         val convEst = msgs.filter { it.includeInContext && it.contextSelectionKey() !in excludedKeys }
             .sumOf { TokenCounter.estimateScaledPrefix(ConversationMessageText.forDerivedContext(it)) }
-        val memorySegments = memorySegmentDao.getRecentForBranch(sessionId, branchId)
+        val memoryPage = memorySegmentDao.getRecentForBranch(sessionId, branchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
         val contextMemoryText = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
         val encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world)
         val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, branchId)
@@ -1324,6 +1330,7 @@ class ChatViewModel @Inject constructor(
         val events = eventNodeDao.getForBranch(sessionId, branchId)
         bookmarkMutex.withLock {
             val bookmarkIds = bookmarkedIdsForWindow(msgs)
+            memorySummaryListRevision.incrementAndGet()
             _state.update { current -> current.copy(
             messages = msgs,
             excludedContextKeys = excludedKeys,
@@ -1342,7 +1349,10 @@ class ChatViewModel @Inject constructor(
             contextMemoryText = contextMemoryText,
             contextMemoryStatus = if (current.currentBranchId == branchId) current.contextMemoryStatus else ContextMemoryStatus.IDLE,
             encyclopediaFoundation = encyclopediaFoundation,
-            memorySegments = memorySegments,
+            memorySegments = memoryPage.take(MEMORY_SEGMENT_PAGE_SIZE),
+            memorySegmentsHasMore = memoryPage.size > MEMORY_SEGMENT_PAGE_SIZE,
+            memorySegmentsLoadingMore = false,
+            memorySegmentsLoadError = null,
             memoryCorrections = if (current.currentBranchId != branchId || correctionRefreshRevision.get() == correctionRevision)
                 memoryCorrections else current.memoryCorrections,
             roundChoiceOptions = roundChoices.options,
@@ -2134,8 +2144,7 @@ class ChatViewModel @Inject constructor(
             if (compacted) {
                 generation.ensureCurrent()
                 try {
-                    val segments = memorySegmentDao.getRecentForBranch(sessionId, branchId)
-                    _state.update { if (it.currentBranchId == branchId) it.copy(memorySegments = segments) else it }
+                    refreshMemorySummaryPage(branchId)
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { /* 摘要已保存，下一次正常消息刷新时重新读取。 */ }
             }
@@ -3710,6 +3719,42 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    private suspend fun refreshMemorySummaryPage(branchId: String) {
+        val page = memorySegmentDao.getRecentForBranch(sessionId, branchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
+        memorySummaryListRevision.incrementAndGet()
+        _state.update { state -> if (state.currentBranchId == branchId) state.copy(
+            memorySegments = page.take(MEMORY_SEGMENT_PAGE_SIZE),
+            memorySegmentsHasMore = page.size > MEMORY_SEGMENT_PAGE_SIZE,
+            memorySegmentsLoadingMore = false,
+            memorySegmentsLoadError = null,
+        ) else state }
+    }
+
+    fun loadMoreMemorySummaries() {
+        val current = _state.value
+        if (!current.isReady || current.isGenerating || current.memoryOperationRunning ||
+            !current.memorySegmentsHasMore || current.memorySegmentsLoadingMore) return
+        val branchId = current.currentBranchId
+        val tail = current.memorySegments.lastOrNull() ?: return
+        val revision = memorySummaryListRevision.get()
+        _state.update { it.copy(memorySegmentsLoadingMore = true, memorySegmentsLoadError = null) }
+        viewModelScope.launch {
+            try {
+                val page = memorySegmentDao.getOlderForBranch(sessionId, branchId, tail.endMessageId, tail.id, MEMORY_SEGMENT_PAGE_SIZE + 1)
+                _state.update { state ->
+                    if (memorySummaryListRevision.get() != revision || state.currentBranchId != branchId ||
+                        state.memorySegments.lastOrNull()?.id != tail.id) state
+                    else state.copy(
+                        memorySegments = (state.memorySegments + page.take(MEMORY_SEGMENT_PAGE_SIZE)).distinctBy { it.id },
+                        memorySegmentsHasMore = page.size > MEMORY_SEGMENT_PAGE_SIZE,
+                    )
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { _state.update { if (it.currentBranchId == branchId) it.copy(memorySegmentsLoadError = "较早摘要读取失败，请重试") else it } }
+            finally { _state.update { if (it.currentBranchId == branchId) it.copy(memorySegmentsLoadingMore = false) else it } }
+        }
+    }
+
     fun continueCurrentStorySummary(onDone: (String) -> Unit = {}) {
         if (_state.value.memoryOperationRunning || _state.value.isGenerating ||
             activeGeneration != null || branchTransitionJob?.isActive == true) return
@@ -3753,8 +3798,7 @@ class ChatViewModel @Inject constructor(
                     },
                 )
                 if (compacted) {
-                    val segments = memorySegmentDao.getRecentForBranch(sessionId, branchId)
-                    _state.update { if (it.currentBranchId == branchId) it.copy(memorySegments = segments) else it }
+                    refreshMemorySummaryPage(branchId)
                     onDone("当前故事线摘要已更新")
                 } else {
                     onDone("本轮整理尚未完成，可再次继续；原文不受影响")

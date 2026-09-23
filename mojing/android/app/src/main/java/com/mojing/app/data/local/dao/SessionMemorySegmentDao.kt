@@ -83,6 +83,22 @@ interface SessionMemorySegmentDao {
     }
 
     @Query("SELECT * FROM session_memory_segments WHERE sessionId = :sessionId AND branchId = 'main' " +
+        "AND (endMessageId < :beforeEndMessageId OR (endMessageId = :beforeEndMessageId AND id < :beforeId)) " +
+        "ORDER BY endMessageId DESC, id DESC LIMIT :limit")
+    suspend fun getOlderMain(sessionId: Long, beforeEndMessageId: Long, beforeId: Long, limit: Int): List<SessionMemorySegmentEntity>
+
+    @Query("$VISIBLE_MEMORY_SEGMENTS_QUERY AND (memory.endMessageId < :beforeEndMessageId " +
+        "OR (memory.endMessageId = :beforeEndMessageId AND memory.id < :beforeId)) " +
+        "ORDER BY memory.endMessageId DESC, memory.id DESC LIMIT :limit")
+    suspend fun getOlderVisible(sessionId: Long, branchId: String, beforeEndMessageId: Long, beforeId: Long, limit: Int): List<SessionMemorySegmentEntity>
+
+    suspend fun getOlderForBranch(sessionId: Long, branchId: String, beforeEndMessageId: Long, beforeId: Long, limit: Int): List<SessionMemorySegmentEntity> {
+        require(limit in 1..100)
+        return if (branchId == "main") getOlderMain(sessionId, beforeEndMessageId, beforeId, limit)
+        else getOlderVisible(sessionId, branchId, beforeEndMessageId, beforeId, limit)
+    }
+
+    @Query("SELECT * FROM session_memory_segments WHERE sessionId = :sessionId AND branchId = 'main' " +
         "AND endMessageId > :afterMessageId ORDER BY startMessageId ASC, endMessageId DESC, id ASC LIMIT :limit")
     suspend fun getMainCoverageAfter(sessionId: Long, afterMessageId: Long, limit: Int): List<SessionMemorySegmentEntity>
 
