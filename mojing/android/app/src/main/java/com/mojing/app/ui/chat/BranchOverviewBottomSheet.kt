@@ -89,10 +89,9 @@ fun BranchOverviewBottomSheet(
                 }
                 IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "关闭故事线") }
             }
-            if (searching) com.mojing.app.ui.common.MoJingTextField(
-                value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(),
-                singleLine = true, placeholder = { Text("搜索名称、来源或分叉内容") },
-                trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, "清除搜索") } },
+            if (searching) com.mojing.app.ui.common.SearchBar(
+                query = query, onQueryChange = { query = it }, modifier = Modifier.fillMaxWidth(),
+                placeholder = "搜索名称、来源或分叉内容", clearDescription = "清除搜索",
             )
             Text(
                 if (query.isBlank()) "${storyBranches.size + 1} 条 · 选择一条继续阅读与创作"

@@ -44,9 +44,7 @@ fun BranchSelector(
         title = { Text("选择故事线", style = MaterialTheme.typography.titleLarge) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(),
-                    placeholder = { Text("搜索故事线") }, leadingIcon = { Icon(Icons.Default.Search, null) },
-                    singleLine = true, shape = RoundedCornerShape(14.dp))
+                com.mojing.app.ui.common.SearchBar(query, { query = it }, placeholder = "搜索故事线")
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedButton(onClick = { onSelect("CREATE_NEW"); onDismiss() }) {
                         Icon(Icons.Default.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("新建")

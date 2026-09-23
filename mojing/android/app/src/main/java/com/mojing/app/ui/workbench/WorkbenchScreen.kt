@@ -421,16 +421,14 @@ fun WorkbenchScreen(
             }
             when (mainTab) {
                 WorkbenchMainTab.TEMPLATES -> {
-                    OutlinedTextField(
-                        value = templateSearch,
-                        onValueChange = { templateSearch = it },
+                    com.mojing.app.ui.common.SearchBar(
+                        query = templateSearch,
+                        onQueryChange = { templateSearch = it },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = MoJingListTokens.rowStart, vertical = 8.dp),
-                        singleLine = true,
-                        leadingIcon = { Icon(Icons.Default.Search, "搜索模板") },
-                        trailingIcon = if (templateSearch.isNotEmpty()) ({ IconButton(onClick = { templateSearch = "" }) { Icon(Icons.Default.Close, "清除搜索") } }) else null,
-                        placeholder = { Text("搜索名称、摘要或分类") }
+                        searchDescription = "搜索模板", clearDescription = "清除搜索",
+                        placeholder = "搜索名称、摘要或分类",
                     )
                     Text("${filteredTemplates.size} 个设定模板", Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

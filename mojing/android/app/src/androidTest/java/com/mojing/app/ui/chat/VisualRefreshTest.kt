@@ -114,6 +114,8 @@ class VisualRefreshTest {
                 }
             }
         }
+        rule.onNodeWithText("雾港").performClick().performImeAction()
+        rule.onNodeWithText("雾港").assertIsNotFocused()
         rule.onNodeWithContentDescription("清空搜索").performClick()
         rule.runOnIdle { assertTrue(query.isEmpty()) }
         rule.onNodeWithContentDescription("清空搜索").assertDoesNotExist()
