@@ -67,6 +67,7 @@ import type {
 } from '../types';
 
 import { friendlyFetchError } from '../utils/userFacingError';
+import { readChatEventStream } from '../utils/chatEventStream';
 
 export class GeneratedStoryNotSavedError extends Error {
   constructor(message: string, readonly requestId: string, readonly text: string,
@@ -1313,28 +1314,7 @@ export const api = {
       } catch { /* 解析失败时使用默认提示 */ }
       throw new Error(errorDetail);
     }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-      const blocks = buffer.split('\n\n');
-      buffer = blocks.pop() ?? '';
-
-      for (const block of blocks) {
-        const line = block.trim();
-        if (!line.startsWith('data:')) continue;
-        const json = line.slice(5).trim();
-        if (!json) continue;
-        onEvent(JSON.parse(json));
-      }
-
-      if (done) {
-        break;
-      }
-    }
+    await readChatEventStream(response.body.getReader(), onEvent);
   },
   getEncyclopediaEntry(entryId: number) {
     return request<EncyclopediaEntryDetail>(`/encyclopedia/entries/${entryId}`);
