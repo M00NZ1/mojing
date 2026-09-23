@@ -20,6 +20,32 @@ from ..models import (
 from ..services.llm_retry import safe_non_streaming_call
 
 
+MEMORY_INPUT_CHARS = 4000
+
+
+def _memory_input_chunks(messages: list[MessageModel]):
+    """Yield every source character with a speaker and message marker."""
+    buffer = ""
+    for message in messages:
+        body = message.content or ""
+        offset = 0
+        while True:
+            marker = f"\n[{message.speaker_type} #{message.id}{' 接续' if offset else ''}]\n"
+            if len(buffer) + len(marker) >= MEMORY_INPUT_CHARS:
+                yield buffer
+                buffer = ""
+            available = MEMORY_INPUT_CHARS - len(buffer) - len(marker)
+            part = body[offset:offset + available]
+            buffer += marker + part
+            offset += len(part)
+            if offset >= len(body):
+                break
+            yield buffer
+            buffer = ""
+    if buffer:
+        yield buffer
+
+
 def get_active_memory_corrections(db: Session, session_id: int, branch_id: str) -> list[SessionMemoryCorrectionModel]:
     """返回当前会话全局纠正与当前精确分支纠正，不继承其他分支。"""
     normalized_branch_id = (branch_id or "main").strip() or "main"
@@ -102,10 +128,6 @@ def create_memory_segment(
     if not messages:
         return None
 
-    dialogue_text = "\n".join(
-        f"[{msg.speaker_type}] {msg.content[:400]}" for msg in messages
-    )
-
     last_segment = db.scalar(
         select(func.max(SessionMemorySegmentModel.segment_index)).where(
             SessionMemorySegmentModel.session_id == session_id,
@@ -113,11 +135,20 @@ def create_memory_segment(
         )
     ) or 0
 
-    prompt = f"""请将以下对话段落压缩为结构化摘要。
+    summary = ""
+    key_facts: list[str] = []
+    key_characters: list[str] = []
+    emotional_tone = "中性"
+    for chunk in _memory_input_chunks(messages):
+        carried = json.dumps(
+            {"summary": summary, "key_facts": key_facts[-8:], "key_characters": key_characters[-8:]},
+            ensure_ascii=False,
+        ) if summary else ""
+        prompt = f"""请将以下对话段落压缩为结构化摘要。消息标记中的接续属于同一条消息；保留已有事实和未完成事项。
 
 对话内容：
-{dialogue_text[:5000]}
-
+{chunk}
+{f'前文承接：{carried}' if carried else ''}
 请输出一个 JSON 对象：
 {{
   "summary": "段落摘要(≤300字)",
@@ -126,32 +157,37 @@ def create_memory_segment(
   "emotional_tone": "情感基调(紧张/温馨/冲突/平静/悬疑/悲伤/欢乐/混合)"
 }}
 """
-
-    response = safe_non_streaming_call(
-        client,
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-        max_tokens=1000,
-    )
-
-    try:
-        content = response.get("content", "") if isinstance(response, dict) else str(response)
-        json_start = content.find("{")
-        json_end = content.rfind("}") + 1
-        if json_start == -1 or json_end <= 0:
+        response = safe_non_streaming_call(
+            client,
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=1000,
+        )
+        try:
+            content = response.get("content", "") if isinstance(response, dict) else str(response)
+            json_start = content.find("{")
+            json_end = content.rfind("}") + 1
+            if json_start == -1 or json_end <= 0:
+                return None
+            result = json.loads(content[json_start:json_end])
+            if not isinstance(result, dict):
+                return None
+        except (json.JSONDecodeError, KeyError, TypeError):
             return None
-        result = json.loads(content[json_start:json_end])
-        if not isinstance(result, dict):
-            return None
-    except (json.JSONDecodeError, KeyError, TypeError):
-        return None
 
-    summary = str(result.get("summary") or "").strip()
-    if not summary:
-        return None
-    key_facts = result.get("key_facts") if isinstance(result.get("key_facts"), list) else []
-    key_characters = result.get("key_characters") if isinstance(result.get("key_characters"), list) else []
+        next_summary = result.get("summary")
+        if not isinstance(next_summary, str) or not next_summary.strip() or len(next_summary) > 1000:
+            return None
+        summary = next_summary.strip()
+        for field, target, width in (("key_facts", key_facts, 300), ("key_characters", key_characters, 120)):
+            values = result.get(field)
+            if isinstance(values, list):
+                for value in values:
+                    if isinstance(value, str) and value.strip() and value[:width] not in target:
+                        target.append(value[:width])
+                del target[:-20]
+        emotional_tone = str(result.get("emotional_tone") or "中性")[:60]
 
     segment = SessionMemorySegmentModel(
         session_id=session_id,
@@ -159,10 +195,10 @@ def create_memory_segment(
         segment_index=last_segment + 1,
         start_message_id=start_msg_id,
         end_message_id=end_msg_id,
-        summary=summary[:1000],
-        key_facts=[str(item)[:300] for item in key_facts[:20]],
-        key_characters=[str(item)[:120] for item in key_characters[:20]],
-        emotional_tone=str(result.get("emotional_tone") or "中性")[:60],
+        summary=summary,
+        key_facts=key_facts,
+        key_characters=key_characters,
+        emotional_tone=emotional_tone,
     )
     db.add(segment)
     return segment

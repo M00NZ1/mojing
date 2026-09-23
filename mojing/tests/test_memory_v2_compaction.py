@@ -20,11 +20,13 @@ from backend.app.models import (
     SessionParticipantModel,
     SessionCharacterStateModel,
     SessionMemoryCorrectionModel,
+    AppSettingModel,
     VoiceProfileModel,
 )
-from backend.app.services import chat_service, export_service, memory_service, memory_v2_service
+from backend.app.services import chat_service, export_service, memory_service, memory_v2_service, system_config_service
 from backend.app.services.memory_source_service import memory_invalidation_plan
-from backend.app.schemas import MessageContextUpdate
+from backend.app.schemas import LocalConfigUpdate, MessageContextUpdate
+from pydantic import ValidationError
 
 
 def _database(tmp_path, name="memory-v2.db"):
@@ -152,6 +154,99 @@ def test_compaction_appends_bounded_segments_and_does_not_repeat_work(tmp_path, 
             )
             assert [row.segment_index for row in segments] == [1, 2]
             assert segments[0].end_message_id < segments[1].start_message_id
+    finally:
+        engine.dispose()
+
+
+def test_saved_web_interval_controls_compaction_and_legacy_value_reads_effectively(tmp_path, monkeypatch):
+    engine, Session = _database(tmp_path, "memory-interval.db")
+    try:
+        session_id, character_id = _seed_session(Session)
+        calls = _install_memory_fakes(monkeypatch, Session)
+        with Session() as db:
+            system_config_service.set_local_config(db, {"memory_compact_threshold": 20})
+            assert system_config_service.get_local_config(db)["memory_compact_threshold"] == 20
+
+        assert memory_service.compact_session_memory_v2(session_id) is True
+        assert calls == []
+        with Session() as db:
+            for index in range(8):
+                db.add(MessageModel(session_id=session_id, speaker_type="user", character_id=character_id,
+                                    content=f"继续剧情-{index}"))
+            db.commit()
+        assert memory_service.compact_session_memory_v2(session_id) is True
+        with Session() as db:
+            assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 1
+            assert len(calls) == 2
+            setting = db.scalar(select(AppSettingModel).where(AppSettingModel.key == "local_config"))
+            setting.value_json = {"memory_compact_threshold": 120}
+            db.commit()
+            assert system_config_service.get_local_config(db)["memory_compact_threshold"] == 12
+        with pytest.raises(ValidationError):
+            LocalConfigUpdate(memory_compact_threshold=120)
+    finally:
+        engine.dispose()
+
+
+def test_long_source_reaches_last_chunk_before_coverage_advances(tmp_path, monkeypatch):
+    engine, Session = _database(tmp_path, "memory-long-source.db")
+    try:
+        session_id, _ = _seed_session(Session, messages_per_branch=12)
+        with Session() as db:
+            last = db.scalar(select(MessageModel).where(MessageModel.session_id == session_id)
+                             .order_by(MessageModel.id.desc()).limit(1))
+            last.content = "剧情正文" * 2500 + "结尾约定"
+            db.commit()
+            source = list(db.scalars(select(MessageModel).where(MessageModel.session_id == session_id)
+                                     .order_by(MessageModel.id)))
+            chunks = list(memory_v2_service._memory_input_chunks(source))
+            assert all(len(chunk) <= memory_v2_service.MEMORY_INPUT_CHARS for chunk in chunks)
+            last_marker = f"\n[{source[-1].speaker_type} #{source[-1].id}]\n"
+            continuation = f"\n[{source[-1].speaker_type} #{source[-1].id} 接续]\n"
+            assert "".join(chunks).split(last_marker, 1)[1].replace(continuation, "") == source[-1].content
+        calls = _install_memory_fakes(monkeypatch, Session)
+        assert memory_service.compact_session_memory_v2(session_id) is True
+        summary_prompts = [prompt for prompt in calls if "提取关键事件节点" not in prompt]
+        assert len(summary_prompts) > 1
+        assert any("结尾约定" in prompt for prompt in summary_prompts)
+        with Session() as db:
+            segment = db.scalar(select(SessionMemorySegmentModel))
+            assert segment is not None and segment.end_message_id == source[-1].id
+    finally:
+        engine.dispose()
+
+
+def test_late_summary_chunk_failure_leaves_sources_uncovered_for_retry(tmp_path, monkeypatch):
+    engine, Session = _database(tmp_path, "memory-late-chunk-failure.db")
+    try:
+        session_id, _ = _seed_session(Session)
+        with Session() as db:
+            last = db.scalar(select(MessageModel).where(MessageModel.session_id == session_id)
+                             .order_by(MessageModel.id.desc()).limit(1))
+            last.content = "长剧情" * 2500 + "最终约定"
+            db.commit()
+        calls = _install_memory_fakes(monkeypatch, Session)
+        working_call = memory_v2_service.safe_non_streaming_call
+        summary_calls = 0
+
+        def fail_second_summary_chunk(client, model, messages, **kwargs):
+            nonlocal summary_calls
+            if "请将以下对话段落压缩" in messages[0]["content"]:
+                summary_calls += 1
+                if summary_calls == 2:
+                    return "not JSON"
+            return working_call(client, model, messages, **kwargs)
+
+        monkeypatch.setattr(memory_v2_service, "safe_non_streaming_call", fail_second_summary_chunk)
+        assert memory_service.compact_session_memory_v2(session_id) is False
+        with Session() as db:
+            assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 0
+            assert db.scalar(select(func.count()).select_from(SessionEventNodeModel)) == 0
+        monkeypatch.setattr(memory_v2_service, "safe_non_streaming_call", working_call)
+        assert memory_service.compact_session_memory_v2(session_id) is True
+        assert any("最终约定" in prompt for prompt in calls)
+        with Session() as db:
+            assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 1
     finally:
         engine.dispose()
 

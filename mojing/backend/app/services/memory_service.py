@@ -21,6 +21,12 @@ from ..models import (
 from .llm_client import build_client, resolve_text_model
 from .llm_retry import safe_non_streaming_call
 from .memory_source_service import MemorySourceChanged, source_snapshot, validate_compaction_sources
+from .system_config_service import (
+    DEFAULT_LOCAL_CONFIG,
+    LOCAL_CONFIG_KEY,
+    effective_memory_compact_threshold,
+    get_setting,
+)
 
 
 DEFAULT_CARD = {
@@ -37,7 +43,6 @@ DEFAULT_CARD = {
 }
 
 logger = logging.getLogger(__name__)
-MEMORY_COMPACTION_THRESHOLD = 12
 MEMORY_COMPACTION_BATCH_SIZE = 40
 _compaction_locks_guard = threading.Lock()
 _compaction_locks: dict[tuple[int, str], threading.Lock] = {}
@@ -401,6 +406,10 @@ def compact_session_memory_v2(session_id: int, branch_id: str = "main") -> bool:
             if not participant_ids:
                 return True
 
+            threshold = effective_memory_compact_threshold(
+                get_setting(db, LOCAL_CONFIG_KEY, DEFAULT_LOCAL_CONFIG).get("memory_compact_threshold")
+            )
+
             last_end_id = db.scalar(
                 select(func.max(SessionMemorySegmentModel.end_message_id)).where(
                     SessionMemorySegmentModel.session_id == session_id,
@@ -420,7 +429,7 @@ def compact_session_memory_v2(session_id: int, branch_id: str = "main") -> bool:
                     .limit(MEMORY_COMPACTION_BATCH_SIZE)
                 )
             )
-            if len(recent_messages) < MEMORY_COMPACTION_THRESHOLD:
+            if len(recent_messages) < threshold:
                 return True
             snapshot = source_snapshot(recent_messages)
 

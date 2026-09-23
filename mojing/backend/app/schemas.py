@@ -837,7 +837,7 @@ class LocalConfigRead(BaseModel):
     default_narrator_enabled: bool = False
     default_choice_generation_enabled: bool = True
     default_anti_cheat_enabled: bool = True
-    memory_compact_threshold: int = 120
+    memory_compact_threshold: int = 12
     max_upload_mb: int = 20
     max_auto_speakers: int = 4
     public_text_api_key: str = ""
@@ -937,7 +937,7 @@ class LocalConfigUpdate(BaseModel):
     default_narrator_enabled: bool | None = None
     default_choice_generation_enabled: bool | None = None
     default_anti_cheat_enabled: bool | None = None
-    memory_compact_threshold: int | None = None
+    memory_compact_threshold: int | None = Field(default=None, ge=10, le=40)
     max_upload_mb: int | None = None
     max_auto_speakers: int | None = None
     public_text_api_key: str | None = None

@@ -101,6 +101,7 @@ export default function SettingsPage() {
   const [personaDesc, setPersonaDesc] = useState('');
   const [personaColor, setPersonaColor] = useState('#53c7a8');
   const [localConfigDraft, setLocalConfigDraft] = useState<LocalConfig | null>(null);
+  const [memoryIntervalText, setMemoryIntervalText] = useState<string | null>(null);
   const [voiceServiceDraft, setVoiceServiceDraft] = useState<VoiceServiceConfig | null>(null);
 
   const selectTab = useCallback((nextTab: SettingsTab) => {
@@ -167,6 +168,7 @@ export default function SettingsPage() {
     },
     onSuccess: (saved) => {
       setLocalConfigDraft(saved);
+      setMemoryIntervalText(null);
       queryClient.setQueryData(['local-config'], saved);
       showToast('本机配置已保存', 'success');
     },
@@ -220,7 +222,11 @@ export default function SettingsPage() {
 
   const lc = localConfigDraft;
   const vs = voiceServiceDraft;
-  const localConfigDirty = Boolean(lc && localConfigQuery.data && JSON.stringify(lc) !== JSON.stringify(localConfigQuery.data));
+  const localConfigDirty = Boolean(lc && localConfigQuery.data && JSON.stringify(lc) !== JSON.stringify(localConfigQuery.data))
+    || (memoryIntervalText !== null && memoryIntervalText !== String(lc?.memory_compact_threshold ?? ''));
+  const memoryIntervalNumber = memoryIntervalText === null ? lc?.memory_compact_threshold : Number(memoryIntervalText);
+  const memoryIntervalValid = Boolean(memoryIntervalText !== '' && typeof memoryIntervalNumber === 'number'
+    && Number.isInteger(memoryIntervalNumber) && memoryIntervalNumber >= 10 && memoryIntervalNumber <= 40);
   const voiceServiceDirty = Boolean(vs && voiceServiceQuery.data && JSON.stringify(vs) !== JSON.stringify(voiceServiceQuery.data));
   const personaDirty = Boolean(activePersonaQuery.data && (
     personaName !== activePersonaQuery.data.name ||
@@ -480,9 +486,19 @@ export default function SettingsPage() {
                   </div>
                   <div className="form-group">
                     <label htmlFor="settings-memory-interval">自动整理记忆的消息间隔</label>
-                    <input id="settings-memory-interval" type="number" min={1} value={lc.memory_compact_threshold} onChange={(e) => {
-                      patchLocalConfig({ memory_compact_threshold: Number(e.target.value) || 120 });
-                    }} />
+                    <input id="settings-memory-interval" type="number" min={10} max={40} step={1}
+                      aria-invalid={!memoryIntervalValid} aria-describedby="settings-memory-interval-hint"
+                      value={memoryIntervalText ?? lc.memory_compact_threshold} onChange={(e) => {
+                        const text = e.target.value;
+                        setMemoryIntervalText(text);
+                        const value = Number(text);
+                        if (text.trim() && Number.isInteger(value) && value >= 10 && value <= 40) {
+                          patchLocalConfig({ memory_compact_threshold: value });
+                        }
+                      }} />
+                    <div id="settings-memory-interval-hint" className="hint">
+                      {memoryIntervalValid ? '每积累 10–40 条消息后，后台按当前故事线整理一批。' : '请输入 10 到 40 之间的整数。'}
+                    </div>
                   </div>
                 </div>
               </details>
@@ -490,7 +506,7 @@ export default function SettingsPage() {
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={!localConfigDirty || saveLocalConfigMutation.isPending}
+                  disabled={!localConfigDirty || !memoryIntervalValid || saveLocalConfigMutation.isPending}
                   onClick={() => saveLocalConfigMutation.mutate()}
                 >
                   {saveLocalConfigMutation.isPending ? '保存中...' : localConfigDirty ? '保存默认配置' : '默认配置已保存'}
@@ -731,7 +747,7 @@ export default function SettingsPage() {
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={!localConfigDirty || saveLocalConfigMutation.isPending}
+                  disabled={!localConfigDirty || !memoryIntervalValid || saveLocalConfigMutation.isPending}
                   onClick={() => saveLocalConfigMutation.mutate()}
                 >
                   {saveLocalConfigMutation.isPending ? '保存中...' : localConfigDirty ? '保存其他设置' : '其他设置已保存'}

@@ -13,7 +13,7 @@ DEFAULT_LOCAL_CONFIG = {
     "default_narrator_enabled": False,
     "default_choice_generation_enabled": True,
     "default_anti_cheat_enabled": True,
-    "memory_compact_threshold": 120,
+    "memory_compact_threshold": 12,
     "max_upload_mb": 20,
     "max_auto_speakers": 2,
     "public_text_api_key": "",
@@ -51,6 +51,11 @@ DEFAULT_VOICE_SERVICE_CONFIG = {
 VOICE_SERVICE_SECRET_FIELDS = {"external_api_key"}
 
 
+def effective_memory_compact_threshold(value: object) -> int:
+    """The Web compactor reads at most 40 messages per bounded batch."""
+    return value if type(value) is int and 10 <= value <= 40 else 12
+
+
 def get_setting(db: Session, key: str, default_value: dict) -> dict:
     row = db.scalar(select(AppSettingModel).where(AppSettingModel.key == key))
     if row is None:
@@ -77,6 +82,9 @@ def get_local_config(db: Session) -> dict:
         get_setting(db, LOCAL_CONFIG_KEY, DEFAULT_LOCAL_CONFIG),
         LOCAL_CONFIG_SECRET_FIELDS,
     )
+    result["memory_compact_threshold"] = effective_memory_compact_threshold(
+        result.get("memory_compact_threshold")
+    )
     # Once a catalog is saved it owns the public text route. Legacy fields
     # remain untouched as a rollback point and for older clients.
     from .model_platform_service import CATALOG_KEY, get_catalog
@@ -102,6 +110,9 @@ def set_local_config(
         value,
         LOCAL_CONFIG_SECRET_FIELDS,
         clear_secret_fields=clear_secret_fields or set(),
+    )
+    stored["memory_compact_threshold"] = effective_memory_compact_threshold(
+        stored.get("memory_compact_threshold")
     )
     from .model_platform_service import CATALOG_KEY
     if get_setting(db, CATALOG_KEY, {}):
