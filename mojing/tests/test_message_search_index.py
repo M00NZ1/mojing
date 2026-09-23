@@ -78,6 +78,9 @@ def test_bounded_backfill_resume_and_cursor_pagination(store):
         ready = complete(db, '雾港')
         assert ready['index'] == {'ready': True, 'indexed_count': 463}
         assert ready['total_count'] == 463
+        older_without_count = search.search_message_page(db, 1, '雾港', before_id=ready['next_cursor'], include_total=False)
+        assert older_without_count['total_count'] is None
+        assert ids(older_without_count) == list(range(438, 413, -1))
         found = ids(ready)
         while ready['next_cursor']:
             ready = search.search_message_page(db, 1, '雾港', before_id=ready['next_cursor'])

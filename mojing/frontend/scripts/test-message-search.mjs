@@ -47,6 +47,7 @@ try {
   const pageSizes = [];
   const searchScopes = [];
   const searchQueries = [];
+  const countRequests = [];
   await context.route('http://127.0.0.1:18001/api/**', async (route) => {
     const url = new URL(route.request().url());
     const endpoint = url.pathname.replace('/api', '');
@@ -55,6 +56,7 @@ try {
       searchCalls++;
       const query = url.searchParams.get('q');
       searchQueries.push(query);
+      countRequests.push(url.searchParams.get('include_total') !== 'false');
       searchScopes.push(url.searchParams.get('branch_id'));
       if (searchFailure) { status = 500; data = { detail: '临时搜索故障' }; }
       else {
@@ -63,7 +65,7 @@ try {
         const allHits = history.filter((m) => m.content.includes(query));
         const hits = allHits.filter((m) => m.id < before).reverse();
         const ready = (url.searchParams.get('advance_index') !== 'false' ? --remaining : remaining) <= 0;
-        data = { items: hits.slice(0, 25).map((m) => ({ ...m, content: undefined, snippet: `第 ${m.id} 夜 · ${query}：码头留下的旧证词` })), next_cursor: hits.length > 25 ? hits[24].id : null, total_count: ready ? allHits.length : null, index: { ready, indexed_count: Math.min(6000, searchCalls * 200) } };
+        data = { items: hits.slice(0, 25).map((m) => ({ ...m, content: undefined, snippet: `第 ${m.id} 夜 · ${query}：码头留下的旧证词` })), next_cursor: hits.length > 25 ? hits[24].id : null, total_count: ready && countRequests.at(-1) ? allHits.length : null, index: { ready, indexed_count: Math.min(6000, searchCalls * 200) } };
       }
     } else if (endpoint.endsWith('/messages/search-index/rebuild')) {
       if (rebuildFailure) { status = 500; data = { detail: '重建暂不可用' }; }
@@ -128,6 +130,7 @@ try {
   await searchInput.fill('线索');
   await page.getByRole('button', { name: '更早结果' }).click();
   await page.getByText(/^第 2 页 ·/).waitFor();
+  assert.equal(countRequests.at(-1), false, 'older pages skip the full hit count');
   await results.getByText('第 3500 夜 · 线索：码头留下的旧证词', { exact: true }).waitFor();
   await results.getByRole('button', { name: /第 3500 夜/ }).click();
   await page.getByText('第 26 / 60 条命中', { exact: true }).waitFor();

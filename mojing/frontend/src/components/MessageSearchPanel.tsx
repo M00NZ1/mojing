@@ -38,6 +38,7 @@ export default function MessageSearchPanel({ sessionId, branchId, value, onChang
   const scope = `${sessionId}:${branchId}:${query}`;
   const [navigation, setNavigation] = useState<{ scope: string; cursors: (number | undefined)[] }>({ scope: '', cursors: [undefined] });
   const [indexPaused, setIndexPaused] = useState(false);
+  const [knownTotal, setKnownTotal] = useState<{ scope: string; count: number } | null>(null);
   const cursors = navigation.scope === scope ? navigation.cursors : [undefined];
   const listRef = useRef<HTMLUListElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -73,14 +74,20 @@ export default function MessageSearchPanel({ sessionId, branchId, value, onChang
     onClose?.();
   }, [rememberQuery, value, onClose]);
   const rebuilding = useMutation({ mutationFn: () => api.rebuildMessageSearchIndex(sessionId), onSuccess: () => {
-    setIndexPaused(false); setNavigation({ scope, cursors: [undefined] });
+    setIndexPaused(false); setKnownTotal(null); setNavigation({ scope, cursors: [undefined] });
     void client.invalidateQueries({ queryKey: ['session-message-search'] });
   } });
   const progress = search.data?.index;
+  useEffect(() => {
+    if (progress?.ready && typeof search.data?.total_count === 'number')
+      setKnownTotal({ scope, count: search.data.total_count });
+  }, [scope, progress?.ready, search.data?.total_count]);
   const selectedPageIndex = selectedHit ? search.data?.items.findIndex((hit) => hit.id === selectedHit.id) : undefined;
   const selectedPosition = selectedPageIndex !== undefined && selectedPageIndex >= 0
     ? (cursors.length - 1) * 25 + selectedPageIndex + 1 : null;
-  const totalCount = progress?.ready && typeof search.data?.total_count === 'number' ? search.data.total_count : null;
+  const totalCount = progress?.ready
+    ? typeof search.data?.total_count === 'number' ? search.data.total_count : knownTotal?.scope === scope ? knownTotal.count : null
+    : null;
   const readingCount = selectedPosition !== null && totalCount !== null
     ? `第 ${selectedPosition} / ${totalCount} 条命中`
     : selectedPosition !== null ? `本页第 ${selectedPosition - (cursors.length - 1) * 25} 条 · 索引未完成`

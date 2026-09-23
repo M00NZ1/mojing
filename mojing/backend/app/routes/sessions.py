@@ -451,12 +451,13 @@ def swipe_message(session_id: int, message_id: int):
 
 @router.get("/{session_id}/messages/search-page", response_model=MessageSearchPageRead)
 def search_message_results(session_id: int, q: str = "", before: int | None = None, limit: int = 25,
-                           branch_id: str = "main", advance_index: bool = True, db: Session = Depends(get_db)):
+                           branch_id: str = "main", advance_index: bool = True, include_total: bool = True,
+                           db: Session = Depends(get_db)):
     from ..services.message_search_service import search_message_page
     if db.get(ChatSessionModel, session_id) is None:
         raise HTTPException(404, "会话不存在")
     try:
-        return search_message_page(db, session_id, q, branch_id, before, limit, advance_index)
+        return search_message_page(db, session_id, q, branch_id, before, limit, advance_index, include_total)
     except BranchContextError as exc:
         _raise_branch_http_error(exc)
     except ValueError as exc:

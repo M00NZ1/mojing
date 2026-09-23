@@ -163,7 +163,7 @@ def _snippet(content, query):
     return ('…' if start else '') + content[start:end].strip() + ('…' if end < len(content) else '')
 
 
-def search_message_page(db, session_id, keyword, branch_id='main', before_id=None, limit=25, advance_index=True):
+def search_message_page(db, session_id, keyword, branch_id='main', before_id=None, limit=25, advance_index=True, include_total=True):
     from .chat_service import resolve_branch_context, _visibility_clause
     context = resolve_branch_context(db, session_id, branch_id)
     query = normalize_search(keyword.strip())
@@ -182,7 +182,7 @@ def search_message_page(db, session_id, keyword, branch_id='main', before_id=Non
     stmt = stmt.where(text('mojing_message_search_fts MATCH :expression'), message.session_id == session_id,
         _visibility_clause(context, message), func.instr(func.mojing_search_normalize(message.content), query) > 0)
     total_count = None
-    if progress['ready']:
+    if progress['ready'] and include_total:
         count_stmt = select(func.count()).select_from(
             fts.join(message, message.id == fts.c.rowid)
         ).where(
