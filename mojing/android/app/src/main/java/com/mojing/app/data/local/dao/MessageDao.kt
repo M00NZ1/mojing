@@ -553,6 +553,25 @@ interface MessageDao {
         )
     }
 
+    @Query(
+        "SELECT * FROM messages AS message " +
+            "WHERE message.sessionId = :sessionId AND message.branchId = 'main' " +
+            "AND (message.id IN (SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression) " +
+            "OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId)) " +
+            "AND ((:exactMatch = 1 AND ((message.searchNormalized <> '' AND message.searchNormalized = :normalizedQuery) OR (message.searchNormalized = '' AND message.content = :query))) " +
+            "OR (:exactMatch = 0 AND ((message.searchNormalized <> '' AND instr(message.searchNormalized, :normalizedQuery) > 0) OR (message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0)))) " +
+            "AND message.id > :afterMessageId ORDER BY message.id ASC LIMIT :limit",
+    )
+    suspend fun searchMainMessagesAfterIndexed(sessionId: Long, query: String, normalizedQuery: String, matchExpression: String, exactMatch: Int,
+        indexedThroughMessageId: Long, indexComplete: Int, limit: Int, afterMessageId: Long): List<MessageEntity>
+
+    suspend fun searchMainMessagesAfter(sessionId: Long, query: String, exactMatch: Int, limit: Int, afterMessageId: Long): List<MessageEntity> {
+        val state = currentSearchIndexState()
+        return searchMainMessagesAfterIndexed(sessionId, query, MessageSearchTokenizer.normalize(query),
+            MessageSearchTokenizer.matchExpression(sessionId, query), exactMatch, state.indexedThroughMessageId,
+            if (state.isComplete) 1 else 0, limit, afterMessageId)
+    }
+
     /** 搜索页展示真实命中消息数，不以当前分页大小冒充总数。 */
     @Query(
         "SELECT COUNT(*) FROM messages AS message WHERE message.sessionId = :sessionId AND message.branchId = 'main' " +
@@ -718,6 +737,25 @@ interface MessageDao {
             limit = limit,
             beforeMessageId = beforeMessageId,
         )
+    }
+
+    @Query(
+        "$CURRENT_MESSAGES_QUERY AND (message.id IN (" +
+            "SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression" +
+            ") OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId)) " +
+            "AND ((:exactMatch = 1 AND ((message.searchNormalized <> '' AND message.searchNormalized = :normalizedQuery) OR (message.searchNormalized = '' AND message.content = :query))) " +
+            "OR (:exactMatch = 0 AND ((message.searchNormalized <> '' AND instr(message.searchNormalized, :normalizedQuery) > 0) OR (message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0)))) " +
+            "AND message.id > :afterMessageId ORDER BY message.id ASC LIMIT :limit",
+    )
+    suspend fun searchVisibleMessagesAfterIndexed(sessionId: Long, branchId: String, query: String, normalizedQuery: String, matchExpression: String,
+        exactMatch: Int, indexedThroughMessageId: Long, indexComplete: Int, limit: Int, afterMessageId: Long): List<MessageEntity>
+
+    suspend fun searchVisibleMessagesAfter(sessionId: Long, branchId: String, query: String, exactMatch: Int, limit: Int,
+        afterMessageId: Long): List<MessageEntity> {
+        val state = currentSearchIndexState()
+        return searchVisibleMessagesAfterIndexed(sessionId, branchId, query, MessageSearchTokenizer.normalize(query),
+            MessageSearchTokenizer.matchExpression(sessionId, query), exactMatch, state.indexedThroughMessageId,
+            if (state.isComplete) 1 else 0, limit, afterMessageId)
     }
 
     @Query(

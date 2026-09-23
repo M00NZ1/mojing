@@ -128,12 +128,22 @@ fun SearchScreen(
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(state.error, color = MaterialTheme.colorScheme.onErrorContainer)
                     TextButton(enabled = !state.searching, onClick = {
-                        if (state.hits.isEmpty()) submit() else vm.loadOlder(sessionId, branchId)
-                    }) { Text(if (state.hits.isEmpty()) "重新搜索" else "重试加载更早结果") }
+                        when (state.failedPage) {
+                            SearchPageDirection.NEWER -> vm.loadNewer(sessionId, branchId)
+                            SearchPageDirection.OLDER -> vm.loadOlder(sessionId, branchId)
+                            null -> submit()
+                        }
+                    }) { Text(when (state.failedPage) {
+                        SearchPageDirection.NEWER -> "重试加载较新结果"
+                        SearchPageDirection.OLDER -> "重试加载更早结果"
+                        null -> "重新搜索"
+                    }) }
                 }
             }
             state.totalMatches?.let { Text("共 $it 条匹配消息", Modifier.padding(horizontal = 20.dp, vertical = 8.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            if (state.counting) Text("已加载 ${state.hits.size} 条 · 正在统计总数…", Modifier.padding(horizontal = 20.dp, vertical = 8.dp), style = MaterialTheme.typography.labelMedium)
+            if (state.counting) Text("已显示 ${state.hits.size} 条 · 正在统计总数…", Modifier.padding(horizontal = 20.dp, vertical = 8.dp), style = MaterialTheme.typography.labelMedium)
+            if (state.hasNewer && state.hits.isNotEmpty()) Text("当前显示第 ${state.firstHitOffset + 1}–${state.firstHitOffset + state.hits.size} 条", Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (state.countError != null) Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(state.countError, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 TextButton(onClick = { vm.countMatches(sessionId, branchId) }) { Text("重新统计") }
@@ -143,8 +153,13 @@ fun SearchScreen(
                 else if (state.completedQuery.isBlank()) SearchEmptyState("准备搜索", "点击搜索按钮或键盘上的搜索键查看结果。")
             }
             LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                items(state.hits, key = { it.message.id }) { hit -> SearchResultCard(hit, state.completedQuery) { focus.clearFocus(); vm.openHit(sessionId, branchId, hit.message.id) } }
-                if (state.hasOlder && state.error == null) item {
+                if (state.hasNewer && state.error == null) item(key = "load_newer") {
+                    TextButton(enabled = !state.searching, onClick = { vm.loadNewer(sessionId, branchId) }, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (state.searching) "正在加载…" else "加载较新结果")
+                    }
+                }
+                items(state.hits, key = { it.message.id }) { hit -> SearchResultCard(hit, state.completedQuery, !state.searching) { focus.clearFocus(); vm.openHit(sessionId, branchId, hit.message.id) } }
+                if (state.hasOlder && state.error == null) item(key = "load_older") {
                     TextButton(enabled = !state.searching, onClick = { vm.loadOlder(sessionId, branchId) }, modifier = Modifier.fillMaxWidth()) {
                         Text(if (state.searching) "正在加载…" else "加载更早结果")
                     }
@@ -164,8 +179,8 @@ fun SearchScreen(
     }
 }
 
-@Composable private fun SearchResultCard(hit: SearchHit, query: String, onClick: () -> Unit) {
-    Surface(onClick = onClick, modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
+@Composable private fun SearchResultCard(hit: SearchHit, query: String, enabled: Boolean, onClick: () -> Unit) {
+    Surface(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(when (hit.message.speakerType) { "user" -> "我"; "narrator" -> "旁白"; else -> "角色" },
@@ -196,7 +211,7 @@ fun SearchScreen(
 
 @Composable private fun SearchContextScreen(state: SearchState, vm: SearchViewModel, sessionId: Long, branchId: String) {
     val index = state.hits.indexOfFirst { it.message.id == state.selectedMessageId }
-    val current = (index + 1).coerceAtLeast(1)
+    val current = (state.firstHitOffset + index + 1).coerceAtLeast(1)
     var readerQuery by androidx.compose.runtime.saveable.rememberSaveable(state.completedQuery) { mutableStateOf(state.completedQuery) }
     val focus = LocalFocusManager.current
     val submit = {
@@ -215,7 +230,8 @@ fun SearchScreen(
                 if (state.error != null) Text("重试", Modifier.clickable { state.selectedMessageId?.let { vm.openHit(sessionId, branchId, it) } }.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.primary)
             }
             if (state.error != null && state.contextMessages.isNotEmpty()) {
-                TextButton(onClick = { vm.navigateHit(sessionId, branchId, 1) }) { Text(state.error) }
+                TextButton(onClick = { vm.navigateHit(sessionId, branchId,
+                    if (state.failedPage == SearchPageDirection.NEWER) -1 else 1) }) { Text(state.error) }
             }
             val listState = rememberLazyListState()
             var positionedId by remember(state.selectedMessageId, state.completedQuery) { mutableStateOf<Long?>(null) }
@@ -259,7 +275,7 @@ fun SearchScreen(
         }
         Column(Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 80.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 3.dp) {
-                IconButton(enabled = index > 0 && !state.searching, onClick = { vm.navigateHit(sessionId, branchId, -1) }) { Icon(Icons.Default.KeyboardArrowUp, "上一个") }
+                IconButton(enabled = index >= 0 && (index > 0 || state.hasNewer) && !state.searching, onClick = { vm.navigateHit(sessionId, branchId, -1) }) { Icon(Icons.Default.KeyboardArrowUp, "上一个") }
             }
             Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 3.dp) {
                 IconButton(enabled = index >= 0 && (index < state.hits.lastIndex || state.hasOlder) && !state.searching, onClick = { vm.navigateHit(sessionId, branchId, 1) }) { Icon(Icons.Default.KeyboardArrowDown, "下一个") }
@@ -268,7 +284,7 @@ fun SearchScreen(
         Surface(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
             shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 1.dp) {
             Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("$current / ${state.totalMatches?.toString() ?: "${state.hits.size}+"}", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                Text("$current / ${state.totalMatches?.toString() ?: "${state.firstHitOffset + state.hits.size}+"}", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                 TextButton(onClick = vm::closeHit) { Text("以列表显示") }
             }
         }

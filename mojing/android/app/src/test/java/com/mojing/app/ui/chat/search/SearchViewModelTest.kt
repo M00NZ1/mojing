@@ -153,6 +153,67 @@ class SearchViewModelTest {
         assertEquals(41, viewModel.state.value.hits.size)
     }
 
+    @Test fun resultWindowStaysBoundedAndCanPageBackToNewerHits() = runTest(dispatcher) {
+        val pages = (1L..200L).reversed().chunked(40).map { ids -> ids.map { message(it, "hit $it") } }
+        coEvery { dao.searchMainMessages(1L, "hit", 0, 40, Long.MAX_VALUE) } returns pages[0]
+        for (page in 1..4) {
+            coEvery { dao.searchMainMessages(1L, "hit", 0, 40, pages[page - 1].last().id) } returns pages[page]
+        }
+        coEvery { dao.searchMainMessagesAfter(1L, "hit", 0, 40, 120L) } returns pages[1].asReversed()
+        coEvery { dao.searchMainMessagesAfter(1L, "hit", 0, 40, 160L) } returns pages[0].asReversed()
+        coEvery { dao.countMainMessages(1L, "hit", 0) } returns 200
+        coEvery { dao.getMainMessageById(1L, 120L) } returns pages[2].first()
+        coEvery { dao.getMainMessageById(1L, 121L) } returns pages[1].last()
+        coEvery { dao.getMainMessagesBefore(1L, any(), any()) } returns emptyList()
+        coEvery { dao.getMainMessagesAfter(1L, any(), any()) } returns emptyList()
+
+        viewModel.setQuery("hit"); viewModel.search(1L, "main"); advanceUntilIdle()
+        repeat(4) { viewModel.loadOlder(1L, "main"); advanceUntilIdle() }
+        val oldestWindow = viewModel.state.value
+        assertEquals(120, oldestWindow.hits.size)
+        assertEquals(80, oldestWindow.firstHitOffset)
+        assertEquals(120L, oldestWindow.hits.first().message.id)
+        assertTrue(oldestWindow.hasNewer)
+        assertFalse(oldestWindow.hasOlder)
+        assertEquals(200, oldestWindow.totalMatches)
+
+        viewModel.openHit(1L, "main", 120L); advanceUntilIdle()
+        viewModel.navigateHit(1L, "main", -1); advanceUntilIdle()
+        assertEquals(121L, viewModel.state.value.selectedMessageId)
+        assertEquals(40, viewModel.state.value.firstHitOffset)
+        assertEquals(160L, viewModel.state.value.hits.first().message.id)
+        assertTrue(viewModel.state.value.hasOlder)
+
+        viewModel.closeHit()
+        viewModel.loadNewer(1L, "main"); advanceUntilIdle()
+        assertEquals(0, viewModel.state.value.firstHitOffset)
+        assertEquals(200L, viewModel.state.value.hits.first().message.id)
+        assertEquals(120, viewModel.state.value.hits.size)
+        assertFalse(viewModel.state.value.hasNewer)
+    }
+
+    @Test fun failedNewerPageCanBeRetriedWithoutLosingWindow() = runTest(dispatcher) {
+        val pages = (1L..160L).reversed().chunked(40).map { ids -> ids.map { message(it, "hit") } }
+        coEvery { dao.searchMainMessages(1L, "hit", 0, 40, Long.MAX_VALUE) } returns pages[0]
+        for (page in 1..3) {
+            coEvery { dao.searchMainMessages(1L, "hit", 0, 40, pages[page - 1].last().id) } returns pages[page]
+        }
+        coEvery { dao.countMainMessages(1L, "hit", 0) } returns 160
+        coEvery { dao.searchMainMessagesAfter(1L, "hit", 0, 40, 120L) } throws IllegalStateException("offline")
+        viewModel.setQuery("hit"); viewModel.search(1L, "main"); advanceUntilIdle()
+        repeat(3) { viewModel.loadOlder(1L, "main"); advanceUntilIdle() }
+        assertEquals(40, viewModel.state.value.firstHitOffset)
+
+        viewModel.loadNewer(1L, "main"); advanceUntilIdle()
+        assertEquals(SearchPageDirection.NEWER, viewModel.state.value.failedPage)
+        assertEquals(120, viewModel.state.value.hits.size)
+        coEvery { dao.searchMainMessagesAfter(1L, "hit", 0, 40, 120L) } returns pages[0].asReversed()
+        viewModel.loadNewer(1L, "main"); advanceUntilIdle()
+        assertNull(viewModel.state.value.error)
+        assertEquals(0, viewModel.state.value.firstHitOffset)
+        assertEquals(120, viewModel.state.value.hits.size)
+    }
+
     @Test fun closeHitPreventsLateDetailResponseFromReopeningReader() = runTest(dispatcher) {
         val gate = CompletableDeferred<MessageEntity?>()
         coEvery { dao.getMainMessageById(1L, 7L) } coAnswers { gate.await() }
