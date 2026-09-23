@@ -27,17 +27,18 @@ fun StoryFeatureCard(
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
-    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(28.dp),
-        color = colors.primaryContainer, contentColor = colors.onPrimaryContainer) {
+    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp),
+        color = colors.surfaceContainerLow, contentColor = colors.onSurface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, colors.outlineVariant)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(eyebrow, style = MaterialTheme.typography.labelMedium, color = colors.onPrimaryContainer)
+            Text(eyebrow, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(title, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
                 StoryLandscape(Modifier.size(44.dp))
             }
             Text(description, style = MaterialTheme.typography.bodyMedium)
-            MoJingButton(onClick, Modifier.fillMaxWidth()) {
-                Text(action, Modifier.weight(1f))
+            MoJingButton(onClick) {
+                Text(action)
                 Spacer(Modifier.width(8.dp))
                 Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
             }
@@ -65,15 +66,16 @@ private fun StoryLandscape(modifier: Modifier) {
 @Composable
 fun StoryLaunchCard(title: String, description: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
-    Surface(onClick = onClick, modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(26.dp),
-        color = colors.primaryContainer, contentColor = colors.onPrimaryContainer) {
+    Surface(onClick = onClick, modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp),
+        color = colors.surfaceContainerLow, contentColor = colors.onSurface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, colors.outlineVariant)) {
         Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(title, style = MaterialTheme.typography.headlineSmall)
                 Text(description, style = MaterialTheme.typography.bodyMedium)
             }
-            Surface(shape = RoundedCornerShape(20.dp), color = colors.primary, contentColor = colors.onPrimary) {
+            Surface(shape = RoundedCornerShape(12.dp), color = colors.primary, contentColor = colors.onPrimary) {
                 Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.padding(12.dp).size(24.dp))
             }
         }
@@ -87,16 +89,14 @@ fun WorkspaceResourceCard(
 ) {
     val colors = MaterialTheme.colorScheme
     Surface(onClick = onClick, modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp), color = colors.surfaceContainerLow) {
+        shape = RoundedCornerShape(12.dp), color = colors.surfaceContainerLowest,
+        border = androidx.compose.foundation.BorderStroke(1.dp, colors.outlineVariant)) {
         Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Surface(shape = RoundedCornerShape(16.dp), color = colors.secondaryContainer) {
-                Icon(icon, null, Modifier.padding(12.dp).size(24.dp), tint = colors.onSecondaryContainer)
-            }
+            Icon(icon, null, Modifier.size(24.dp), tint = colors.onSurfaceVariant)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                    Text(index, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
                 }
                 Text(description, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             }

@@ -26,7 +26,7 @@ class SettingsSectionsTest {
             MaterialTheme { Column {
                 SettingsSections(request, { request = false; consumed++ }, { action ->
                     if (blocked) pending = action else action()
-                }) { Text("当前分类：$it") }
+                }, onBack = {}) { Text("当前分类：$it") }
             } }
         }
         rule.onNodeWithText("个性化").performClick()
@@ -37,6 +37,7 @@ class SettingsSectionsTest {
         rule.onNodeWithText("当前分类：2").assertIsDisplayed()
         rule.runOnIdle { assertEquals(1, consumed); assertNotNull(pending); pending?.invoke(); blocked = false }
         rule.onNodeWithText("当前分类：0").assertIsDisplayed()
+        rule.onNodeWithContentDescription("返回设置").performClick()
         rule.onNodeWithText("个性化").performClick()
         restore.emulateSavedInstanceStateRestore()
         rule.onNodeWithText("当前分类：2").assertIsDisplayed()
@@ -54,9 +55,11 @@ class SettingsSectionsTest {
                     composable(Routes.SETTINGS) { entry ->
                         val requested by entry.savedStateHandle.getStateFlow(SETTINGS_MODEL_REQUEST, false).collectAsState()
                         Column {
-                            SettingsSections(requested, { entry.savedStateHandle[SETTINGS_MODEL_REQUEST] = false }, { it() }) {
-                                Text("当前分类：$it")
-                                TextButton({ nav.navigateToMainTab(Routes.CREATION_HUB) }) { Text("进入创作中心") }
+                            SettingsSections(requested, { entry.savedStateHandle[SETTINGS_MODEL_REQUEST] = false }, { it() }, onBack = {}) {
+                                Column {
+                                    Text("当前分类：$it")
+                                    TextButton({ nav.navigateToMainTab(Routes.CREATION_HUB) }) { Text("进入创作中心") }
+                                }
                             }
                         }
                     }

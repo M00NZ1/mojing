@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -18,10 +17,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.outlined.DataUsage
-import androidx.compose.material.icons.outlined.ErrorOutline
-import androidx.compose.material.icons.outlined.Forum
-import androidx.compose.material.icons.outlined.Paid
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -97,20 +92,6 @@ fun SettingsScreen(
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        topBar = {
-            TopAppBar(
-                title = { Text("设置") },
-                navigationIcon = {
-                    IconButton(
-                        onClick = {
-                            requestNavigation { navController.returnToSessionHome() }
-                        },
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回会话主页")
-                    }
-                },
-            )
-        },
         bottomBar = {
             MainAppBottomNavigation(
                 navController = navController,
@@ -118,11 +99,16 @@ fun SettingsScreen(
             )
         },
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding).imePadding()) {
+        Surface(
+            modifier = Modifier.fillMaxSize().padding(padding).imePadding(),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
             SettingsSections(
                 requestModelSection = requestModelSection,
                 onModelRequestConsumed = onModelRequestConsumed,
                 requestNavigation = ::requestNavigation,
+                onBack = { requestNavigation { navController.returnToSessionHome() } },
             ) { selectedTab ->
                 when (selectedTab) {
                     0 -> ConnectionSettingsTab(viewModel = viewModel, snackbarHostState = snackbarHostState)
@@ -152,6 +138,7 @@ fun SettingsScreen(
                         navController.navigate("usage/platform?platformId=${android.net.Uri.encode(platform.id)}&platformName=${android.net.Uri.encode(platform.name)}")
                     })
                 }
+            }
             }
         }
     }
@@ -207,15 +194,16 @@ private fun PersonalizationTab(
     onProfileSaved: (String, String, String) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        SingleChoiceSegmentedButtonRow(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+        TabRow(
+            selectedTabIndex = selectedSection,
+            modifier = Modifier.fillMaxWidth(),
         ) {
             listOf("我的资料", "外观").forEachIndexed { index, label ->
-                SegmentedButton(
+                Tab(
                     selected = selectedSection == index,
                     onClick = { onSelectSection(index) },
-                    shape = SegmentedButtonDefaults.itemShape(index, 2),
-                ) { Text(label) }
+                    text = { Text(label) },
+                )
             }
         }
         Box(modifier = Modifier.weight(1f)) {
@@ -259,14 +247,11 @@ fun ProfileTab(
     var isAvatarImporting by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
-
-        Text("对话中的我", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "角色会用这份资料称呼和理解你。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        SettingsSectionHeader(
+            title = "对话中的我",
+            description = "角色会用这份资料称呼和理解你。",
         )
 
         OutlinedTextField(
@@ -290,8 +275,7 @@ fun ProfileTab(
             maxLines = 10,
         )
 
-        HorizontalDivider()
-        Text("形象", style = MaterialTheme.typography.titleSmall)
+        SettingsDividerLabel("形象")
 
         AvatarEditor(
             avatarImagePath = userAvatarImagePath,
@@ -303,7 +287,7 @@ fun ProfileTab(
 
         ColorPickerField(selectedColor = avatarColor, onColorSelected = onAvatarColorChange)
         Text(
-            "头像在选择后立即更新；名字、设定与颜色在保存后生效。",
+            "头像选择后立即更新；名字、设定与颜色在保存后生效。",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -366,11 +350,9 @@ fun DefaultsTab(viewModel: SettingsViewModel) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("新故事默认设置", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "修改会立即保存在本机，只影响之后新建的故事。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        SettingsSectionHeader(
+            title = "新故事默认设置",
+            description = "修改会立即保存在本机，只影响之后新建的故事。",
         )
         if (creationOptionsLoading) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -463,8 +445,7 @@ fun DefaultsTab(viewModel: SettingsViewModel) {
                 isError = uploadError,
                 supportingText = if (uploadError) { { Text("请输入 1 到 200 之间的整数") } } else null,
             )
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-            Text("新角色生成参数", style = MaterialTheme.typography.titleSmall)
+            SettingsDividerLabel("新角色生成参数")
             OutlinedTextField(value = temp, onValueChange = { viewModel.updateDefaultTemperature(it) }, label = { Text("温度") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), isError = tempError, supportingText = if (tempError) { { Text("请输入 0 到 2 之间的数字") } } else null)
             OutlinedTextField(value = maxTokens, onValueChange = { viewModel.updateDefaultMaxTokens(it) }, label = { Text("最大回复长度（Token）") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), isError = maxTokensError, supportingText = if (maxTokensError) { { Text("请输入 1 到 200000 之间的整数") } } else null)
             OutlinedTextField(value = topP, onValueChange = { viewModel.updateDefaultTopP(it) }, label = { Text("Top P") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), isError = topPError, supportingText = if (topPError) { { Text("请输入 0 到 1 之间的数字") } } else null)
@@ -505,5 +486,32 @@ private fun CreationOptionPicker(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun SettingsSectionHeader(
+    title: String,
+    description: String,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(title, style = MaterialTheme.typography.headlineSmall)
+        Text(
+            description,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun SettingsDividerLabel(label: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(label, style = MaterialTheme.typography.titleSmall)
+        HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
     }
 }

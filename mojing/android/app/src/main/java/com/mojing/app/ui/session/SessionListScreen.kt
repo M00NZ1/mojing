@@ -259,10 +259,16 @@ fun SessionListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Column {
-                    Text("墨境", style = MaterialTheme.typography.titleLarge)
-                    Text("你的故事空间", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                } },
+                title = {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("故事库", style = MaterialTheme.typography.headlineSmall)
+                        Text(
+                            if (sessions.isEmpty()) "对话与长篇创作" else "${sessions.size} 个故事",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
                 actions = {
                     BadgedBox(
                         badge = {
@@ -276,11 +282,14 @@ fun SessionListScreen(
                             }
                         },
                     ) {
-                        TextButton(onClick = onGenerationTasksClick) { Text("生成记录") }
+                        IconButton(onClick = onGenerationTasksClick) {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = "生成记录")
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background
+                    containerColor = MaterialTheme.colorScheme.background,
+                    scrolledContainerColor = MaterialTheme.colorScheme.background,
                 )
             )
         },
@@ -311,8 +320,10 @@ fun SessionListScreen(
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { viewModel.updateSearch(it) },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = MoJingListTokens.rowStart, vertical = 8.dp),
-                    placeholder = { Text("按标题搜索对话…") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    placeholder = { Text("搜索故事标题…") },
                     leadingIcon = { Icon(Icons.Default.Search, "搜索对话标题") },
                     trailingIcon = if (searchQuery.isNotBlank()) {
                         {
@@ -469,8 +480,23 @@ fun SessionListScreen(
                     contentPadding = PaddingValues(bottom = 96.dp),
                 ) {
                     item(key = "story-library-heading") {
-                        com.mojing.app.ui.common.WorkspaceSectionHeading("故事集", "继续上一幕，或开启新的旅程。",
-                            Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(if (searchQuery.isBlank()) "故事列表" else "搜索结果", style = MaterialTheme.typography.titleMedium)
+                            }
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                            ) {
+                                Text("${filteredSessions.size}", modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                                    style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                            }
+                        }
                     }
                     itemsIndexed(filteredSessions, key = { _, r -> r.session.id }) { index, row ->
                         val openRename = {
@@ -478,8 +504,15 @@ fun SessionListScreen(
                             renameTargetId = row.session.id
                             renameTargetTitle = row.session.title
                         }
-                        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
-                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(22.dp))) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                            ),
+                        ) {
                             SwipeRevealListRow(
                                 swipeEnabled = true,
                                 isPinned = row.session.pinnedAt > 0,
@@ -492,12 +525,6 @@ fun SessionListScreen(
                                     backgroundFailure = backgroundFailures[row.session.id]?.message,
                                     onStop = { com.mojing.app.ui.chat.RetainedChatSessions.stores.stop(row.session.id) },
                                     onRename = openRename)
-                            }
-                            if (index < filteredSessions.lastIndex) {
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(start = MoJingListTokens.dividerInset),
-                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                                )
                             }
                         }
                     }
@@ -548,7 +575,30 @@ fun SessionListScreen(
                     .padding(bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text("新建对话", style = MaterialTheme.typography.titleLarge)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Surface(
+                        modifier = Modifier.size(42.dp),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.AutoStories, contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("新建对话", style = MaterialTheme.typography.titleLarge)
+                        Text("设定这一幕，然后开始书写", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+                Text("故事信息", style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary)
                 if (isCreatingSession) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     Text(
@@ -623,7 +673,8 @@ fun SessionListScreen(
                     selectedCharacterIds = openingCharacterSelection(selectableCharacters.map { it.id }.toSet(), selectedCharacterIds)
                 }
 
-                Text("参与角色", style = MaterialTheme.typography.labelMedium)
+                Text("参与角色", style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary)
                 if (allBoundCharacters.isEmpty()) {
                     Text(
                         "选择角色开始故事，也可以先进入空白对话，稍后再添加。",
@@ -907,18 +958,20 @@ fun SessionListRowInner(row: SessionWithListMeta, isGenerating: Boolean = false,
         maxChars = 72,
     )
     val meta = "${row.messageCount} 条 · ${row.participantCount} 角色"
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 18.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.Top) {
-        Surface(Modifier.size(48.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.primaryContainer) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 15.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+        Surface(Modifier.size(50.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(17.dp),
+            color = MaterialTheme.colorScheme.primaryContainer,
+            tonalElevation = 2.dp) {
             Box(contentAlignment = Alignment.Center) {
-                Text(session.title.take(1).ifBlank { "墨" }, style = MaterialTheme.typography.titleLarge)
+                Text(session.title.trim().take(1).ifBlank { "墨" }, style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer)
             }
         }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(session.title.ifBlank { "未命名对话" }, Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (session.pinnedAt > 0) {
                     Icon(Icons.Default.PushPin, "已置顶", Modifier.padding(start = 6.dp).size(16.dp),
                         tint = MaterialTheme.colorScheme.primary)
@@ -931,16 +984,27 @@ fun SessionListRowInner(row: SessionWithListMeta, isGenerating: Boolean = false,
                 }
             }
             if (isGenerating) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                Text("后台处理中 · 点击查看", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                if (onStop != null) TextButton(onClick = onStop) { Text("停止") }
+                Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                    Row(Modifier.padding(horizontal = 8.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary)
+                        Text("后台生成", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                if (onStop != null) TextButton(onClick = onStop, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) { Text("停止") }
             }
             if (!isGenerating && backgroundFailure != null) Text("生成未完成 · $backgroundFailure",
                 maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
             if (!isGenerating && backgroundFailure == null && preview.isNotEmpty()) Text(preview, style = MaterialTheme.typography.bodyMedium,
                 maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("$meta · ${dateTimeFormat.format(Date(session.updatedAt))}",
-                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(meta, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("·", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                Text(dateTimeFormat.format(Date(session.updatedAt)), style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }

@@ -25,7 +25,7 @@ private val DarkColorScheme = darkColorScheme(
     surfaceVariant = DarkSurfaceVariant,
     onBackground = DarkOnBackground,
     onSurface = DarkOnSurface,
-    onSurfaceVariant = Color(0xFFB8B8D0),
+    onSurfaceVariant = Color(0xFFB8C4BF),
     error = DarkError,
 )
 
@@ -197,9 +197,9 @@ fun MoJingTheme(
             colorScheme = colorScheme,
             typography = AppTypography,
             shapes = Shapes(
-                extraSmall = RoundedCornerShape(8.dp), small = RoundedCornerShape(12.dp),
-                medium = RoundedCornerShape(16.dp), large = RoundedCornerShape(22.dp),
-                extraLarge = RoundedCornerShape(28.dp)),
+                extraSmall = RoundedCornerShape(6.dp), small = RoundedCornerShape(12.dp),
+                medium = RoundedCornerShape(14.dp), large = RoundedCornerShape(20.dp),
+                extraLarge = RoundedCornerShape(24.dp)),
             content = content,
         )
     }

@@ -8,7 +8,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.runtime.getValue
@@ -20,11 +19,12 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.*
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.semantics
 
 @Composable
 private fun fieldColors() = OutlinedTextFieldDefaults.colors(
     focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
     disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
     focusedBorderColor = MaterialTheme.colorScheme.primary,
     unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
@@ -47,13 +47,15 @@ fun MoJingTextField(
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     singleLine: Boolean = false, maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE, minLines: Int = 1,
     interactionSource: MutableInteractionSource? = null,
-    shape: Shape = RoundedCornerShape(18.dp), colors: TextFieldColors = fieldColors(),
+    shape: Shape = RoundedCornerShape(12.dp), colors: TextFieldColors = fieldColors(),
 ) {
     val source = interactionSource ?: remember { MutableInteractionSource() }
-    OutlinedTextField(value, onValueChange, modifier, enabled, readOnly, textStyle,
-        label, placeholder, leadingIcon, trailingIcon, prefix, suffix, supportingText, isError,
+    FieldFrame(modifier, label, enabled, isError) {
+    OutlinedTextField(value, onValueChange, if (label == null) modifier else Modifier.fillMaxWidth(), enabled, readOnly, textStyle,
+        null, placeholder, leadingIcon, trailingIcon, prefix, suffix, supportingText, isError,
         visualTransformation, keyboardOptions, keyboardActions, singleLine, maxLines, minLines,
         source, shape, colors)
+    }
 }
 
 @Composable
@@ -70,13 +72,39 @@ fun MoJingTextField(
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     singleLine: Boolean = false, maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE, minLines: Int = 1,
     interactionSource: MutableInteractionSource? = null,
-    shape: Shape = RoundedCornerShape(18.dp), colors: TextFieldColors = fieldColors(),
+    shape: Shape = RoundedCornerShape(12.dp), colors: TextFieldColors = fieldColors(),
 ) {
     val source = interactionSource ?: remember { MutableInteractionSource() }
-    OutlinedTextField(value, onValueChange, modifier, enabled, readOnly, textStyle,
-        label, placeholder, leadingIcon, trailingIcon, prefix, suffix, supportingText, isError,
+    FieldFrame(modifier, label, enabled, isError) {
+    OutlinedTextField(value, onValueChange, if (label == null) modifier else Modifier.fillMaxWidth(), enabled, readOnly, textStyle,
+        null, placeholder, leadingIcon, trailingIcon, prefix, suffix, supportingText, isError,
         visualTransformation, keyboardOptions, keyboardActions, singleLine, maxLines, minLines,
         source, shape, colors)
+    }
+}
+
+/** Stable labels stay above the writing surface, including while the keyboard is open. */
+@Composable
+private fun FieldFrame(
+    modifier: Modifier,
+    label: @Composable (() -> Unit)?,
+    enabled: Boolean,
+    isError: Boolean,
+    content: @Composable () -> Unit,
+) {
+    if (label == null) {
+        content()
+        return
+    }
+    Column(modifier.semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            val color = when {
+                !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                isError -> MaterialTheme.colorScheme.error
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            ProvideTextStyle(MaterialTheme.typography.labelLarge.copy(color = color)) { label() }
+        content()
+    }
 }
 
 @Composable
@@ -92,11 +120,9 @@ fun MoJingButton(
 ) {
     val source = interactionSource ?: remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed && enabled) 0.975f else 1f,
+    val scale by animateFloatAsState(if (pressed && enabled) 0.99f else 1f,
         spring(dampingRatio = 0.8f, stiffness = 700f), label = "buttonPress")
-    val corner by animateDpAsState(if (pressed && enabled) 12.dp else 24.dp,
-        spring(dampingRatio = 0.85f, stiffness = 600f), label = "buttonCorner")
-    Button(onClick, modifier.heightIn(min = 48.dp).graphicsLayer { scaleX = scale; scaleY = scale }, enabled, shape ?: RoundedCornerShape(corner), colors,
+    Button(onClick, modifier.heightIn(min = 48.dp).graphicsLayer { scaleX = scale; scaleY = scale }, enabled, shape ?: MaterialTheme.shapes.small, colors,
         elevation, border, contentPadding, source, content)
 }
 
@@ -113,11 +139,9 @@ fun MoJingOutlinedButton(
 ) {
     val source = interactionSource ?: remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed && enabled) 0.975f else 1f,
+    val scale by animateFloatAsState(if (pressed && enabled) 0.99f else 1f,
         spring(dampingRatio = 0.8f, stiffness = 700f), label = "buttonPress")
-    val corner by animateDpAsState(if (pressed && enabled) 12.dp else 24.dp,
-        spring(dampingRatio = 0.85f, stiffness = 600f), label = "buttonCorner")
-    OutlinedButton(onClick, modifier.heightIn(min = 48.dp).graphicsLayer { scaleX = scale; scaleY = scale }, enabled, shape ?: RoundedCornerShape(corner), colors,
+    OutlinedButton(onClick, modifier.heightIn(min = 48.dp).graphicsLayer { scaleX = scale; scaleY = scale }, enabled, shape ?: MaterialTheme.shapes.small, colors,
         elevation, border, contentPadding, source, content)
 }
 
@@ -134,10 +158,8 @@ fun MoJingTonalButton(
 ) {
     val source = interactionSource ?: remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed && enabled) 0.975f else 1f,
+    val scale by animateFloatAsState(if (pressed && enabled) 0.99f else 1f,
         spring(dampingRatio = 0.8f, stiffness = 700f), label = "buttonPress")
-    val corner by animateDpAsState(if (pressed && enabled) 12.dp else 24.dp,
-        spring(dampingRatio = 0.85f, stiffness = 600f), label = "buttonCorner")
-    FilledTonalButton(onClick, modifier.heightIn(min = 48.dp).graphicsLayer { scaleX = scale; scaleY = scale }, enabled, shape ?: RoundedCornerShape(corner), colors,
+    FilledTonalButton(onClick, modifier.heightIn(min = 48.dp).graphicsLayer { scaleX = scale; scaleY = scale }, enabled, shape ?: MaterialTheme.shapes.small, colors,
         elevation, border, contentPadding, source, content)
 }
