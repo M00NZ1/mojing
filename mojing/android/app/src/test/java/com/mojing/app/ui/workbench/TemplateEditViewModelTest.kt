@@ -5,6 +5,7 @@ import com.mojing.app.data.local.dao.WorldLoreEntryDao
 import com.mojing.app.data.local.dao.WorldTemplateDao
 import com.mojing.app.data.local.entity.GenerationTaskEntity
 import com.mojing.app.data.local.entity.WorldTemplateEntity
+import com.mojing.app.data.local.entity.LegacyWorldMappingEntity
 import com.mojing.app.data.remote.BackendAssetsApi
 import com.mojing.app.data.remote.BackendWorldsApi
 import com.mojing.app.domain.generation.GenerationQueueProcessor
@@ -48,11 +49,16 @@ class TemplateEditViewModelTest {
     private fun createViewModel(
         templateDao: WorldTemplateDao,
         activeTasks: Flow<List<GenerationTaskEntity>> = flowOf(emptyList()),
+        mappedTemplate: Boolean = false,
     ): TemplateEditViewModel {
         val queue = mockk<GenerationQueueProcessor>(relaxed = true)
         every { queue.observeActiveForTemplate(any()) } returns activeTasks
         return TemplateEditViewModel(
-            worldMappingDao = io.mockk.mockk { io.mockk.coEvery { getByTemplateId(any()) } returns null },
+            worldMappingDao = io.mockk.mockk {
+                io.mockk.coEvery { getByTemplateId(any()) } returns if (mappedTemplate) {
+                    LegacyWorldMappingEntity(7L, 3L, "test")
+                } else null
+            },
             templateDao = templateDao,
             loreEntryDao = mockk<WorldLoreEntryDao>(relaxed = true),
             backendWorldsApi = mockk<Lazy<BackendWorldsApi>>(relaxed = true),
@@ -236,6 +242,40 @@ class TemplateEditViewModelTest {
         vm.save()
         advanceUntilIdle()
         assertFalse(vm.state.value.isDirty)
+        assertEquals(null, vm.state.value.saveError)
+    }
+
+    @Test
+    fun duplicateTemplateIdKeepsDraftAndShowsActionableSaveError() = runTest(dispatcher) {
+        val original = WorldTemplateEntity(id = 7L, templateId = "rain-city", label = "雨城")
+        val duplicate = original.copy(id = 8L, templateId = "taken")
+        val dao = mockk<WorldTemplateDao> {
+            coEvery { getById(7L) } returns original
+            coEvery { getByTemplateId("taken") } returns duplicate
+        }
+        val vm = createViewModel(dao)
+        vm.load(7L)
+        vm.updateTemplateId("taken")
+        vm.save()
+        advanceUntilIdle()
+
+        assertEquals("模板标识已被使用，请修改模板标识后重试。", vm.state.value.saveError)
+        assertEquals("taken", vm.state.value.templateId)
+        assertTrue(vm.state.value.isDirty)
+        io.mockk.coVerify(exactly = 0) { dao.upsert(any()) }
+    }
+
+    @Test
+    fun mappedTemplateLoadExplainsWhereToContinueEditing() = runTest(dispatcher) {
+        val dao = mockk<WorldTemplateDao> {
+            coEvery { getById(7L) } returns WorldTemplateEntity(id = 7L, templateId = "rain-city")
+        }
+        val vm = createViewModel(dao, mappedTemplate = true)
+        vm.load(7L)
+        advanceUntilIdle()
+
+        assertEquals("这份资料已归入世界百科，请从对应百科中编辑。", vm.state.value.loadError)
+        assertFalse(vm.state.value.isPersisted)
     }
 
     @Test

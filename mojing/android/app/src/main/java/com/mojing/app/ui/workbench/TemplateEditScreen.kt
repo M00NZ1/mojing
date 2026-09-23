@@ -76,6 +76,9 @@ fun TemplateEditScreen(
 
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
+    LaunchedEffect(state.saveError) {
+        if (state.saveError != null) scrollState.animateScrollTo(0)
+    }
     var categoryExpanded by remember { mutableStateOf(false) }
     var modeExpanded by remember { mutableStateOf(false) }
     var isCoverImporting by remember { mutableStateOf(false) }
@@ -130,8 +133,8 @@ fun TemplateEditScreen(
                 icon = Icons.Default.ErrorOutline,
                 title = "无法打开模板",
                 message = state.loadError.orEmpty(),
-                actionLabel = "重新加载",
-                onAction = { viewModel.load(templateId) },
+                actionLabel = if (state.loadErrorCanReturn) "返回工坊" else "重新加载",
+                onAction = if (state.loadErrorCanReturn) onBack else ({ viewModel.load(templateId) }),
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
@@ -186,6 +189,34 @@ fun TemplateEditScreen(
                                 enabled = !state.isRefreshingCompletion && !state.isAiCompleting,
                                 modifier = Modifier.fillMaxWidth(),
                             ) { Text(if (state.isRefreshingCompletion) "读取中…" else "重新读取") }
+                        }
+                    }
+                }
+
+                state.saveError?.let { message ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                        shape = MaterialTheme.shapes.medium,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text("保存未完成", style = MaterialTheme.typography.titleSmall)
+                            Text(message, style = MaterialTheme.typography.bodyMedium)
+                            OutlinedButton(
+                                onClick = if (state.saveErrorCanReturn) ::requestBack else viewModel::retrySave,
+                                enabled = !state.isSaving && !state.isAiCompleting,
+                            ) {
+                                Icon(
+                                    if (state.saveErrorCanReturn) Icons.AutoMirrored.Filled.ArrowBack else Icons.Default.Refresh,
+                                    contentDescription = null,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(if (state.saveErrorCanReturn) "返回工坊" else if (state.isSaving) "保存中…" else "重试保存")
+                            }
                         }
                     }
                 }

@@ -45,6 +45,9 @@ data class TemplateEditState(
     val completionRefreshError: String? = null,
     val isLoaded: Boolean = false,
     val loadError: String? = null,
+    val loadErrorCanReturn: Boolean = false,
+    val saveError: String? = null,
+    val saveErrorCanReturn: Boolean = false,
     val isPersisted: Boolean = false,
     val isDirty: Boolean = false,
     val isBackendQualityLoading: Boolean = false,
@@ -67,6 +70,18 @@ private data class TemplateDraftSnapshot(
     val suggestedChoicesJson: String,
     val coverImagePath: String,
 )
+
+private object TemplateAlreadyInEncyclopediaException : IllegalStateException()
+private object DuplicateTemplateIdException : IllegalStateException()
+
+private fun templateEditErrorMessage(error: Throwable, loading: Boolean): String = when {
+    error === TemplateAlreadyInEncyclopediaException ->
+        "这份资料已归入世界百科，请从对应百科中编辑。"
+    error === DuplicateTemplateIdException ->
+        "模板标识已被使用，请修改模板标识后重试。"
+    loading -> "读取模板失败，请重试。"
+    else -> "模板未能保存到本机，请检查内容后重试。"
+}
 
 private fun TemplateEditState.toDraftSnapshot() = TemplateDraftSnapshot(
     label = label,
@@ -118,7 +133,11 @@ class TemplateEditViewModel @Inject constructor(
 
     private fun updateDraft(transform: (TemplateEditState) -> TemplateEditState) {
         val next = transform(_state.value)
-        _state.value = next.copy(isDirty = next.toDraftSnapshot() != savedDraft)
+        _state.value = next.copy(
+            isDirty = next.toDraftSnapshot() != savedDraft,
+            saveError = null,
+            saveErrorCanReturn = false,
+        )
     }
 
     private fun startTemplateQueueObservation(rowId: Long) {
@@ -189,6 +208,10 @@ class TemplateEditViewModel @Inject constructor(
         _state.value = _state.value.copy(snackbar = null)
     }
 
+    fun retrySave() {
+        if (_state.value.saveError != null) save()
+    }
+
     fun syncPublicLlmKeyFromStorage() {
         _state.value = _state.value.copy(hasPublicLlmKey = secureStorage.publicApiKey.isNotBlank())
     }
@@ -213,7 +236,9 @@ class TemplateEditViewModel @Inject constructor(
         _state.value = _state.value.copy(isLoaded = false, loadError = null)
         viewModelScope.launch {
             try {
-                check(effectiveId <= 0 || worldMappingDao.getByTemplateId(effectiveId) == null) { "这份资料已归入世界，请从世界页面编辑" }
+                if (effectiveId > 0 && worldMappingDao.getByTemplateId(effectiveId) != null) {
+                    throw TemplateAlreadyInEncyclopediaException
+                }
                 val entity = if (effectiveId > 0) templateDao.getById(effectiveId) else null
                 currentEntity = entity
                 val loaded = when {
@@ -247,11 +272,12 @@ class TemplateEditViewModel @Inject constructor(
                 startTemplateQueueObservation(effectiveId)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 currentEntity = null
                 val failed = TemplateEditState(
                     isLoaded = true,
-                    loadError = "读取模板失败，请重试",
+                    loadError = templateEditErrorMessage(e, loading = true),
+                    loadErrorCanReturn = e === TemplateAlreadyInEncyclopediaException,
                     hasPublicLlmKey = secureStorage.publicApiKey.isNotBlank(),
                 )
                 savedDraft = failed.toDraftSnapshot()
@@ -473,12 +499,21 @@ class TemplateEditViewModel @Inject constructor(
             return
         }
         val submittedDraft = s.toDraftSnapshot()
-        _state.value = s.copy(isSaving = true)
+        _state.value = s.copy(isSaving = true, saveError = null, saveErrorCanReturn = false)
         viewModelScope.launch {
             try {
-                check(currentEntity == null || worldMappingDao.getByTemplateId(currentEntity!!.id) == null) { "这份资料已归入世界，请从世界页面编辑" }
+                if (currentEntity != null && worldMappingDao.getByTemplateId(currentEntity!!.id) != null) {
+                    throw TemplateAlreadyInEncyclopediaException
+                }
+                val normalizedTemplateId = s.templateId.trim()
+                if (normalizedTemplateId != currentEntity?.templateId) {
+                    val duplicate = templateDao.getByTemplateId(normalizedTemplateId)
+                    if (duplicate != null && duplicate.id != currentEntity?.id) {
+                        throw DuplicateTemplateIdException
+                    }
+                }
                 val toSave = (currentEntity ?: WorldTemplateEntity()).copy(
-                    templateId = s.templateId.trim(),
+                    templateId = normalizedTemplateId,
                     label = s.label.trim(),
                     category = s.category,
                     summary = s.summary,
@@ -494,7 +529,9 @@ class TemplateEditViewModel @Inject constructor(
                 if (saved == null || saved.id <= 0L) {
                     _state.value = _state.value.copy(
                         isSaving = false,
-                        snackbar = UserFacingStrings.localSaveFailed("模板"),
+                        saveError = UserFacingStrings.localSaveFailed("模板"),
+                        saveErrorCanReturn = false,
+                        snackbar = null,
                     )
                     return@launch
                 }
@@ -505,6 +542,8 @@ class TemplateEditViewModel @Inject constructor(
                 val persisted = current.withPersistedDraft(saved).copy(
                     isSaving = false,
                     isDirty = false,
+                    saveError = null,
+                    saveErrorCanReturn = false,
                 )
                 savedDraft = persisted.toDraftSnapshot()
                 val draftChangedWhileSaving = current.toDraftSnapshot() != submittedDraft
@@ -521,10 +560,12 @@ class TemplateEditViewModel @Inject constructor(
             } catch (cancelled: CancellationException) {
                 _state.value = _state.value.copy(isSaving = false)
                 throw cancelled
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     isSaving = false,
-                    snackbar = UserFacingStrings.localSaveFailed("模板"),
+                    saveError = templateEditErrorMessage(e, loading = false),
+                    saveErrorCanReturn = e === TemplateAlreadyInEncyclopediaException,
+                    snackbar = null,
                 )
             }
         }
