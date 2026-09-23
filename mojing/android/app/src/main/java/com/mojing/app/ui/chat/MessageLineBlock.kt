@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mojing.app.data.local.entity.MessageAttachmentEntity
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -78,13 +79,18 @@ fun MessageLineBlock(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (!isUser) {
-                        Text(senderLabel, style = MaterialTheme.typography.labelLarge, color = labelColor)
+                        Text(senderLabel, modifier = Modifier.weight(1f, fill = false),
+                            style = MaterialTheme.typography.labelLarge, color = labelColor,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Spacer(Modifier.width(8.dp))
                     }
-                    Text(timeText, style = MaterialTheme.typography.labelSmall, color = timeColor)
+                    Text(timeText, style = MaterialTheme.typography.labelSmall,
+                        color = timeColor, maxLines = 1)
                     if (isUser) {
                         Spacer(Modifier.width(8.dp))
-                        Text(senderLabel, style = MaterialTheme.typography.labelLarge, color = labelColor)
+                        Text(senderLabel, modifier = Modifier.weight(1f, fill = false),
+                            style = MaterialTheme.typography.labelLarge, color = labelColor,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 Spacer(Modifier.height(2.dp))

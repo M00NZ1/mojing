@@ -91,6 +91,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
@@ -734,6 +735,7 @@ fun ChatScreen(
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             topBar = {
+                val compactHeader = LocalConfiguration.current.screenWidthDp < 400
                 Column(Modifier.fillMaxWidth()) {
                     TopAppBar(
                         title = {
@@ -758,7 +760,7 @@ fun ChatScreen(
                                 Icon(if (readingMode) Icons.Default.Edit else Icons.Default.MenuBook,
                                     if (readingMode) "退出阅读模式" else "阅读模式")
                             }
-                            if (state.world?.gameplayMode == "小说创作") {
+                            if (!compactHeader && state.world?.gameplayMode == "小说创作") {
                                 IconButton(onClick = { dismissKeyboard(); showContents = true }) {
                                     Icon(Icons.Default.FormatListBulleted, "小说目录")
                                 }
@@ -795,6 +797,17 @@ fun ChatScreen(
                                     expanded = topActionsMenuExpanded,
                                     onDismissRequest = { topActionsMenuExpanded = false },
                                 ) {
+                                    if (compactHeader && state.world?.gameplayMode == "小说创作") {
+                                        DropdownMenuItem(
+                                            leadingIcon = { Icon(Icons.Default.FormatListBulleted, null) },
+                                            text = { Text("小说目录") },
+                                            onClick = {
+                                                topActionsMenuExpanded = false
+                                                dismissKeyboard()
+                                                showContents = true
+                                            },
+                                        )
+                                    }
                                     DropdownMenuItem(
                                         leadingIcon = { Icon(Icons.Default.Edit, null) },
                                         text = { Text(if (state.world?.gameplayMode == "小说创作") "修改小说标题" else "重命名对话") },

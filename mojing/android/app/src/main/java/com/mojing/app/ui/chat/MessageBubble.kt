@@ -460,9 +460,12 @@ fun UserMessageBubble(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End,
                             ) {
-                                Text(timeText, style = MaterialTheme.typography.labelSmall, color = timeColor)
+                                Text(timeText, style = MaterialTheme.typography.labelSmall,
+                                    color = timeColor, maxLines = 1)
                                 Spacer(Modifier.width(8.dp))
-                                Text(senderLabel, style = MaterialTheme.typography.labelLarge, color = labelColor)
+                                Text(senderLabel, modifier = Modifier.weight(1f, fill = false),
+                                    style = MaterialTheme.typography.labelLarge, color = labelColor,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             Spacer(Modifier.height(4.dp))
                         } else {
@@ -478,7 +481,8 @@ fun UserMessageBubble(
                         shape = RoundedCornerShape(d.bubbleCornerOuter, d.bubbleCornerOuter, d.bubbleCornerInner, d.bubbleCornerOuter),
                         color = MaterialTheme.colorScheme.primaryContainer,
                         modifier = Modifier
-                            .widthIn(max = d.bubbleMaxWidth)
+                            .widthIn(max = if (attachments.isEmpty()) d.bubbleMaxWidth
+                                else minOf(d.bubbleMaxWidth, 360.dp))
                             .combinedClickable(onClick = onClick, onLongClick = onLongPress),
                     ) {
                         Column(modifier = Modifier.padding(d.bubbleInnerPadding)) {
@@ -702,9 +706,12 @@ fun CharacterMessageBubble(
                 if (clusterInlineHeader) {
                     if (showSenderHeader) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(senderLabel, style = MaterialTheme.typography.labelLarge, color = labelColor)
-                            Spacer(Modifier.weight(1f))
-                            Text(timeText, style = MaterialTheme.typography.labelSmall, color = timeColor)
+                            Text(senderLabel, modifier = Modifier.weight(1f, fill = false),
+                                style = MaterialTheme.typography.labelLarge, color = labelColor,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.width(8.dp))
+                            Text(timeText, style = MaterialTheme.typography.labelSmall,
+                                color = timeColor, maxLines = 1)
                         }
                         Spacer(Modifier.height(4.dp))
                     } else {
