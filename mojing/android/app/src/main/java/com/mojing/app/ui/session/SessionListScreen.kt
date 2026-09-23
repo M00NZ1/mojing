@@ -566,6 +566,15 @@ fun SessionListScreen(
             },
         ) {
             val newSessionScroll = rememberScrollState()
+            val selectableCharacters = remember(selectedEncId, allBoundCharacters) {
+                when (val id = selectedEncId) {
+                    null -> allBoundCharacters
+                    else -> allBoundCharacters.filter { it.boundEncyclopediaId <= 0L || it.boundEncyclopediaId == id }
+                }
+            }
+            LaunchedEffect(selectedEncId, allBoundCharacters) {
+                selectedCharacterIds = openingCharacterSelection(selectableCharacters.map { it.id }.toSet(), selectedCharacterIds)
+            }
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -668,16 +677,6 @@ fun SessionListScreen(
                             DropdownMenuItem(text = { Text("${template.label} · 旧资料") }, onClick = { selectedTemplate = template; selectedEncId = null; worldExpanded = false })
                         }
                     }
-                }
-
-                val selectableCharacters = remember(selectedEncId, allBoundCharacters) {
-                    when (val id = selectedEncId) {
-                        null -> allBoundCharacters
-                        else -> allBoundCharacters.filter { (it.boundEncyclopediaId <= 0L || it.boundEncyclopediaId == id) }
-                    }
-                }
-                LaunchedEffect(selectedEncId, allBoundCharacters) {
-                    selectedCharacterIds = openingCharacterSelection(selectableCharacters.map { it.id }.toSet(), selectedCharacterIds)
                 }
 
                 Text("参与角色", style = MaterialTheme.typography.labelLarge,
