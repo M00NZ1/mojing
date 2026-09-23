@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -15,6 +16,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -46,30 +49,58 @@ fun StoryContentsSheet(
     val currentSaving by rememberUpdatedState(saving)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true,
         confirmValueChange = { it != SheetValue.Hidden || !currentSaving })
-    if (editingNovel || creatingChapter || editingChapter != null) AlertDialog(
-        onDismissRequest = { if (!saving) { editingNovel = false; creatingChapter = false; editingChapter = null } },
-        title = { Text(if (creatingChapter) "生成下一章" else if (editingNovel) "小说标题" else "章节名称") },
-        text = { Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            com.mojing.app.ui.common.MoJingTextField(value = title, onValueChange = { title = it.take(100) }, singleLine = true,
-                enabled = !saving,
-                label = { Text(if (creatingChapter) "章节名（可由模型生成）" else "名称") })
-            if (creatingChapter) com.mojing.app.ui.common.MoJingTextField(value = direction, onValueChange = { direction = it.take(4000) },
-                enabled = !saving,
-                label = { Text("剧情走向（可选）") }, minLines = 2, maxLines = 5)
-            if (!creatingChapter) saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        } },
-        confirmButton = { TextButton(enabled = !controlsBusy && (creatingChapter || title.isNotBlank()), onClick = {
-            when {
-                creatingChapter -> if (onNextChapter(title, direction)) { creatingChapter = false; onDismiss() }
-                editingNovel -> onRenameNovel(title) { editingNovel = false }
-                else -> editingChapter?.let { entry -> onRenameChapter(entry.messageId, title) {
-                    editingChapter = null
-                    viewModel.refreshEntry(entry.messageId)
-                } }
+    if (editingNovel || creatingChapter || editingChapter != null) {
+        fun closeEditor() {
+            editingNovel = false
+            creatingChapter = false
+            editingChapter = null
+        }
+        Dialog(onDismissRequest = { if (!saving) closeEditor() },
+            properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(Modifier.fillMaxWidth().widthIn(max = 560.dp).padding(horizontal = 16.dp)
+                .heightIn(max = 560.dp).imePadding(),
+                shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface) {
+                Column {
+                    Text(if (creatingChapter) "生成下一章" else if (editingNovel) "小说标题" else "章节名称",
+                        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp),
+                        style = MaterialTheme.typography.titleLarge)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp, vertical = 18.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        com.mojing.app.ui.common.MoJingTextField(value = title,
+                            onValueChange = { title = it.take(100) }, modifier = Modifier.fillMaxWidth(),
+                            singleLine = true, enabled = !saving,
+                            label = { Text(if (creatingChapter) "章节名（可由模型生成）" else "名称") })
+                        if (creatingChapter) com.mojing.app.ui.common.MoJingTextField(
+                            value = direction, onValueChange = { direction = it.take(4000) },
+                            modifier = Modifier.fillMaxWidth(), enabled = !saving,
+                            label = { Text("剧情走向（可选）") }, minLines = 2, maxLines = 5)
+                        saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    FlowRow(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(enabled = !saving, onClick = ::closeEditor) { Text("取消") }
+                        com.mojing.app.ui.common.MoJingButton(
+                            enabled = !controlsBusy && (creatingChapter || title.isNotBlank()),
+                            onClick = {
+                                when {
+                                    creatingChapter -> if (onNextChapter(title, direction)) { creatingChapter = false; onDismiss() }
+                                    editingNovel -> onRenameNovel(title) { editingNovel = false }
+                                    else -> editingChapter?.let { entry -> onRenameChapter(entry.messageId, title) {
+                                        editingChapter = null
+                                        viewModel.refreshEntry(entry.messageId)
+                                    } }
+                                }
+                            },
+                        ) { Text(if (saving) "保存中…" else if (creatingChapter) "开始生成" else "保存") }
+                    }
+                }
             }
-        }) { Text(if (saving) "保存中…" else if (creatingChapter) "开始生成" else "保存") } },
-        dismissButton = { TextButton(enabled = !saving, onClick = { editingNovel = false; creatingChapter = false; editingChapter = null }) { Text("取消") } },
-    )
+        }
+    }
     ModalBottomSheet(sheetState = sheetState, onDismissRequest = { if (!saving) onDismiss() },
         dragHandle = null, containerColor = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.9f)) {
