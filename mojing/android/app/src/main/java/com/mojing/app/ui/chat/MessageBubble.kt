@@ -61,6 +61,7 @@ import androidx.compose.ui.semantics.semantics
 import com.mojing.app.data.local.entity.MessageAttachmentEntity
 import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.domain.engine.StructuredParser
+import com.mojing.app.domain.engine.StructuredReply
 import com.mojing.app.ui.common.avatarImageModel
 import com.mojing.app.ui.common.ImagePreviewDialog
 import com.mojing.app.domain.billing.CurrencyDisplayState
@@ -504,7 +505,9 @@ fun UserMessageBubble(
                             val showCaption = message.content.isNotBlank() &&
                                 (message.content != "[图片]" || attachments.isEmpty())
                             if (showCaption) {
-                                val quoted = ChatMessageTextFormat.splitQuote(message.content)
+                                val quoted = remember(message.content) {
+                                    ChatMessageTextFormat.splitQuote(message.content)
+                                }
                                 quoted.quote?.let { source ->
                                     Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh,
                                         shape = RoundedCornerShape(8.dp)) {
@@ -515,8 +518,11 @@ fun UserMessageBubble(
                                     }
                                     Spacer(Modifier.height(8.dp))
                                 }
+                                val body = remember(quoted.body) {
+                                    ChatMessageTextFormat.forBubbleDisplay(quoted.body)
+                                }
                                 SearchableMessageText(
-                    text = ChatMessageTextFormat.forBubbleDisplay(quoted.body),
+                    text = body,
                                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                                     style = d.bodyTextStyle(),
                                 )
@@ -726,14 +732,19 @@ fun CharacterMessageBubble(
                 if (attachments.isNotEmpty()) {
                     CharacterAttachmentChips(attachments, onImageClick)
                 }
-                val reply = StructuredParser.parse(message.content)
-                val structuredRenderable = StructuredParser.isStructured(message.content) &&
+                val isStructured = remember(message.content) { StructuredParser.isStructured(message.content) }
+                val reply = remember(message.content, isStructured) {
+                    if (isStructured) StructuredParser.parse(message.content) else StructuredReply()
+                }
+                val structuredRenderable = isStructured &&
                     (reply.narrations.isNotEmpty() || reply.thoughts.isNotEmpty() ||
                         reply.speeches.isNotEmpty() || reply.choices.isNotEmpty())
+                val narrationBodies = remember(message.content) { reply.narrations.map(ChatMessageTextFormat::forBubbleDisplay) }
+                val thoughtBodies = remember(message.content) { reply.thoughts.map(ChatMessageTextFormat::forBubbleDisplay) }
+                val speechBodies = remember(message.content) { reply.speeches.map { ChatMessageTextFormat.forBubbleDisplay(it.text) } }
+                val choiceBodies = remember(message.content) { reply.choices.map(ChatMessageTextFormat::forBubbleDisplay) }
                 if (structuredRenderable) {
-                    reply.narrations.forEach { narration ->
-                        if (narration.isBlank()) return@forEach
-                        val body = ChatMessageTextFormat.forBubbleDisplay(narration)
+                    narrationBodies.forEach { body ->
                         if (body.isBlank()) return@forEach
                         Surface(
                             shape = RoundedCornerShape(d.bubbleCornerOuter),
@@ -749,9 +760,7 @@ fun CharacterMessageBubble(
                         }
                         Spacer(modifier = Modifier.size(4.dp))
                     }
-                    reply.thoughts.forEach { thought ->
-                        if (thought.isBlank()) return@forEach
-                        val body = ChatMessageTextFormat.forBubbleDisplay(thought)
+                    thoughtBodies.forEach { body ->
                         if (body.isBlank()) return@forEach
                         SearchableMessageText(
                     text = "💭 $body",
@@ -760,9 +769,7 @@ fun CharacterMessageBubble(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    reply.speeches.forEach { speech ->
-                        if (speech.text.isBlank()) return@forEach
-                        val body = ChatMessageTextFormat.forBubbleDisplay(speech.text)
+                    speechBodies.forEach { body ->
                         if (body.isBlank()) return@forEach
                         Row(modifier = Modifier.padding(top = 4.dp)) {
                             Surface(
@@ -779,7 +786,7 @@ fun CharacterMessageBubble(
                             }
                         }
                     }
-                    val plainBody = ChatMessageTextFormat.forBubbleDisplay(reply.plainText)
+                    val plainBody = remember(message.content) { ChatMessageTextFormat.forBubbleDisplay(reply.plainText) }
                     if (plainBody.isNotBlank()) {
                         Row(modifier = Modifier.padding(top = 4.dp)) {
                             Surface(
@@ -801,9 +808,7 @@ fun CharacterMessageBubble(
                             }
                         }
                     }
-                    if (showHistoricalChoices) reply.choices.forEach { choice ->
-                        if (choice.isBlank()) return@forEach
-                        val body = ChatMessageTextFormat.forBubbleDisplay(choice)
+                    if (showHistoricalChoices) choiceBodies.forEach { body ->
                         if (body.isBlank()) return@forEach
                         Surface(
                             shape = RoundedCornerShape(d.bubbleCornerOuter),
@@ -821,12 +826,12 @@ fun CharacterMessageBubble(
                         }
                     }
                 } else {
-                    val rawPlain = if (StructuredParser.isStructured(message.content)) {
-                        StructuredParser.stripTags(message.content)
-                    } else {
-                        message.content
+                    val plain = remember(message.content) {
+                        ChatMessageTextFormat.forBubbleDisplay(
+                            if (isStructured)
+                                StructuredParser.stripTags(message.content) else message.content,
+                        )
                     }
-                    val plain = ChatMessageTextFormat.forBubbleDisplay(rawPlain)
                     if (plain.isNotBlank()) {
                         Row {
                             Surface(
@@ -877,13 +882,16 @@ fun NarratorMessageBubble(
     modifier: Modifier = Modifier,
 ) {
     val d = LocalChatDensityMetrics.current
-    val reply = StructuredParser.parse(message.content)
-    val rawBody = if (StructuredParser.isStructured(message.content)) {
-        StructuredParser.stripTags(message.content)
-    } else {
-        message.content
+    val isStructured = remember(message.content) { StructuredParser.isStructured(message.content) }
+    val reply = remember(message.content, isStructured) {
+        if (isStructured) StructuredParser.parse(message.content) else StructuredReply()
     }
-    val body = ChatMessageTextFormat.forBubbleDisplay(rawBody)
+    val body = remember(message.content, isStructured) {
+        ChatMessageTextFormat.forBubbleDisplay(
+            if (isStructured) StructuredParser.stripTags(message.content) else message.content,
+        )
+    }
+    val choices = remember(message.content) { reply.choices.map(ChatMessageTextFormat::forBubbleDisplay) }
     Surface(
         shape = RoundedCornerShape(d.bubbleCornerOuter),
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -899,8 +907,7 @@ fun NarratorMessageBubble(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
                 )
             }
-            if (showHistoricalChoices) reply.choices.forEach { choice ->
-                val label = ChatMessageTextFormat.forBubbleDisplay(choice)
+            if (showHistoricalChoices) choices.forEach { label ->
                 if (label.isBlank()) return@forEach
                 Surface(
                     shape = RoundedCornerShape(d.bubbleCornerOuter),
