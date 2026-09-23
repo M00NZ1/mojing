@@ -46,6 +46,11 @@ const QUICK_ACTION_LABELS: Record<string, string> = {
 };
 
 type RightPanelTab = 'participants' | 'config' | 'states' | 'memory' | 'trace' | 'events';
+type ReplyRecoveryMode = 'retry' | 'review' | 'waiting';
+
+function replyRecoveryModeFromStatus(status: 'active' | 'ready' | 'review'): ReplyRecoveryMode {
+  return status === 'ready' ? 'retry' : status === 'review' ? 'review' : 'waiting';
+}
 
 function toastErrorMessage(e: unknown): string {
   return friendlyFetchError(e);
@@ -179,7 +184,7 @@ export default function ChatPage() {
   const [locatingMessageId, setLocatingMessageId] = useState<number | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [replyRecovery, setReplyRecovery] = useState<{
-    sessionId: number; branchId: string; partialReplySaved: boolean;
+    sessionId: number; branchId: string; userMessageId?: number; mode: ReplyRecoveryMode;
   } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const generationGateRef = useRef(false);
@@ -986,6 +991,7 @@ export default function ChatPage() {
   async function runStreamGeneration(payload: {
     branchId: string;
     userMessage?: string;
+    existingUserMessageId?: number;
     filesToSend?: File[];
     quoteMessage?: ChatQuoteDraft | null;
     streamIntoCurrentList?: boolean;
@@ -995,6 +1001,7 @@ export default function ChatPage() {
     const {
       branchId,
       userMessage,
+      existingUserMessageId,
       filesToSend = [],
       quoteMessage = null,
       streamIntoCurrentList = true,
@@ -1009,7 +1016,7 @@ export default function ChatPage() {
     let outboundPersisted = false;
     let generationRequestStarted = false;
     let activeClientMessageId: string | null = null;
-    let submittedMessageId: number | undefined;
+    let submittedMessageId: number | undefined = existingUserMessageId;
     const markOutboundPersisted = () => {
       if (outboundPersisted) return;
       outboundPersisted = true;
@@ -1197,10 +1204,25 @@ export default function ChatPage() {
     } catch (error) {
       // SSE errors/aborts must not be reported as a successful send. Re-read the
       // database so optimistic and partial placeholders cannot remain on screen.
-      if (generationRequestStarted) reloadMessages();
+      if (generationRequestStarted) void reloadMessages();
       if (sessionIdRef.current === sessionId && (replySaved || outboundPersisted
         || (generationRequestStarted && !outboundUserMessage && filesToSend.length === 0))) {
-        setReplyRecovery({ sessionId, branchId, partialReplySaved: replySaved });
+        if (sessionIdRef.current === sessionId && abortRef.current === abortController) {
+          setReplyRecovery({
+            sessionId, branchId, userMessageId: submittedMessageId,
+            mode: replySaved ? 'review' : 'waiting',
+          });
+          if (!replySaved && submittedMessageId && generationRequestStarted) {
+            void api.getUserMessageReplyStatus(sessionId, submittedMessageId, branchId).then((state) => {
+              if (sessionIdRef.current !== sessionId) return;
+              setReplyRecovery((current) => {
+                if (!current || current.userMessageId !== submittedMessageId
+                  || current.branchId !== branchId) return current;
+                return { ...current, mode: replyRecoveryModeFromStatus(state.status) };
+              });
+            }).catch(() => { /* The user can retry the status read without blocking Stop. */ });
+          }
+        }
       }
       if (outboundPersisted || replySaved) void Promise.allSettled([
         queryClient.invalidateQueries({ queryKey: ['sessions'] }),
@@ -1242,9 +1264,10 @@ export default function ChatPage() {
   });
 
   const generateBranchReplyMutation = useMutation({
-    mutationFn: async (payload: { branchId: string; streamIntoCurrentList?: boolean }) =>
+    mutationFn: async (payload: { branchId: string; streamIntoCurrentList?: boolean; existingUserMessageId?: number }) =>
       runStreamGeneration({
         branchId: payload.branchId,
+        existingUserMessageId: payload.existingUserMessageId,
         userMessage: undefined,
         streamIntoCurrentList: payload.streamIntoCurrentList ?? payload.branchId === selectedBranchId,
       }),
@@ -1404,8 +1427,15 @@ export default function ChatPage() {
         setFiles((current) => removeSelectedFiles(current, files));
       }
       if (selectedBranchRef.current === send.branchId) void reloadMessages();
-      setReplyRecovery({ sessionId, branchId: send.branchId, partialReplySaved: false });
-      showToast('消息已保存，可从对话记录继续生成回复。', 'success');
+      let mode: ReplyRecoveryMode = 'waiting';
+      try {
+        const state = await api.getUserMessageReplyStatus(sessionId, saved.id, send.branchId);
+        mode = replyRecoveryModeFromStatus(state.status);
+      } catch { /* The saved user message is confirmed; reply state is still uncertain. */ }
+      if (sessionIdRef.current === sessionId) {
+        setReplyRecovery({ sessionId, branchId: send.branchId, userMessageId: saved.id, mode });
+        showToast(mode === 'retry' ? '消息已保存，可以继续生成回复。' : '消息已保存，请核对本轮回复状态。', 'success');
+      }
     } catch (error) {
       showToast(`尚未确认消息已保存：${toastErrorMessage(error)}。沿用本次编号重试不会重复写入。`, 'warn');
     } finally {
@@ -1605,10 +1635,29 @@ export default function ChatPage() {
 
   function retryLastReply() {
     const recovery = replyRecovery;
-    if (!recovery || recovery.sessionId !== sessionId || recovery.partialReplySaved
+    if (!recovery || recovery.sessionId !== sessionId || recovery.mode !== 'retry' || !recovery.userMessageId
       || recovery.branchId !== selectedBranchRef.current || !reserveGeneration()) return;
     setReplyRecovery(null);
-    generateBranchReplyMutation.mutate({ branchId: recovery.branchId });
+    generateBranchReplyMutation.mutate({
+      branchId: recovery.branchId, existingUserMessageId: recovery.userMessageId,
+    });
+  }
+
+  async function refreshReplyRecovery() {
+    const recovery = replyRecovery;
+    await reloadMessages();
+    if (!recovery?.userMessageId || recovery.sessionId !== sessionId) return;
+    try {
+      const state = await api.getUserMessageReplyStatus(sessionId, recovery.userMessageId, recovery.branchId);
+      if (sessionIdRef.current !== sessionId) return;
+      setReplyRecovery((current) => {
+        if (!current || current.userMessageId !== recovery.userMessageId
+          || current.branchId !== recovery.branchId) return current;
+        return { ...current, mode: replyRecoveryModeFromStatus(state.status) };
+      });
+    } catch {
+      showToast('暂时无法确认回复状态，请稍后重新读取。', 'warn');
+    }
   }
 
   function createBranch(message: Message) {
@@ -2034,7 +2083,7 @@ export default function ChatPage() {
           isError={sendMutation.isError && !isAbortError(sendMutation.error) && replyRecovery?.sessionId !== sessionId}
           errorMessage={sendMutation.error?.message}
           replyRecoveryMode={replyRecovery?.sessionId === sessionId && replyRecovery.branchId === selectedBranchId
-            ? (replyRecovery.partialReplySaved ? 'review' : 'retry') : undefined}
+            ? replyRecovery.mode : undefined}
           onRetryReply={retryLastReply}
           onDismissReplyRecovery={() => setReplyRecovery(null)}
           pendingSendPreview={pendingSend?.sessionId === sessionId && !isGenerating
@@ -2044,7 +2093,7 @@ export default function ChatPage() {
           onCheckPendingSend={() => { void checkPendingSend(); }}
           onRetryPendingSend={() => { void retryPendingSend(); }}
           onForgetPendingSend={forgetPendingSend}
-          onRefreshReplies={() => { void reloadMessages(); }}
+          onRefreshReplies={() => { void refreshReplyRecovery(); }}
           refreshingReplies={messagesLoading}
           onSend={handleSend}
           onStop={() => { abortRef.current?.abort(); }}

@@ -491,6 +491,12 @@ export const api = {
     if (branchId) search.set('branch_id', branchId);
     return request<MessagePage>(`/sessions/${sessionId}/messages?${search.toString()}`);
   },
+  getUserMessageReplyStatus(sessionId: number, messageId: number, branchId: string) {
+    const search = new URLSearchParams({ branch_id: branchId });
+    return request<{ status: 'active' | 'ready' | 'review' }>(
+      `/sessions/${sessionId}/user-message/${messageId}/reply-status?${search}`,
+    );
+  },
   getMessageWindow(sessionId: number, anchorId: number, branchId = 'main', radius = 20) {
     const search = new URLSearchParams({ anchor_id: String(anchorId), radius: String(radius) });
     if (branchId) search.set('branch_id', branchId);

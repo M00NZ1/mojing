@@ -1,6 +1,7 @@
 import html
 import shutil
 import tempfile
+import threading
 import time
 from contextlib import closing
 from pathlib import Path
@@ -97,6 +98,8 @@ from ..services.model_platform_service import (
 router = APIRouter(prefix="/sessions", tags=["会话"])
 BACKUP_ACTION_HEADER = "portable-backup-v1"
 CHAT_UPLOAD_CHUNK_BYTES = 1024 * 1024
+_reply_generation_lock = threading.Lock()
+_active_reply_generations: set[tuple[int, int]] = set()
 
 
 class _ClosingStreamingResponse(StreamingResponse):
@@ -107,8 +110,9 @@ class _ClosingStreamingResponse(StreamingResponse):
     replies and release the model stream, so they must run before returning.
     """
 
-    def __init__(self, content, **kwargs):
+    def __init__(self, content, *, on_close=None, **kwargs):
         self._sync_content = content
+        self._on_close = on_close
         super().__init__(self._iterate_closing(), **kwargs)
 
     async def _iterate_closing(self):
@@ -121,6 +125,9 @@ class _ClosingStreamingResponse(StreamingResponse):
     async def _close_content(self):
         with anyio.CancelScope(shield=True):
             await anyio.to_thread.run_sync(self._sync_content.close)
+            if self._on_close is not None:
+                callback, self._on_close = self._on_close, None
+                callback()
 
     async def __call__(self, scope, receive, send):
         try:
@@ -794,6 +801,52 @@ def get_user_message_by_client_id(session_id: int, client_message_id: UUID, db: 
     return serialize_message(message)
 
 
+def _validated_reply_source(db: Session, session_id: int, branch_id: str, message_id: int) -> MessageModel:
+    message = db.get(MessageModel, message_id)
+    if (message is None or message.session_id != session_id
+            or message.branch_id != branch_id or message.speaker_type != "user"):
+        raise HTTPException(status_code=400, detail="本轮已保存消息不属于当前故事线")
+    return message
+
+
+def _reply_generation_state(db: Session, session_id: int, branch_id: str, message_id: int) -> str:
+    key = (session_id, message_id)
+    with _reply_generation_lock:
+        if key in _active_reply_generations:
+            return "active"
+        if get_visible_tail_message_id(db, session_id, branch_id) != message_id:
+            return "review"
+        return "ready"
+
+
+@router.get("/{session_id}/user-message/{message_id}/reply-status")
+def get_user_message_reply_status(
+    session_id: int, message_id: int, branch_id: str = "main", db: Session = Depends(get_db),
+):
+    _validated_reply_source(db, session_id, branch_id, message_id)
+    try:
+        return {"status": _reply_generation_state(db, session_id, branch_id, message_id)}
+    except BranchContextError as exc:
+        _raise_branch_http_error(exc)
+
+
+def _claim_reply_generation(db: Session, session_id: int, branch_id: str, message_id: int):
+    """Fence duplicate replies to one saved user message in the local API process."""
+    key = (session_id, message_id)
+    with _reply_generation_lock:
+        if key in _active_reply_generations:
+            raise HTTPException(status_code=409, detail="本轮回复仍在生成，请稍后重新读取对话")
+        if get_visible_tail_message_id(db, session_id, branch_id) != message_id:
+            raise HTTPException(status_code=409, detail="该消息之后已有新内容，请重新读取对话")
+        _active_reply_generations.add(key)
+
+    def release():
+        with _reply_generation_lock:
+            _active_reply_generations.discard(key)
+
+    return release
+
+
 @router.get("/{session_id}/export")
 def export_session_archive(session_id: int, db: Session = Depends(get_db)):
     session = db.get(ChatSessionModel, session_id)
@@ -1168,11 +1221,20 @@ def generate_stream(session_id: int, payload: GenerateRequest, db: Session = Dep
         raise HTTPException(status_code=400, detail="本轮消息不能同时提交正文和已保存消息编号")
     selection_text = payload.user_message or ""
     if payload.existing_user_message_id is not None:
-        existing_user_message = db.get(MessageModel, payload.existing_user_message_id)
-        if (existing_user_message is None or existing_user_message.session_id != session_id
-                or existing_user_message.branch_id != branch_id or existing_user_message.speaker_type != "user"):
-            raise HTTPException(status_code=400, detail="本轮已保存消息不属于当前故事线")
+        existing_user_message = _validated_reply_source(
+            db, session_id, branch_id, payload.existing_user_message_id,
+        )
         selection_text = existing_user_message.content
+
+    def reply_response(content):
+        release = (_claim_reply_generation(db, session_id, branch_id, payload.existing_user_message_id)
+                   if payload.existing_user_message_id is not None else None)
+        try:
+            return _ClosingStreamingResponse(content, on_close=release, media_type="text/event-stream")
+        except Exception:
+            if release is not None:
+                release()
+            raise
 
     if payload.user_message:
         create_message(
@@ -1195,7 +1257,7 @@ def generate_stream(session_id: int, payload: GenerateRequest, db: Session = Dep
             trigger_memory_compaction_async(session_id, branch_id)
             yield sse_event({"type": "done"})
 
-        return _ClosingStreamingResponse(narrator_only_stream(), media_type="text/event-stream")
+        return reply_response(narrator_only_stream())
 
     if payload.auto_select_speakers:
         target_ids, plan_reason = select_speakers_for_turn(
@@ -1224,7 +1286,7 @@ def generate_stream(session_id: int, payload: GenerateRequest, db: Session = Dep
             yield sse_event({"type": "session", "session_id": session_id})
             yield sse_event({"type": "error", "message": "当前会话还没有绑定人物，请先在角色页添加角色到会话中。"})
             yield sse_event({"type": "done"})
-        return _ClosingStreamingResponse(empty_error_stream(), media_type="text/event-stream")
+        return reply_response(empty_error_stream())
 
     def event_stream():
         yield sse_event({"type": "session", "session_id": session_id})
@@ -1244,7 +1306,7 @@ def generate_stream(session_id: int, payload: GenerateRequest, db: Session = Dep
         trigger_memory_compaction_async(session_id, branch_id)
         yield sse_event({"type": "done"})
 
-    return _ClosingStreamingResponse(event_stream(), media_type="text/event-stream")
+    return reply_response(event_stream())
 
 
 @router.get("/{session_id}/bookmarks", summary="获取收藏列表")

@@ -1,3 +1,4 @@
+import asyncio
 import shutil
 import sqlite3
 from contextlib import closing
@@ -181,5 +182,60 @@ def test_generation_uses_saved_message_for_speaker_selection_without_resending(t
                 ), db)
             assert conflict.value.status_code == 400
             assert db.scalar(select(func.count()).select_from(MessageModel)) == 1
+            asyncio.run(response._close_content())
+    finally:
+        engine.dispose()
+
+
+def test_saved_user_reply_retry_waits_for_stream_close_and_rechecks_history(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'chat.db'}")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
+    monkeypatch.setattr(session_routes, "get_model_choice", lambda *args: {"selection": None})
+
+    def narrator_reply(*_args, **_kwargs):
+        yield {"type": "message_start", "stream_key": "reply"}
+
+    monkeypatch.setattr(
+        session_routes, "stream_narrator_reply",
+        narrator_reply,
+    )
+    try:
+        with Session() as db:
+            session = ChatSessionModel(title="会话")
+            db.add(session)
+            db.commit()
+            saved = add_user_message(session.id, SessionMessageCreate(content="请继续", client_message_id=uuid4()), db)
+            payload = GenerateRequest(existing_user_message_id=saved.id, narrator_only=True)
+            assert session_routes.get_user_message_reply_status(session.id, saved.id, "main", db) == {"status": "ready"}
+            response = session_routes.generate_stream(session.id, payload, db)
+            assert session_routes.get_user_message_reply_status(session.id, saved.id, "main", db) == {"status": "active"}
+            with pytest.raises(HTTPException) as active:
+                session_routes.generate_stream(session.id, payload, db)
+            assert active.value.status_code == 409
+
+            async def consume():
+                return [chunk async for chunk in response.body_iterator]
+
+            assert any('"type": "done"' in chunk for chunk in asyncio.run(consume()))
+            assert session_routes.get_user_message_reply_status(session.id, saved.id, "main", db) == {"status": "ready"}
+            interrupted = session_routes.generate_stream(session.id, payload, db)
+
+            async def disconnect():
+                await interrupted.body_iterator.__anext__()
+                await interrupted.body_iterator.aclose()
+
+            asyncio.run(disconnect())
+            assert session_routes.get_user_message_reply_status(session.id, saved.id, "main", db) == {"status": "ready"}
+            db.add(MessageModel(
+                session_id=session.id, branch_id="main", speaker_type="narrator",
+                content="已经回复", parent_message_id=saved.id,
+            ))
+            db.commit()
+            assert session_routes.get_user_message_reply_status(session.id, saved.id, "main", db) == {"status": "review"}
+            with pytest.raises(HTTPException) as already_replied:
+                session_routes.generate_stream(session.id, payload, db)
+            assert already_replied.value.status_code == 409
+            assert db.scalar(select(func.count()).select_from(MessageModel)) == 2
     finally:
         engine.dispose()
