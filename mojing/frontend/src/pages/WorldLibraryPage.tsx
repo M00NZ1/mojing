@@ -54,25 +54,35 @@ export default function WorldLibraryPage() {
   return (
     <main className="page world-library-page">
       <header className="world-library-header">
-        <div><p className="eyebrow">创作资料</p><h1>世界</h1><p className="hint">背景、人物、地点与事件，在同一个世界中整理。</p></div>
+        <div><h1>世界</h1><p className="hint">每个世界，都有自己的百科。背景、人物、地点与事件在此整理。</p></div>
         <CreationHomeLink />
       </header>
       <nav className="world-library-tools" aria-label="世界工具">
-        <Link className="btn btn-primary" to="/encyclopedia">建立与编辑世界</Link>
+        <Link className="btn btn-primary" to="/encyclopedia">管理世界</Link>
         <Link className="btn btn-ghost" to="/workbench?tab=create">生成世界</Link>
         <Link className="btn btn-ghost" to="/workbench?tab=import">导入资料</Link>
         <Link className="btn btn-ghost" to="/workbench?tab=history">生成记录</Link>
       </nav>
-      <label className="form-group world-library-search">搜索世界<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="名称或简介" /></label>
+      <div className="world-library-filter">
+        <label className="world-library-search"><span>搜索世界</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称或简介" /></label>
+        {library.isSuccess && <span className="world-library-count" role="status">{search.trim() ? `${worlds.length} 个匹配` : `${worlds.length} 个世界`}</span>}
+      </div>
       {library.isPending && <p role="status">正在读取世界…</p>}
       {library.isError && <InlineQueryError message="世界读取失败" error={library.error} onRetry={() => void library.refetch()} />}
       {notice && <p role="status" className="hint">{notice} {promote.data && <Link to={`/encyclopedia?encId=${promote.data.encyclopedia_id}`}>打开世界资料</Link>}</p>}
       {promote.isError && <InlineQueryError message="整理未完成，原资料已保留" error={promote.error} retrying={library.isFetching} onRetry={() => void retryPromotion()} />}
       <section className="world-library-grid" aria-label="我的世界">
         {worlds.map((world) => (
-          <Link to={`/encyclopedia?encId=${world.id}`} className="world-library-card page-card" key={world.id}>
-            <span className="eyebrow">{world.gameplay_mode || '自由剧情'}</span>
-            <h2>{world.name}</h2><p>{world.description || '进入世界，开始整理设定。'}</p><span className="world-library-open">打开世界 →</span>
+          <Link to={`/encyclopedia?encId=${world.id}`} className="world-library-card" key={world.id}>
+            <div className={`world-library-cover${world.cover_image_path ? '' : ' world-library-cover-empty'}`} aria-hidden="true">
+              <span>{Array.from(world.name.trim())[0] || '境'}</span>
+              {world.cover_image_path && <img src={api.mediaRefUrl(world.cover_image_path)} alt="" loading="lazy" onError={(event) => { event.currentTarget.style.display = 'none'; }} />}
+            </div>
+            <div className="world-library-card-body">
+              <span className="world-library-mode">{world.gameplay_mode || '自由剧情'}</span>
+              <h2>{world.name}</h2><p>{world.description || '尚未填写简介，进入百科完善世界设定。'}</p>
+              <span className="world-library-open">打开世界百科 <span aria-hidden="true">↗</span></span>
+            </div>
           </Link>
         ))}
       </section>
