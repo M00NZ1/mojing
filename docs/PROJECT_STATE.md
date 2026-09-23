@@ -222,7 +222,7 @@ Android 设置新增“关于与更新”，展示当前安装版本，手动检
 | Web | React、TypeScript、Vite；本机 FastAPI、SQLAlchemy、SQLite |
 | Android | Kotlin、Jetpack Compose、Room |
 | Android 应用标识 | `com.mojing.app` |
-| Android 版本 | 1.0.28 / 10028 |
+| Android 版本 | 1.1.0 / 10100 |
 | Room schema | 21 |
 
 ## 对话阅读与搜索
@@ -514,9 +514,9 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 ## 本地状态与交付
 
-当前分支为 `main`。本轮 Android 版本为 1.0.28 / 10028，Room schema 为 21。
+当前分支为 `main`。本轮 Android 版本为 1.1.0 / 10100，Room schema 为 21。
 
-本轮交付为 [墨境 1.0.28](https://github.com/M00NZ1/mojing/releases/tag/v1.0.28)，提供通用版、ARM64 与 ARMv7。APK 输出目录为 `outputs/android/20260914-1.0.28/`。
+本轮交付为 [墨境 1.1.0](https://github.com/M00NZ1/mojing/releases/tag/v1.1.0)，提供通用版、ARM64 与 ARMv7。APK 输出目录为 `outputs/android/20260923-1.1.0/`。更新内容见[更新日志](CHANGELOG.md)。
 
 正式数据库 `mojing/backend/storage/app.db` 为 3,891,200 字节，修改时间为 2026-08-28 23:23:12。本批未修改数据库、媒体、凭据、签名或历史 worktree；既有运行环境保持原状，测试日志与截图保留在 `.codex-work/`。
 

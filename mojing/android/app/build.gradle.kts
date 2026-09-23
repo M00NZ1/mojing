@@ -15,8 +15,8 @@ import com.android.build.api.variant.FilterConfiguration
  * 超出时请改公式或改为手写整数，并保持单调递增）。
  */
 private val appVersionMajor = 1
-private val appVersionMinor = 0
-private val appVersionPatch = 28
+private val appVersionMinor = 1
+private val appVersionPatch = 0
 
 private val appVersionCode = appVersionMajor * 10_000 + appVersionMinor * 100 + appVersionPatch
 
