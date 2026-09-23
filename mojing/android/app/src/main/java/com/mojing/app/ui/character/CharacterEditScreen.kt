@@ -105,9 +105,10 @@ fun CharacterEditScreen(
     var pendingExport by remember { mutableStateOf<PendingExport?>(null) }
     var isWritingExport by remember { mutableStateOf(false) }
 
-    val canSave = state.loadError == null && state.personaRefreshError == null && !state.isRefreshingPersona && (!state.isPersisted || state.isDirty || state.saveError != null)
+    val canSave = state.loadError == null && state.personaRefreshError == null && !state.isRefreshingPersona &&
+        state.recoverableDraft == null && !state.draftUnreadable && (!state.isPersisted || state.isDirty || state.saveError != null)
     val pageBusy = state.isSaving || isAvatarImporting || isCardImageProcessing ||
-        state.isGeneratingCardImage || state.isPreparingExport || pendingExport != null || isWritingExport
+        state.isGeneratingCardImage || state.isPreparingExport || pendingExport != null || isWritingExport || state.isDiscardingDraft
 
     fun leaveEditor(destination: String) {
         if (destination == "settings") onOpenSettings() else onBack()
@@ -117,7 +118,10 @@ fun CharacterEditScreen(
         hideImeKeyboard(keyboardController, focusManager)
         when {
             pageBusy -> scope.launch { snackbarHostState.showSnackbar("正在保存、处理图片或导出，请稍候") }
+            state.recoverableDraft != null || state.draftUnreadable ->
+                scope.launch { snackbarHostState.showSnackbar("请先恢复或丢弃本机角色草稿") }
             state.isDirty -> pendingExit = destination
+            state.draftError != null -> scope.launch { snackbarHostState.showSnackbar("请先重试清理本机角色草稿") }
             else -> leaveEditor(destination)
         }
     }
@@ -168,6 +172,9 @@ fun CharacterEditScreen(
     }
 
     LaunchedEffect(characterId) { viewModel.load(characterId) }
+    LaunchedEffect(state.recoverableDraft, state.draftUnreadable) {
+        if (state.recoverableDraft != null || state.draftUnreadable) pendingExit = null
+    }
 
     LaunchedEffect(state.apiBaseUrl) {
         if (ApiProviderPresets.isExactSinglePresetBaseUrl(state.apiBaseUrl)) showManualCharChatUrlModel = false
@@ -302,6 +309,16 @@ fun CharacterEditScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            state.draftError?.takeIf { !state.draftUnreadable && state.recoverableDraft == null }?.let { error ->
+                Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(error, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer)
+                        TextButton(onClick = viewModel::retryDraftSave) { Text(if (state.isDirty) "重试暂存" else "重试清理") }
+                    }
+                }
+            }
             if (isImeOpen) state.saveError?.let { error ->
                 Text(error, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
             }
@@ -815,7 +832,7 @@ fun CharacterEditScreen(
         }
     }
 
-    pendingExit?.let { destination ->
+    pendingExit?.takeIf { state.recoverableDraft == null && !state.draftUnreadable }?.let { destination ->
         AlertDialog(
             onDismissRequest = { pendingExit = null },
             title = { Text("保存角色修改？") },
@@ -834,8 +851,29 @@ fun CharacterEditScreen(
                     TextButton(onClick = { pendingExit = null }) { Text("继续编辑") }
                     TextButton(
                         enabled = !pageBusy,
-                        onClick = { pendingExit = null; leaveEditor(destination) },
+                        onClick = {
+                            pendingExit = null
+                            viewModel.discardChangesAndLeave { leaveEditor(destination) }
+                        },
                     ) { Text("放弃修改", color = MaterialTheme.colorScheme.error) }
+                }
+            },
+        )
+    }
+    if (state.recoverableDraft != null || state.draftUnreadable) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text(if (state.draftUnreadable) "角色草稿暂时无法读取" else "发现未保存的角色草稿") },
+            text = { Text(state.draftError ?: "上次编辑的内容保存在此设备。恢复后请检查资料再保存；丢弃只移除草稿，不改已保存角色。") },
+            confirmButton = {
+                TextButton(enabled = !state.isDiscardingDraft,
+                    onClick = if (state.draftUnreadable) viewModel::retryDraftLoad else viewModel::restoreDraft) {
+                    Text(if (state.draftUnreadable) "重新读取" else "恢复草稿")
+                }
+            },
+            dismissButton = {
+                TextButton(enabled = !state.isDiscardingDraft, onClick = viewModel::discardStoredDraft) {
+                    Text(if (state.isDiscardingDraft) "正在丢弃…" else "丢弃草稿")
                 }
             },
         )

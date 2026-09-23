@@ -10,6 +10,8 @@ import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.CharacterProfileEntity
 import com.mojing.app.data.local.entity.EncyclopediaEntity
 import com.mojing.app.data.SecureStorage
+import com.mojing.app.data.CharacterDraftSnapshot
+import com.mojing.app.data.CharacterEditDraftStore
 import com.mojing.app.data.remote.BackendSystemProbeApi
 import com.mojing.app.data.remote.LlmApiService
 import com.mojing.app.data.remote.ChatMessage
@@ -43,6 +45,8 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.text.Charsets
 import java.io.File
 import javax.inject.Inject
@@ -99,6 +103,10 @@ data class CharacterEditState(
     /** 绑定百科后，会话选该库时仅可选这些角色；并在百科中镜像一条「角色」条目 */
     val boundEncyclopediaId: Long = 0L,
     val encyclopediaOptions: List<EncyclopediaEntity> = emptyList(),
+    val recoverableDraft: CharacterDraftSnapshot? = null,
+    val draftError: String? = null,
+    val draftUnreadable: Boolean = false,
+    val isDiscardingDraft: Boolean = false,
 )
 
 internal fun CharacterEditState.samplingError(): String? = listOf(
@@ -108,34 +116,6 @@ internal fun CharacterEditState.samplingError(): String? = listOf(
     "频率惩罚" to samplingParameterError(frequencyPenalty),
     "存在惩罚" to samplingParameterError(presencePenalty),
 ).firstOrNull { it.second != null }?.let { "${it.first}：${it.second}" }
-
-private data class CharacterDraftSnapshot(
-    val name: String,
-    val personaPrompt: String,
-    val apiKey: String,
-    val apiBaseUrl: String,
-    val modelName: String,
-    val temperature: String,
-    val maxTokens: String,
-    val topP: String,
-    val frequencyPenalty: String,
-    val presencePenalty: String,
-    val avatarColor: String,
-    val avatarImagePath: String,
-    val cardImagePath: String,
-    val characterCardJsonRaw: String,
-    val thinkMaxEnabled: Boolean,
-    val thinkMaxModelName: String,
-    val imageGenEnabled: Boolean,
-    val imageGenApiKey: String,
-    val imageGenBaseUrl: String,
-    val imageGenModel: String,
-    val voiceProvider: String,
-    val voiceApiBaseUrl: String,
-    val voiceApiKey: String,
-    val voiceModel: String,
-    val boundEncyclopediaId: Long,
-)
 
 private fun CharacterEditState.toDraftSnapshot() = CharacterDraftSnapshot(
     name = name,
@@ -199,6 +179,34 @@ private fun CharacterEditState.withPersistedDraft(
     isPersisted = true,
 )
 
+private fun CharacterEditState.withRecoveredDraft(draft: CharacterDraftSnapshot) = copy(
+    name = draft.name,
+    personaPrompt = draft.personaPrompt,
+    apiKey = draft.apiKey,
+    apiBaseUrl = draft.apiBaseUrl,
+    modelName = draft.modelName,
+    temperature = draft.temperature,
+    maxTokens = draft.maxTokens,
+    topP = draft.topP,
+    frequencyPenalty = draft.frequencyPenalty,
+    presencePenalty = draft.presencePenalty,
+    avatarColor = draft.avatarColor,
+    avatarImagePath = draft.avatarImagePath,
+    cardImagePath = draft.cardImagePath,
+    characterCardJsonRaw = draft.characterCardJsonRaw,
+    thinkMaxEnabled = draft.thinkMaxEnabled,
+    thinkMaxModelName = draft.thinkMaxModelName,
+    imageGenEnabled = draft.imageGenEnabled,
+    imageGenApiKey = draft.imageGenApiKey,
+    imageGenBaseUrl = draft.imageGenBaseUrl,
+    imageGenModel = draft.imageGenModel,
+    voiceProvider = draft.voiceProvider,
+    voiceApiBaseUrl = draft.voiceApiBaseUrl,
+    voiceApiKey = draft.voiceApiKey,
+    voiceModel = draft.voiceModel,
+    boundEncyclopediaId = draft.boundEncyclopediaId,
+)
+
 enum class PortableExportFormat {
     JSON, TXT, DOCX
 }
@@ -216,6 +224,7 @@ class CharacterEditViewModel @Inject constructor(
     private val systemProbeApi: BackendSystemProbeApi,
     private val imageRepository: ImageRepository,
     private val llmApiService: LlmApiService,
+    private val draftStore: CharacterEditDraftStore,
 ) : ViewModel() {
     private val _state = MutableStateFlow(CharacterEditState())
     val state: StateFlow<CharacterEditState> = _state.asStateFlow()
@@ -227,10 +236,139 @@ class CharacterEditViewModel @Inject constructor(
     private var personaReadRevision = 0L
     private var prevCharacterGenBusy = false
     private var savedDraft = _state.value.toDraftSnapshot()
+    private val draftWriteMutex = Mutex()
+    private var draftWriteRevision = 0L
+    private var draftWriteJob: Job? = null
 
     private fun updateDraft(transform: (CharacterEditState) -> CharacterEditState) {
+        if (!_state.value.isLoaded || _state.value.loadError != null || _state.value.recoverableDraft != null || _state.value.draftUnreadable || _state.value.isDiscardingDraft) return
         val next = transform(_state.value)
         _state.value = next.copy(isDirty = next.saveError != null || next.toDraftSnapshot() != savedDraft)
+        persistCurrentDraft()
+    }
+
+    private fun persistCurrentDraft() {
+        val id = lastLoadedCharacterId?.takeIf { it > 0L } ?: return
+        val snapshot = _state.value.toDraftSnapshot()
+        val dirty = _state.value.isDirty
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        draftWriteJob = viewModelScope.launch {
+            try {
+                draftWriteMutex.withLock {
+                    if (revision != draftWriteRevision || lastLoadedCharacterId != id) return@withLock
+                    if (dirty) draftStore.save(id, snapshot) else draftStore.clear(id)
+                }
+                if (revision == draftWriteRevision && lastLoadedCharacterId == id)
+                    _state.update { it.copy(draftError = null) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (revision == draftWriteRevision && lastLoadedCharacterId == id)
+                    _state.update { it.copy(draftError = "角色草稿暂存失败，当前输入仍在页面中；可重试或直接保存角色") }
+            }
+        }
+    }
+
+    fun retryDraftSave() {
+        if (_state.value.isLoaded && _state.value.recoverableDraft == null && !_state.value.draftUnreadable) persistCurrentDraft()
+    }
+
+    private suspend fun syncDraftAfterSave(id: Long) {
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        val current = _state.value
+        try {
+            draftWriteMutex.withLock {
+                if (current.isDirty) draftStore.save(id, current.toDraftSnapshot())
+                else draftStore.clear(id)
+            }
+            if (revision == draftWriteRevision) _state.update { it.copy(draftError = null) }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) {
+            if (revision == draftWriteRevision) _state.update { it.copy(
+                draftError = if (current.isDirty) "角色已保存，但新的修改暂存失败；请重试"
+                else "角色已保存，但旧草稿清除失败；请重试清理后离开",
+            ) }
+        }
+    }
+
+    private suspend fun readRecoveryDraft(id: Long) {
+        if (id <= 0L) return
+        val draft = try { draftStore.load(id) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) {
+            if (lastLoadedCharacterId == id) _state.update { it.copy(
+                draftUnreadable = true,
+                draftError = "本机角色草稿无法读取，已保留原始草稿。可重试读取或明确丢弃。",
+            ) }
+            return
+        }
+        if (lastLoadedCharacterId != id) return
+        _state.update { current -> current.copy(
+            recoverableDraft = draft?.takeIf { it != savedDraft },
+            draftUnreadable = false,
+            draftError = null,
+        ) }
+        if (draft == savedDraft) {
+            try { draftStore.clear(id) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (lastLoadedCharacterId == id)
+                    _state.update { it.copy(draftError = "已保存角色可用，但旧草稿清除失败；可重试清理") }
+            }
+        }
+    }
+
+    fun retryDraftLoad() {
+        val id = lastLoadedCharacterId?.takeIf { it > 0L } ?: return
+        if (!_state.value.draftUnreadable || _state.value.isDiscardingDraft) return
+        viewModelScope.launch { readRecoveryDraft(id) }
+    }
+
+    fun restoreDraft() {
+        if (_state.value.isDiscardingDraft) return
+        val draft = _state.value.recoverableDraft ?: return
+        val restored = _state.value.withRecoveredDraft(draft).copy(recoverableDraft = null, draftError = null)
+        _state.value = restored.copy(isDirty = restored.toDraftSnapshot() != savedDraft)
+        persistCurrentDraft()
+    }
+
+    fun discardStoredDraft() {
+        val id = lastLoadedCharacterId?.takeIf { it > 0L } ?: return
+        if (_state.value.isDiscardingDraft) return
+        _state.update { it.copy(isDiscardingDraft = true) }
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        viewModelScope.launch {
+            try {
+                draftWriteMutex.withLock { draftStore.clear(id) }
+                if (revision == draftWriteRevision && lastLoadedCharacterId == id)
+                    _state.update { it.copy(recoverableDraft = null, draftUnreadable = false, draftError = null, isDiscardingDraft = false) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (revision == draftWriteRevision && lastLoadedCharacterId == id)
+                    _state.update { it.copy(draftError = "未能丢弃角色草稿，请重试", isDiscardingDraft = false) }
+            }
+        }
+    }
+
+    fun discardChangesAndLeave(onDiscarded: () -> Unit) {
+        val id = lastLoadedCharacterId?.takeIf { it > 0L }
+        if (id == null) { onDiscarded(); return }
+        if (_state.value.isDiscardingDraft) return
+        _state.update { it.copy(isDiscardingDraft = true) }
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        viewModelScope.launch {
+            try {
+                draftWriteMutex.withLock { draftStore.clear(id) }
+                if (revision == draftWriteRevision && lastLoadedCharacterId == id) onDiscarded()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (revision == draftWriteRevision && lastLoadedCharacterId == id)
+                    _state.update { it.copy(draftError = "草稿清除失败，已留在编辑页；可重试后离开", isDiscardingDraft = false) }
+            }
+        }
     }
 
     private fun startCharacterQueueObservation(id: Long) {
@@ -344,6 +482,8 @@ class CharacterEditViewModel @Inject constructor(
             }
             genObserveJob?.cancel()
             personaWatchdogJob?.cancel()
+            draftWriteRevision++
+            draftWriteJob?.cancel()
             lastLoadedCharacterId = id
             _state.value = current.copy(isLoaded = false, loadError = null)
             try {
@@ -372,7 +512,9 @@ class CharacterEditViewModel @Inject constructor(
                     )
                 }
                 savedDraft = loaded.toDraftSnapshot()
-                _state.value = loaded
+                _state.value = if (id > 0L && loaded.loadError == null) loaded.copy(isLoaded = false) else loaded
+                if (loaded.loadError == null) readRecoveryDraft(id)
+                if (lastLoadedCharacterId == id) _state.update { it.copy(isLoaded = true) }
                 startCharacterQueueObservation(id)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -612,7 +754,7 @@ class CharacterEditViewModel @Inject constructor(
 
     fun save(routeCharacterId: Long, onSaved: () -> Unit = {}) {
         val submittedState = _state.value
-        if (submittedState.isSaving || submittedState.isAiCompleting || submittedState.isRefreshingPersona || submittedState.personaRefreshError != null || !submittedState.isLoaded || submittedState.loadError != null) return
+        if (submittedState.isSaving || submittedState.isDiscardingDraft || submittedState.isAiCompleting || submittedState.isRefreshingPersona || submittedState.personaRefreshError != null || !submittedState.isLoaded || submittedState.loadError != null || submittedState.recoverableDraft != null || submittedState.draftUnreadable) return
         val submittedDraft = submittedState.toDraftSnapshot()
         submittedState.samplingError()?.let {
             showSnackbar(it)
@@ -701,7 +843,8 @@ class CharacterEditViewModel @Inject constructor(
                     persisted.copy(snackbar = UserFacingStrings.saveSuccessGeneric())
                 }
                 _state.value = result.copy(isDirty = result.toDraftSnapshot() != savedDraft)
-                canLeaveAfterSave = !_state.value.isDirty
+                syncDraftAfterSave(effectiveId)
+                canLeaveAfterSave = !_state.value.isDirty && _state.value.draftError == null
             } catch (cancelled: CancellationException) {
                 _state.value = _state.value.copy(isSaving = false)
                 throw cancelled
@@ -722,8 +865,10 @@ class CharacterEditViewModel @Inject constructor(
                         saveError = "角色已保存，资料更新未完成。再次保存会更新同一角色。",
                     )
                     _state.value = result.copy(isDirty = true)
+                    persistCurrentDraft()
                 } else {
                     _state.value = latest.copy(isSaving = false, saveError = "保存失败，编辑内容已保留，请重试。", snackbar = "保存失败，请重试")
+                    persistCurrentDraft()
                 }
             }
             if (canLeaveAfterSave) onSaved()

@@ -2,6 +2,8 @@ package com.mojing.app.ui.character
 
 import android.content.Context
 import com.mojing.app.data.SecureStorage
+import com.mojing.app.data.CharacterDraftSnapshot
+import com.mojing.app.data.CharacterEditDraftStore
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.CharacterProfileDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
@@ -55,6 +57,7 @@ class CharacterEditViewModelTest {
         val viewModel: CharacterEditViewModel,
         val saveCharacterBinding: SaveCharacterBindingUseCase,
         val profileDao: CharacterProfileDao,
+        val draftStore: CharacterEditDraftStore,
     )
 
     private fun createSubject(
@@ -62,6 +65,9 @@ class CharacterEditViewModelTest {
         profileDao: CharacterProfileDao = mockk(relaxed = true),
         saveCharacterBinding: SaveCharacterBindingUseCase = mockk(relaxed = true),
         activeTasks: Flow<List<GenerationTaskEntity>> = flowOf(emptyList()),
+        draftStore: CharacterEditDraftStore = mockk(relaxed = true) {
+            coEvery { load(any()) } returns null
+        },
     ): TestSubject {
         val encyclopediaDao = mockk<EncyclopediaDao> {
             coEvery { getAll() } returns emptyList()
@@ -83,10 +89,93 @@ class CharacterEditViewModelTest {
                 systemProbeApi = mockk<BackendSystemProbeApi>(relaxed = true),
                 imageRepository = mockk<ImageRepository>(relaxed = true),
                 llmApiService = mockk<LlmApiService>(relaxed = true),
+                draftStore = draftStore,
             ),
             saveCharacterBinding = saveCharacterBinding,
             profileDao = profileDao,
+            draftStore = draftStore,
         )
+    }
+
+    @Test
+    fun editorWaitsForDraftReadBeforeAcceptingChanges() = runTest(dispatcher) {
+        val dao = mockk<CharacterDao> { coEvery { getById(7L) } returns CharacterEntity(id = 7L, name = "已保存") }
+        val pendingDraft = CompletableDeferred<CharacterDraftSnapshot?>()
+        val store = mockk<CharacterEditDraftStore>(relaxed = true) {
+            coEvery { load(7L) } coAnswers { pendingDraft.await() }
+        }
+        val vm = createSubject(dao, draftStore = store).viewModel
+
+        vm.load(7L)
+        assertFalse(vm.state.value.isLoaded)
+        vm.updateName("读取期间输入")
+        assertEquals("已保存", vm.state.value.name)
+        pendingDraft.complete(CharacterDraftSnapshot(name = "待恢复"))
+        advanceUntilIdle()
+        assertTrue(vm.state.value.isLoaded)
+        assertNotNull(vm.state.value.recoverableDraft)
+        assertEquals("已保存", vm.state.value.name)
+    }
+
+    @Test
+    fun recoveredDraftWaitsForChoiceAndKeepsSavedCharacterUntouched() = runTest(dispatcher) {
+        val saved = CharacterEntity(id = 7L, name = "已保存", personaPrompt = "旧人设")
+        val dao = mockk<CharacterDao> { coEvery { getById(7L) } returns saved }
+        val store = mockk<CharacterEditDraftStore>(relaxed = true) {
+            coEvery { load(7L) } returns CharacterDraftSnapshot(name = "未保存", personaPrompt = "完整草稿")
+        }
+        val vm = createSubject(dao, draftStore = store).viewModel
+
+        vm.load(7L)
+        assertEquals("已保存", vm.state.value.name)
+        assertNotNull(vm.state.value.recoverableDraft)
+        vm.updateName("不可覆盖")
+        assertEquals("已保存", vm.state.value.name)
+        vm.restoreDraft()
+        advanceUntilIdle()
+        assertEquals("未保存", vm.state.value.name)
+        assertEquals("完整草稿", vm.state.value.personaPrompt)
+        assertTrue(vm.state.value.isDirty)
+        coVerify { store.save(7L, match { it.name == "未保存" && it.personaPrompt == "完整草稿" }) }
+    }
+
+    @Test
+    fun unreadableDraftRequiresExplicitDiscardBeforeEditing() = runTest(dispatcher) {
+        val dao = mockk<CharacterDao> { coEvery { getById(7L) } returns CharacterEntity(id = 7L, name = "已保存") }
+        val store = mockk<CharacterEditDraftStore>(relaxed = true) {
+            coEvery { load(7L) } throws IllegalStateException("bad draft")
+        }
+        val vm = createSubject(dao, draftStore = store).viewModel
+        vm.load(7L)
+        assertTrue(vm.state.value.draftUnreadable)
+        vm.updateName("不可覆盖")
+        assertEquals("已保存", vm.state.value.name)
+        vm.discardStoredDraft()
+        advanceUntilIdle()
+        assertFalse(vm.state.value.draftUnreadable)
+        coVerify(exactly = 1) { store.clear(7L) }
+    }
+
+    @Test
+    fun saveKeepsEditorOpenWhenOldDraftCannotBeCleared() = runTest(dispatcher) {
+        val original = CharacterEntity(id = 7L, name = "原名")
+        val saved = original.copy(name = "新名")
+        val dao = mockk<CharacterDao> { coEvery { getById(7L) } returnsMany listOf(original, saved) }
+        val profile = mockk<CharacterProfileDao>(relaxed = true) { coEvery { getByCharacter(7L) } returns null }
+        val store = mockk<CharacterEditDraftStore>(relaxed = true) {
+            coEvery { load(7L) } returns null
+            coEvery { clear(7L) } throws IllegalStateException("disk")
+        }
+        val saver = mockk<SaveCharacterBindingUseCase> { coEvery { this@mockk.invoke(any()) } returns 7L }
+        val vm = createSubject(dao, profile, saver, draftStore = store).viewModel
+        vm.load(7L)
+        vm.updateName("新名")
+        var left = false
+        vm.save(7L) { left = true }
+        advanceUntilIdle()
+        assertFalse(left)
+        assertFalse(vm.state.value.isDirty)
+        assertNotNull(vm.state.value.draftError)
     }
 
     @Test
