@@ -377,6 +377,7 @@ export default function CharactersPage() {
   const favoriteMutation = useMutation({
     mutationFn: (id: number) => api.toggleFavorite(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['characters'] }),
+    onError: (error) => showToast(error instanceof Error ? error.message : '收藏修改失败，请重试', 'error'),
   });
 
   const uploadVoiceMutation = useMutation({
@@ -581,11 +582,18 @@ export default function CharactersPage() {
           )}
           {filteredCharacters.map((char) => {
             const cover = (char.card_image_path || char.avatar_image_path || '').trim();
+            const favoriteButton = (
+              <button type="button" className={`character-favorite ${char.favorite ? 'active' : ''}`}
+                aria-label={`${char.favorite ? '取消收藏' : '收藏'} ${char.name}`}
+                aria-pressed={Boolean(char.favorite)} disabled={favoriteMutation.isPending}
+                onClick={() => favoriteMutation.mutate(char.id)}>
+                <UiIcon name="bookmark" />
+              </button>
+            );
             if (sidebarLayout === 'grid') {
               return (
+                <div key={char.id} data-character-id={char.id} className="character-grid-item">
                 <button
-                  key={char.id}
-                  data-character-id={char.id}
                   type="button"
                   className={`character-grid-card ${editing?.id === char.id ? 'active' : ''}`}
                   onClick={() => handleSelect(char)}
@@ -601,23 +609,15 @@ export default function CharactersPage() {
                   </div>
                   <div className="character-grid-caption">
                     <span className="character-grid-name">{char.name}</span>
-                    <span
-                      className={`character-grid-fav ${char.favorite ? 'active' : ''}`}
-                      role="presentation"
-                      title={char.favorite ? '取消收藏' : '收藏'}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        favoriteMutation.mutate(char.id);
-                      }}
-                    >
-                      <UiIcon name="bookmark" />
-                    </span>
                   </div>
                 </button>
+                {favoriteButton}
+                </div>
               );
             }
             return (
-              <button key={char.id} data-character-id={char.id} type="button" className={`secondary-nav-item ${editing?.id === char.id ? 'active' : ''}`} onClick={() => handleSelect(char)}>
+              <div key={char.id} data-character-id={char.id} className={`character-list-item ${editing?.id === char.id ? 'active' : ''}`}>
+              <button type="button" className="secondary-nav-item" onClick={() => handleSelect(char)}>
                 <span
                   className="secondary-nav-avatar"
                   style={{
@@ -631,15 +631,9 @@ export default function CharactersPage() {
                   <span className="secondary-nav-name">{char.name}</span>
                   <span className="secondary-nav-sub">{char.persona_prompt?.trim() ? '人设已填写' : '待补充人设'}</span>
                 </span>
-                <span
-                  className={`secondary-nav-fav ${char.favorite ? 'active' : ''}`}
-                  role="presentation"
-                  title={char.favorite ? '取消收藏' : '收藏'}
-                  onClick={(e) => { e.stopPropagation(); favoriteMutation.mutate(char.id); }}
-                >
-                  <UiIcon name="bookmark" />
-                </span>
               </button>
+              {favoriteButton}
+              </div>
             );
           })}
           {!charactersQuery.isLoading && !charactersQuery.isError && filteredCharacters.length === 0 && (

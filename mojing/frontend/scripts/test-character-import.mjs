@@ -40,6 +40,11 @@ try {
         return route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aPioAAAAASUVORK5CYII=', 'base64') });
       }
       if (endpoint === '/characters' && req.method() === 'GET') data = rows;
+      else if (/^\/characters\/\d+\/favorite$/.test(endpoint) && req.method() === 'PATCH') {
+        const target = rows.find((row) => row.id === Number(endpoint.split('/')[2]));
+        target.favorite = !target.favorite;
+        data = { ok: true, favorite: target.favorite };
+      }
       else if (endpoint === '/characters' && req.method() === 'POST') { data = { ...character(5, req.postDataJSON().name), ...req.postDataJSON(), id: 5 }; rows.push(data); }
       else if (endpoint.startsWith('/characters/import-')) {
         imports++;
@@ -56,6 +61,22 @@ try {
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(`http://127.0.0.1:${port}/characters`);
+    for (const layout of ['list', 'grid']) {
+      if (layout === 'grid') await page.getByRole('button', { name: '切换为网格', exact: true }).click();
+      const favorite = page.getByRole('button', { name: '收藏 普通角色', exact: true });
+      await favorite.focus();
+      await page.keyboard.press('Enter');
+      const selectedFavorite = page.getByRole('button', { name: '取消收藏 普通角色', exact: true });
+      await selectedFavorite.waitFor();
+      assert.equal(await selectedFavorite.getAttribute('aria-pressed'), 'true');
+      assert.equal(new URL(page.url()).searchParams.has('characterId'), false, '收藏不能同时打开编辑器');
+      const bounds = await selectedFavorite.boundingBox();
+      assert.ok(bounds && bounds.width >= 44 && bounds.height >= 44, '收藏按钮应具有独立触控区');
+      if (output) await page.screenshot({ path: path.join(output, `character-library-${layout}-${width}.png`) });
+      await selectedFavorite.click();
+      await page.getByRole('button', { name: '收藏 普通角色', exact: true }).waitFor();
+    }
+    await page.getByRole('button', { name: '切换为列表', exact: true }).click();
     await page.getByLabel('按名字搜索角色').fill('收藏');
     await page.locator('.character-library-actions').getByRole('button', { name: '导入角色' }).click();
     let dialog = page.getByRole('dialog', { name: '导入角色', exact: true });
@@ -67,9 +88,7 @@ try {
     waiting = true;
     await dialog.getByRole('button', { name: '重试', exact: true }).click();
     await dialog.getByRole('button', { name: '正在导入…' }).waitFor();
-    assert.equal(await dialog.getByRole('button', { name: '关闭导入' }).isDisabled(), true);
-    await page.keyboard.press('Escape');
-    await dialog.waitFor();
+    assert.equal(await dialog.getByRole('button', { name: '后台继续导入并关闭窗口' }).isEnabled(), true);
     const deadline = Date.now() + 3000;
     while (!gate && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.ok(gate); gate(); waiting = false;

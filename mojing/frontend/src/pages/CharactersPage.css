@@ -1,3 +1,28 @@
+.characters-layout .character-list-item { display: flex; align-items: center; min-width: 0; border-left: 3px solid transparent; }
+.characters-layout .character-list-item.active { background: var(--active-bg); border-left-color: var(--accent); }
+.characters-layout .character-list-item .secondary-nav-item { flex: 1; min-width: 0; padding-left: 13px; border-left: 0; background: transparent; }
+.characters-layout .character-favorite {
+  display: grid;
+  place-items: center;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-2);
+}
+.characters-layout .character-favorite:hover { background: var(--hover); }
+.characters-layout .character-favorite.active { color: var(--accent); }
+.characters-layout .character-favorite.active .ui-icon { fill: currentColor; }
+.characters-layout .character-favorite .ui-icon { width: 18px; height: 18px; }
+.characters-layout .character-grid-item { position: relative; min-width: 0; }
+.characters-layout .character-grid-cover { aspect-ratio: 4 / 5; }
+.characters-layout .character-grid-caption { min-height: 56px; padding: 10px 8px; }
+.characters-layout .character-grid-name { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.4; }
+.characters-layout .character-grid-item .character-favorite { position: absolute; top: 6px; right: 6px; background: var(--bg); border: 1px solid var(--line); }
+
 .characters-layout .secondary-main:has(.character-editor) {
   display: flex;
   min-height: 0;
