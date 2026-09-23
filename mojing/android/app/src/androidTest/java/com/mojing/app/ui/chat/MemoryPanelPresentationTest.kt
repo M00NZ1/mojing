@@ -32,11 +32,15 @@ class MemoryPanelPresentationTest {
                 }
             }
         }
+        rule.onNodeWithText("用户纠正 1").performScrollTo().performClick()
         rule.onNodeWithText("角色不知道秘密").assertIsDisplayed()
         rule.onNodeWithText("本故事线尚未构造可追踪的角色或旁白请求").assertDoesNotExist()
-        rule.onNode(hasScrollAction()).performScrollToNode(hasText("码头相遇"))
+        rule.onNodeWithText("自动摘要 1").performScrollTo().performClick()
         rule.onNodeWithText("码头相遇").assertIsDisplayed()
         rule.onNodeWithText("纠正这段记忆").assertExists()
+        rule.onNodeWithText("角色不知道秘密").assertDoesNotExist()
+        rule.onNodeWithText("长期记忆", useUnmergedTree = true).performScrollTo().performClick()
+        rule.onNodeWithText("重建记忆").assertIsDisplayed()
     }
 
     @Test fun longTextExpandsAndShortTextNeedsNoExtraButton() {

@@ -615,35 +615,44 @@ fun MemoryTab(
     memoryOperationRunning: Boolean = false,
     contextMemoryStatus: ContextMemoryStatus = ContextMemoryStatus.IDLE,
 ) {
+    var section by remember(currentBranchId) { mutableIntStateOf(0) }
     Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            OutlinedButton(
-                onClick = onRebuildContextMemory,
-                enabled = !isGenerating && !memoryOperationRunning,
-                modifier = Modifier.weight(1f),
-            ) {
-                Icon(Icons.Default.Refresh, contentDescription = "重建当前会话记忆")
-                Spacer(Modifier.width(8.dp))
-                Text("重建记忆")
-            }
-            OutlinedButton(
-                onClick = onClearContextMemory,
-                enabled = !isGenerating && !memoryOperationRunning,
-                modifier = Modifier.weight(1f),
-            ) {
-                Icon(Icons.Default.DeleteSweep, contentDescription = "清空当前会话记忆")
-                Spacer(Modifier.width(8.dp))
-                Text("清空记忆")
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("长期记忆", "用户纠正 ${corrections.size}", "自动摘要 ${segments.size}").forEachIndexed { index, label ->
+                FilterChip(selected = section == index, onClick = { section = index }, label = { Text(label) })
             }
         }
         HorizontalDivider()
+        key(currentBranchId, section) {
         LazyColumn(modifier = Modifier.fillMaxWidth()) {
-            item {
+            if (section == 0) item {
                 Column(Modifier.fillMaxWidth().padding(12.dp)) {
                     Text("长期记忆", style = MaterialTheme.typography.titleMedium)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(
+                            onClick = onRebuildContextMemory,
+                            enabled = !isGenerating && !memoryOperationRunning,
+                            modifier = Modifier.heightIn(min = 48.dp),
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = "重建当前会话记忆")
+                            Spacer(Modifier.width(8.dp))
+                            Text("重建记忆")
+                        }
+                        OutlinedButton(
+                            onClick = onClearContextMemory,
+                            enabled = !isGenerating && !memoryOperationRunning,
+                            modifier = Modifier.heightIn(min = 48.dp),
+                        ) {
+                            Icon(Icons.Default.DeleteSweep, contentDescription = "清空当前会话记忆")
+                            Spacer(Modifier.width(8.dp))
+                            Text("清空记忆")
+                        }
+                    }
+
                     if (memoryOperationRunning) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
                     if (contextMemoryStatus.message.isNotEmpty() && !memoryOperationRunning) {
                         Text(
@@ -656,144 +665,149 @@ fun MemoryTab(
                     ExpandableMemoryText(contextMemoryText.ifBlank { "暂无长期记忆，可从当前故事线重建。" }, collapsedLines = 6)
                 }
             }
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("用户纠正", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    Button(
-                        enabled = !isGenerating,
-                        onClick = { onAddCorrection("", null) },
-                    ) { Text("新增") }
+            if (section == 1) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("用户纠正", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        Button(
+                            enabled = !isGenerating,
+                            onClick = { onAddCorrection("", null) },
+                        ) { Text("新增") }
+                    }
+                    Text(
+                        "纠正会优先注入后续角色回复和旁白。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                    )
                 }
-                Text(
-                    "纠正会优先注入后续角色回复和旁白。",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
-            }
-            if (corrections.isEmpty()) {
-                item { Text("暂无用户纠正", modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            } else {
-                items(corrections, key = { "correction:${it.id}" }) { correction ->
-                    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(if (correction.branchId == null) "整个对话" else "仅当前故事线",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Spacer(Modifier.height(4.dp))
-                            ExpandableMemoryText(correction.content)
-                            correction.sourceMessageId?.let { sourceId ->
-                                TextButton(
-                                    enabled = !isGenerating,
-                                    onClick = { onJumpToSource(sourceId) },
-                                ) { Text("查看来源") }
-                            }
-                            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                                TextButton(enabled = !isGenerating, onClick = { onEditCorrection(correction) }) { Text("编辑") }
-                                TextButton(enabled = !isGenerating, onClick = { onDeleteCorrection(correction) }) { Text("删除") }
+                if (corrections.isEmpty()) {
+                    item { Text("暂无用户纠正", modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                } else {
+                    items(corrections, key = { "correction:${it.id}" }) { correction ->
+                        Surface(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.surface) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(if (correction.branchId == null) "整个对话" else "仅当前故事线",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(Modifier.height(4.dp))
+                                ExpandableMemoryText(correction.content)
+                                correction.sourceMessageId?.let { sourceId ->
+                                    TextButton(
+                                        enabled = !isGenerating,
+                                        onClick = { onJumpToSource(sourceId) },
+                                    ) { Text("查看来源") }
+                                }
+                                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                    TextButton(enabled = !isGenerating, onClick = { onEditCorrection(correction) }) { Text("编辑") }
+                                    TextButton(enabled = !isGenerating, onClick = { onDeleteCorrection(correction) }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                                }
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                             }
                         }
                     }
                 }
-            }
-            item {
-                val currentTrace = promptTrace?.takeIf { it.branchId == currentBranchId }
-                Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
-                    var showTrace by remember(currentBranchId) { mutableStateOf(false) }
-                    TextButton(onClick = { showTrace = !showTrace }) {
-                        Text(if (showTrace) "收起提示依据" else "查看最近一次提示依据")
-                    }
-                    if (showTrace) {
-                    if (currentTrace == null) {
-                        Text(
-                            "本故事线尚未构造可追踪的角色或旁白请求",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
-                    } else {
-                        val responderType = if (currentTrace.responderType == "narrator") "旁白" else "角色"
-                        Text(
-                            "$responderType · ${currentTrace.responderLabel}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
-                        if (currentTrace.corrections.isEmpty()) {
-                            Text("本轮未采用用户纠正", modifier = Modifier.padding(top = 6.dp))
+                item {
+                    val currentTrace = promptTrace?.takeIf { it.branchId == currentBranchId }
+                    Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+                        var showTrace by remember(currentBranchId) { mutableStateOf(false) }
+                        TextButton(onClick = { showTrace = !showTrace }) {
+                            Text(if (showTrace) "收起提示依据" else "查看最近一次提示依据")
+                        }
+                        if (showTrace) {
+                        if (currentTrace == null) {
+                            Text(
+                                "本故事线尚未构造可追踪的角色或旁白请求",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
                         } else {
-                            currentTrace.corrections.forEachIndexed { index, correction ->
-                                Text(
-                                    "${index + 1}. ${if (correction.branchId == null) "全会话" else "本分支"} · ${correction.content}",
-                                    maxLines = 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(top = 6.dp),
-                                )
-                                correction.sourceMessageId?.let {
+                            val responderType = if (currentTrace.responderType == "narrator") "旁白" else "角色"
+                            Text(
+                                "$responderType · ${currentTrace.responderLabel}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                            if (currentTrace.corrections.isEmpty()) {
+                                Text("本轮未采用用户纠正", modifier = Modifier.padding(top = 6.dp))
+                            } else {
+                                currentTrace.corrections.forEachIndexed { index, correction ->
                                     Text(
-                                        "已关联原文",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        "${index + 1}. ${if (correction.branchId == null) "全会话" else "本分支"} · ${correction.content}",
+                                        maxLines = 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(top = 6.dp),
                                     )
+                                    correction.sourceMessageId?.let {
+                                        Text(
+                                            "已关联原文",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
                                 }
                             }
+                            Text(
+                                "用户纠正在自动记忆之前注入；这里只表示本机已构造提示，不代表模型已成功回复。",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
                         }
-                        Text(
-                            "用户纠正在自动记忆之前注入；这里只表示本机已构造提示，不代表模型已成功回复。",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 8.dp),
-                        )
                     }
+                    }
+                    HorizontalDivider()
                 }
+            }
+            if (section == 2) {
+                item {
+                    Spacer(Modifier.height(8.dp))
+                    Text("自动摘要", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
                 }
-                HorizontalDivider()
-            }
-            item {
-                Spacer(Modifier.height(8.dp))
-                Text("自动摘要", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
-            }
-            if (segments.isEmpty()) {
-                item { Text("对话积累后会自动整理摘要。暂未整理或整理失败时，原文仍完整保留，后续对话会再次尝试。", modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            } else {
-                items(segments, key = { "summary:${it.id}" }) { segment ->
-                    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Text("剧情摘要", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                                Text(segment.emotionalTone, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            ExpandableMemoryText(segment.summary)
-                            TextButton(
-                                enabled = !isGenerating,
-                                onClick = { onAddCorrection(segment.summary, segment.startMessageId.takeIf { it > 0L }) },
-                            ) { Text("纠正这段记忆") }
-                            val facts = try { Gson().fromJson(segment.keyFactsJson, List::class.java).orEmpty() } catch (_: Exception) { emptyList<Any>() }
-                            facts.take(3).forEach { fact -> ExpandableMemoryText("• $fact", collapsedLines = 2) }
-                            val source = segment.sourceReference()
-                            Spacer(Modifier.height(4.dp))
-                            if (source == null) {
-                                Text(
-                                    "旧记忆未记录原文范围",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            } else {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
+                if (segments.isEmpty()) {
+                    item { Text("对话积累后会自动整理摘要。暂未整理或整理失败时，原文仍完整保留，后续对话会再次尝试。", modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                } else {
+                    items(segments, key = { "summary:${it.id}" }) { segment ->
+                        Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Text("剧情摘要", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                    Text(segment.emotionalTone, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                ExpandableMemoryText(segment.summary)
+                                TextButton(
+                                    enabled = !isGenerating,
+                                    onClick = { onAddCorrection(segment.summary, segment.startMessageId.takeIf { it > 0L }) },
+                                ) { Text("纠正这段记忆") }
+                                val facts = try { Gson().fromJson(segment.keyFactsJson, List::class.java).orEmpty() } catch (_: Exception) { emptyList<Any>() }
+                                facts.take(3).forEach { fact -> ExpandableMemoryText("• $fact", collapsedLines = 2) }
+                                val source = segment.sourceReference()
+                                Spacer(Modifier.height(4.dp))
+                                if (source == null) {
                                     Text(
-                                        source.label,
+                                        "旧记忆未记录原文范围",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.weight(1f),
                                     )
-                                    TextButton(enabled = !isGenerating, onClick = { onJumpToSource(source.messageId) }) {
-                                        Text("查看原文")
+                                } else {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Text(
+                                            source.label,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        TextButton(enabled = !isGenerating, onClick = { onJumpToSource(source.messageId) }) {
+                                            Text("查看原文")
+                                        }
                                     }
                                 }
                             }
@@ -801,9 +815,10 @@ fun MemoryTab(
                     }
                 }
             }
-            }
+        }
         }
     }
+}
 
 @Composable
 fun TimelineTab(
