@@ -17,6 +17,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -96,14 +98,19 @@ class VisualRefreshTest {
 
     @Test fun navigationSelectionAndSearchClearRemainAccessible() {
         var query by mutableStateOf("雾港")
-        var selected by mutableStateOf(false)
+        var selected by mutableStateOf("对话")
         rule.setContent {
             MoJingTheme {
-                Column {
+                val density = LocalDensity.current
+                CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale = 1.6f)) {
+                Column(Modifier.width(320.dp)) {
                     SearchBar(query, { query = it })
                     ImeHideAwareNavigationBar {
-                        MoJingNavItem(selected, { selected = true }, Icons.Default.Create, "创作")
+                        listOf("对话", "创作", "设置").forEach { label ->
+                            MoJingNavItem(selected == label, { selected = label }, Icons.Default.Create, label)
+                        }
                     }
+                }
                 }
             }
         }
@@ -111,6 +118,9 @@ class VisualRefreshTest {
         rule.runOnIdle { assertTrue(query.isEmpty()) }
         rule.onNodeWithContentDescription("清空搜索").assertDoesNotExist()
         rule.onNodeWithText("创作").assertIsNotSelected().performClick().assertIsSelected()
+        rule.onNodeWithText("对话").assertIsNotSelected().assertIsDisplayed()
+        rule.onNodeWithText("设置").assertIsDisplayed().performClick().assertIsSelected()
+        rule.onNodeWithText("创作").assertIsNotSelected()
     }
 
     @Test fun longConfirmationKeepsItsActionVisible() {

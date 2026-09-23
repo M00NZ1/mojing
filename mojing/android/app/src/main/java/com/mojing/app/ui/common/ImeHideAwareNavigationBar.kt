@@ -11,8 +11,11 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Surface
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.padding
@@ -51,13 +54,16 @@ fun ImeHideAwareNavigationBar(
         )
     ) {
         Surface(
-            modifier = Modifier.navigationBarsPadding().padding(horizontal = 24.dp, vertical = 8.dp),
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(30.dp),
+            modifier = Modifier.fillMaxWidth(),
             color = MaterialTheme.colorScheme.surfaceContainerLowest,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
-            shadowElevation = 3.dp,
         ) {
-            Row(Modifier.fillMaxWidth().selectableGroup().padding(4.dp), verticalAlignment = Alignment.CenterVertically, content = content)
+            Column {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Box(Modifier.fillMaxWidth().navigationBarsPadding(), contentAlignment = Alignment.Center) {
+                    Row(Modifier.widthIn(max = 600.dp).fillMaxWidth().selectableGroup().padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically, content = content)
+                }
+            }
         }
     }
 }
