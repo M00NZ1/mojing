@@ -266,10 +266,6 @@ def extract_event_nodes(
     if not messages:
         return []
 
-    dialogue_text = "\n".join(
-        f"[{msg.speaker_type}] {msg.content[:300]}" for msg in messages[-20:]
-    )
-
     branch_id = messages[0].branch_id if messages else "main"
 
     character_scope = (
@@ -291,13 +287,19 @@ def extract_event_nodes(
             )
         )
     existing_titles = [ev.title for ev in existing_events]
+    title_to_id = {(ev.title or "").lower(): ev.id for ev in existing_events}
+    seen_titles = set(title_to_id)
+    source_ids = {message.id for message in messages}
+    candidates: list[tuple[int, int, dict]] = []
+    sequence = 0
+    for chunk in _memory_input_chunks(messages):
+        known_titles = existing_titles + [candidate[2]["title"] for candidate in candidates]
+        prompt = f"""从以下对话中提取关键事件节点。消息标记中的接续属于同一条消息。
 
-    prompt = f"""从以下对话中提取关键事件节点。
-
-已有事件（避免重复）：{json.dumps(existing_titles, ensure_ascii=False)}
+已有事件（避免重复）：{json.dumps(known_titles[-20:], ensure_ascii=False)}
 
 对话内容：
-{dialogue_text[:4000]}
+{chunk}
 
 请输出 JSON 数组：
 [
@@ -305,67 +307,81 @@ def extract_event_nodes(
     "title": "事件标题(≤60字)",
     "event_type": "事件类型(action/discovery/relationship_change/world_change/combat/dialogue_key)",
     "description": "事件描述(≤200字)",
-    "importance": "重要程度1-5(5=剧情节點)",
+    "importance": "重要程度1-5(5=剧情节点)",
+    "message_id": "事件实际发生的消息标记中的整数ID",
     "parent_event_title": "父事件标题(如果是某事件的后续，否则null)"
   }}
 ]
-只提取明确发生的新事件，最多5个。
+只提取明确发生的新事件，当前片段最多5个；没有则输出空数组。
 """
+        response = safe_non_streaming_call(
+            client,
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=1500,
+        )
 
-    response = safe_non_streaming_call(
-        client,
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-        max_tokens=1500,
-    )
+        try:
+            content = response.get("content", "") if isinstance(response, dict) else str(response)
+            json_start = content.find("[")
+            json_end = content.rfind("]") + 1
+            if json_start == -1 or json_end <= 0:
+                return None
+            events_data = json.loads(content[json_start:json_end])
+            if not isinstance(events_data, list):
+                return None
+        except (json.JSONDecodeError, KeyError, TypeError):
+            return None
 
-    try:
-        content = response.get("content", "") if isinstance(response, dict) else str(response)
-        json_start = content.find("[")
-        json_end = content.rfind("]") + 1
-        if json_start == -1 or json_end <= 0:
-            return None
-        events_data = json.loads(content[json_start:json_end])
-        if not isinstance(events_data, list):
-            return None
-    except (json.JSONDecodeError, KeyError, TypeError):
-        return None
+        for ev in events_data[:5]:
+            if not isinstance(ev, dict):
+                continue
+            title = str(ev.get("title") or "").strip()[:200]
+            if not title or title.lower() in seen_titles:
+                continue
+            try:
+                importance = max(1, min(5, int(ev.get("importance", 2))))
+            except (TypeError, ValueError):
+                importance = 2
+            try:
+                source_id = int(ev.get("message_id"))
+            except (TypeError, ValueError):
+                source_id = messages[-1].id
+            if source_id not in source_ids:
+                source_id = messages[-1].id
+            candidates.append((importance, sequence, {
+                "title": title,
+                "event_type": str(ev.get("event_type") or "action")[:60],
+                "description": str(ev.get("description") or "")[:2000],
+                "parent_event_title": str(ev.get("parent_event_title") or "").strip(),
+                "message_id": source_id,
+            }))
+            sequence += 1
+            seen_titles.add(title.lower())
+        candidates.sort(key=lambda candidate: (-candidate[0], candidate[1]))
+        del candidates[5:]
 
     if before_write is not None:
         before_write()
 
     new_nodes = []
-    title_to_id = {}
-    for ev in existing_events:
-        title_to_id[(ev.title or "").lower()] = ev.id
-
-    for ev in events_data[:5]:
-        if not isinstance(ev, dict):
-            continue
-        title = str(ev.get("title") or "").strip()[:200]
-        if not title or title.lower() in title_to_id:
-            continue
-
+    for importance, _, ev in sorted(candidates, key=lambda candidate: candidate[1]):
+        title = ev["title"]
         parent_id = None
-        parent_title = str(ev.get("parent_event_title") or "").strip()
+        parent_title = ev["parent_event_title"]
         if parent_title:
             parent_id = title_to_id.get(parent_title.lower())
-
-        try:
-            importance = max(1, min(5, int(ev.get("importance", 2))))
-        except (TypeError, ValueError):
-            importance = 2
         node = SessionEventNodeModel(
             session_id=session_id,
             character_id=character_id,
             branch_id=branch_id,
             parent_event_id=parent_id,
-            event_type=str(ev.get("event_type") or "action")[:60],
+            event_type=ev["event_type"],
             title=title,
-            description=str(ev.get("description") or "")[:2000],
+            description=ev["description"],
             importance=importance,
-            message_id=messages[-1].id if messages else None,
+            message_id=ev["message_id"],
         )
         db.add(node)
         new_nodes.append(node)

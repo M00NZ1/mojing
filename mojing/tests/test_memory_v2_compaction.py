@@ -251,6 +251,110 @@ def test_late_summary_chunk_failure_leaves_sources_uncovered_for_retry(tmp_path,
         engine.dispose()
 
 
+def test_events_use_early_and_late_full_source_with_message_links(tmp_path, monkeypatch):
+    engine, Session = _database(tmp_path, "memory-full-events.db")
+    try:
+        session_id, _ = _seed_session(Session, messages_per_branch=40)
+        with Session() as db:
+            source = list(db.scalars(select(MessageModel).where(MessageModel.session_id == session_id)
+                                     .order_by(MessageModel.id)))
+            source[0].content = "第一幕线索已被发现"
+            source[-1].content = "剧情铺垫" * 2500 + "结尾反转已发生"
+            db.commit()
+            early_id, late_id = source[0].id, source[-1].id
+        _install_memory_fakes(monkeypatch, Session)
+        summary_call = memory_v2_service.safe_non_streaming_call
+        event_prompts = []
+
+        def source_aware_events(client, model, messages, **kwargs):
+            prompt = messages[0]["content"]
+            if "从以下对话中提取关键事件节点" not in prompt:
+                return summary_call(client, model, messages, **kwargs)
+            event_prompts.append(prompt)
+            events = []
+            if "第一幕线索已被发现" in prompt:
+                events.append({"title": "第一幕发现", "importance": 4, "message_id": early_id})
+            if "结尾反转已发生" in prompt:
+                events.append({"title": "结尾反转", "importance": 5, "message_id": late_id})
+            return json.dumps(events, ensure_ascii=False)
+
+        monkeypatch.setattr(memory_v2_service, "safe_non_streaming_call", source_aware_events)
+        assert memory_service.compact_session_memory_v2(session_id) is True
+        assert len(event_prompts) > 1
+        with Session() as db:
+            assert {event.title: event.message_id for event in db.scalars(select(SessionEventNodeModel))} == {
+                "第一幕发现": early_id, "结尾反转": late_id,
+            }
+    finally:
+        engine.dispose()
+
+
+def test_late_event_chunk_failure_keeps_summary_and_events_retriable(tmp_path, monkeypatch):
+    engine, Session = _database(tmp_path, "memory-late-event-failure.db")
+    try:
+        session_id, _ = _seed_session(Session)
+        with Session() as db:
+            last = db.scalar(select(MessageModel).where(MessageModel.session_id == session_id)
+                             .order_by(MessageModel.id.desc()).limit(1))
+            last.content = "长剧情" * 2500 + "最终反转"
+            db.commit()
+        _install_memory_fakes(monkeypatch, Session)
+        working_call = memory_v2_service.safe_non_streaming_call
+        event_calls = 0
+
+        def fail_second_event_chunk(client, model, messages, **kwargs):
+            nonlocal event_calls
+            if "从以下对话中提取关键事件节点" in messages[0]["content"]:
+                event_calls += 1
+                if event_calls == 2:
+                    return "not JSON"
+            return working_call(client, model, messages, **kwargs)
+
+        monkeypatch.setattr(memory_v2_service, "safe_non_streaming_call", fail_second_event_chunk)
+        assert memory_service.compact_session_memory_v2(session_id) is False
+        assert event_calls == 2
+        with Session() as db:
+            assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 0
+            assert db.scalar(select(func.count()).select_from(SessionEventNodeModel)) == 0
+        monkeypatch.setattr(memory_v2_service, "safe_non_streaming_call", working_call)
+        assert memory_service.compact_session_memory_v2(session_id) is True
+        with Session() as db:
+            assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 1
+    finally:
+        engine.dispose()
+
+
+def test_event_candidates_keep_five_most_important_across_chunks(tmp_path, monkeypatch):
+    engine, Session = _database(tmp_path, "memory-event-limit.db")
+    try:
+        session_id, _ = _seed_session(Session)
+        with Session() as db:
+            last = db.scalar(select(MessageModel).where(MessageModel.session_id == session_id)
+                             .order_by(MessageModel.id.desc()).limit(1))
+            last.content = "后续剧情" * 9000
+            db.commit()
+        _install_memory_fakes(monkeypatch, Session)
+        summary_call = memory_v2_service.safe_non_streaming_call
+        event_calls = 0
+
+        def ranked_events(client, model, messages, **kwargs):
+            nonlocal event_calls
+            if "从以下对话中提取关键事件节点" not in messages[0]["content"]:
+                return summary_call(client, model, messages, **kwargs)
+            event_calls += 1
+            return json.dumps([{"title": f"事件{event_calls}", "importance": 1 if event_calls <= 5 else 5}])
+
+        monkeypatch.setattr(memory_v2_service, "safe_non_streaming_call", ranked_events)
+        assert memory_service.compact_session_memory_v2(session_id) is True
+        assert event_calls > 5
+        with Session() as db:
+            titles = {event.title for event in db.scalars(select(SessionEventNodeModel))}
+            assert len(titles) == 5
+            assert "事件1" not in titles and f"事件{event_calls}" in titles
+    finally:
+        engine.dispose()
+
+
 def test_failed_event_extraction_rolls_back_segment_and_is_retriable(tmp_path, monkeypatch):
     engine, Session = _database(tmp_path, "memory-failure.db")
     try:
