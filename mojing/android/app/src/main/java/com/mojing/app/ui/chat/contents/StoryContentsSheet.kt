@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -41,7 +42,7 @@ fun StoryContentsSheet(
     var editingChapter by remember { mutableStateOf<StoryContentsEntry?>(null) }
     var title by remember { mutableStateOf("") }
     var direction by remember { mutableStateOf("") }
-    val controlsBusy = busy || saving || state.refreshingId != null
+    val controlsBusy = busy || saving || state.isLoading || state.refreshingId != null
     val currentSaving by rememberUpdatedState(saving)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true,
         confirmValueChange = { it != SheetValue.Hidden || !currentSaving })
@@ -70,59 +71,76 @@ fun StoryContentsSheet(
     )
     ModalBottomSheet(sheetState = sheetState, onDismissRequest = { if (!saving) onDismiss() },
         dragHandle = null, containerColor = MaterialTheme.colorScheme.surface) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("小说目录", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                IconButton(onClick = onDismiss, enabled = !saving) { Icon(Icons.Default.Close, "关闭小说目录") }
-            }
-            TextButton(enabled = !controlsBusy, onClick = { onEditStart(); title = novelTitle; editingNovel = true }) {
-                Text(novelTitle.ifBlank { "设置小说标题" }, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(enabled = !controlsBusy, onClick = { title = ""; direction = ""; creatingChapter = true }) { Text(if (state.entries.firstOrNull()?.incomplete == true) "继续未完成章节" else "生成下一章") }
-                TextButton(enabled = !controlsBusy && state.entries.isNotEmpty(), onClick = onExport) { Text("导出小说 TXT") }
-            }
-            Spacer(Modifier.height(12.dp))
-            if (state.refreshingId != null) LinearProgressIndicator(Modifier.fillMaxWidth())
-            state.refreshFailedId?.let { messageId ->
-                TextButton(onClick = { viewModel.refreshEntry(messageId) }) {
-                    Text("名称已保存，点击重试刷新目录", color = MaterialTheme.colorScheme.error)
+        Column(Modifier.fillMaxWidth().fillMaxHeight(0.9f)) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("小说目录", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    IconButton(onClick = onDismiss, enabled = !saving) { Icon(Icons.Default.Close, "关闭小说目录") }
                 }
-            }
-        }
-        when {
-            state.isLoading -> Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-            state.error != null && state.entries.isEmpty() -> Column(Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(state.error!!, color = MaterialTheme.colorScheme.error)
-                TextButton(onClick = viewModel::retry) { Text("重试") }
-            }
-            state.entries.isEmpty() -> Text("当前故事线还没有可识别的章节", Modifier.padding(32.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            else -> LazyColumn(contentPadding = PaddingValues(bottom = 28.dp)) {
-                items(state.entries, key = { it.messageId }) { entry ->
-                    ListItem(
-                        modifier = Modifier.fillMaxWidth().clickable(enabled = !saving) {
-                            if (onOpenMessage(entry.messageId)) onDismiss()
-                        },
-                        trailingContent = { TextButton(enabled = !controlsBusy, onClick = { onEditStart(); title = entry.title; editingChapter = entry }) { Text("命名") } },
-                        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
-                        headlineContent = { Text(entry.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                        supportingContent = {
-                            Column {
-                                Text(entry.dateLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                if (entry.incomplete) Text("未完成", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                                if (entry.preview.isNotBlank()) Text(entry.preview, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            }
-                        },
-                    )
-                    HorizontalDivider(Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                }
-                if (state.hasMore) item(key = "more") {
-                    TextButton(onClick = viewModel::loadMore, enabled = !state.isLoadingMore, modifier = Modifier.fillMaxWidth()) {
-                        if (state.isLoadingMore) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                        else Text("加载更早章节")
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                if (state.refreshingId != null) LinearProgressIndicator(Modifier.fillMaxWidth())
+                state.refreshFailedId?.let { messageId ->
+                    TextButton(onClick = { viewModel.refreshEntry(messageId) }) {
+                        Text("名称已保存，点击重试刷新目录", color = MaterialTheme.colorScheme.error)
                     }
                 }
-                state.error?.let { message -> item(key = "more-error") { TextButton(onClick = viewModel::loadMore, modifier = Modifier.fillMaxWidth()) { Text(message) } } }
+            }
+            LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(bottom = 16.dp)) {
+                item(key = "novel-title") {
+                    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 16.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(novelTitle.ifBlank { "未命名小说" }, style = MaterialTheme.typography.headlineSmall)
+                            Text(if (state.hasMore) "已加载 ${state.entries.size} 条目录 · 最近内容在前" else "${state.entries.size} 条目录 · 最近内容在前",
+                                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        IconButton(enabled = !controlsBusy, onClick = { onEditStart(); title = novelTitle; editingNovel = true }) {
+                            Icon(Icons.Outlined.Edit, "编辑小说标题")
+                        }
+                    }
+                }
+            when {
+                state.isLoading -> item { Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
+                state.error != null && state.entries.isEmpty() -> item { Column(Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(state.error!!, color = MaterialTheme.colorScheme.error)
+                    TextButton(onClick = viewModel::retry) { Text("重试") }
+                } }
+                state.entries.isEmpty() -> item { Text("当前故事线还没有章节，点击下方生成开篇。", Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                else -> {
+                    items(state.entries, key = { it.messageId }) { entry ->
+                        ListItem(
+                            modifier = Modifier.fillMaxWidth().clickable(enabled = !saving) {
+                                if (onOpenMessage(entry.messageId)) onDismiss()
+                            },
+                            trailingContent = { IconButton(enabled = !controlsBusy, onClick = { onEditStart(); title = entry.title; editingChapter = entry }) { Icon(Icons.Outlined.Edit, "修改章节名称：${entry.title}") } },
+                            colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
+                            headlineContent = { Text(entry.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                            supportingContent = {
+                                Column {
+                                    Text(entry.dateLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    if (entry.incomplete) Text("未完成", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                    if (entry.preview.isNotBlank()) Text(entry.preview, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                }
+                            },
+                        )
+                        HorizontalDivider(Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                    }
+                    if (state.hasMore) item(key = "more") {
+                        TextButton(onClick = viewModel::loadMore, enabled = !state.isLoadingMore, modifier = Modifier.fillMaxWidth()) {
+                            if (state.isLoadingMore) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            else Text("加载更早章节")
+                        }
+                    }
+                    state.error?.let { message -> item(key = "more-error") { TextButton(onClick = viewModel::loadMore, modifier = Modifier.fillMaxWidth()) { Text(message) } } }
+                }
+            }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            FlowRow(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                com.mojing.app.ui.common.MoJingButton(enabled = !controlsBusy, onClick = { title = ""; direction = ""; creatingChapter = true }) {
+                    Text(when { state.entries.firstOrNull()?.incomplete == true -> "继续未完成章节"; state.entries.isEmpty() -> "生成开篇"; else -> "生成下一章" })
+                }
+                TextButton(enabled = !controlsBusy && state.entries.isNotEmpty(), onClick = onExport) { Text("导出小说 TXT") }
             }
         }
     }
