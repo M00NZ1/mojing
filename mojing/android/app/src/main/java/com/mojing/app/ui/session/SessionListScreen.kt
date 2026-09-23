@@ -59,6 +59,7 @@ import com.mojing.app.ui.chat.ChatMessageTextFormat
 import com.mojing.app.ui.navigation.MainAppBottomNavigation
 import com.mojing.app.ui.common.LlmKeySetupHintCard
 import com.mojing.app.ui.common.MoJingListTokens
+import com.mojing.app.ui.common.MoJingToggleRow
 import com.mojing.app.ui.common.SwipeRevealListRow
 import com.mojing.app.ui.common.isImeKeyboardOpen
 import com.mojing.app.ui.util.UserFacingStrings
@@ -794,45 +795,44 @@ fun SessionListScreen(
                     )
                 }
                 if (showConversationOptions) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked = narratorOn, onCheckedChange = { narratorOn = it })
-                            Text("启用旁白", modifier = Modifier.padding(end = 8.dp))
+                    Surface(Modifier.fillMaxWidth(),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        MoJingToggleRow("启用旁白", "回复中加入场景叙述", narratorOn,
+                            { narratorOn = it }, enabled = !isCreatingSession)
+                        if (narratorOn) {
                             OutlinedTextField(
                                 value = narratorName,
                                 onValueChange = { narratorName = it },
                                 label = { Text("旁白名称") },
                                 singleLine = true,
-                                enabled = narratorOn,
-                                modifier = Modifier.weight(1f),
+                                enabled = !isCreatingSession,
+                                modifier = Modifier.fillMaxWidth(),
                             )
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked = choiceOn, onCheckedChange = { choiceOn = it })
-                            Text("生成剧情选项", modifier = Modifier.padding(end = 8.dp))
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        MoJingToggleRow("生成剧情选项", "回复后给出可选行动", choiceOn,
+                            { choiceOn = it }, enabled = !isCreatingSession)
+                        if (choiceOn) {
                             OutlinedTextField(
                                 value = maxChoicesStr,
                                 onValueChange = { v ->
                                     if (v.isEmpty()) maxChoicesStr = ""
                                     else if (v.length <= 2 && v.all { it.isDigit() }) maxChoicesStr = v
                                 },
-                                label = { Text("最多") },
+                                label = { Text("每轮最多选项") },
                                 singleLine = true,
-                                enabled = choiceOn,
-                                modifier = Modifier.width(88.dp),
+                                enabled = !isCreatingSession,
+                                keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                                modifier = Modifier.fillMaxWidth(),
                             )
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked = antiCheatOn, onCheckedChange = { antiCheatOn = it })
-                            Column {
-                                Text("保持世界规则", style = MaterialTheme.typography.bodyMedium)
-                                Text(
-                                    "提醒角色遵守当前世界的限制与设定",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        MoJingToggleRow("保持世界规则", "提醒角色遵守当前世界的限制与设定",
+                            antiCheatOn, { antiCheatOn = it }, enabled = !isCreatingSession)
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         OutlinedTextField(
                             value = displayContextLimitStr,
                             onValueChange = { v ->
@@ -846,8 +846,11 @@ fun SessionListScreen(
                             },
                             suffix = { Text("tokens") },
                             singleLine = true,
+                            enabled = !isCreatingSession,
+                            keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
                             modifier = Modifier.fillMaxWidth(),
                         )
+                    }
                     }
                 }
                 }
