@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from dataclasses import replace
 from urllib.parse import urlsplit
 
 import httpx
@@ -125,7 +126,23 @@ def resolve_selection(db: Session, selection: ModelSelection):
     key = decrypt_api_key(platform["api_key"])
     if not key:
         raise HTTPException(400, "所选平台尚未填写 Key。")
-    return ResolvedTextConfig(key, platform["base_url"], selection.model, "session")
+    return ResolvedTextConfig(
+        key, platform["base_url"], selection.model, "session",
+        platform_id=platform["id"], platform_name=platform["name"],
+    )
+
+
+def match_saved_platform(db: Session, resolved):
+    """Attribute inherited or character routes only when the actual connection is unique."""
+    if resolved.platform_id:
+        return resolved
+    base = resolved.base_url.strip().rstrip("/").lower()
+    matches = [
+        p for p in get_catalog(db)["platforms"]
+        if p["base_url"].strip().rstrip("/").lower() == base
+        and decrypt_api_key(p["api_key"]) == resolved.api_key
+    ]
+    return replace(resolved, platform_id=matches[0]["id"], platform_name=matches[0]["name"]) if len(matches) == 1 else resolved
 
 
 def set_default_platform(db: Session, platform_id: str) -> dict:

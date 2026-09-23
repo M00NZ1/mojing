@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 import { api } from '../api/client';
-import type { Expression, Message, SessionBranch } from '../types';
+import type { Expression, Message, MessageUsage, SessionBranch } from '../types';
 import { extractChoicesFromMessage, stripChoicesFromMessageContent } from '../utils/chatChoiceParsing';
 import { copyText } from '../utils/clipboard';
 import { useToast } from '../hooks/useToast';
@@ -112,6 +113,19 @@ function DebugBlock({ debug }: { debug?: Record<string, unknown> }) {
       )}
     </details>
   );
+}
+
+function MessageUsageLine({ usage }: { usage?: MessageUsage }) {
+  if (!usage) return null;
+  const cost = usage.cost_known && usage.estimated_cost != null
+    ? `${usage.currency === 'CNY' ? '¥' : usage.currency === 'USD' ? '$' : `${usage.currency ?? ''} `}${usage.estimated_cost.toFixed(usage.estimated_cost !== 0 && Math.abs(usage.estimated_cost) < 0.01 ? 6 : 4)}`
+    : '费用未知';
+  const source = usage.usage_source === 'estimated' || usage.usage_source === 'approximate' ? '约' : '';
+  return <div className="message-usage-line" aria-label="消息用量">
+    <span>{usage.duration_ms > 0 ? `${(usage.duration_ms / 1000).toFixed(1)} 秒` : '耗时未知'}</span>
+    <span>{usage.total_tokens.toLocaleString('zh-CN')} Token</span>
+    <span>{source}{cost}</span>
+  </div>;
 }
 
 type ActionButtonProps = {
@@ -389,6 +403,24 @@ export default function MessageList({
     overscan: 8,
   });
   rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => !focusSettlingRef.current;
+  const visibleVirtualItems = rowVirtualizer.getVirtualItems();
+  const visibleUsageIds = useMemo(() => visibleVirtualItems
+    .map((item) => reverseMessages[item.index])
+    .filter((message): message is Message => Boolean(message && message.id > 0 && (message.speaker_type === 'character' || message.speaker_type === 'narrator' || message.speaker_type === 'system')))
+    .map((message) => message.id), [reverseMessages, visibleVirtualItems]);
+  const messageUsageQuery = useQuery({
+    queryKey: ['message-usage', visibleUsageIds],
+    queryFn: () => api.messageUsage(visibleUsageIds),
+    enabled: visibleUsageIds.length > 0,
+    staleTime: 30_000,
+  });
+  const messageUsage = messageUsageQuery.data?.items ?? {};
+  const previousGeneratingRef = useRef(isGenerating);
+  useEffect(() => {
+    const wasGenerating = previousGeneratingRef.current;
+    previousGeneratingRef.current = isGenerating;
+    if (wasGenerating && !isGenerating && visibleUsageIds.length > 0) void messageUsageQuery.refetch();
+  }, [isGenerating, messageUsageQuery.refetch, visibleUsageIds.length]);
 
   // 检查是否在底部
   const checkAtBottom = useCallback(() => {
@@ -580,7 +612,7 @@ export default function MessageList({
           position: 'relative',
         }}
       >
-        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+        {visibleVirtualItems.map((virtualRow) => {
           const message = reverseMessages[virtualRow.index];
           const structured = message.structured_content || {};
           const choices = extractChoicesFromMessage(message);
@@ -646,8 +678,9 @@ export default function MessageList({
                           </button>
                         ))}
                       </div>
-                    )}
+                      )}
                   </div>
+                  <MessageUsageLine usage={messageUsage[String(message.id)]} />
                   {!readOnly && showNarratorActions && (
                     <div className="chat-msg-tools chat-msg-system-tools">
                       {onEditMessage && (
@@ -759,6 +792,7 @@ export default function MessageList({
                       )}
                       {showPromptDebug && <DebugBlock debug={structured} />}
                     </div>
+                    {!isUser && <MessageUsageLine usage={messageUsage[String(message.id)]} />}
 
                     {!readOnly && showActions && (
                       <div className="chat-msg-tools">

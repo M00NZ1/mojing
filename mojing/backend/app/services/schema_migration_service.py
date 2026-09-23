@@ -13,6 +13,7 @@ from .backup_service import BackupError, build_database_rollback_snapshot
 
 SESSION_BRANCH_MIGRATION_ID = "20260829_session_branch_checkpoints"
 SESSION_BRANCH_TABLE = "session_branches"
+COST_SCHEMA_MIGRATION_ID = "20260923_cost_pricing"
 
 
 class SchemaMigrationError(RuntimeError):
@@ -44,6 +45,116 @@ class _SchemaRequirements:
 
 
 SnapshotBuilder = Callable[[Path, str], Path]
+
+
+def ensure_cost_schema(
+    executor: Session | Connection,
+    *,
+    snapshot_builder: SnapshotBuilder = build_database_rollback_snapshot,
+) -> None:
+    """幂等补齐成本字段；旧记录只标为未知，不推断其平台或价格。"""
+    connection = _connection_for(executor)
+    if connection.engine.url.get_backend_name() != "sqlite":
+        raise SchemaMigrationError("成本结构兼容迁移仅支持本机 SQLite 数据库。")
+    if not _table_exists(connection, "llm_cost_records"):
+        return
+    columns = _column_names(connection, "llm_cost_records")
+    required_columns = {
+        "id", "model_name", "provider", "prompt_tokens", "completion_tokens",
+        "total_tokens", "estimated_cost", "success",
+    }
+    missing_required = required_columns - columns
+    if missing_required:
+        raise SchemaMigrationError("成本记录表缺少基础字段，已停止自动迁移以避免误改数据。")
+    additions = {
+        "platform_id": "VARCHAR(120)",
+        "platform_name": "VARCHAR(120) NOT NULL DEFAULT ''",
+        "currency": "VARCHAR(3) NOT NULL DEFAULT 'USD'",
+        "cost_known": "INTEGER NOT NULL DEFAULT 1",
+        "pricing_snapshot_json": "JSON",
+        "message_id": "VARCHAR(128)",
+        "usage_source": "VARCHAR(40) NOT NULL DEFAULT 'estimated'",
+    }
+    existing_indexes = _index_shapes(connection, "llm_cost_records")
+    missing_indexes = []
+    for name, fields, unique in (
+        ("ix_llm_cost_records_platform_id", ("platform_id",), False),
+        ("ix_llm_cost_records_message_id", ("message_id",), False),
+    ):
+        if not _has_index_shape(existing_indexes, fields, unique):
+            missing_indexes.append((name, fields, unique))
+    null_backfill_needed = connection.exec_driver_sql(
+        'SELECT 1 FROM "llm_cost_records" WHERE "platform_id" IS NULL AND "cost_known" != 0 LIMIT 1'
+    ).first() is not None if "cost_known" in columns else True
+    needs_change = bool(set(additions) - columns or missing_indexes or null_backfill_needed)
+    if _table_exists(connection, "model_prices"):
+        price_required = {
+            "platform_id", "model_name", "currency", "input_per_million",
+            "output_per_million", "cached_input_per_million",
+        }
+        missing_price = price_required - _column_names(connection, "model_prices")
+        if missing_price:
+            raise SchemaMigrationError("模型价格表缺少基础字段，已停止自动迁移。")
+        price_indexes = _index_shapes(connection, "model_prices")
+        if not _has_index_shape(price_indexes, ("platform_id", "model_name"), True):
+            needs_change = True
+    if not needs_change:
+        return
+    snapshot_path: Path | None = None
+    changed = False
+    try:
+        _begin_sqlite_write_transaction(connection)
+        # Re-read after acquiring the lock, then snapshot before any ALTER/backfill.
+        columns = _column_names(connection, "llm_cost_records")
+        if not set(additions) - columns and not missing_indexes and not null_backfill_needed:
+            if isinstance(executor, Session):
+                executor.commit()
+            return
+        database = connection.engine.url.database
+        if database and database != ":memory:":
+            snapshot_path = snapshot_builder(_sqlite_database_path(connection), COST_SCHEMA_MIGRATION_ID)
+        for name, definition in additions.items():
+            if name not in columns:
+                connection.exec_driver_sql(
+                    f'ALTER TABLE "llm_cost_records" ADD COLUMN "{name}" {definition}'
+                )
+                changed = True
+        for name, fields, unique in missing_indexes:
+            field_sql = ", ".join(_quote_identifier(field) for field in fields)
+            connection.exec_driver_sql(
+                f'CREATE INDEX IF NOT EXISTS "{name}" ON "llm_cost_records" ({field_sql})'
+            )
+            changed = True
+        if _table_exists(connection, "model_prices"):
+            duplicate = connection.exec_driver_sql(
+                "SELECT 1 FROM model_prices GROUP BY platform_id, model_name HAVING COUNT(*) > 1 LIMIT 1"
+            ).first()
+            if duplicate is not None:
+                raise SchemaMigrationError("模型价格存在重复平台/模型标识，已停止自动迁移。")
+            existing_indexes = _index_shapes(connection, "model_prices")
+            if not _has_index_shape(existing_indexes, ("platform_id", "model_name"), True):
+                connection.exec_driver_sql(
+                    'CREATE UNIQUE INDEX IF NOT EXISTS "uq_model_prices_platform_model" '
+                    'ON "model_prices" ("platform_id", "model_name")'
+                )
+                changed = True
+        # NULL platform_id is the only safe identity test for pre-feature records.
+        if null_backfill_needed or "platform_id" not in columns:
+            connection.exec_driver_sql(
+                'UPDATE "llm_cost_records" SET "cost_known" = 0 WHERE "platform_id" IS NULL'
+            )
+        if isinstance(executor, Session):
+            executor.commit()
+    except BackupError as exc:
+        if isinstance(executor, Session):
+            executor.rollback()
+        raise SchemaMigrationError("无法创建迁移前回滚快照，数据库结构未修改。") from exc
+    except Exception as exc:
+        if isinstance(executor, Session):
+            executor.rollback()
+        if snapshot_path is None and connection.engine.url.database not in (None, ":memory:"):
+            raise SchemaMigrationError("成本结构迁移失败，数据库结构未修改。") from exc
+        raise
 
 
 def ensure_session_branch_schema(

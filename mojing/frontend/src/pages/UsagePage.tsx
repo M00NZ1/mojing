@@ -1,13 +1,13 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { formatTokens, formatUsageDate, formatUsd, providerLabel, readUsageFilters, UsageFilters, UsageLoadState, UsageMetrics, usageSearch } from '../components/UsageDisplay';
+import { formatCost, formatCurrencyTotals, formatTokens, formatUsageDate, providerLabel, readUsageFilters, UsageFilters, UsageLoadState, UsageMetrics, usageSearch } from '../components/UsageDisplay';
 import type { UsageModel, UsageRequest, UsageTotals } from '../types';
 import './UsagePage.css';
 
 function modelTotals(model: UsageModel): UsageTotals {
   return {
-    cost_usd: model.cost_usd, total_tokens: model.total_tokens, total_calls: model.calls,
+    cost_usd: model.cost_usd, currency_totals: model.currency_totals, total_tokens: model.total_tokens, total_calls: model.calls,
     success_calls: model.success_calls, failed_calls: model.failed_calls, duration_ms: model.duration_ms,
   };
 }
@@ -18,7 +18,7 @@ function RequestRow({ record }: { record: UsageRequest }) {
       <span className={`usage-request-status ${record.success ? 'is-success' : 'is-failed'}`}>{record.success ? '成功' : '失败'}</span>
       <span className="usage-request-time">{formatUsageDate(record.created_at)}</span>
       <span className="usage-request-tokens">{formatTokens(record.total_tokens)} Token</span>
-      <strong>{formatUsd(record.estimated_cost)}</strong>
+      <strong>{formatCost(record.estimated_cost, record.currency ?? 'USD')}</strong>
       <span className="usage-list-arrow" aria-hidden="true">⌄</span>
     </summary>
     <div className="usage-request-detail">
@@ -49,6 +49,7 @@ export default function UsagePage({ level }: { level: 'platform' | 'model' }) {
     enabled: valid,
   });
   const currentModel = modelsQuery.data?.items.find((item) => item.model_name === modelName);
+  const platformName = modelsQuery.data?.items.find((item) => item.platform_name)?.platform_name || providerLabel(provider);
   const recordsQuery = useInfiniteQuery({
     queryKey: ['cost-model-records', provider, modelName, filters.days, filters.status],
     queryFn: ({ pageParam }) => api.costModelRecords(provider, modelName, { ...filters, beforeId: pageParam }),
@@ -61,12 +62,12 @@ export default function UsagePage({ level }: { level: 'platform' | 'model' }) {
   return <main className="usage-page">
     <nav className="usage-breadcrumb" aria-label="用量层级">
       <Link to={summaryUrl}>用量汇总</Link><span aria-hidden="true">/</span>
-      {level === 'model' ? <><Link to={platformUrl}>{providerLabel(provider)}</Link><span aria-hidden="true">/</span><strong>模型请求</strong></> : <strong>平台明细</strong>}
+      {level === 'model' ? <><Link to={platformUrl}>{platformName}</Link><span aria-hidden="true">/</span><strong>模型请求</strong></> : <strong>平台明细</strong>}
     </nav>
     <header className="usage-page-header">
       <div>
-        <p className="eyebrow">{level === 'model' ? providerLabel(provider) : '平台用量'}</p>
-        <h1>{level === 'model' ? (modelName || '未记录模型') : providerLabel(provider)}</h1>
+        <p className="eyebrow">{level === 'model' ? platformName : '平台用量'}</p>
+        <h1>{level === 'model' ? (modelName || '未记录模型') : platformName}</h1>
         <p>{level === 'model' ? '逐次查看请求 Token、费用、耗时与来源对话。' : '查看该平台下每个模型的请求与费用。'}</p>
       </div>
       <Link className="usage-page-back" to={level === 'model' ? platformUrl : summaryUrl}>← 返回{level === 'model' ? '平台' : '汇总'}</Link>
@@ -84,7 +85,7 @@ export default function UsagePage({ level }: { level: 'platform' | 'model' }) {
       {modelsQuery.data && level === 'platform' && <>
         <UsageMetrics totals={modelsQuery.data.totals} />
         <div className="usage-section-head"><h2>使用过的模型</h2><span>{modelsQuery.data.items.length} 个模型</span></div>
-        <div className="usage-list">{[...modelsQuery.data.items].sort((a, b) => b.cost_usd - a.cost_usd || b.total_tokens - a.total_tokens).map((item) => <Link
+        <div className="usage-list">{[...modelsQuery.data.items].sort((a, b) => (b.cost_usd ?? -1) - (a.cost_usd ?? -1) || b.total_tokens - a.total_tokens).map((item) => <Link
           key={item.model_name}
           className="usage-list-row"
           to={`/usage/model?${usageSearch(filters, { provider, model: item.model_name })}`}
@@ -92,7 +93,7 @@ export default function UsagePage({ level }: { level: 'platform' | 'model' }) {
         >
           <span className="usage-list-symbol" aria-hidden="true">M</span>
           <span className="usage-list-primary"><strong>{item.model_name || '未记录模型'}</strong><small>{formatTokens(item.calls)} 次请求 · 成功 {formatTokens(item.success_calls)} · 失败 {formatTokens(item.failed_calls)}</small></span>
-          <span className="usage-list-secondary"><strong>{formatUsd(item.cost_usd)}</strong><small>{formatTokens(item.total_tokens)} Token</small></span>
+          <span className="usage-list-secondary"><strong>{item.currency_totals ? formatCurrencyTotals(item.currency_totals) : formatCost(item.cost_usd)}</strong><small>{formatTokens(item.total_tokens)} Token</small></span>
           <span className="usage-list-arrow" aria-hidden="true">›</span>
         </Link>)}</div>
         {modelsQuery.data.items.length === 0 && <div className="usage-empty">该筛选范围内还没有模型请求。</div>}

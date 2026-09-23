@@ -33,6 +33,17 @@ export function formatUsd(value: number): string {
   return `$${value.toFixed(value !== 0 && Math.abs(value) < 0.01 ? 6 : 4)}`;
 }
 
+export function formatCost(value: number | null | undefined, currency = 'USD'): string {
+  if (!Number.isFinite(value)) return '费用未知';
+  const symbol = currency === 'CNY' ? '¥' : currency === 'USD' ? '$' : `${currency} `;
+  return `${symbol}${Number(value).toFixed(value !== 0 && Math.abs(Number(value)) < 0.01 ? 6 : 4)}`;
+}
+
+export function formatCurrencyTotals(totals?: Record<string, number>): string {
+  if (!totals || Object.keys(totals).length === 0) return '费用未知';
+  return Object.entries(totals).map(([currency, value]) => formatCost(value, currency)).join(' · ');
+}
+
 export function formatUsageDate(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value || '时间未记录' : date.toLocaleString('zh-CN', { hour12: false });
@@ -59,7 +70,7 @@ export function UsageFilters({ value, onChange }: { value: UsageFiltersState; on
 
 export function UsageMetrics({ totals }: { totals: UsageTotals }) {
   const metrics = [
-    ['预估费用 · USD', formatUsd(totals.cost_usd)],
+    ['预估费用', totals.currency_totals ? formatCurrencyTotals(totals.currency_totals) : formatCost(totals.cost_usd)],
     ['使用 Token', formatTokens(totals.total_tokens)],
     ['成功请求', formatTokens(totals.success_calls)],
     ['失败请求', formatTokens(totals.failed_calls)],

@@ -2054,6 +2054,8 @@ html[data-chat-density="reader"] .chat-bubble {
 /* ── Markdown 渲染样式 ── */
 .chat-bubble-text .md-paragraph { margin: 0 0 6px 0; line-height: 1.55; }
 .chat-bubble-text .md-paragraph:last-child { margin-bottom: 0; }
+.message-usage-line { display: flex; flex-wrap: wrap; gap: 8px; margin: 5px 2px 0; color: var(--text-2); font-size: .7rem; line-height: 1.35; opacity: .78; }
+.message-usage-line span + span::before { content: '·'; margin-right: 8px; color: var(--muted); }
 .chat-bubble-text .md-heading { margin: 8px 0 4px; font-weight: 600; }
 .chat-bubble-text .md-heading:first-child { margin-top: 0; }
 .chat-bubble-text h1.md-heading { font-size: 1.15rem; }

@@ -7,11 +7,60 @@ import { confirmModal } from './ConfirmModal';
 import { ModelNamePicker } from './ModelNamePicker';
 import './ModelPlatforms.css';
 
-import type { ModelPlatform, ModelCatalog, ModelSelection } from '../types';
+import type { ModelPlatform, ModelCatalog, ModelPrice, ModelSelection } from '../types';
 const catalogKey = ['model-platforms'];
 const emptyPlatform = (): ModelPlatform => ({ id: crypto.randomUUID(), name: '', base_url: '', api_key: '', models: [], selected_model: '' });
 export const parseModelNames = (text: string) => [...new Set(text.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean))];
 const errorText = (e: unknown) => e instanceof Error ? e.message : '操作失败，请重试。';
+
+function PriceEditor({ platformId, models }: { platformId: string; models: string[] }) {
+  const queryClient = useQueryClient();
+  const prices = useQuery({ queryKey: ['model-prices', platformId], queryFn: () => api.getModelPrices(platformId) });
+  const [drafts, setDrafts] = useState<Record<string, ModelPrice>>({});
+  const [selectedModel, setSelectedModel] = useState(models[0] ?? '');
+  const [syncHistory, setSyncHistory] = useState(false);
+  useEffect(() => { if (!models.includes(selectedModel)) setSelectedModel(models[0] ?? ''); }, [models, selectedModel]);
+  const save = useMutation({
+    mutationFn: ({ price, sync }: { price: ModelPrice; sync: boolean }) => api.saveModelPrice(platformId, { ...price, sync_history: sync }),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(['model-prices', platformId], (current: { platform_id: string; items: ModelPrice[] } | undefined) => ({
+        platform_id: platformId,
+        items: [...(current?.items ?? []).filter((item) => item.model_name !== saved.model_name), saved],
+      }));
+      setDrafts((current) => { const next = { ...current }; delete next[saved.model_name]; return next; });
+      setSyncHistory(false);
+    },
+  });
+  const priceFor = (model: string) => drafts[model] ?? prices.data?.items.find((item) => item.model_name === model) ?? {
+    model_name: model, currency: 'USD', input_per_million: 0, output_per_million: 0, cached_input_per_million: 0,
+  };
+  const isPersistedConfigured = (model: string) => Boolean(prices.data?.items.some((item) => item.model_name === model));
+  function update(model: string, patch: Partial<ModelPrice>) { setDrafts((current) => ({ ...current, [model]: { ...priceFor(model), ...patch } })); }
+  const price = selectedModel ? priceFor(selectedModel) : null;
+  const persistedConfigured = selectedModel ? isPersistedConfigured(selectedModel) : false;
+  const saving = save.isPending && save.variables?.price.model_name === selectedModel;
+  return <section className="model-platform-editor-section model-price-editor" aria-labelledby="model-price-title">
+    <div className="model-platform-section-heading"><h4 id="model-price-title">模型价格</h4><p>按每百万 Token 填写输入、输出与缓存输入价格。未配置时用量会显示费用未知。</p></div>
+    {prices.isPending && <p role="status" className="model-price-state">正在读取价格…</p>}
+    {prices.isError && <p role="alert" className="model-platform-error">价格读取失败。<button type="button" className="btn btn-sm" onClick={() => { void prices.refetch(); }}>重试</button></p>}
+    {!prices.isPending && <div className="model-price-list">
+      {models.length === 0 && <p className="model-price-state">先添加至少一个模型，再配置价格。</p>}
+      {models.length > 0 && <>
+        <div className="model-price-picker"><span>选择模型</span><ModelNamePicker models={models} value={selectedModel} onChange={(model) => { setSelectedModel(model); save.reset(); }} /></div>
+        {price && <div className={`model-price-row${persistedConfigured ? '' : ' is-unconfigured'}`}>
+          <div className="model-price-model"><strong>{selectedModel}</strong><span>{persistedConfigured ? `${price.currency} · 已配置` : (drafts[selectedModel] ? '有未保存价格草稿' : '尚未配置价格')}</span></div>
+          <label>币种<select value={price.currency} onChange={(e) => update(selectedModel, { currency: e.target.value })}><option value="USD">USD</option><option value="CNY">CNY</option></select></label>
+          <label>输入 / 百万<input type="number" min="0" step="any" value={price.input_per_million} onChange={(e) => update(selectedModel, { input_per_million: Number(e.target.value) })} /></label>
+          <label>输出 / 百万<input type="number" min="0" step="any" value={price.output_per_million} onChange={(e) => update(selectedModel, { output_per_million: Number(e.target.value) })} /></label>
+          <label>缓存输入 / 百万<input type="number" min="0" step="any" value={price.cached_input_per_million} onChange={(e) => update(selectedModel, { cached_input_per_million: Number(e.target.value) })} /></label>
+          <div className="model-price-actions"><label className="model-price-sync"><input type="checkbox" checked={syncHistory} onChange={(e) => setSyncHistory(e.target.checked)} />同步历史记录</label><button type="button" className="btn btn-sm btn-primary" disabled={saving} onClick={() => save.mutate({ price, sync: syncHistory })}>{saving ? '保存中…' : '保存价格'}</button></div>
+          {save.isError && save.variables?.price.model_name === selectedModel && <p className="model-platform-error" role="alert">{errorText(save.error)}</p>}
+          {save.isSuccess && save.data.model_name === selectedModel && <p className="model-price-success" role="status">价格已保存{save.data.recalculated_count != null ? `，已重算 ${save.data.recalculated_count} 条记录` : ''}。</p>}
+        </div>}
+      </>}
+    </div>}
+  </section>;
+}
 
 export function ModelPlatformsPanel({ onDirtyChange, onEditingChange }: { onDirtyChange: (dirty: boolean) => void; onEditingChange: (editing: boolean) => void }) {
   const queryClient = useQueryClient();
@@ -156,6 +205,10 @@ export function ModelPlatformsPanel({ onDirtyChange, onEditingChange }: { onDirt
         <div className="model-platform-wide model-platform-model-field"><span>默认模型</span><ModelNamePicker models={models} value={draft.selected_model} onChange={(model) => setDraft({ ...draft, selected_model: model })} /></div>
         </div>
       </section>
+      {catalog.data?.platforms.some((platform) => platform.id === draft.id) && <PriceEditor
+        platformId={draft.id}
+        models={catalog.data.platforms.find((platform) => platform.id === draft.id)?.models ?? []}
+      />}
       </fieldset>
       <div className="model-platform-editor-actions"><span>{dirty ? '有未保存修改' : '暂无修改'}</span><div className="model-platform-actions"><button type="button" className="btn btn-primary" disabled={save.isPending || fetching || !draft.name.trim() || !draft.api_key.trim() || !models.includes(draft.selected_model)} onClick={() => save.mutate({ ...draft, models })}>{save.isPending ? '正在保存…' : '保存平台'}</button>
         <button type="button" className="btn btn-ghost" disabled={save.isPending} onClick={() => { void closeEditor(); }}>取消</button></div></div>

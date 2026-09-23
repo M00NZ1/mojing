@@ -31,12 +31,13 @@ from ..models import (
     WorldTemplateModel,
 )
 from ..schemas import MessageRead, PromptRewriteRequest
-from .llm_client import build_client, detect_provider, resolve_text_model
+from .llm_client import build_client, detect_provider, resolve_text_config, resolve_text_model
 from .llm_retry import safe_non_streaming_call, safe_streaming_call
 from .memory_service import ensure_session_character_state
 from .speaker_scheduler import select_speakers as speaker_scheduler_select
 from .rag_service import get_context_chunks
-from .cost_service import record_llm_call
+from .cost_service import get_price_snapshot, record_llm_call
+from .model_platform_service import match_saved_platform
 from .output_postprocess import apply_rules
 from .system_config_service import get_local_config
 from .think_max_model import resolve_think_max_chat_model
@@ -967,8 +968,23 @@ def _count_tokens(text: str) -> int:
         import tiktoken
         enc = tiktoken.get_encoding("cl100k_base")
         return len(enc.encode(text))
-    except ImportError:
+    except Exception:
         return int(len(text) * 1.5)
+
+
+def _stream_token_usage(prompt_messages: list[dict], raw_text: str, usage) -> tuple[int, int, str]:
+    """Prefer the provider's final stream usage; mark local counts as estimates."""
+    if usage is not None:
+        prompt = max(int(getattr(usage, "prompt_tokens", 0) or 0), 0)
+        completion = max(int(getattr(usage, "completion_tokens", 0) or 0), 0)
+        if prompt or completion or not raw_text:
+            return prompt, completion, "api"
+    prompt = 0
+    for message in prompt_messages:
+        content = message.get("content", "")
+        text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+        prompt += _count_tokens(text) + 4
+    return prompt, _count_tokens(raw_text), "estimated"
 
 
 def _build_memory_section(title: str, hits: list[dict]) -> str:
@@ -1720,6 +1736,15 @@ def stream_character_reply(session_id: int, character_id: int, branch_id: str = 
 
     stream_key = uuid4().hex
     db = SessionLocal()
+    request_started = False
+    usage_recorded = False
+    prompt_messages: list[dict] = []
+    raw_text = ""
+    usage = None
+    resolved = None
+    resolved_model = ""
+    price_snapshot = None
+    stream_start = time.time()
     if text_config is not None:
         db.info["text_config_override"] = text_config
     try:
@@ -1729,12 +1754,15 @@ def stream_character_reply(session_id: int, character_id: int, branch_id: str = 
             yield {"type": "error", "stream_key": stream_key, "message": f"人物 {character_id} 不存在"}
             return
         prompt_messages, debug_payload = build_group_prompt(db, session_id, character, branch_id)
+        resolved = match_saved_platform(db, resolve_text_config(character, db))
+        db.info["text_config_override"] = resolved
         client = build_client(character, db)
         session = db.get(ChatSessionModel, session_id)
         cfg = get_local_config(db)
-        resolved_model = text_config.model if text_config is not None else resolve_think_max_chat_model(
+        resolved_model = resolved.model if text_config is not None else resolve_think_max_chat_model(
             character, session, cfg, default_model=settings.default_model
         )
+        price_snapshot = get_price_snapshot(db, resolved.platform_id, resolved_model) if resolved.platform_id else None
         stream_kwargs: dict = {
             "temperature": character.temperature,
             "max_tokens": character.max_tokens,
@@ -1745,6 +1773,8 @@ def stream_character_reply(session_id: int, character_id: int, branch_id: str = 
         }
         if character.top_k or character.repetition_penalty != 1.0:
             stream_kwargs["extra_body"] = {"top_k": character.top_k, "repetition_penalty": character.repetition_penalty}
+        stream_start = time.time()
+        request_started = True
         response = safe_streaming_call(
             client,
             model=resolved_model,
@@ -1752,9 +1782,7 @@ def stream_character_reply(session_id: int, character_id: int, branch_id: str = 
             **stream_kwargs,
         )
 
-        raw_text = ""
         pending_high_surrogate = ""
-        stream_start = time.time()
         yield {
             "type": "message_start",
             "stream_key": stream_key,
@@ -1762,8 +1790,11 @@ def stream_character_reply(session_id: int, character_id: int, branch_id: str = 
             "character_name": character.name,
         }
         for chunk in response:
-            delta = chunk.choices[0].delta
-            delta_text = delta.content or ""
+            usage = getattr(chunk, "usage", None) or usage
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+            delta_text = getattr(choices[0].delta, "content", None) or ""
             if not delta_text:
                 continue
             safe_delta, pending_high_surrogate = _consume_stream_delta(delta_text, pending_high_surrogate)
@@ -1787,23 +1818,6 @@ def stream_character_reply(session_id: int, character_id: int, branch_id: str = 
                 "character_name": character.name,
                 "delta": trailing_delta,
             }
-
-        # 成本记录
-        # [⚠ 避坑] 上游模型流式分块可能把 Emoji 或代理对拆开；这里必须先修复再落库，
-        # 否则 SSE 写回或消息保存阶段会被非法 Unicode 直接打断。
-        try:
-            usage = response.usage if hasattr(response, "usage") else None
-            prompt_tokens = usage.prompt_tokens if usage else 0
-            completion_tokens = usage.completion_tokens if usage else 0
-            duration_ms = int((time.time() - stream_start) * 1000)
-            record_llm_call(
-                db, session_id=session_id, character_id=character.id,
-                model_name=resolved_model, provider=detect_provider(character),
-                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-                duration_ms=duration_ms, success=True,
-            )
-        except Exception:
-            pass
 
         world = db.scalar(select(SessionWorldModel).where(SessionWorldModel.session_id == session_id))
         processed = apply_rules(raw_text.strip())
@@ -1833,6 +1847,19 @@ def stream_character_reply(session_id: int, character_id: int, branch_id: str = 
             structured_content=structured,
         )
         db.refresh(message, attribute_names=["character"])
+        prompt_tokens, completion_tokens, usage_source = _stream_token_usage(prompt_messages, raw_text, usage)
+        try:
+            record_llm_call(
+                db, session_id=session_id, character_id=character.id, message_id=message.id,
+                model_name=resolved_model, provider=detect_provider(character, resolved.base_url),
+                platform_id=resolved.platform_id, platform_name=resolved.platform_name,
+                price_snapshot=price_snapshot, usage_source=usage_source,
+                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                duration_ms=int((time.time() - stream_start) * 1000), success=True,
+            )
+            usage_recorded = True
+        except Exception:
+            db.rollback()  # The reply is already saved; a billing failure must not hide it.
 
         if world and world.encyclopedia_id and world.auto_sediment_enabled:
             msg_count = db.scalar(
@@ -1853,6 +1880,19 @@ def stream_character_reply(session_id: int, character_id: int, branch_id: str = 
             "message": serialize_message(message).model_dump(mode="json"),
         }
     except Exception as exc:
+        if request_started and not usage_recorded and resolved is not None:
+            try:
+                prompt_tokens, completion_tokens, usage_source = _stream_token_usage(prompt_messages, raw_text, usage)
+                record_llm_call(
+                    db, session_id=session_id, character_id=character_id,
+                    model_name=resolved_model, provider=detect_provider(character, resolved.base_url),
+                    platform_id=resolved.platform_id, platform_name=resolved.platform_name,
+                    price_snapshot=price_snapshot, usage_source=usage_source,
+                    prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                    duration_ms=int((time.time() - stream_start) * 1000), success=False,
+                )
+            except Exception:
+                db.rollback()
         error_msg = str(exc)
         lowered = error_msg.lower()
         # 将常见 API 错误转译为用户可理解的中文提示
@@ -1878,6 +1918,15 @@ def stream_narrator_reply(session_id: int, branch_id: str = "main", *, text_conf
 
     stream_key = uuid4().hex
     db = SessionLocal()
+    request_started = False
+    usage_recorded = False
+    prompt_messages: list[dict] = []
+    raw_text = ""
+    usage = None
+    resolved = None
+    resolved_model = ""
+    price_snapshot = None
+    stream_start = time.time()
     if text_config is not None:
         db.info["text_config_override"] = text_config
     try:
@@ -1897,7 +1946,12 @@ def stream_narrator_reply(session_id: int, branch_id: str = "main", *, text_conf
             return
 
         prompt_messages, debug_payload = build_narrator_prompt(db, session_id, world.narrator_name, branch_id)
+        resolved = match_saved_platform(db, resolve_text_config(narrator_character, db))
+        db.info["text_config_override"] = resolved
         client = build_client(narrator_character, db)
+        resolved_model = resolved.model if text_config is not None else resolve_text_model(
+            narrator_character, db, default=settings.default_model)
+        price_snapshot = get_price_snapshot(db, resolved.platform_id, resolved_model) if resolved.platform_id else None
         stream_kwargs: dict = {
             "temperature": min(max(narrator_character.temperature, 0.6), 1.1),
             "max_tokens": min(max(narrator_character.max_tokens, 800), 1800),
@@ -1911,13 +1965,14 @@ def stream_narrator_reply(session_id: int, branch_id: str = "main", *, text_conf
                 "top_k": narrator_character.top_k,
                 "repetition_penalty": narrator_character.repetition_penalty,
             }
+        stream_start = time.time()
+        request_started = True
         response = safe_streaming_call(
             client,
-            model=resolve_text_model(narrator_character, db, default=settings.default_model),
+            model=resolved_model,
             messages=prompt_messages,
             **stream_kwargs,
         )
-        raw_text = ""
         pending_high_surrogate = ""
         yield {
             "type": "message_start",
@@ -1926,8 +1981,11 @@ def stream_narrator_reply(session_id: int, branch_id: str = "main", *, text_conf
             "character_name": world.narrator_name,
         }
         for chunk in response:
-            delta = chunk.choices[0].delta
-            delta_text = delta.content or ""
+            usage = getattr(chunk, "usage", None) or usage
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+            delta_text = getattr(choices[0].delta, "content", None) or ""
             if not delta_text:
                 continue
             safe_delta, pending_high_surrogate = _consume_stream_delta(delta_text, pending_high_surrogate)
@@ -1970,6 +2028,19 @@ def stream_narrator_reply(session_id: int, branch_id: str = "main", *, text_conf
             content=processed,
             structured_content=structured,
         )
+        prompt_tokens, completion_tokens, usage_source = _stream_token_usage(prompt_messages, raw_text, usage)
+        try:
+            record_llm_call(
+                db, session_id=session_id, message_id=message.id,
+                model_name=resolved_model, provider=detect_provider(narrator_character, resolved.base_url),
+                platform_id=resolved.platform_id, platform_name=resolved.platform_name,
+                price_snapshot=price_snapshot, usage_source=usage_source,
+                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                duration_ms=int((time.time() - stream_start) * 1000), success=True,
+            )
+            usage_recorded = True
+        except Exception:
+            db.rollback()
         yield {
             "type": "message_end",
             "stream_key": stream_key,
@@ -1978,6 +2049,19 @@ def stream_narrator_reply(session_id: int, branch_id: str = "main", *, text_conf
             "message": serialize_message(message).model_dump(mode="json"),
         }
     except Exception as exc:
+        if request_started and not usage_recorded and resolved is not None:
+            try:
+                prompt_tokens, completion_tokens, usage_source = _stream_token_usage(prompt_messages, raw_text, usage)
+                record_llm_call(
+                    db, session_id=session_id,
+                    model_name=resolved_model, provider=detect_provider(narrator_character, resolved.base_url),
+                    platform_id=resolved.platform_id, platform_name=resolved.platform_name,
+                    price_snapshot=price_snapshot, usage_source=usage_source,
+                    prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                    duration_ms=int((time.time() - stream_start) * 1000), success=False,
+                )
+            except Exception:
+                db.rollback()
         error_msg = str(exc)
         if "timeout" in error_msg.lower():
             error_msg = "请求大模型超时，请重试。"

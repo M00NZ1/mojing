@@ -42,7 +42,8 @@ export type StoryWritingResult = {
 
 export type UsagePeriod = { days: number; since: string; until: string };
 export type UsageTotals = {
-  cost_usd: number;
+  cost_usd: number | null;
+  currency_totals?: Record<string, number>;
   total_tokens: number;
   total_calls: number;
   success_calls: number;
@@ -51,18 +52,21 @@ export type UsageTotals = {
 };
 export type UsageProvider = {
   provider: string;
+  platform_name?: string | null;
   calls: number;
   success_calls: number;
   failed_calls: number;
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
-  cost_usd: number;
+  cost_usd: number | null;
+  currency_totals?: Record<string, number>;
   duration_ms: number;
   models_count: number;
 };
 export type UsageModel = {
   provider: string;
+  platform_name?: string | null;
   model_name: string;
   calls: number;
   success_calls: number;
@@ -70,7 +74,8 @@ export type UsageModel = {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
-  cost_usd: number;
+  cost_usd: number | null;
+  currency_totals?: Record<string, number>;
   duration_ms: number;
 };
 export type UsageProvidersResponse = { period: UsagePeriod; totals: UsageTotals; items: UsageProvider[] };
@@ -82,7 +87,8 @@ export type UsageRequest = {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
-  estimated_cost: number;
+  estimated_cost: number | null;
+  currency?: string | null;
   duration_ms: number;
   success: boolean;
   created_at: string;
@@ -217,6 +223,20 @@ export type Message = {
   attachments?: Attachment[];
   /** 仅用于将 SSE 临时消息与对应的 message_start/delta/message_end 关联。 */
   stream_key?: string;
+};
+
+export type MessageUsage = {
+  message_id: number;
+  platform_name?: string | null;
+  model_name?: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  estimated_cost: number | null;
+  currency?: string | null;
+  cost_known: boolean;
+  usage_source?: string | null;
+  duration_ms: number;
 };
 
 export type MessagePage = {
@@ -819,3 +839,13 @@ export interface ModelPlatform {
 export interface ModelCatalog { version: number; active_id: string | null; platforms: ModelPlatform[] }
 export interface ModelSelection { platform_id: string; model: string }
 export interface ModelChoice { version: number; selection: ModelSelection | null }
+export type ModelPrice = {
+  model_name: string;
+  currency: 'USD' | 'CNY' | string;
+  input_per_million: number;
+  output_per_million: number;
+  cached_input_per_million: number;
+  source?: string | null;
+};
+export type ModelPricesResponse = { platform_id: string; items: ModelPrice[] };
+export type SavedModelPriceResponse = ModelPrice & { recalculated_count?: number };

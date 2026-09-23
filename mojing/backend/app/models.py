@@ -73,6 +73,13 @@ class LlmCostRecordModel(Base):
     character_id: Mapped[int] = mapped_column(Integer, nullable=True)
     model_name: Mapped[str] = mapped_column(String(120), default="")
     provider: Mapped[str] = mapped_column(String(60), default="openai")
+    platform_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    platform_name: Mapped[str] = mapped_column(String(120), default="")
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
+    cost_known: Mapped[bool] = mapped_column(Integer, default=True)
+    pricing_snapshot_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    message_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    usage_source: Mapped[str] = mapped_column(String(40), default="estimated")
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
@@ -80,6 +87,23 @@ class LlmCostRecordModel(Base):
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     success: Mapped[bool] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
+
+
+class ModelPriceModel(Base):
+    """平台/模型的本地价格；平台 ID 与模型名构成唯一作用域。"""
+
+    __tablename__ = "model_prices"
+    __table_args__ = (UniqueConstraint("platform_id", "model_name", name="uq_model_prices_platform_model"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    platform_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    model_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    input_per_million: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    output_per_million: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    cached_input_per_million: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc, onupdate=now_utc)
 
 
 class VoiceProfileModel(Base):

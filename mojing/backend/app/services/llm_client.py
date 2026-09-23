@@ -16,6 +16,8 @@ class ResolvedTextConfig:
     base_url: str
     model: str
     source: str
+    platform_id: str | None = None
+    platform_name: str = ""
 
 
 def is_placeholder_text_base(base_url: str | None) -> bool:
@@ -106,8 +108,12 @@ def resolve_text_model(character: CharacterModel, db=None, *, default: str = "de
 
 
 def detect_provider(character: CharacterModel, base_url: str | None = None) -> str:
-    """根据人物的 api_base_url 自动检测提供商类型。"""
+    """根据本次实际请求地址检测服务商类型。"""
     base = (base_url if base_url is not None else character.api_base_url or "").lower().strip()
+    if "api.deepseek.com" in base:
+        return "deepseek"
+    if "siliconflow.cn" in base:
+        return "siliconflow"
     if "anthropic" in base or "claude" in base:
         return "claude"
     if "ollama" in base or "localhost:11434" in base or "127.0.0.1:11434" in base:

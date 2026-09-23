@@ -3,11 +3,15 @@ import type {
   ModelCatalog,
   ModelSelection,
   ModelChoice,
+  ModelPrice,
+  ModelPricesResponse,
+  SavedModelPriceResponse,
   AssetItem,
   CostData,
   UsageModelsResponse,
   UsageProvidersResponse,
   UsageRecordsResponse,
+  MessageUsage,
   ApiChannel,
   Character,
   CharacterProfile,
@@ -356,6 +360,15 @@ export const api = {
       signal,
     });
   },
+  getModelPrices(platformId: string) {
+    return request<ModelPricesResponse>(`/costs/prices?platform_id=${encodeURIComponent(platformId)}`);
+  },
+  saveModelPrice(platformId: string, price: Omit<ModelPrice, 'source'> & { sync_history: boolean }) {
+    return request<SavedModelPriceResponse>('/costs/prices', {
+      method: 'PUT',
+      body: JSON.stringify({ platform_id: platformId, ...price }),
+    });
+  },
   getStoryRequestState(requestId: string, signal?: AbortSignal) {
     return request<StoryRequestState>(`/story-simulations/requests/${encodeURIComponent(requestId)}`, { signal });
   },
@@ -408,6 +421,10 @@ export const api = {
     const search = new URLSearchParams({ days: String(params.days), status: params.status, model, limit: '50' });
     if (params.beforeId) search.set('before_id', String(params.beforeId));
     return request<UsageRecordsResponse>(`/costs/providers/${encodeURIComponent(provider)}/records?${search}`);
+  },
+  messageUsage(ids: number[]) {
+    const uniqueIds = [...new Set(ids)].filter((id) => Number.isInteger(id) && id > 0).slice(0, 100);
+    return request<{ items: Record<string, MessageUsage> }>(`/costs/messages?ids=${uniqueIds.join(',')}`);
   },
   updateSession(sessionId: number, payload: { title?: string; think_max_enabled?: boolean }) {
     return request<SessionItem>(`/sessions/${sessionId}`, {
