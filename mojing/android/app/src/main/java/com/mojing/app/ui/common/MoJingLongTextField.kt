@@ -14,11 +14,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -86,22 +83,10 @@ fun MoJingLongTextField(
                         TextButton(onClick = { hideImeKeyboard(keyboard, focus); expanded = false }) { Text("完成") }
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    MoJingTextField(
-                        value = value,
-                        onValueChange = onValueChange,
-                        placeholder = { Text(placeholder) },
-                        enabled = enabled,
+                    MoJingWritingField(
+                        value = value, onValueChange = onValueChange, label = label,
+                        placeholder = placeholder, enabled = enabled,
                         modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 4.dp),
-                        shape = RectangleShape,
-                        textStyle = MaterialTheme.typography.bodyLarge,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color.Transparent,
-                            unfocusedBorderColor = Color.Transparent,
-                            disabledBorderColor = Color.Transparent,
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            disabledContainerColor = Color.Transparent,
-                        ),
                     )
                     Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
                         Text("修改保留在表单中，返回后保存", style = MaterialTheme.typography.bodySmall,

@@ -1380,15 +1380,16 @@ fun ChatScreen(
                         selected = correctionScopeBranchId != null,
                         onClick = { correctionScopeBranchId = state.currentBranchId }, label = { Text("仅当前故事线") })
                 }
-                OutlinedTextField(
+                com.mojing.app.ui.common.MoJingWritingField(
                     value = correctionDraft,
                     onValueChange = { correctionDraft = it.take(2000) },
                     enabled = !correctionSaving,
-                    label = { Text("纠正内容") },
+                    label = "纠正内容",
+                    placeholder = "写下需要修正的事实或角色认知",
                     modifier = Modifier.fillMaxWidth().weight(1f),
-                    minLines = 3,
-                    supportingText = { Text("${correctionDraft.length}/2000") },
                 )
+                Text("${correctionDraft.length}/2000", Modifier.align(Alignment.End),
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (correctionSourceMessageId != null) Text("已关联原文，可在记忆面板中查看。",
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             },

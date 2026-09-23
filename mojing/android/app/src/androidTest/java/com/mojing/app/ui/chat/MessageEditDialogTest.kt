@@ -31,7 +31,7 @@ class MessageEditDialogTest {
         rule.onNodeWithText("创建编辑分支").performClick()
         rule.onNodeWithText("正在保存…").assertIsNotEnabled()
         rule.onNodeWithContentDescription("关闭消息编辑").assertIsNotEnabled()
-        rule.onNodeWithText("消息正文").assertIsNotEnabled()
+        rule.onNodeWithContentDescription("消息正文").assertIsNotEnabled()
         rule.runOnIdle { saving = false; failure = "消息编辑失败，请重试" }
         rule.onNodeWithText("消息编辑失败，请重试").assertIsDisplayed()
         rule.onNodeWithText("修改后的正文").assertExists()
@@ -53,7 +53,7 @@ class MessageEditDialogTest {
                 draft.isNotBlank() && draft != original, { saved = draft }, { dismissed++ })
         } }
         rule.onNodeWithText("创建编辑分支").assertIsDisplayed().assertIsNotEnabled()
-        rule.onNodeWithText("消息正文").performClick().performTextReplacement(original + "新的结尾")
+        rule.onNodeWithContentDescription("消息正文").performClick().performTextReplacement(original + "新的结尾")
         rule.waitUntil(5_000) {
             rule.onAllNodesWithText("保存到新故事线，并重新生成回复。").fetchSemanticsNodes().isEmpty()
         }

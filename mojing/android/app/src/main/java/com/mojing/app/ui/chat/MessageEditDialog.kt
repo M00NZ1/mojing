@@ -10,7 +10,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.mojing.app.ui.common.MoJingButton
-import com.mojing.app.ui.common.MoJingTextField
+import com.mojing.app.ui.common.MoJingWritingField
 
 @Composable
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
@@ -59,13 +59,13 @@ internal fun MessageEditDialog(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            MoJingTextField(
+            MoJingWritingField(
                 value = content,
                 onValueChange = onContentChange,
                 enabled = !saving && !committed,
                 modifier = Modifier.fillMaxWidth().weight(1f),
-                label = { Text("消息正文") },
-                textStyle = MaterialTheme.typography.bodyLarge,
+                label = "消息正文",
+                placeholder = "输入消息正文",
             )
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
                 Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
