@@ -33,6 +33,71 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class EntryEditViewModelTest {
+    @Test fun directNewEntryRestoresDraftBeforeAcceptingInput() = runTest(dispatcher) {
+        val store = mockk<EntryEditDraftStore>(relaxed = true) {
+            coEvery { load(3L, 0L) } returns EntryDraftSnapshot(title = "旧开篇", content = "未保存正文")
+        }
+        val vm = createViewModel(encyclopediaDao(), mockk(relaxed = true), draftStore = store)
+        vm.load(3L, 0L)
+        assertNotNull(vm.state.value.recoverableDraft)
+        vm.updateContent("覆盖正文")
+        assertEquals("", vm.state.value.content)
+        vm.restoreDraft()
+        advanceUntilIdle()
+        assertEquals("旧开篇", vm.state.value.title)
+        assertEquals("未保存正文", vm.state.value.content)
+        coVerify { store.save(3L, 0L, match { it.content == "未保存正文" }) }
+        var left = false
+        vm.discardChangesAndLeave { left = true }
+        advanceUntilIdle()
+        assertTrue(left)
+        coVerify { store.clear(3L, 0L) }
+    }
+
+    @Test fun firstSaveMovesDirectNewDraftAndRetryDoesNotCreateAnotherEntry() = runTest(dispatcher) {
+        val saved = EncyclopediaEntryEntity(id = 12L, encyclopediaId = 3L, title = "潮汐钟")
+        val store = mockk<EntryEditDraftStore>(relaxed = true) { coEvery { load(3L, 0L) } returns null }
+        var transfers = 0
+        coEvery { store.syncAfterFirstSave(3L, 12L, null) } coAnswers {
+            if (++transfers == 1) throw IllegalStateException("write")
+        }
+        val saver = mockk<SaveCharacterEntryUseCase> { coEvery { saveEdited(any()) } returns saved }
+        val versions = mockk<EntryVersionDao> { coEvery { getPage(12L, any(), any()) } returns emptyList() }
+        val vm = createViewModel(encyclopediaDao(), mockk(relaxed = true), versions, saver, draftStore = store)
+        vm.load(3L, 0L)
+        vm.updateTitle("潮汐钟")
+        vm.save()
+        advanceUntilIdle()
+        assertTrue(vm.state.value.isPersisted)
+        assertNotNull(vm.state.value.draftError)
+        vm.retryDraftSave()
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.draftError)
+        assertEquals(2, transfers)
+        coVerify(exactly = 1) { saver.saveEdited(any()) }
+    }
+
+    @Test fun firstSaveTransfersEditsMadeWhileDatabaseWriteWasPending() = runTest(dispatcher) {
+        val saved = EncyclopediaEntryEntity(id = 12L, encyclopediaId = 3L, title = "潮汐钟")
+        val gate = CompletableDeferred<Unit>()
+        val saver = mockk<SaveCharacterEntryUseCase> {
+            coEvery { saveEdited(any()) } coAnswers { gate.await(); saved }
+        }
+        val store = mockk<EntryEditDraftStore>(relaxed = true) { coEvery { load(3L, 0L) } returns null }
+        val versions = mockk<EntryVersionDao> { coEvery { getPage(12L, any(), any()) } returns emptyList() }
+        val vm = createViewModel(encyclopediaDao(), mockk(relaxed = true), versions, saver, draftStore = store)
+        vm.load(3L, 0L)
+        vm.updateTitle("潮汐钟")
+        vm.save()
+        vm.updateContent("保存期间新写的正文")
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.isDirty)
+        assertEquals(12L, vm.state.value.persistedEntryId)
+        assertEquals("保存期间新写的正文", vm.state.value.content)
+        coVerify { store.syncAfterFirstSave(3L, 12L, match { it.content == "保存期间新写的正文" }) }
+    }
+
     @Test fun waitsForRecoveryChoiceBeforeEditing() = runTest(dispatcher) {
         val entry = EncyclopediaEntryEntity(id = 8L, encyclopediaId = 3L, title = "已保存")
         val dao = mockk<EncyclopediaEntryDao> { coEvery { getById(8L) } returns entry }

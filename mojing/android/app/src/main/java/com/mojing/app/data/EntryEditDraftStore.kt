@@ -34,7 +34,7 @@ class EntryEditDraftStore @Inject constructor(@ApplicationContext context: Conte
     private val gson = Gson()
 
     suspend fun load(encyclopediaId: Long, entryId: Long): EntryDraftSnapshot? = withContext(Dispatchers.IO) {
-        if (encyclopediaId <= 0L || entryId <= 0L) return@withContext null
+        if (encyclopediaId <= 0L || entryId < 0L) return@withContext null
         val raw = preferences.getString(key(encyclopediaId, entryId), null) ?: return@withContext null
         val stored = runCatching {
             val root = JsonParser.parseString(raw).asJsonObject
@@ -49,15 +49,24 @@ class EntryEditDraftStore @Inject constructor(@ApplicationContext context: Conte
     }
 
     suspend fun save(encyclopediaId: Long, entryId: Long, draft: EntryDraftSnapshot) = withContext(Dispatchers.IO) {
-        require(encyclopediaId > 0L && entryId > 0L)
+        require(encyclopediaId > 0L && entryId >= 0L)
         check(preferences.edit().putString(key(encyclopediaId, entryId), gson.toJson(StoredEntryDraft(1, draft))).commit()) {
             "词条草稿暂存失败"
         }
     }
 
     suspend fun clear(encyclopediaId: Long, entryId: Long) = withContext(Dispatchers.IO) {
-        if (encyclopediaId <= 0L || entryId <= 0L) return@withContext
+        if (encyclopediaId <= 0L || entryId < 0L) return@withContext
         check(preferences.edit().remove(key(encyclopediaId, entryId)).commit()) { "词条草稿清除失败" }
+    }
+
+    /** Move the pre-save draft key to the assigned entry ID in one preferences write. */
+    suspend fun syncAfterFirstSave(encyclopediaId: Long, savedEntryId: Long, remainingDraft: EntryDraftSnapshot?) = withContext(Dispatchers.IO) {
+        require(encyclopediaId > 0L && savedEntryId > 0L)
+        val editor = preferences.edit().remove(key(encyclopediaId, 0L))
+        if (remainingDraft == null) editor.remove(key(encyclopediaId, savedEntryId))
+        else editor.putString(key(encyclopediaId, savedEntryId), gson.toJson(StoredEntryDraft(1, remainingDraft)))
+        check(editor.commit()) { "词条草稿转移失败" }
     }
 
     private fun key(encyclopediaId: Long, entryId: Long) = "encyclopedia_${encyclopediaId}_entry_$entryId"

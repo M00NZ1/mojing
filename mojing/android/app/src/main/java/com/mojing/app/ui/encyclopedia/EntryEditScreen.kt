@@ -72,6 +72,7 @@ fun EntryEditScreen(
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenSource: (EntrySourceTarget) -> Unit = {},
+    onOpenSavedEntry: (Long) -> Unit = {},
     viewModel: EntryEditViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -162,6 +163,10 @@ fun EntryEditScreen(
     LaunchedEffect(encyclopediaId, entryId) {
         subTab = EntryEditSubTab.EDIT
         if (!viewModel.state.value.isLoaded) viewModel.load(encyclopediaId, entryId)
+    }
+    LaunchedEffect(entryId, state.persistedEntryId, state.isSaving, state.draftError) {
+        if (entryId == 0L && state.isLoaded && state.isPersisted && !state.isSaving &&
+            state.draftError == null && state.persistedEntryId > 0L) onOpenSavedEntry(state.persistedEntryId)
     }
     LaunchedEffect(state.recoverableDraft, state.draftUnreadable) {
         if (state.recoverableDraft != null || state.draftUnreadable) showDiscardDialog = false

@@ -301,6 +301,10 @@ internal fun NavGraph(
                 encyclopediaId = encId,
                 entryId = entryId,
                 onOpenSource = { source -> navController.navigateSingleTop(Routes.chatSource(source.sessionId, source.messageId, source.branchId)) },
+                onOpenSavedEntry = { savedId -> navController.navigate(Routes.entryEdit(encId, savedId)) {
+                    popUpTo(entry.destination.id) { inclusive = true }
+                    launchSingleTop = true
+                } },
                 onBack = { navController.popBackStack() },
                 onOpenSettings = { navController.navigateToModelSettings() },
             )

@@ -62,6 +62,7 @@ data class EntryEditState(
     val isLoaded: Boolean = false,
     val loadError: String? = null,
     val isPersisted: Boolean = false,
+    val persistedEntryId: Long = 0L,
     val isDirty: Boolean = false,
     /** 按保存顺序倒序，每页最多十条。 */
     val versions: List<EntryVersionEntity> = emptyList(),
@@ -106,6 +107,7 @@ private fun EntryEditState.withPersistedEntry(entry: EncyclopediaEntryEntity) = 
     isLoaded = true,
     loadError = null,
     isPersisted = true,
+    persistedEntryId = entry.id,
 )
 
 private fun EntryEditState.withRecoveredDraft(draft: EntryDraftSnapshot) = copy(
@@ -144,6 +146,7 @@ class EntryEditViewModel @Inject constructor(
     private val draftWriteMutex = Mutex()
     private var draftWriteRevision = 0L
     private var draftWriteJob: Job? = null
+    private var pendingNewDraftTransfer = false
     private var sourceJob: kotlinx.coroutines.Job? = null
     private var sourceRevision = 0L
 
@@ -197,7 +200,7 @@ class EntryEditViewModel @Inject constructor(
     }
 
     private fun persistCurrentDraft() {
-        val id = draftEntryId.takeIf { it > 0L && encId > 0L } ?: return
+        val id = draftEntryId.takeIf { it >= 0L && encId > 0L } ?: return
         val encyclopediaId = encId
         val snapshot = _state.value.toDraftSnapshot()
         val dirty = _state.value.isDirty
@@ -207,7 +210,10 @@ class EntryEditViewModel @Inject constructor(
             try {
                 draftWriteMutex.withLock {
                     if (revision != draftWriteRevision || draftEntryId != id || encId != encyclopediaId) return@withLock
-                    if (dirty) draftStore.save(encyclopediaId, id, snapshot)
+                    if (pendingNewDraftTransfer && id > 0L) {
+                        draftStore.syncAfterFirstSave(encyclopediaId, id, snapshot.takeIf { dirty })
+                        pendingNewDraftTransfer = false
+                    } else if (dirty) draftStore.save(encyclopediaId, id, snapshot)
                     else draftStore.clear(encyclopediaId, id)
                 }
                 if (revision == draftWriteRevision && draftEntryId == id && encId == encyclopediaId)
@@ -221,31 +227,37 @@ class EntryEditViewModel @Inject constructor(
     }
 
     fun retryDraftSave() {
-        if (_state.value.isLoaded && _state.value.recoverableDraft == null && !_state.value.draftUnreadable)
-            persistCurrentDraft()
+        if (_state.value.isLoaded && _state.value.recoverableDraft == null && !_state.value.draftUnreadable) {
+            if (pendingNewDraftTransfer && draftEntryId > 0L) viewModelScope.launch { syncDraftAfterSave(encId, draftEntryId) }
+            else persistCurrentDraft()
+        }
     }
 
     private suspend fun syncDraftAfterSave(encyclopediaId: Long, entryId: Long) {
         val revision = ++draftWriteRevision
         draftWriteJob?.cancel()
-        val current = _state.value
         try {
             draftWriteMutex.withLock {
-                if (current.isDirty) draftStore.save(encyclopediaId, entryId, current.toDraftSnapshot())
+                if (revision != draftWriteRevision || encId != encyclopediaId || draftEntryId != entryId) return@withLock
+                val current = _state.value
+                if (pendingNewDraftTransfer) {
+                    draftStore.syncAfterFirstSave(encyclopediaId, entryId, current.toDraftSnapshot().takeIf { current.isDirty })
+                    pendingNewDraftTransfer = false
+                } else if (current.isDirty) draftStore.save(encyclopediaId, entryId, current.toDraftSnapshot())
                 else draftStore.clear(encyclopediaId, entryId)
             }
             if (revision == draftWriteRevision) _state.update { it.copy(draftError = null) }
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) {
             if (revision == draftWriteRevision) _state.update { it.copy(
-                draftError = if (current.isDirty) "词条已保存，但新的修改暂存失败；请重试"
+                draftError = if (_state.value.isDirty) "词条已保存，但新的修改暂存失败；请重试"
                 else "词条已保存，但旧草稿清除失败；请重试清理后离开",
             ) }
         }
     }
 
     private suspend fun readRecoveryDraft(encyclopediaId: Long, entryId: Long) {
-        if (entryId <= 0L) return
+        if (entryId < 0L) return
         val draft = try { draftStore.load(encyclopediaId, entryId) }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) {
@@ -272,7 +284,7 @@ class EntryEditViewModel @Inject constructor(
     }
 
     fun retryDraftLoad() {
-        val id = draftEntryId.takeIf { it > 0L } ?: return
+        val id = draftEntryId.takeIf { it >= 0L } ?: return
         if (!_state.value.draftUnreadable || _state.value.isDiscardingDraft) return
         val encyclopediaId = encId
         viewModelScope.launch { readRecoveryDraft(encyclopediaId, id) }
@@ -287,7 +299,7 @@ class EntryEditViewModel @Inject constructor(
     }
 
     fun discardStoredDraft() {
-        val id = draftEntryId.takeIf { it > 0L } ?: return
+        val id = draftEntryId.takeIf { it >= 0L } ?: return
         if (_state.value.isDiscardingDraft) return
         val encyclopediaId = encId
         _state.update { it.copy(isDiscardingDraft = true) }
@@ -307,7 +319,7 @@ class EntryEditViewModel @Inject constructor(
     }
 
     fun discardChangesAndLeave(onDiscarded: () -> Unit) {
-        val id = draftEntryId.takeIf { it > 0L }
+        val id = draftEntryId.takeIf { it >= 0L }
         if (id == null) { onDiscarded(); return }
         if (_state.value.isDiscardingDraft) return
         val encyclopediaId = encId
@@ -316,7 +328,12 @@ class EntryEditViewModel @Inject constructor(
         draftWriteJob?.cancel()
         viewModelScope.launch {
             try {
-                draftWriteMutex.withLock { draftStore.clear(encyclopediaId, id) }
+                draftWriteMutex.withLock {
+                    if (pendingNewDraftTransfer && id > 0L) {
+                        draftStore.syncAfterFirstSave(encyclopediaId, id, null)
+                        pendingNewDraftTransfer = false
+                    } else draftStore.clear(encyclopediaId, id)
+                }
                 if (revision == draftWriteRevision && encId == encyclopediaId && draftEntryId == id) onDiscarded()
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
@@ -340,6 +357,7 @@ class EntryEditViewModel @Inject constructor(
         val revision = ++loadRevision
         draftWriteRevision++
         draftWriteJob?.cancel()
+        pendingNewDraftTransfer = false
         encId = encyclopediaId
         draftEntryId = entryId
         loadJob = viewModelScope.launch {
@@ -388,8 +406,8 @@ class EntryEditViewModel @Inject constructor(
                     )
                 }
                 savedDraft = loaded.toDraftSnapshot()
-                _state.value = if (entry != null) loaded.copy(isLoaded = false) else loaded
-                if (entry != null) readRecoveryDraft(encyclopediaId, entryId)
+                _state.value = loaded.copy(isLoaded = false)
+                readRecoveryDraft(encyclopediaId, entryId)
                 if (revision != loadRevision) return@launch
                 _state.update { it.copy(isLoaded = true) }
                 if (entry != null) loadVersionPage(older = false)
@@ -582,6 +600,7 @@ class EntryEditViewModel @Inject constructor(
                 )
                 val saved = saveCharacterEntry.saveEdited(toSave)
                 currentEntry = saved
+                if (draftEntryId == 0L && saved.id > 0L) pendingNewDraftTransfer = true
                 draftEntryId = saved.id
                 val latest = _state.value
                 val persisted = latest.withPersistedEntry(saved).copy(
@@ -592,6 +611,7 @@ class EntryEditViewModel @Inject constructor(
                 val result = if (latest.toDraftSnapshot() != submittedDraft) {
                     latest.copy(
                         isPersisted = true,
+                        persistedEntryId = saved.id,
                         saveError = null,
                         snackbar = "已保存，当前还有未保存的修改",
                     )
