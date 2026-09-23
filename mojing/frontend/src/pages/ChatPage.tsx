@@ -23,6 +23,7 @@ import { COMPACT_LAYOUT_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
 import DeleteMessageDialog from '../components/DeleteMessageDialog';
 import MessageContextDialog from '../components/MessageContextDialog';
 import { friendlyFetchError } from '../utils/userFacingError';
+import { hasUnsavedEditMessage } from '../utils/editMessageDraft';
 import { extractChoicesFromMessage, mergeRoundChoices, stripChoicesFromMessageContent } from '../utils/chatChoiceParsing';
 import { getRegenerationBranchPoint } from '../utils/chatBranching';
 import { clearChatDraft, loadChatDraft, saveChatDraft, loadChatQuote, saveChatQuote, type ChatQuoteDraft } from '../utils/chatDraftStorage';
@@ -516,12 +517,19 @@ export default function ChatPage() {
     isWorldDirty,
   } = useSessionWorld(sessionId);
 
+  const messageEditDirty = editMessageId !== null && hasUnsavedEditMessage(editContent, editOriginalContent);
   const worldNavigationBlocker = useBlocker(({ currentLocation, nextLocation }) =>
-    isWorldDirty && currentLocation.pathname !== nextLocation.pathname,
+    (isWorldDirty || messageEditDirty || editSavePending) && currentLocation.pathname !== nextLocation.pathname,
   );
 
   useEffect(() => {
     if (worldNavigationBlocker.state !== 'blocked') return;
+    if (editSavePending) {
+      worldNavigationBlocker.reset();
+      return;
+    }
+    // 消息编辑使用原面板确认，避免叠加弹窗及焦点陷阱。
+    if (messageEditDirty) return;
     let active = true;
     void confirmModal(
       '世界设置尚未保存',
@@ -533,13 +541,13 @@ export default function ChatPage() {
       else worldNavigationBlocker.reset();
     });
     return () => { active = false; };
-  }, [worldNavigationBlocker]);
+  }, [worldNavigationBlocker, messageEditDirty, editSavePending]);
 
   useBeforeUnload(useCallback((event) => {
-    if (!isWorldDirty) return;
+    if (!isWorldDirty && !messageEditDirty && !editSavePending) return;
     event.preventDefault();
     event.returnValue = '';
-  }, [isWorldDirty]));
+  }, [isWorldDirty, messageEditDirty, editSavePending]));
 
   async function handleSaveWorld() {
     try {
@@ -1964,6 +1972,10 @@ export default function ChatPage() {
         regenerateAfterSave={flatMessages.find((message) => message.id === editMessageId)?.speaker_type === 'user'}
         isSaving={editSavePending}
         saveError={editSaveError}
+        navigationPending={worldNavigationBlocker.state === 'blocked' && messageEditDirty && !editSavePending}
+        worldDirty={isWorldDirty}
+        onCancelNavigation={() => { if (worldNavigationBlocker.state === 'blocked') worldNavigationBlocker.reset(); }}
+        onDiscardNavigation={() => { if (worldNavigationBlocker.state === 'blocked') worldNavigationBlocker.proceed(); }}
         onContentChange={(content) => { setEditContent(content); setEditSaveError(null); }}
         onSave={saveEditedMessage}
         onClose={() => setEditMessageId(null)}

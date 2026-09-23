@@ -11,6 +11,10 @@ interface EditMessageModalProps {
   regenerateAfterSave: boolean;
   isSaving: boolean;
   saveError?: string | null;
+  navigationPending?: boolean;
+  worldDirty?: boolean;
+  onCancelNavigation?: () => void;
+  onDiscardNavigation?: () => void;
   onContentChange: (content: string) => void;
   onSave: (messageId: number, content: string) => void | Promise<void>;
   onClose: () => void;
@@ -30,6 +34,10 @@ export default function EditMessageModal({
   regenerateAfterSave,
   isSaving,
   saveError,
+  navigationPending = false,
+  worldDirty = false,
+  onCancelNavigation,
+  onDiscardNavigation,
   onContentChange,
   onSave,
   onClose,
@@ -43,6 +51,8 @@ export default function EditMessageModal({
   const dirtyRef = useRef(false);
   const isSavingRef = useRef(false);
   const discardPendingRef = useRef(false);
+  const navigationRef = useRef({ navigationPending, onCancelNavigation });
+  navigationRef.current = { navigationPending, onCancelNavigation };
   const [discardPending, setDiscardPending] = useState(false);
   const titleId = useId();
   const descriptionId = useId();
@@ -54,7 +64,11 @@ export default function EditMessageModal({
   onCloseRef.current = onClose;
   dirtyRef.current = hasChanges;
   isSavingRef.current = isSaving;
-  discardPendingRef.current = discardPending;
+  discardPendingRef.current = discardPending || navigationPending;
+
+  useEffect(() => {
+    if (navigationPending) continueEditingRef.current?.focus();
+  }, [navigationPending]);
 
   useEffect(() => {
     if (messageId === null) return undefined;
@@ -83,6 +97,7 @@ export default function EditMessageModal({
         event.stopPropagation();
         if (isSavingRef.current) return;
         if (discardPendingRef.current) {
+          if (navigationRef.current.navigationPending) navigationRef.current.onCancelNavigation?.();
           discardPendingRef.current = false;
           setDiscardPending(false);
           focusTextarea();
@@ -145,7 +160,7 @@ export default function EditMessageModal({
   if (messageId === null) return null;
 
   const requestClose = () => {
-    if (isSaving) return;
+    if (isSaving || navigationPending) return;
     if (hasChanges) {
       discardPendingRef.current = true;
       setDiscardPending(true);
@@ -156,6 +171,7 @@ export default function EditMessageModal({
   };
 
   const continueEditing = () => {
+    if (navigationPending) onCancelNavigation?.();
     discardPendingRef.current = false;
     setDiscardPending(false);
     window.requestAnimationFrame(() => textareaRef.current?.focus());
@@ -179,7 +195,7 @@ export default function EditMessageModal({
         tabIndex={-1}
         onSubmit={(event) => {
           event.preventDefault();
-          if (canSave) void onSave(messageId, content);
+          if (canSave && !navigationPending) void onSave(messageId, content);
         }}
       >
         <div className="edit-message-header">
@@ -195,7 +211,7 @@ export default function EditMessageModal({
             className="edit-message-close"
             aria-label="关闭消息编辑"
             title="关闭"
-            disabled={isSaving}
+            disabled={isSaving || navigationPending}
             onClick={requestClose}
           >
             <UiIcon name="close" />
@@ -216,21 +232,23 @@ export default function EditMessageModal({
               onContentChange(event.target.value);
             }}
             rows={6}
-            disabled={isSaving}
+            disabled={isSaving || navigationPending}
           />
         </label>
 
         {saveError && <p className="edit-message-error" role="alert">{saveError}</p>}
 
-        {discardPending ? (
+        {discardPending || navigationPending ? (
           <div className="edit-message-discard" role="alert" aria-labelledby={discardTitleId} data-edit-discard-confirm>
             <div>
               <strong id={discardTitleId}>放弃这次修改？</strong>
-              <p>尚未保存的改写会丢失，原消息不会改变。</p>
+              <p>{navigationPending && worldDirty
+                ? '尚未保存的消息改写和世界设置会丢失，原消息不会改变。'
+                : '尚未保存的改写会丢失，原消息不会改变。'}</p>
             </div>
             <div className="edit-message-discard-actions">
               <button ref={continueEditingRef} type="button" className="btn btn-ghost" onClick={continueEditing}>继续编辑</button>
-              <button type="button" className="btn btn-danger" onClick={onClose}>放弃修改</button>
+              <button type="button" className="btn btn-danger" onClick={navigationPending ? onDiscardNavigation : onClose}>{navigationPending ? '放弃并离开' : '放弃修改'}</button>
             </div>
           </div>
         ) : (
