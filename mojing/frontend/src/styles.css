@@ -3651,7 +3651,8 @@ html[data-theme="paper"] .chat-bubble-text hr {
   flex-shrink: 0;
 }
 
-.chat-inputbar-pending {
+.chat-inputbar-pending,
+.chat-inputbar-recovery {
   display: grid;
   justify-content: stretch;
   gap: 5px;
@@ -3663,7 +3664,8 @@ html[data-theme="paper"] .chat-bubble-text hr {
   padding: 10px 12px;
 }
 
-.chat-inputbar-pending strong { font-size: 0.82rem; }
+.chat-inputbar-pending strong,
+.chat-inputbar-recovery strong { font-size: 0.82rem; }
 .chat-inputbar-pending-preview {
   color: var(--text-2);
   overflow-wrap: anywhere;

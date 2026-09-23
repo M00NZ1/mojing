@@ -18,8 +18,9 @@ interface ChatInputBarProps {
   isPending: boolean;
   isError: boolean;
   errorMessage?: string;
-  retryReplyAvailable?: boolean;
+  replyRecoveryMode?: 'retry' | 'review';
   onRetryReply?: () => void;
+  onDismissReplyRecovery?: () => void;
   pendingSendPreview?: string;
   pendingSendHasFiles?: boolean;
   pendingSendChecking?: boolean;
@@ -48,7 +49,7 @@ interface ChatInputBarProps {
 export default function ChatInputBar({
   input, setInput, files, setFiles, fileUrls, submittingFiles = [],
   isGenerating, isPending, isError, errorMessage,
-  retryReplyAvailable, onRetryReply, pendingSendPreview, pendingSendHasFiles = false, pendingSendChecking = false,
+  replyRecoveryMode, onRetryReply, onDismissReplyRecovery, pendingSendPreview, pendingSendHasFiles = false, pendingSendChecking = false,
   onCheckPendingSend, onRetryPendingSend, onForgetPendingSend, onRefreshReplies, refreshingReplies = false,
   onSend, onStop, onQuickAction, quickActionPendingLabel, canCreateEntryFromMessage,
   settingConflictHint,
@@ -420,17 +421,29 @@ export default function ChatInputBar({
             </div>
           </div>
         )}
-        {retryReplyAvailable && onRetryReply && (
-          <div className="chat-inputbar-error chat-inputbar-retry">
-            <span>回复未完成。停止后服务端可能仍在保存正文，请先核对对话记录。</span>
-            {onRefreshReplies && (
-              <button type="button" className="btn btn-ghost btn-sm" onClick={onRefreshReplies} disabled={refreshingReplies || isGenerating || isPending}>
-                {refreshingReplies ? '正在读取…' : '重新读取对话'}
-              </button>
-            )}
-            <button type="button" className="btn btn-sm" onClick={onRetryReply} disabled={isGenerating || isPending}>
-              再生成一条回复
-            </button>
+        {replyRecoveryMode && !isGenerating && (
+          <div className="chat-inputbar-error chat-inputbar-retry chat-inputbar-recovery" role="status">
+            <strong>{replyRecoveryMode === 'review' ? '本轮回复尚未确认完成' : '回复未完成'}</strong>
+            <span>{replyRecoveryMode === 'review'
+              ? '已有回复保存，后续发言可能中断。请重新读取对话，避免重复生成已保存的内容。'
+              : '停止后服务端可能仍在保存正文，请先核对对话记录。'}</span>
+            <div className="chat-inputbar-pending-actions">
+              {onRefreshReplies && (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={onRefreshReplies} disabled={refreshingReplies || isGenerating || isPending}>
+                  {refreshingReplies ? '正在读取…' : '重新读取对话'}
+                </button>
+              )}
+              {replyRecoveryMode === 'retry' && onRetryReply && (
+                <button type="button" className="btn btn-sm" onClick={onRetryReply} disabled={isGenerating || isPending}>
+                  再生成一条回复
+                </button>
+              )}
+              {onDismissReplyRecovery && (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={onDismissReplyRecovery} disabled={isGenerating || isPending}>
+                  已核对
+                </button>
+              )}
+            </div>
           </div>
         )}
       </form>

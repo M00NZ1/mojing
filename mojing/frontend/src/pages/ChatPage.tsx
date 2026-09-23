@@ -178,7 +178,9 @@ export default function ChatPage() {
   } | null>(null);
   const [locatingMessageId, setLocatingMessageId] = useState<number | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [retryReplyBranchId, setRetryReplyBranchId] = useState<string | null>(null);
+  const [replyRecovery, setReplyRecovery] = useState<{
+    sessionId: number; branchId: string; partialReplySaved: boolean;
+  } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const generationGateRef = useRef(false);
   const modelChoiceBusyRef = useRef({ sessionId, busy: true });
@@ -269,7 +271,7 @@ export default function ChatPage() {
       draftInputBySessionRef.current[prev] = inputDraftMirrorRef.current;
       abortRef.current?.abort();
       abortRef.current = null;
-      setRetryReplyBranchId(null);
+      setReplyRecovery(null);
       setShowChatMenu(false);
       setShowBranchTree(false);
       setSettingConflictResult(null);
@@ -1196,9 +1198,10 @@ export default function ChatPage() {
       // SSE errors/aborts must not be reported as a successful send. Re-read the
       // database so optimistic and partial placeholders cannot remain on screen.
       if (generationRequestStarted) reloadMessages();
-      if (outboundPersisted && !replySaved) {
-        setRetryReplyBranchId(branchId);
-      } else if (replySaved) setRetryReplyBranchId(null);
+      if (sessionIdRef.current === sessionId && (replySaved || outboundPersisted
+        || (generationRequestStarted && !outboundUserMessage && filesToSend.length === 0))) {
+        setReplyRecovery({ sessionId, branchId, partialReplySaved: replySaved });
+      }
       if (outboundPersisted || replySaved) void Promise.allSettled([
         queryClient.invalidateQueries({ queryKey: ['sessions'] }),
         queryClient.invalidateQueries({ queryKey: ['session-branches', sessionId] }),
@@ -1221,7 +1224,7 @@ export default function ChatPage() {
         useStoryModeNarrator: true,
       }),
     onSuccess: async (_result, variables) => {
-      setRetryReplyBranchId(null);
+      setReplyRecovery(null);
       setFiles((current) => removeSelectedFiles(current, variables.filesToSend));
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['sessions'] }),
@@ -1246,7 +1249,7 @@ export default function ChatPage() {
         streamIntoCurrentList: payload.streamIntoCurrentList ?? payload.branchId === selectedBranchId,
       }),
     onSuccess: async (_value, variables) => {
-      setRetryReplyBranchId(null);
+      setReplyRecovery(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['sessions'] }),
         queryClient.invalidateQueries({ queryKey: ['character-states', sessionId] }),
@@ -1370,7 +1373,7 @@ export default function ChatPage() {
       return;
     }
     if (!reserveGeneration()) return;
-    setRetryReplyBranchId(null);
+    setReplyRecovery(null);
     sendMutation.mutate({
       sessionId,
       branchId: selectedBranchId,
@@ -1401,7 +1404,7 @@ export default function ChatPage() {
         setFiles((current) => removeSelectedFiles(current, files));
       }
       if (selectedBranchRef.current === send.branchId) void reloadMessages();
-      setRetryReplyBranchId(send.branchId);
+      setReplyRecovery({ sessionId, branchId: send.branchId, partialReplySaved: false });
       showToast('消息已保存，可从对话记录继续生成回复。', 'success');
     } catch (error) {
       showToast(`尚未确认消息已保存：${toastErrorMessage(error)}。沿用本次编号重试不会重复写入。`, 'warn');
@@ -1422,7 +1425,7 @@ export default function ChatPage() {
       if (!result.ok) return;
     }
     if (!reserveGeneration()) return;
-    setRetryReplyBranchId(null);
+    setReplyRecovery(null);
     sendMutation.mutate({
       sessionId, branchId: send.branchId, userMessage: send.input,
       filesToSend: [...files], quoteMessage: send.quote,
@@ -1601,9 +1604,11 @@ export default function ChatPage() {
   }
 
   function retryLastReply() {
-    const branchId = retryReplyBranchId;
-    if (!branchId || branchId !== selectedBranchRef.current || !reserveGeneration()) return;
-    generateBranchReplyMutation.mutate({ branchId });
+    const recovery = replyRecovery;
+    if (!recovery || recovery.sessionId !== sessionId || recovery.partialReplySaved
+      || recovery.branchId !== selectedBranchRef.current || !reserveGeneration()) return;
+    setReplyRecovery(null);
+    generateBranchReplyMutation.mutate({ branchId: recovery.branchId });
   }
 
   function createBranch(message: Message) {
@@ -2026,10 +2031,12 @@ export default function ChatPage() {
           submittingFiles={sendMutation.isPending ? sendMutation.variables?.filesToSend : undefined}
           isGenerating={isGenerating}
           isPending={sendMutation.isPending}
-          isError={sendMutation.isError && !isAbortError(sendMutation.error) && retryReplyBranchId === null}
+          isError={sendMutation.isError && !isAbortError(sendMutation.error) && replyRecovery?.sessionId !== sessionId}
           errorMessage={sendMutation.error?.message}
-          retryReplyAvailable={retryReplyBranchId === selectedBranchId}
+          replyRecoveryMode={replyRecovery?.sessionId === sessionId && replyRecovery.branchId === selectedBranchId
+            ? (replyRecovery.partialReplySaved ? 'review' : 'retry') : undefined}
           onRetryReply={retryLastReply}
+          onDismissReplyRecovery={() => setReplyRecovery(null)}
           pendingSendPreview={pendingSend?.sessionId === sessionId && !isGenerating
             ? (pendingSend.input.trim() || pendingSend.files?.map((file) => file.name).join('、') || '').slice(0, 100) : undefined}
           pendingSendHasFiles={Boolean(pendingSend?.files?.length)}
