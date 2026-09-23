@@ -4,6 +4,11 @@ import kotlinx.coroutines.launch
 
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingButton as Button
+import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.material3.Surface
+import androidx.compose.material3.HorizontalDivider
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
@@ -128,7 +133,12 @@ fun StorySimulationScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("小说创作") },
+                title = { Text("小说创作", style = MaterialTheme.typography.titleMedium) },
+                actions = {
+                    if (isImeOpen && !isBusy && !state.hasPendingStory && state.savedSessionId == null && !state.isRestoring && state.recoveryError == null) {
+                        TextButton(enabled = state.premise.isNotBlank(), onClick = { focusManager.clearFocus(); viewModel.createStory(onOpenSession) }) { Text("开始创作") }
+                    }
+                },
                 navigationIcon = {
                     IconButton(
                         onClick = {
@@ -142,15 +152,55 @@ fun StorySimulationScreen(
             )
         },
         bottomBar = {
-            MainAppBottomNavigation(
-                navController = navController,
-                onNavigateRequest = { action -> requestNavigation(action) },
-            )
+            Column {
+                if (!isImeOpen && !state.hasPendingStory && state.savedSessionId == null && !state.isRestoring && state.recoveryError == null) {
+                    Surface(color = MaterialTheme.colorScheme.surface) {
+                        Column {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
+                                when {
+                                    state.isGenerating -> OutlinedButton(onClick = { viewModel.stopGeneration() }, modifier = Modifier.fillMaxWidth()) {
+                                        Text("停止生成")
+                                    }
+                                    state.isSaving -> Button(
+                                        onClick = {},
+                                        enabled = false,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.width(20.dp).height(20.dp),
+                                            strokeWidth = 2.dp,
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("正在保存到本地…")
+                                    }
+                                    state.hasPendingStory -> TextButton(onClick = { requestNavigation {} }) { Text("放弃本次正文") }
+                                    state.savedSessionId != null -> Unit
+                                    else -> Button(
+                                        onClick = { focusManager.clearFocus(); viewModel.createStory(onOpenSession) },
+                                        enabled = state.premise.isNotBlank(),
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Icon(Icons.Default.AutoAwesome, contentDescription = null)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("生成小说并开始创作")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                MainAppBottomNavigation(
+                    navController = navController,
+                    onNavigateRequest = { action -> requestNavigation(action) },
+                )
+            }
         },
     ) { padding ->
         Column(
             modifier = Modifier
                 .padding(padding)
+                .consumeWindowInsets(padding)
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
                 .imePadding()
@@ -315,32 +365,7 @@ fun StorySimulationScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            when {
-                state.isGenerating -> Unit
-                state.isSaving -> Button(
-                    onClick = {},
-                    enabled = false,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.width(20.dp).height(20.dp),
-                        strokeWidth = 2.dp,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("正在保存到本地…")
-                }
-                state.hasPendingStory -> TextButton(onClick = { requestNavigation {} }) { Text("放弃本次正文") }
-                state.savedSessionId != null -> Unit
-                else -> Button(
-                    onClick = { focusManager.clearFocus(); viewModel.createStory(onOpenSession) },
-                    enabled = state.premise.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Default.AutoAwesome, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("生成小说并开始创作")
-                }
-            }
+
             }
             Spacer(Modifier.height(24.dp))
         }
