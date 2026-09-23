@@ -121,6 +121,7 @@ object ChatContract {
         val bookmarkedMessageIds: Set<Long> = emptySet(),
         val excludedContextKeys: Set<String> = emptySet(),
         val bookmarkPreviews: Map<Long, String> = emptyMap(),
+        val bookmarkReadOnlyMessage: MessageEntity? = null,
         val searchResults: List<MessageEntity> = emptyList(),
         val searchPreviews: Map<Long, String> = emptyMap(),
         val isSearchingMessages: Boolean = false,

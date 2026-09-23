@@ -2449,6 +2449,71 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun bookmarkedOldReplyOpensReadOnlyWithoutChangingSelectedVersion() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        val oldReply = MessageEntity(id = 500, sessionId = 42, swipeGroupId = "reply", content = "收藏的旧回复")
+        coEvery { dao.getMainMessageById(42, 500) } returns oldReply
+        coEvery { dao.getEffectiveSwipeSelectionsForGroups(42, "main", listOf("reply")) } returns
+            listOf(BranchSwipeSelectionEntity(42, "main", "reply", 501))
+        val preferences = uiPreferences()
+        val vm = createViewModel(messageDao = dao, uiPreferencesRepository = preferences)
+        advanceUntilIdle()
+
+        var opened = false
+        vm.openBookmarkedMessage(500) { opened = true }
+        advanceUntilIdle()
+
+        assertTrue(opened)
+        assertEquals(oldReply, vm.state.value.bookmarkReadOnlyMessage)
+        assertEquals("main", vm.state.value.currentBranchId)
+        assertEquals(null, vm.state.value.focusedMessageId)
+        coVerify(exactly = 0) { dao.selectSwipeVariantForBranch(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { preferences.setLastChatBranch(any(), any()) }
+        vm.closeBookmarkedReadOnlyMessage()
+        assertEquals(null, vm.state.value.bookmarkReadOnlyMessage)
+    }
+
+    @Test
+    fun bookmarkedSelectedReplyStillNavigatesToTheTimeline() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        val selectedReply = MessageEntity(id = 500, sessionId = 42, swipeGroupId = "reply", content = "当前回复")
+        coEvery { dao.getMainMessageById(42, 500) } returns selectedReply
+        coEvery { dao.getEffectiveSwipeSelectionsForGroups(42, "main", listOf("reply")) } returns
+            listOf(BranchSwipeSelectionEntity(42, "main", "reply", 500))
+        val vm = createViewModel(messageDao = dao)
+        advanceUntilIdle()
+
+        vm.openBookmarkedMessage(500)
+        advanceUntilIdle()
+
+        assertEquals(null, vm.state.value.bookmarkReadOnlyMessage)
+        assertEquals(500L, vm.state.value.focusedMessageId)
+    }
+
+    @Test
+    fun bookmarkedOldReplyOnAnotherBranchKeepsTheCurrentStoryline() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        val oldReply = MessageEntity(id = 500, sessionId = 42, branchId = "source", swipeGroupId = "reply", content = "旧故事线回复")
+        coEvery { dao.getMainMessageById(42, 500) } returns null
+        coEvery { dao.getByIdInSession(500, 42) } returns oldReply
+        coEvery { dao.getVisibleMessageById(42, "source", 500) } returns oldReply
+        coEvery { dao.getEffectiveSwipeSelectionsForGroups(42, "source", listOf("reply")) } returns
+            listOf(BranchSwipeSelectionEntity(42, "source", "reply", 501))
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId = 42, branchId = "source", sourceMessageId = 1))
+        val preferences = uiPreferences()
+        val vm = createViewModel(messageDao = dao, sessionBranchDao = branches, uiPreferencesRepository = preferences)
+        advanceUntilIdle()
+
+        vm.openBookmarkedMessage(500)
+        advanceUntilIdle()
+
+        assertEquals(oldReply, vm.state.value.bookmarkReadOnlyMessage)
+        assertEquals("main", vm.state.value.currentBranchId)
+        coVerify(exactly = 0) { preferences.setLastChatBranch(any(), any()) }
+    }
+
+    @Test
     fun bookmarkNavigationFailureKeepsPanelAndCanRetry() = runTest(testDispatcher) {
         val dao = mockk<MessageDao>(relaxed = true)
         coEvery { dao.getMainMessageById(42, 500) } throws IllegalStateException("read failed")

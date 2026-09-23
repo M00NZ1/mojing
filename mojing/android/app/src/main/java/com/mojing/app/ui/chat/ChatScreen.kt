@@ -1399,6 +1399,42 @@ fun ChatScreen(
         )
     }
 
+    state.bookmarkReadOnlyMessage?.let { message ->
+        val body = ChatMessageTextFormat.visibleBody(message.content, message.speakerType)
+            .ifBlank { "（这条消息没有文字正文）" }
+        val sourceLabel = when {
+            message.branchId == state.currentBranchId -> "当前故事线"
+            message.branchId == "main" -> "主线"
+            else -> state.branches.firstOrNull { it.branchId == message.branchId }?.label ?: "原故事线"
+        }
+        AlertDialog(
+            onDismissRequest = viewModel::closeBookmarkedReadOnlyMessage,
+            title = { Text("收藏原文 · 只读") },
+            text = {
+                Column {
+                    Text(
+                        "来自$sourceLabel。阅读不会切换故事线或采用版本。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        body,
+                        modifier = Modifier.padding(top = 12.dp)
+                            .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.55f).dp)
+                            .verticalScroll(rememberScrollState()),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = viewModel::closeBookmarkedReadOnlyMessage) { Text("关闭") }
+            },
+            dismissButton = {
+                TextButton(onClick = { clipboardManager.setText(AnnotatedString(body)) }) { Text("复制全文") }
+            },
+        )
+    }
+
     if (correctionDialogOpen) {
         var correctionSaving by remember { mutableStateOf(false) }
         var correctionSaveError by remember { mutableStateOf<String?>(null) }

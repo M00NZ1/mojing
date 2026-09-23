@@ -1489,15 +1489,26 @@ class ChatViewModel @Inject constructor(
                 val currentBranch = currentBranchId()
                 val visible = getVisibleMessage(currentBranch, messageId)
                 if (visible != null) {
-                    opened = loadMessageWindow(currentBranch, messageId)
+                    if (isInactiveBookmarkedVariant(currentBranch, visible)) {
+                        _state.update { it.copy(bookmarkReadOnlyMessage = visible) }
+                        opened = true
+                    } else {
+                        opened = loadMessageWindow(currentBranch, messageId)
+                    }
                 } else {
                     val target = messageDao.getByIdInSession(messageId, sessionId)
                     val branches = sessionBranchDao.getBySession(sessionId)
-                    if (target != null && (target.branchId == "main" || branches.any { it.branchId == target.branchId }) &&
-                        getVisibleMessage(target.branchId, messageId) != null) {
-                        refreshMessagesUi(target.branchId, anchorMessageId = messageId)
-                        opened = _state.value.currentBranchId == target.branchId && _state.value.focusedMessageId == messageId
-                        if (opened) persistCurrentBranchSelection()
+                    if (target != null) {
+                        val sourceAvailable = (target.branchId == "main" || branches.any { it.branchId == target.branchId }) &&
+                            getVisibleMessage(target.branchId, messageId) != null
+                        if (!sourceAvailable || isInactiveBookmarkedVariant(target.branchId, target)) {
+                            _state.update { it.copy(bookmarkReadOnlyMessage = target) }
+                            opened = true
+                        } else {
+                            refreshMessagesUi(target.branchId, anchorMessageId = messageId)
+                            opened = _state.value.currentBranchId == target.branchId && _state.value.focusedMessageId == messageId
+                            if (opened) persistCurrentBranchSelection()
+                        }
                     }
                 }
                 if (!opened) _state.update { it.copy(error = "收藏原文已删除或所在故事线已不可用") }
@@ -1511,6 +1522,17 @@ class ChatViewModel @Inject constructor(
             if (opened) onOpened()
         }
         if (!launched) _state.update { it.copy(error = "当前正在生成或切换故事线，请稍后再定位收藏") }
+    }
+
+    private suspend fun isInactiveBookmarkedVariant(branchId: String, message: MessageEntity): Boolean {
+        val groupId = message.swipeGroupId?.takeIf(String::isNotBlank) ?: return false
+        val selectedId = messageDao.getEffectiveSwipeSelectionsForGroups(sessionId, branchId, listOf(groupId))
+            .firstOrNull { it.swipeGroupId == groupId }?.selectedMessageId
+        return selectedId != message.id
+    }
+
+    fun closeBookmarkedReadOnlyMessage() {
+        _state.update { it.copy(bookmarkReadOnlyMessage = null) }
     }
 
     private suspend fun loadMessageWindow(branchId: String, messageId: Long): Boolean {
