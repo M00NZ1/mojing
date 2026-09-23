@@ -397,7 +397,7 @@ fun WorkbenchScreen(
             }
         }
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
+        Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
             ScrollableTabRow(
                 selectedTabIndex = mainTab.ordinal,
                 edgePadding = MoJingListTokens.rowStart,
@@ -428,9 +428,12 @@ fun WorkbenchScreen(
                             .fillMaxWidth()
                             .padding(horizontal = MoJingListTokens.rowStart, vertical = 8.dp),
                         singleLine = true,
-                        label = { Text("搜索模板") },
-                        placeholder = { Text("名称 / 摘要 / 分类") }
+                        leadingIcon = { Icon(Icons.Default.Search, "搜索模板") },
+                        trailingIcon = if (templateSearch.isNotEmpty()) ({ IconButton(onClick = { templateSearch = "" }) { Icon(Icons.Default.Close, "清除搜索") } }) else null,
+                        placeholder = { Text("搜索名称、摘要或分类") }
                     )
+                    Text("${filteredTemplates.size} 个设定模板", Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (filteredTemplates.isEmpty()) {
                         EmptyState(
                             icon = if (templates.isEmpty()) Icons.Default.Public else Icons.Default.SearchOff,
@@ -451,9 +454,9 @@ fun WorkbenchScreen(
                     } else {
                         if (listLayout == "grid") {
                             LazyVerticalGrid(
-                                columns = GridCells.Fixed(2),
+                                columns = GridCells.Adaptive(156.dp),
                                 modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
@@ -503,6 +506,7 @@ fun WorkbenchScreen(
                                     ) {
                                         WorkbenchTemplateGridCard(
                                             template = template,
+                                            canonical = template.id in promotedTemplateIds,
                                             onStartChat = { onStartChat(template.id) },
                                         )
                                     }
@@ -511,7 +515,7 @@ fun WorkbenchScreen(
                         } else {
                             LazyColumn(
                                 modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(vertical = 0.dp),
+                                contentPadding = PaddingValues(bottom = 96.dp),
                             ) {
                                 itemsIndexed(filteredTemplates, key = { _, t -> t.id }) { index, template ->
                                     Column(Modifier.fillMaxWidth()) {
@@ -560,6 +564,7 @@ fun WorkbenchScreen(
                                         ) {
                                             WorkbenchTemplateListRowInner(
                                                 template = template,
+                                                canonical = template.id in promotedTemplateIds,
                                                 onStartChat = { onStartChat(template.id) },
                                             )
                                         }
@@ -904,6 +909,7 @@ fun WorkbenchScreen(
 @Composable
 private fun WorkbenchTemplateListRowInner(
     template: WorldTemplateEntity,
+    canonical: Boolean,
     onStartChat: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -944,12 +950,13 @@ private fun WorkbenchTemplateListRowInner(
             Text(
                 template.label.ifEmpty { "未命名模板" },
                 style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         },
         supportingContent = {
             Column {
+                if (canonical) Text("已归入世界百科", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary)
                 Text(
                     template.summary.take(96).ifEmpty { "暂无摘要" },
                     style = MaterialTheme.typography.bodySmall,
@@ -977,6 +984,7 @@ private fun WorkbenchTemplateListRowInner(
 @Composable
 private fun WorkbenchTemplateGridCard(
     template: WorldTemplateEntity,
+    canonical: Boolean,
     onStartChat: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -984,13 +992,13 @@ private fun WorkbenchTemplateGridCard(
         modifier = Modifier
             .fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         Column {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(2f / 3f),
+                    .aspectRatio(4f / 5f),
             ) {
                 key(template.id, template.coverImagePath, template.updatedAt) {
                     if (template.coverImagePath.isNotBlank()) {
@@ -1024,10 +1032,14 @@ private fun WorkbenchTemplateGridCard(
                 }
             }
             Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                Text(if (canonical) "已归入世界百科" else template.category.ifBlank { "设定模板" },
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(4.dp))
                 Text(
                     template.label.ifEmpty { "未命名模板" },
                     style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
@@ -1038,7 +1050,7 @@ private fun WorkbenchTemplateGridCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(8.dp))
-                FilledTonalButton(
+                TextButton(
                     onClick = onStartChat,
                     modifier = Modifier.fillMaxWidth(),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
