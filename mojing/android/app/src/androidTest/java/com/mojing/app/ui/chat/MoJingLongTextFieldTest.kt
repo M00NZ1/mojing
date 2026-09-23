@@ -22,11 +22,12 @@ class MoJingLongTextFieldTest {
         val field = rule.onNode(hasSetTextAction())
         val collapsedHeight = field.fetchSemanticsNode().boundsInRoot.height
         rule.onNodeWithText("展开编辑").assertIsDisplayed().performClick()
-        val expandedHeight = field.fetchSemanticsNode().boundsInRoot.height
+        val editor = rule.onNodeWithContentDescription("人设提示词")
+        val expandedHeight = editor.fetchSemanticsNode().boundsInRoot.height
         assertTrue(expandedHeight > collapsedHeight)
-        assertTrue(expandedHeight < collapsedHeight * 3)
-        field.performTextReplacement("修改后的角色背景\n保留新的说话风格")
-        rule.onNodeWithText("收起编辑").performClick()
+        rule.onNodeWithText("完成").assertIsDisplayed()
+        editor.performTextReplacement("修改后的角色背景\n保留新的说话风格")
+        rule.onNodeWithText("完成").performClick()
         rule.runOnIdle { assertEquals("修改后的角色背景\n保留新的说话风格", value.value) }
         rule.onNodeWithText("展开编辑").assertIsDisplayed()
     }
