@@ -15,7 +15,7 @@ import { newStoryRequestId, readStoryDraft, saveStoryDraft, type StoryDraftStatu
 
 export default function StorySimulationPage() {
   const navigate = useNavigate();
-  const { generation, start, dismiss, consumeCompleted } = useStoryGeneration();
+  const { generation, start, dismiss, discardUnsaved, consumeCompleted } = useStoryGeneration();
   const [loadedDraft] = useState(readStoryDraft);
   const [values, setValues] = useState(loadedDraft.values);
   const [draftStatus, setDraftStatus] = useState<StoryDraftStatus | 'saving'>(loadedDraft.status);
@@ -134,6 +134,12 @@ export default function StorySimulationPage() {
       if (mountedRef.current && valuesRef.current.request_id === requestId) discardMutation.mutate(requestId);
     }
   };
+  const discardUnsavedResult = async () => {
+    if (await confirmModal('清除待保存正文', '请先确认已复制完整正文。清除后将无法从墨境恢复这次生成结果，是否继续？', 'warning')) {
+      discardUnsaved();
+      setNotice('待保存正文已清除，可以重新创作。');
+    }
+  };
 
   useEffect(() => {
     if (generation.phase !== 'success' || generation.requestId !== valuesRef.current.request_id || !generation.sessionId) return;
@@ -204,6 +210,14 @@ export default function StorySimulationPage() {
         <h2>{recovered.title || '本次创作已保存'}</h2>
         <button type="button" className="btn btn-primary" disabled={preparing || generating} onClick={() => { handleSubmit(); }}>打开已保存会话</button>
       </section>}
+      {generation.unsavedText && <section className="page-card" aria-label="未保存的小说正文">
+        <div className="card-header"><h2>正文已生成，但尚未写入会话</h2></div>
+        <p>{generation.unsavedLocal
+          ? '正文已暂存在此浏览器。请先复制全文；数据库恢复后可以重新创作。'
+          : '浏览器暂存也未成功，正文目前只在此页面。请立即复制全文，关闭页面会丢失。'}</p>
+        <WorldResultText text={generation.unsavedText} label="未保存的小说正文" />
+        <button type="button" className="btn btn-ghost" onClick={() => { void discardUnsavedResult(); }}>已复制，清除这份正文</button>
+      </section>}
       {['unavailable', 'conflict', 'unreadable'].includes(draftStatus) && (
         <section className="page-card" role="status" aria-label="草稿保存状态">
           <p>{draftStatus === 'unavailable' ? '草稿尚未保存，本页输入仍然保留。' : draftStatus === 'conflict' ? '其他页面已更新草稿，本页输入尚未覆盖已保存内容。' : '已保存的草稿暂时无法读取，本页输入仍然保留。'}</p>
@@ -214,7 +228,7 @@ export default function StorySimulationPage() {
           </div>
         </section>
       )}
-      {(!values.request_id || recovered?.status === 'missing' || recovered?.status === 'saved') && <StorySimulationForm
+      {!generation.unsavedText && (!values.request_id || recovered?.status === 'missing' || recovered?.status === 'saved') && <StorySimulationForm
         values={values}
         onChange={(patch) => { setValues((current) => ({ ...current, ...patch, request_id: undefined })); setError(''); setNotice(''); if (generation.phase === 'error' || generation.phase === 'stopped') dismiss(); }}
         onSubmit={handleSubmit}

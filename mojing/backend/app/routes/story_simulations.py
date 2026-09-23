@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..schemas import StoryGenerationRequestStatus, StoryWritingRequest, StoryWritingResult
-from ..services.story_simulation_service import StoryGenerationCancelled, create_story_session
+from ..services.story_simulation_service import GeneratedStoryNotSaved, StoryGenerationCancelled, create_story_session
 from ..services.story_generation_draft import delete_generation_draft, read_request_status
 
 
@@ -26,6 +27,11 @@ async def create_story_simulation(payload: StoryWritingRequest, request: Request
         return await create_story_session(db, payload, is_disconnected=request.is_disconnected)
     except StoryGenerationCancelled as exc:
         raise HTTPException(status_code=499, detail="小说生成已停止，草稿仍然保留。") from exc
+    except GeneratedStoryNotSaved as exc:
+        return JSONResponse(status_code=503, content={
+            "detail": str(exc),
+            "generated_story": {"request_id": exc.request_id, "text": exc.text},
+        })
     except HTTPException:
         raise
     except RuntimeError as exc:

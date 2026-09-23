@@ -66,6 +66,13 @@ import type {
 } from '../types';
 
 import { friendlyFetchError } from '../utils/userFacingError';
+
+export class GeneratedStoryNotSavedError extends Error {
+  constructor(message: string, readonly requestId: string, readonly text: string) {
+    super(message);
+    this.name = 'GeneratedStoryNotSavedError';
+  }
+}
 const API_BASE = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_BASE) || 'http://127.0.0.1:8000/api';
 export const EVENT_PAGE_SIZE = 40;
 const VITE_STORAGE = typeof import.meta !== 'undefined' ? (import.meta as any).env?.VITE_STORAGE_BASE : undefined;
@@ -134,6 +141,19 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
+    if (path === '/story-simulations' && response.status === 503 && payload && typeof payload === 'object') {
+      const generated = (payload as { generated_story?: unknown }).generated_story;
+      if (generated && typeof generated === 'object'
+        && typeof (generated as { request_id?: unknown }).request_id === 'string'
+        && typeof (generated as { text?: unknown }).text === 'string'
+        && (generated as { text: string }).text.trim()) {
+        throw new GeneratedStoryNotSavedError(
+          formatApiErrorPayload(payload, response.status),
+          (generated as { request_id: string }).request_id,
+          (generated as { text: string }).text,
+        );
+      }
+    }
     throw new Error(formatApiErrorPayload(payload, response.status));
   }
   return response.json() as Promise<T>;

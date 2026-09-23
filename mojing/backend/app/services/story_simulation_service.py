@@ -47,6 +47,17 @@ class StoryGenerationCancelled(RuntimeError):
     """客户端已离开或主动停止，且正式会话尚未开始写入。"""
 
 
+class GeneratedStoryNotSaved(Exception):
+    """The model finished, but neither the draft nor the session could be stored."""
+
+    def __init__(self, draft: StoryDraft, request_id: str):
+        self.request_id = request_id
+        self.text = "\n\n".join([draft.title] + [
+            f"{chapter.title}\n\n{chapter.content}" for chapter in draft.chapters
+        ])
+        super().__init__("正文已生成，但本机数据库暂时无法保存。请先复制全文。")
+
+
 DisconnectCheck = Callable[[], Awaitable[bool]]
 
 
@@ -217,6 +228,7 @@ async def _create_story_session_impl(
 ) -> StoryWritingResult:
     client = None
     recovery_available = stored_draft is not None
+    draft_write_failed = False
     try:
         context = stored_context if stored_context is not None else _load_context(db, payload.template_id, payload.encyclopedia_id, payload.character_ids)
         if stored_draft is not None:
@@ -239,21 +251,29 @@ async def _create_story_session_impl(
             )
             draft = parse_story_draft(raw, payload.chapter_count, payload.premise)
             if request_id is not None and request_payload_hash is not None:
-                stored_row = save_generation_draft(
-                    db,
-                    request_id=request_id,
-                    payload=payload,
-                    payload_hash=request_payload_hash,
-                    context_text=context,
-                    draft_json={
-                        "title": draft.title,
-                        "chapters": [chapter.model_dump(mode="json") for chapter in draft.chapters],
-                        "next_choices": draft.next_choices,
-                    },
-                )
-                draft = parse_story_draft(json.dumps(stored_row.draft_json, ensure_ascii=False), payload.chapter_count, payload.premise)
-                context = stored_row.context_text
-            recovery_available = request_id is not None
+                try:
+                    stored_row = save_generation_draft(
+                        db,
+                        request_id=request_id,
+                        payload=payload,
+                        payload_hash=request_payload_hash,
+                        context_text=context,
+                        draft_json={
+                            "title": draft.title,
+                            "chapters": [chapter.model_dump(mode="json") for chapter in draft.chapters],
+                            "next_choices": draft.next_choices,
+                        },
+                    )
+                except (HTTPException, SQLAlchemyError) as exc:
+                    if isinstance(exc, HTTPException) and exc.status_code != 503:
+                        raise
+                    # Keep the finished model output in memory and try the
+                    # ordinary atomic session + receipt write once.
+                    draft_write_failed = True
+                else:
+                    draft = parse_story_draft(json.dumps(stored_row.draft_json, ensure_ascii=False), payload.chapter_count, payload.premise)
+                    context = stored_row.context_text
+                    recovery_available = True
             await client.close()
             client = None
         if is_disconnected is not None and await is_disconnected():
@@ -332,25 +352,41 @@ async def _create_story_session_impl(
     except IntegrityError:
         db.rollback()
         if request_id is not None and request_payload_hash is not None:
-            recovered = find_receipt(db, request_id, request_payload_hash)
+            try:
+                recovered = find_receipt(db, request_id, request_payload_hash)
+            except SQLAlchemyError:
+                if draft_write_failed:
+                    raise GeneratedStoryNotSaved(draft, request_id)
+                raise
             if recovered is not None:
                 return recovered
             if recovery_available:
                 raise HTTPException(status_code=503, detail="正文已完整暂存，但会话保存失败，请稍后重试")
+            if draft_write_failed:
+                raise GeneratedStoryNotSaved(draft, request_id)
         raise
     except SQLAlchemyError as exc:
         db.rollback()
         if recovery_available:
             raise HTTPException(status_code=503, detail="正文已完整暂存，但会话保存失败，请稍后重试") from exc
+        if draft_write_failed:
+            raise GeneratedStoryNotSaved(draft, request_id) from exc
         raise
-    except (HTTPException, StoryGenerationCancelled):
+    except HTTPException as exc:
+        db.rollback()
+        if draft_write_failed:
+            raise GeneratedStoryNotSaved(draft, request_id) from exc
+        raise
+    except StoryGenerationCancelled:
         db.rollback()
         raise
     except asyncio.CancelledError:
         db.rollback()
         raise
-    except Exception:
+    except Exception as exc:
         db.rollback()
+        if draft_write_failed:
+            raise GeneratedStoryNotSaved(draft, request_id) from exc
         raise
     finally:
         if client is not None:

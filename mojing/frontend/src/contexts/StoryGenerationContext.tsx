@@ -1,9 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link, useBeforeUnload, useLocation, useNavigate } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, GeneratedStoryNotSavedError } from '../api/client';
 import type { StoryWritingPayload } from '../types';
 import { clearSubmittedStoryDraft } from '../utils/storyDraftStorage';
+import { clearUnsavedGeneratedStory, readUnsavedGeneratedStory, saveUnsavedGeneratedStory } from '../utils/generatedStoryStorage';
 import { isAbortError } from '../utils/userFacingError';
 import './StoryGenerationContext.css';
 
@@ -17,6 +18,8 @@ type StoryGenerationState = {
   submittedRaw?: string;
   error: string;
   stopping: boolean;
+  unsavedText?: string;
+  unsavedLocal?: boolean;
 };
 
 const idleState: StoryGenerationState = {
@@ -28,6 +31,7 @@ type StoryGenerationContextValue = {
   start: (payload: StoryWritingPayload, submittedRaw: string) => boolean;
   stop: () => void;
   dismiss: () => void;
+  discardUnsaved: () => void;
   consumeCompleted: (requestId: string) => Promise<number | null>;
 };
 
@@ -35,7 +39,14 @@ const StoryGenerationContext = createContext<StoryGenerationContextValue | null>
 
 export function StoryGenerationProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
-  const [generation, setGeneration] = useState<StoryGenerationState>(idleState);
+  const [generation, setGeneration] = useState<StoryGenerationState>(() => {
+    const recovered = readUnsavedGeneratedStory();
+    return recovered ? {
+      ...idleState, phase: 'error', requestId: recovered.requestId,
+      error: '正文已生成，但数据库未保存。请先复制全文。',
+      unsavedText: recovered.text, unsavedLocal: true,
+    } : idleState;
+  });
   const generationRef = useRef(generation);
   const controllerRef = useRef<AbortController | null>(null);
   const consumingRef = useRef(false);
@@ -46,7 +57,7 @@ export function StoryGenerationProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const start = useCallback((payload: StoryWritingPayload, submittedRaw: string) => {
-    if (controllerRef.current || !payload.request_id || consumingRef.current) return false;
+    if (controllerRef.current || !payload.request_id || consumingRef.current || generationRef.current.unsavedText) return false;
     const controller = new AbortController();
     controllerRef.current = controller;
     const running: StoryGenerationState = {
@@ -62,6 +73,12 @@ export function StoryGenerationProvider({ children }: { children: ReactNode }) {
         void queryClient.invalidateQueries({ queryKey: ['sessions'] });
       } catch (reason) {
         if (controllerRef.current !== controller) return;
+        if (reason instanceof GeneratedStoryNotSavedError && reason.requestId === payload.request_id) {
+          const unsavedLocal = saveUnsavedGeneratedStory({ requestId: reason.requestId, text: reason.text });
+          updateGeneration({ ...running, phase: 'error', error: reason.message,
+            unsavedText: reason.text, unsavedLocal });
+          return;
+        }
         updateGeneration(isAbortError(reason)
           ? { ...running, phase: 'stopped', stopping: false }
           : { ...running, phase: 'error', error: reason instanceof Error ? reason.message : '小说生成失败，请重试' });
@@ -79,7 +96,14 @@ export function StoryGenerationProvider({ children }: { children: ReactNode }) {
   }, [updateGeneration]);
 
   const dismiss = useCallback(() => {
-    if (controllerRef.current || generationRef.current.phase === 'running') return;
+    if (controllerRef.current || generationRef.current.phase === 'running' || generationRef.current.unsavedText) return;
+    updateGeneration(idleState);
+  }, [updateGeneration]);
+
+  const discardUnsaved = useCallback(() => {
+    const current = generationRef.current;
+    if (controllerRef.current || !current.unsavedText || !current.requestId) return;
+    clearUnsavedGeneratedStory(current.requestId);
     updateGeneration(idleState);
   }, [updateGeneration]);
 
@@ -97,14 +121,15 @@ export function StoryGenerationProvider({ children }: { children: ReactNode }) {
   }, [updateGeneration]);
 
   useBeforeUnload(useCallback((event) => {
-    if (generationRef.current.phase !== 'running') return;
+    if (generationRef.current.phase !== 'running' &&
+      !(generationRef.current.unsavedText && !generationRef.current.unsavedLocal)) return;
     event.preventDefault();
     event.returnValue = '';
   }, []));
 
   useEffect(() => () => { controllerRef.current?.abort(); }, []);
 
-  return <StoryGenerationContext.Provider value={{ generation, start, stop, dismiss, consumeCompleted }}>{children}</StoryGenerationContext.Provider>;
+  return <StoryGenerationContext.Provider value={{ generation, start, stop, dismiss, discardUnsaved, consumeCompleted }}>{children}</StoryGenerationContext.Provider>;
 }
 
 export function useStoryGeneration(): StoryGenerationContextValue {
@@ -126,7 +151,7 @@ export function StoryGenerationStatus() {
   const title = generation.phase === 'running'
     ? (generation.stopping ? '正在停止写作' : `正在写作 · ${generation.chapterCount} 章`)
     : generation.phase === 'success' ? '小说已生成'
-      : generation.phase === 'stopped' ? '本次生成已停止' : '小说生成失败';
+      : generation.phase === 'stopped' ? '本次生成已停止' : generation.unsavedText ? '正文尚未保存' : '小说生成失败';
   return (
     <aside className={`story-generation-status is-${generation.phase}`} role={generation.phase === 'error' ? 'alert' : 'status'} aria-live={generation.phase === 'error' ? 'assertive' : 'polite'} aria-label="小说创作状态">
       <span className="story-generation-status-mark" aria-hidden="true" />
@@ -140,7 +165,7 @@ export function StoryGenerationStatus() {
           : location.pathname !== '/story-simulation' && <Link className="btn btn-secondary" to="/story-simulation">返回创作</Link>}
         {generation.phase === 'running'
           ? <button type="button" className="btn btn-ghost" disabled={generation.stopping} onClick={stop}>{generation.stopping ? '正在停止…' : '停止生成'}</button>
-          : <button type="button" className="story-generation-status-dismiss" aria-label="收起创作状态" onClick={dismiss}>×</button>}
+          : !generation.unsavedText && <button type="button" className="story-generation-status-dismiss" aria-label="收起创作状态" onClick={dismiss}>×</button>}
       </div>
     </aside>
   );

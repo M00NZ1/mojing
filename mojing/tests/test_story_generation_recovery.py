@@ -115,6 +115,46 @@ def test_receipt_failure_leaves_recoverable_draft_and_no_session(local_app, monk
         assert db.scalar(select(StoryGenerationDraftModel)) is not None
 
 
+def test_draft_write_failure_still_saves_session_and_receipt(local_app, monkeypatch):
+    app, Session = local_app
+    client = FakeClient()
+    fake(monkeypatch, client)
+    body = request(request_id="abababab-abab-4aba-8aba-abababababab")
+    with Session() as db:
+        db.execute(text("CREATE TRIGGER reject_story_draft BEFORE INSERT ON story_generation_drafts BEGIN SELECT RAISE(ABORT, 'fixture'); END"))
+        db.commit()
+    with TestClient(app) as http:
+        response = http.post("/api/story-simulations", json=body)
+        assert response.status_code == 200
+        assert http.post("/api/story-simulations", json=body).json() == response.json()
+    assert client.calls == 1
+    with Session() as db:
+        assert db.scalar(select(StoryGenerationDraftModel)) is None
+        assert db.scalar(select(StoryRequestReceiptModel)) is not None
+        assert db.scalar(select(ChatSessionModel)) is not None
+
+
+def test_draft_and_session_write_failure_returns_finished_text(local_app, monkeypatch):
+    app, Session = local_app
+    client = FakeClient()
+    fake(monkeypatch, client)
+    body = request(request_id="bcbcbcbc-bcbc-4bcb-8bcb-bcbcbcbcbcbc")
+    with Session() as db:
+        db.execute(text("CREATE TRIGGER reject_story_draft BEFORE INSERT ON story_generation_drafts BEGIN SELECT RAISE(ABORT, 'fixture'); END"))
+        db.execute(text("CREATE TRIGGER reject_story_session BEFORE INSERT ON chat_sessions BEGIN SELECT RAISE(ABORT, 'fixture'); END"))
+        db.commit()
+    with TestClient(app) as http:
+        response = http.post("/api/story-simulations", json=body)
+    assert response.status_code == 503
+    assert response.json()["generated_story"]["request_id"] == body["request_id"]
+    assert "钟声穿过雾港" in response.json()["generated_story"]["text"]
+    assert "门后传来脚步" in response.json()["generated_story"]["text"]
+    assert client.calls == 1
+    with Session() as db:
+        assert db.scalar(select(ChatSessionModel)) is None
+        assert db.scalar(select(StoryGenerationDraftModel)) is None
+
+
 def test_explicit_delete_removes_only_draft_and_is_idempotent(local_app):
     app, Session = local_app
     draft_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
