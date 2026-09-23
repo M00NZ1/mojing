@@ -109,7 +109,7 @@ fun TemplateEditScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(if (templateId == 0L && !state.isPersisted) "新建设定模板" else "编辑设定模板")
+                    Text(if (templateId == 0L && !state.isPersisted) "新建设定模板" else "编辑设定模板", style = MaterialTheme.typography.titleMedium)
                 },
                 navigationIcon = {
                     IconButton(onClick = ::requestBack, enabled = !saveBusy) {
@@ -117,7 +117,7 @@ fun TemplateEditScreen(
                     }
                 },
                 actions = {
-                    IconButton(
+                    if (isImeOpen) IconButton(
                         onClick = { viewModel.save() },
                         enabled = state.isLoaded && canSave && !saveBusy && !state.isAiCompleting,
                     ) {
@@ -126,6 +126,40 @@ fun TemplateEditScreen(
                     }
                 }
             )
+        },
+        bottomBar = {
+            if (!isImeOpen && state.isLoaded && state.loadError == null) {
+                Surface(color = MaterialTheme.colorScheme.surface) {
+                    Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Box(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
+                            Button(
+                                onClick = { viewModel.save() },
+                                enabled = canSave && !saveBusy && !state.isAiCompleting,
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
+                            ) {
+                                if (state.isSaving) {
+                                    CircularProgressIndicator(
+                                        Modifier.size(20.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("正在保存…")
+                                } else {
+                                    Text(
+                                        when {
+                                            !state.isPersisted -> "保存模板"
+                                            state.isDirty -> "保存修改"
+                                            else -> "已保存"
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     ) { padding ->
         if (state.loadError != null) {
@@ -159,6 +193,7 @@ fun TemplateEditScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
+                    .consumeWindowInsets(padding)
                     .imePadding()
                     .verticalScroll(scrollState)
                     .padding(horizontal = 16.dp, vertical = 12.dp),
@@ -221,7 +256,7 @@ fun TemplateEditScreen(
                     }
                 }
 
-                Text("基本信息", style = MaterialTheme.typography.titleMedium)
+                com.mojing.app.ui.common.WorkspaceSectionHeading("基本信息", "名称、分类与故事模式")
                 OutlinedTextField(
                     value = state.label,
                     onValueChange = { viewModel.updateLabel(it) },
@@ -277,7 +312,7 @@ fun TemplateEditScreen(
                 )
 
                 HorizontalDivider()
-                Text("世界设定", style = MaterialTheme.typography.titleMedium)
+                com.mojing.app.ui.common.WorkspaceSectionHeading("世界设定", "背景、局势与固定规则")
 
                 if (state.isAiCompleting) {
                     TemplateWorldPromptSkeletonBlock()
@@ -325,6 +360,7 @@ fun TemplateEditScreen(
                 }
 
                 HorizontalDivider()
+                com.mojing.app.ui.common.WorkspaceSectionHeading("世界封面", "为设定选择封面")
                 CoverImagePicker(
                     imagePath = state.coverImagePath,
                     onImageSelected = { viewModel.updateCoverImage(it) },
@@ -411,7 +447,7 @@ fun TemplateEditScreen(
                         }
                         if (state.coverBuiltinAssets.isNotEmpty()) {
                             Column(
-                                modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp),
+                                modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp).verticalScroll(rememberScrollState()),
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
                                 state.coverBuiltinAssets.forEach { asset ->
@@ -449,30 +485,6 @@ fun TemplateEditScreen(
                     }
                 }
 
-                Spacer(Modifier.height(4.dp))
-                Button(
-                    onClick = { viewModel.save() },
-                    enabled = canSave && !saveBusy && !state.isAiCompleting,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
-                ) {
-                    if (state.isSaving) {
-                        CircularProgressIndicator(
-                            Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary,
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text("正在保存…")
-                    } else {
-                        Text(
-                            when {
-                                !state.isPersisted -> "保存模板"
-                                state.isDirty -> "保存修改"
-                                else -> "已保存"
-                            },
-                        )
-                    }
-                }
                 Spacer(Modifier.height(8.dp))
             }
         }
