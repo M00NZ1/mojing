@@ -132,6 +132,7 @@ export function extractChoicesFromMessage(message: {
   structured_content?: Record<string, unknown>;
 }): string[] {
   const structured = message.structured_content ?? {};
+  if (structured.interrupted === true) return [];
   const fromStruct = structured.choices;
   if (Array.isArray(fromStruct)) {
     const choices = fromStruct.map((c) => String(c).trim()).filter(Boolean);

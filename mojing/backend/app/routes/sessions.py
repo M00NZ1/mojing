@@ -2,6 +2,7 @@ import html
 import shutil
 import tempfile
 import time
+from contextlib import closing
 from pathlib import Path
 from urllib.parse import quote
 from uuid import uuid4
@@ -1065,8 +1066,11 @@ def generate_stream(session_id: int, payload: GenerateRequest, db: Session = Dep
         def narrator_only_stream():
             yield sse_event({"type": "session", "session_id": session_id})
             yield sse_event({"type": "speaker_plan", "character_ids": [], "reason": "仅生成旁白"})
-            for event in stream_narrator_reply(session_id, branch_id, **route_args):
-                yield sse_event(event)
+            with closing(stream_narrator_reply(session_id, branch_id, **route_args)) as replies:
+                for event in replies:
+                    yield sse_event(event)
+                    if event.get("type") == "error":
+                        return
             trigger_memory_compaction_async(session_id, branch_id)
             yield sse_event({"type": "done"})
 
@@ -1105,11 +1109,17 @@ def generate_stream(session_id: int, payload: GenerateRequest, db: Session = Dep
         yield sse_event({"type": "session", "session_id": session_id})
         yield sse_event({"type": "speaker_plan", "character_ids": target_ids, "reason": plan_reason})
         for character_id in target_ids:
-            for event in stream_character_reply(session_id, character_id, branch_id, **route_args):
-                yield sse_event(event)
+            with closing(stream_character_reply(session_id, character_id, branch_id, **route_args)) as replies:
+                for event in replies:
+                    yield sse_event(event)
+                    if event.get("type") == "error":
+                        return
         if payload.include_narrator:
-            for event in stream_narrator_reply(session_id, branch_id, **route_args):
-                yield sse_event(event)
+            with closing(stream_narrator_reply(session_id, branch_id, **route_args)) as replies:
+                for event in replies:
+                    yield sse_event(event)
+                    if event.get("type") == "error":
+                        return
         trigger_memory_compaction_async(session_id, branch_id)
         yield sse_event({"type": "done"})
 

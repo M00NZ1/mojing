@@ -654,6 +654,7 @@ export default function MessageList({
                 />
               )}
               {message.include_in_context === false && <div className="hint" style={{ padding: '6px 12px' }} role="note">已排除上下文 · 原文保留</div>}
+              {structured.interrupted === true && <div className="hint" style={{ padding: '6px 12px' }} role="note">回复已中断 · 收到的正文已保留</div>}
               {isNarrator ? (
                 <div className="chat-msg-system">
                   <div

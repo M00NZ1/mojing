@@ -356,6 +356,7 @@ def create_message(
     branch_id: str = "main",
     parent_message_id: int | None = None,
     regenerated_from_message_id: int | None = None,
+    refresh_after_commit: bool = True,
 ) -> MessageModel:
     """写入消息并顺手更新会话更新时间。"""
 
@@ -391,8 +392,39 @@ def create_message(
         if (session.title.startswith("新对话") or session.title == "新对话") and speaker_type == "user" and content.strip():
             session.title = content.strip().splitlines()[0][:18]
     db.commit()
-    db.refresh(message, attribute_names=["attachments", "character"])
+    if refresh_after_commit:
+        db.refresh(message, attribute_names=["attachments", "character"])
     return message
+
+
+def _save_interrupted_reply(
+    db: Session,
+    session_id: int,
+    branch_id: str,
+    speaker_type: str,
+    raw_text: str,
+    character_id: int | None = None,
+) -> MessageModel | None:
+    """只保存已收到的正文；未闭合的模型控制标签不进入阅读区。"""
+    content = re.split(r"<CHOICES\b", _repair_unicode_text(raw_text), maxsplit=1, flags=re.IGNORECASE)[0]
+    content = re.sub(r"</?(?:NARRATION|THOUGHT|SPEECH)>|<(?:NARRATION|THOUGHT|SPEECH)[^>]*$", "\n", content, flags=re.IGNORECASE)
+    content = _clean_reply_spacing(content)
+    if not content:
+        return None
+    structured = parse_structured_reply(content)
+    structured["choices"] = []
+    structured["interrupted"] = True
+    return create_message(
+        db,
+        session_id=session_id,
+        speaker_type=speaker_type,
+        character_id=character_id,
+        branch_id=branch_id,
+        parent_message_id=get_visible_tail_message_id(db, session_id, branch_id),
+        content=content,
+        structured_content=structured,
+        refresh_after_commit=False,
+    )
 
 
 def get_session_messages_page(
@@ -1747,9 +1779,25 @@ def stream_character_reply(session_id: int, character_id: int, branch_id: str = 
     resolved = None
     resolved_model = ""
     price_snapshot = None
+    reply_completed = False
+    partial_attempted = False
+    partial_message = None
+    response = None
     stream_start = time.time()
     if text_config is not None:
         db.info["text_config_override"] = text_config
+
+    def save_partial():
+        nonlocal partial_attempted, partial_message
+        if partial_attempted or reply_completed or not raw_text.strip():
+            return partial_message
+        partial_attempted = True
+        try:
+            partial_message = _save_interrupted_reply(db, session_id, branch_id, "character", raw_text, character_id)
+        except Exception:
+            db.rollback()
+        return partial_message
+
     try:
         resolve_branch_context(db, session_id, branch_id)
         character = db.get(CharacterModel, character_id)
@@ -1849,6 +1897,7 @@ def stream_character_reply(session_id: int, character_id: int, branch_id: str = 
             content=processed,
             structured_content=structured,
         )
+        reply_completed = True
         db.refresh(message, attribute_names=["character"])
         prompt_tokens, completion_tokens, usage_source = _stream_token_usage(prompt_messages, raw_text, usage)
         try:
@@ -1883,19 +1932,7 @@ def stream_character_reply(session_id: int, character_id: int, branch_id: str = 
             "message": serialize_message(message).model_dump(mode="json"),
         }
     except Exception as exc:
-        if request_started and not usage_recorded and resolved is not None:
-            try:
-                prompt_tokens, completion_tokens, usage_source = _stream_token_usage(prompt_messages, raw_text, usage)
-                record_llm_call(
-                    db, session_id=session_id, character_id=character_id,
-                    model_name=resolved_model, provider=detect_provider(character, resolved.base_url),
-                    platform_id=resolved.platform_id, platform_name=resolved.platform_name,
-                    price_snapshot=price_snapshot, usage_source=usage_source,
-                    prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-                    duration_ms=int((time.time() - stream_start) * 1000), success=False,
-                )
-            except Exception:
-                db.rollback()
+        saved = message if reply_completed else save_partial()
         error_msg = str(exc)
         lowered = error_msg.lower()
         # 将常见 API 错误转译为用户可理解的中文提示
@@ -1911,8 +1948,31 @@ def stream_character_reply(session_id: int, character_id: int, branch_id: str = 
             error_msg = "API 额度不足，请检查账户余额。"
         elif "rate_limit" in lowered or "429" in error_msg:
             error_msg = "请求过于频繁，请稍后重试。"
-        yield {"type": "error", "stream_key": stream_key, "message": error_msg}
+        yield {"type": "error", "stream_key": stream_key, "message": error_msg,
+               "reply_saved": saved is not None,
+               "saved_message": serialize_message(saved).model_dump(mode="json") if saved else None}
     finally:
+        close_response = getattr(response, "close", None)
+        if callable(close_response):
+            try:
+                close_response()
+            except Exception:
+                pass
+        saved = save_partial()
+        if request_started and not reply_completed and not usage_recorded and resolved is not None:
+            try:
+                prompt_tokens, completion_tokens, usage_source = _stream_token_usage(prompt_messages, raw_text, usage)
+                record_llm_call(
+                    db, session_id=session_id, character_id=character_id,
+                    message_id=saved.id if saved is not None else None,
+                    model_name=resolved_model, provider=detect_provider(character, resolved.base_url),
+                    platform_id=resolved.platform_id, platform_name=resolved.platform_name,
+                    price_snapshot=price_snapshot, usage_source=usage_source,
+                    prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                    duration_ms=int((time.time() - stream_start) * 1000), success=False,
+                )
+            except Exception:
+                db.rollback()
         db.close()
 
 
@@ -1929,9 +1989,25 @@ def stream_narrator_reply(session_id: int, branch_id: str = "main", *, text_conf
     resolved = None
     resolved_model = ""
     price_snapshot = None
+    reply_completed = False
+    partial_attempted = False
+    partial_message = None
+    response = None
     stream_start = time.time()
     if text_config is not None:
         db.info["text_config_override"] = text_config
+
+    def save_partial():
+        nonlocal partial_attempted, partial_message
+        if partial_attempted or reply_completed or not raw_text.strip():
+            return partial_message
+        partial_attempted = True
+        try:
+            partial_message = _save_interrupted_reply(db, session_id, branch_id, "narrator", raw_text)
+        except Exception:
+            db.rollback()
+        return partial_message
+
     try:
         resolve_branch_context(db, session_id, branch_id)
         world = db.scalar(select(SessionWorldModel).where(SessionWorldModel.session_id == session_id))
@@ -2031,6 +2107,7 @@ def stream_narrator_reply(session_id: int, branch_id: str = "main", *, text_conf
             content=processed,
             structured_content=structured,
         )
+        reply_completed = True
         prompt_tokens, completion_tokens, usage_source = _stream_token_usage(prompt_messages, raw_text, usage)
         try:
             record_llm_call(
@@ -2052,11 +2129,29 @@ def stream_narrator_reply(session_id: int, branch_id: str = "main", *, text_conf
             "message": serialize_message(message).model_dump(mode="json"),
         }
     except Exception as exc:
-        if request_started and not usage_recorded and resolved is not None:
+        saved = message if reply_completed else save_partial()
+        error_msg = str(exc)
+        if "timeout" in error_msg.lower():
+            error_msg = "请求大模型超时，请重试。"
+        elif "connection" in error_msg.lower():
+            error_msg = "与大模型服务连接中断，请检查网络。"
+        yield {"type": "error", "stream_key": stream_key, "message": error_msg,
+               "reply_saved": saved is not None,
+               "saved_message": serialize_message(saved).model_dump(mode="json") if saved else None}
+    finally:
+        close_response = getattr(response, "close", None)
+        if callable(close_response):
+            try:
+                close_response()
+            except Exception:
+                pass
+        saved = save_partial()
+        if request_started and not reply_completed and not usage_recorded and resolved is not None:
             try:
                 prompt_tokens, completion_tokens, usage_source = _stream_token_usage(prompt_messages, raw_text, usage)
                 record_llm_call(
                     db, session_id=session_id,
+                    message_id=saved.id if saved is not None else None,
                     model_name=resolved_model, provider=detect_provider(narrator_character, resolved.base_url),
                     platform_id=resolved.platform_id, platform_name=resolved.platform_name,
                     price_snapshot=price_snapshot, usage_source=usage_source,
@@ -2065,13 +2160,6 @@ def stream_narrator_reply(session_id: int, branch_id: str = "main", *, text_conf
                 )
             except Exception:
                 db.rollback()
-        error_msg = str(exc)
-        if "timeout" in error_msg.lower():
-            error_msg = "请求大模型超时，请重试。"
-        elif "connection" in error_msg.lower():
-            error_msg = "与大模型服务连接中断，请检查网络。"
-        yield {"type": "error", "stream_key": stream_key, "message": error_msg}
-    finally:
         db.close()
 
 

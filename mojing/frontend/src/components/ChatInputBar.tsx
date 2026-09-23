@@ -400,9 +400,9 @@ export default function ChatInputBar({
         )}
         {retryReplyAvailable && onRetryReply && (
           <div className="chat-inputbar-error chat-inputbar-retry">
-            <span>回复未完成，用户消息已经保存。</span>
+            <span>回复未完成；请先核对对话中已保存的内容。</span>
             <button type="button" className="btn btn-sm" onClick={onRetryReply} disabled={isGenerating || isPending}>
-              重新生成回复
+              再生成一条回复
             </button>
           </div>
         )}

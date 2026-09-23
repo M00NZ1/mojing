@@ -1023,6 +1023,7 @@ export default function ChatPage() {
     };
 
     const abortController = new AbortController();
+    let replySaved = false;
     abortRef.current = abortController;
     setIsGenerating(true);
     clearSpeakerPlan();
@@ -1074,9 +1075,16 @@ export default function ChatPage() {
           }
           if (type === 'error') {
             const streamKey = typeof event.stream_key === 'string' ? event.stream_key : undefined;
-            removeStreamingPlaceholder(streamKey);
+            const savedMessage = event.saved_message;
+            if (event.reply_saved === true && savedMessage && typeof savedMessage === 'object') {
+              replySaved = true;
+              if (streamIntoCurrentList) finalizePlaceholderMessage(savedMessage as Message, streamKey);
+            } else {
+              removeStreamingPlaceholder(streamKey);
+            }
             throw new Error(toastErrorMessage(event.message ?? '发生错误'));
           }
+          if (type === 'message_end') replySaved = true;
           if (!streamIntoCurrentList) return;
           if (sessionIdRef.current !== sessionId || selectedBranchRef.current !== branchId) return;
           if (type === 'speaker_plan') {
@@ -1111,13 +1119,13 @@ export default function ChatPage() {
       // SSE errors/aborts must not be reported as a successful send. Re-read the
       // database so optimistic and partial placeholders cannot remain on screen.
       if (generationRequestStarted) reloadMessages();
-      if (outboundPersisted) {
+      if (outboundPersisted && !replySaved) {
         setRetryReplyBranchId(branchId);
-        void Promise.allSettled([
-          queryClient.invalidateQueries({ queryKey: ['sessions'] }),
-          queryClient.invalidateQueries({ queryKey: ['session-branches', sessionId] }),
-        ]);
-      }
+      } else if (replySaved) setRetryReplyBranchId(null);
+      if (outboundPersisted || replySaved) void Promise.allSettled([
+        queryClient.invalidateQueries({ queryKey: ['sessions'] }),
+        queryClient.invalidateQueries({ queryKey: ['session-branches', sessionId] }),
+      ]);
       throw error;
     } finally {
       setIsGenerating(false);
