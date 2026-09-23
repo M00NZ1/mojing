@@ -6,6 +6,8 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import com.mojing.app.data.local.entity.BranchSwipeSelectionEntity
+import com.mojing.app.data.local.entity.BranchContextExclusionEntity
+import com.mojing.app.data.local.entity.contextSelectionKey
 import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.local.entity.MessageSearchIndexStateEntity
 import com.mojing.app.data.local.entity.SessionBranchEntity
@@ -68,7 +70,7 @@ private const val CURRENT_MESSAGES_QUERY = """
       )
 """
 
-private const val MAIN_CONTEXT_MESSAGES_QUERY = """
+private const val MAIN_SELECTED_MESSAGES_QUERY = """
     SELECT message.*
     FROM messages AS message
     WHERE message.sessionId = :sessionId
@@ -111,7 +113,7 @@ private const val MAIN_CONTEXT_MESSAGES_QUERY = """
       )
 """
 
-private const val VISIBLE_CONTEXT_MESSAGES_QUERY = CURRENT_MESSAGES_QUERY + """
+private const val VISIBLE_SELECTED_MESSAGES_QUERY = CURRENT_MESSAGES_QUERY + """
       AND (
           (message.swipeGroupId IS NULL AND message.includeInContext = 1)
           OR (
@@ -156,21 +158,42 @@ private const val VISIBLE_CONTEXT_MESSAGES_QUERY = CURRENT_MESSAGES_QUERY + """
       )
 """
 
+/** 阅读和章节目录仍使用采用版本；排除仅影响模型、摘要和自动事件。 */
+private const val MAIN_CONTEXT_MESSAGES_QUERY = MAIN_SELECTED_MESSAGES_QUERY + """
+      AND NOT EXISTS (
+          SELECT 1 FROM branch_context_exclusions AS exclusion
+          WHERE exclusion.sessionId = :sessionId AND exclusion.branchId = 'main'
+            AND exclusion.messageKey = CASE
+                WHEN message.swipeGroupId IS NULL OR trim(message.swipeGroupId) = '' THEN 'm' || message.id
+                ELSE 'g' || message.swipeGroupId END
+      )
+"""
+
+private const val VISIBLE_CONTEXT_MESSAGES_QUERY = VISIBLE_SELECTED_MESSAGES_QUERY + """
+      AND NOT EXISTS (
+          SELECT 1 FROM branch_context_exclusions AS exclusion
+          WHERE exclusion.sessionId = :sessionId AND exclusion.branchId = :branchId
+            AND exclusion.messageKey = CASE
+                WHEN message.swipeGroupId IS NULL OR trim(message.swipeGroupId) = '' THEN 'm' || message.id
+                ELSE 'g' || message.swipeGroupId END
+      )
+"""
+
 @Dao
 interface MessageDao {
-    @Query("SELECT COALESCE(MAX(CASE WHEN json_valid(structuredContentJson) THEN CAST(json_extract(structuredContentJson, '$.chapter_number') AS INTEGER) ELSE 0 END), 0) FROM ($MAIN_CONTEXT_MESSAGES_QUERY)")
+    @Query("SELECT COALESCE(MAX(CASE WHEN json_valid(structuredContentJson) THEN CAST(json_extract(structuredContentJson, '$.chapter_number') AS INTEGER) ELSE 0 END), 0) FROM ($MAIN_SELECTED_MESSAGES_QUERY)")
     suspend fun getMainMaxChapter(sessionId: Long): Int
 
-    @Query("SELECT COALESCE(MAX(CASE WHEN json_valid(structuredContentJson) THEN CAST(json_extract(structuredContentJson, '$.chapter_number') AS INTEGER) ELSE 0 END), 0) FROM ($VISIBLE_CONTEXT_MESSAGES_QUERY)")
+    @Query("SELECT COALESCE(MAX(CASE WHEN json_valid(structuredContentJson) THEN CAST(json_extract(structuredContentJson, '$.chapter_number') AS INTEGER) ELSE 0 END), 0) FROM ($VISIBLE_SELECTED_MESSAGES_QUERY)")
     suspend fun getBranchMaxChapter(sessionId: Long, branchId: String): Int
 
     @Query("SELECT id, speakerType, branchId, createdAt, structuredContentJson, substr(content, 1, 180) AS contentPreview " +
-        "FROM ($MAIN_CONTEXT_MESSAGES_QUERY) WHERE speakerType IN ('narrator', 'character') " +
+        "FROM ($MAIN_SELECTED_MESSAGES_QUERY) WHERE speakerType IN ('narrator', 'character') " +
         "AND id < :beforeMessageId ORDER BY id DESC LIMIT :limit")
     suspend fun getMainStoryContentsBefore(sessionId: Long, beforeMessageId: Long, limit: Int): List<StoryContentsMessageProjection>
 
     @Query("SELECT id, speakerType, branchId, createdAt, structuredContentJson, substr(content, 1, 180) AS contentPreview " +
-        "FROM ($VISIBLE_CONTEXT_MESSAGES_QUERY) WHERE speakerType IN ('narrator', 'character') " +
+        "FROM ($VISIBLE_SELECTED_MESSAGES_QUERY) WHERE speakerType IN ('narrator', 'character') " +
         "AND id < :beforeMessageId ORDER BY id DESC LIMIT :limit")
     suspend fun getBranchStoryContentsBefore(sessionId: Long, branchId: String, beforeMessageId: Long, limit: Int): List<StoryContentsMessageProjection>
 
@@ -179,11 +202,11 @@ interface MessageDao {
         else getBranchStoryContentsBefore(sessionId, branchId, beforeMessageId, limit)
 
     @Query("SELECT id, speakerType, branchId, createdAt, structuredContentJson, substr(content, 1, 180) AS contentPreview " +
-        "FROM ($MAIN_CONTEXT_MESSAGES_QUERY) WHERE id = :messageId AND speakerType IN ('narrator', 'character') LIMIT 1")
+        "FROM ($MAIN_SELECTED_MESSAGES_QUERY) WHERE id = :messageId AND speakerType IN ('narrator', 'character') LIMIT 1")
     suspend fun getMainStoryContentsEntry(sessionId: Long, messageId: Long): StoryContentsMessageProjection?
 
     @Query("SELECT id, speakerType, branchId, createdAt, structuredContentJson, substr(content, 1, 180) AS contentPreview " +
-        "FROM ($VISIBLE_CONTEXT_MESSAGES_QUERY) WHERE id = :messageId AND speakerType IN ('narrator', 'character') LIMIT 1")
+        "FROM ($VISIBLE_SELECTED_MESSAGES_QUERY) WHERE id = :messageId AND speakerType IN ('narrator', 'character') LIMIT 1")
     suspend fun getBranchStoryContentsEntry(sessionId: Long, branchId: String, messageId: Long): StoryContentsMessageProjection?
 
     @Query("SELECT * FROM messages WHERE sessionId = :sessionId AND branchId = 'main' ORDER BY createdAt ASC")
@@ -322,14 +345,45 @@ interface MessageDao {
         gid: String,
     ): BranchSwipeSelectionEntity?
 
+    @Query("SELECT messageKey FROM branch_context_exclusions WHERE sessionId = :sessionId AND branchId = :branchId AND messageKey IN (:keys)")
+    suspend fun getExcludedContextKeys(sessionId: Long, branchId: String, keys: List<String>): List<String>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertContextExclusion(entity: BranchContextExclusionEntity): Long
+
+    @Query("DELETE FROM branch_context_exclusions WHERE sessionId = :sessionId AND branchId = :branchId AND messageKey = :key")
+    suspend fun deleteContextExclusion(sessionId: Long, branchId: String, key: String): Int
+
+    /** 只改当前故事线的模型参与状态；原文和采用版本始终保留。 */
+    @Transaction
+    suspend fun setContextExcluded(sessionId: Long, branchId: String, messageId: Long, excluded: Boolean): Boolean {
+        if (branchId.isBlank()) return false
+        val message = if (branchId == "main") getMainMessageById(sessionId, messageId)
+            else getVisibleMessageById(sessionId, branchId, messageId)
+        if (message == null) return false
+        val groupId = message.swipeGroupId?.takeIf(String::isNotBlank)
+        if (groupId == null && !message.includeInContext) return false
+        val variants = groupId?.let { visibleSwipeVariants(sessionId, branchId, it) }
+        if (groupId != null && effectiveSwipeSelection(sessionId, branchId, groupId, variants.orEmpty()) != messageId) return false
+        val key = message.contextSelectionKey()
+        val currentlyExcluded = getExcludedContextKeys(sessionId, branchId, listOf(key)).isNotEmpty()
+        if (currentlyExcluded == excluded) return true
+        if (excluded) insertContextExclusion(BranchContextExclusionEntity(sessionId, branchId, key))
+        else deleteContextExclusion(sessionId, branchId, key)
+        val cutoff = variants?.minOfOrNull(MessageEntity::id) ?: message.id
+        deleteMemorySegmentTail(sessionId, branchId, cutoff)
+        invalidateContextMemoryForBranch(sessionId, branchId, System.currentTimeMillis())
+        return true
+    }
+
     // Resolve legacy defaults from the whole visible storyline, never from a paged UI window.
-    @Query("SELECT sessionId, 'main' AS branchId, swipeGroupId, id AS selectedMessageId FROM ($MAIN_CONTEXT_MESSAGES_QUERY) WHERE swipeGroupId IN (:groupIds)")
+    @Query("SELECT sessionId, 'main' AS branchId, swipeGroupId, id AS selectedMessageId FROM ($MAIN_SELECTED_MESSAGES_QUERY) WHERE swipeGroupId IN (:groupIds)")
     suspend fun getMainEffectiveSwipeSelections(
         sessionId: Long,
         groupIds: List<String>,
     ): List<BranchSwipeSelectionEntity>
 
-    @Query("SELECT sessionId, :branchId AS branchId, swipeGroupId, id AS selectedMessageId FROM ($VISIBLE_CONTEXT_MESSAGES_QUERY) WHERE swipeGroupId IN (:groupIds)")
+    @Query("SELECT sessionId, :branchId AS branchId, swipeGroupId, id AS selectedMessageId FROM ($VISIBLE_SELECTED_MESSAGES_QUERY) WHERE swipeGroupId IN (:groupIds)")
     suspend fun getVisibleEffectiveSwipeSelections(
         sessionId: Long,
         branchId: String,

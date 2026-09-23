@@ -106,6 +106,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mojing.app.media.AndroidTts
 import com.mojing.app.media.NativeSpeechRecognizer
 import com.mojing.app.data.local.entity.MessageEntity
+import com.mojing.app.data.local.entity.contextSelectionKey
 import com.mojing.app.data.local.entity.MessageAttachmentEntity
 import com.mojing.app.data.local.entity.SessionMemoryCorrectionEntity
 import com.mojing.app.domain.engine.StructuredParser
@@ -1148,12 +1149,13 @@ fun ChatScreen(
                         val msg = line.selectedMessage()
                         val canContinueReply = !state.hasNewerMessages &&
                             state.messages.lastOrNull()?.id == msg.id &&
+                            msg.contextSelectionKey() !in state.excludedContextKeys &&
                             msg.speakerType == "user"
                         val canRegenerate = ReplyRegenerationPolicy.canRegenerate(
                             messages = state.messages,
                             target = msg,
                             hasNewerMessages = state.hasNewerMessages,
-                        )
+                        ) && msg.contextSelectionKey() !in state.excludedContextKeys
                         val charId = msg.characterId ?: 0L
                         val anchors = state.branchAnchorsByMessageId[msg.id].orEmpty()
                         val canReturnMain = state.currentBranchId != "main" &&
@@ -1170,6 +1172,7 @@ fun ChatScreen(
                             userAvatarColor = state.userAvatarColor,
                             userDisplayName = state.userDisplayName,
                             bookmarkedMessageIds = state.bookmarkedMessageIds,
+                            excludedContextKeys = state.excludedContextKeys,
                             currentChoiceMessageId = state.roundChoiceMessageId,
                             canContinueReply = canContinueReply,
                             canRegenerate = canRegenerate,
@@ -1223,6 +1226,14 @@ fun ChatScreen(
                                     is MessageAction.ToggleBookmark -> {
                                         viewModel.handleMessageAction(action)
                                         scope.launch { snackbarHostState.showSnackbar(UserFacingStrings.bookmarkUpdated()) }
+                                    }
+                                    is MessageAction.SetContextExcluded -> {
+                                        viewModel.setMessageContextExcluded(action.message.id, action.excluded) { saved ->
+                                            if (saved) scope.launch {
+                                                snackbarHostState.showSnackbar(if (action.excluded)
+                                                    "已从当前故事线的后续上下文排除" else "已恢复到当前故事线的后续上下文")
+                                            }
+                                        }
                                     }
                                     is MessageAction.Quote -> viewModel.handleMessageAction(action)
                                     is MessageAction.CreateBranch -> {

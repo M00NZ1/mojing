@@ -21,9 +21,10 @@ import com.mojing.app.data.local.entity.*
         GenerationTaskEntity::class, MessageSearchFtsEntity::class,
         MessageSearchIndexStateEntity::class, BranchVisibilitySegmentEntity::class,
         SessionMemoryCorrectionEntity::class, BranchSwipeSelectionEntity::class,
+        BranchContextExclusionEntity::class,
         LegacyWorldMappingEntity::class, LegacyLoreMappingEntity::class,
     ],
-    version = 21,
+    version = 22,
     exportSchema = true
 )
 @TypeConverters(Converters::class)

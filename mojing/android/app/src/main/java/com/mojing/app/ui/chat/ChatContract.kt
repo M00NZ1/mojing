@@ -35,6 +35,7 @@ sealed class MessageAction {
         val sourceMessageId: Long,
     ) : MessageAction()
     data class ToggleBookmark(val message: MessageEntity) : MessageAction()
+    data class SetContextExcluded(val message: MessageEntity, val excluded: Boolean) : MessageAction()
     data class CreateBranch(val message: MessageEntity) : MessageAction()
     data class SwitchToBranch(val branchId: String) : MessageAction()
 }
@@ -116,6 +117,7 @@ object ChatContract {
         val bookmarkLocatingId: Long? = null,
         val bookmarkBusyIds: Set<Long> = emptySet(),
         val bookmarkedMessageIds: Set<Long> = emptySet(),
+        val excludedContextKeys: Set<String> = emptySet(),
         val bookmarkPreviews: Map<Long, String> = emptyMap(),
         val searchResults: List<MessageEntity> = emptyList(),
         val searchPreviews: Map<Long, String> = emptyMap(),

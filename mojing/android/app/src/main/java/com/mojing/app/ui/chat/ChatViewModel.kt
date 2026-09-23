@@ -39,6 +39,7 @@ import com.mojing.app.domain.config.VoiceTtsParams
 import com.mojing.app.data.local.entity.SessionWorldCredentialDraft
 import com.mojing.app.data.local.entity.MessageBookmarkEntity
 import com.mojing.app.data.local.entity.MessageEntity
+import com.mojing.app.data.local.entity.contextSelectionKey
 import com.mojing.app.data.local.entity.SessionBranchEntity
 import com.mojing.app.data.local.entity.SessionParticipantEntity
 import com.mojing.app.domain.engine.CharacterMediaMarkers
@@ -837,19 +838,20 @@ class ChatViewModel @Inject constructor(
         val initialRows = getMessageTailForBranch(initialBranchId, INITIAL_MESSAGE_WINDOW_SIZE + 1)
         val hasOlderMessages = initialRows.size > INITIAL_MESSAGE_WINDOW_SIZE
         val msgs = initialRows.take(INITIAL_MESSAGE_WINDOW_SIZE).asReversed()
+        val excludedKeys = excludedKeysForWindow(initialBranchId, msgs)
         val sourcePreviews = branchSourcePreviews(branches)
         val maps = buildCharacterPresentationMaps(participants)
 
         val firstChar = participants.firstOrNull()?.characterId?.let { characterDao.getById(it) }
         val displayCap = session.displayContextTokenLimit.takeIf { it > 0 } ?: 1_000_000
-        val convEst = msgs.filter { it.includeInContext }
+        val convEst = msgs.filter { it.includeInContext && it.contextSelectionKey() !in excludedKeys }
             .sumOf { TokenCounter.estimateScaledPrefix(ConversationMessageText.forDerivedContext(it)) }
 
         val attMap = attachmentsForMessages(msgs)
         val marks = bookmarkDao.getBySession(sessionId)
         val bookmarkIds = marks.map { it.messageId }.toSet()
         val previews = messagePreviews(bookmarkIds, maxChars = 120)
-        val roundChoices = buildRoundChoiceSnapshot(world, msgs)
+        val roundChoices = buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
 
         _state.value = _state.value.copy(
             sessionTitle = session.title,
@@ -874,6 +876,7 @@ class ChatViewModel @Inject constructor(
             characterColors = maps.colors,
             bookmarks = marks,
             bookmarkedMessageIds = bookmarkIds,
+            excludedContextKeys = excludedKeys,
             bookmarkPreviews = previews,
             userDisplayName = secureStorage.userName,
             userAvatarImagePath = secureStorage.userAvatarImagePath,
@@ -1137,6 +1140,12 @@ class ChatViewModel @Inject constructor(
     private fun currentBranchId(): String =
         _state.value.currentBranchId.ifBlank { "main" }
 
+    private suspend fun excludedKeysForWindow(branchId: String, messages: List<MessageEntity>): Set<String> {
+        val keys = messages.map(MessageEntity::contextSelectionKey).distinct()
+        return if (keys.isEmpty()) emptySet() else
+            messageDao.getExcludedContextKeys(sessionId, branchId, keys).toSet()
+    }
+
     private suspend fun withEffectiveSwipeSelections(
         branchId: String,
         messages: List<MessageEntity>,
@@ -1270,6 +1279,7 @@ class ChatViewModel @Inject constructor(
         val hasOlderMessages = pageRows.size > if (anchor == null) INITIAL_MESSAGE_WINDOW_SIZE else radius
         val msgs = if (anchor == null) pageRows.take(INITIAL_MESSAGE_WINDOW_SIZE).asReversed()
             else pageRows.take(radius).asReversed() + anchor + afterRows.take(radius)
+        val excludedKeys = excludedKeysForWindow(branchId, msgs)
         val world = sessionWorldDao.getBySession(sessionId)
         val anchors = branches
             .filter { it.sourceMessageId > 0L }
@@ -1291,16 +1301,17 @@ class ChatViewModel @Inject constructor(
         val participants = participantDao.getBySession(sessionId)
         val firstChar = participants.firstOrNull()?.characterId?.let { characterDao.getById(it) }
         val displayCap = sess?.displayContextTokenLimit?.takeIf { it > 0 } ?: 1_000_000
-        val convEst = msgs.filter { it.includeInContext }
+        val convEst = msgs.filter { it.includeInContext && it.contextSelectionKey() !in excludedKeys }
             .sumOf { TokenCounter.estimateScaledPrefix(ConversationMessageText.forDerivedContext(it)) }
         val memorySegments = memorySegmentDao.getRecentForBranch(sessionId, branchId)
         val contextMemoryText = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
         val encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world)
         val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, branchId)
-        val roundChoices = buildRoundChoiceSnapshot(world, msgs)
+        val roundChoices = buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
         val events = eventNodeDao.getForBranch(sessionId, branchId)
         _state.update { current -> current.copy(
             messages = msgs,
+            excludedContextKeys = excludedKeys,
             displayLines = msgs.toChatDisplayLines(),
             hasOlderMessages = hasOlderMessages,
             hasNewerMessages = anchor != null && afterRows.size > radius,
@@ -1376,20 +1387,22 @@ class ChatViewModel @Inject constructor(
             branchId,
             messages.distinctBy { it.id }.sortedBy { it.id },
         )
+        val excludedKeys = excludedKeysForWindow(branchId, normalized)
         val attachments = attachmentsForMessages(normalized)
         val tokenEstimate = normalized
             .asSequence()
-            .filter { it.includeInContext }
+            .filter { it.includeInContext && it.contextSelectionKey() !in excludedKeys }
             .sumOf { TokenCounter.estimateScaledPrefix(it.content) }
         _state.update { current ->
             if (current.currentBranchId != branchId) return@update current
             val roundChoices = if (hasNewerMessages) {
                 RoundChoiceSnapshot()
             } else {
-                buildRoundChoiceSnapshot(current.world, normalized)
+                buildRoundChoiceSnapshot(current.world, normalized.filterNot { it.contextSelectionKey() in excludedKeys })
             }
             current.copy(
                 messages = normalized,
+                excludedContextKeys = excludedKeys,
                 displayLines = normalized.toChatDisplayLines(),
                 hasOlderMessages = hasOlderMessages,
                 hasNewerMessages = hasNewerMessages,
@@ -3405,6 +3418,42 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun setMessageContextExcluded(
+        messageId: Long,
+        excluded: Boolean,
+        onResult: (Boolean) -> Unit = {},
+    ) {
+        if (_state.value.isGenerating) {
+            _state.update { it.copy(error = "当前正在生成，请等待完成后再调整上下文") }
+            onResult(false)
+            return
+        }
+        val launched = launchBranchTransition contextTransition@{
+            val branchId = currentBranchId()
+            var committed = false
+            try {
+                committed = messageDao.setContextExcluded(sessionId, branchId, messageId, excluded)
+                if (!committed) {
+                    _state.update { it.copy(error = "该消息已不在当前故事线，请刷新后重试") }
+                    onResult(false)
+                    return@contextTransition
+                }
+                refreshMessagesUi(branchId)
+                onResult(currentBranchId() == branchId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                _state.update { it.copy(error = if (committed)
+                    "上下文设置已保存，但对话刷新失败，请重新进入对话" else "上下文设置失败，请重试") }
+                onResult(false)
+            }
+        }
+        if (!launched) {
+            _state.update { it.copy(error = "当前正在生成或切换故事线，请稍后再调整上下文") }
+            onResult(false)
+        }
+    }
+
     fun toggleBookmark(messageId: Long) =
         setBookmark(messageId, messageId !in _state.value.bookmarkedMessageIds)
 
@@ -3800,6 +3849,7 @@ class ChatViewModel @Inject constructor(
                 }
             }
             is MessageAction.ToggleBookmark -> toggleBookmark(action.message.id)
+            is MessageAction.SetContextExcluded -> setMessageContextExcluded(action.message.id, action.excluded)
             is MessageAction.SelectChoice -> {
                 val choice = action.choice.trim()
                 val current = _state.value

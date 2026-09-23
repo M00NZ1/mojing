@@ -120,6 +120,9 @@ internal fun MessageActionPanelContent(
     onDismiss: () -> Unit,
     onAction: (MessageAction) -> Unit,
     onSelectText: (() -> Unit)? = null,
+    isContextExcluded: Boolean = false,
+    canToggleContext: Boolean = true,
+    showContextAction: Boolean = true,
 ) {
     if (isGenerating) {
         Text("回复生成中，部分操作暂不可用", modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
@@ -170,6 +173,18 @@ internal fun MessageActionPanelContent(
                 null,
             )
         },
+    )
+    if (showContextAction) MessageActionRow(
+        modifier = Modifier.fillMaxWidth(),
+        text = { Text(if (isContextExcluded) "恢复到模型上下文" else "从模型上下文排除") },
+        supportingText = when {
+            canToggleContext -> "只影响当前故事线的后续回复与自动记忆；原文、目录和采用版本保留"
+            message.swipeGroupId.isNullOrBlank() -> "这条附属消息原本不参与模型上下文"
+            else -> "请先切换到这个回复版本"
+        },
+        enabled = !isGenerating && canToggleContext,
+        onClick = { onAction(MessageAction.SetContextExcluded(message, !isContextExcluded)); onDismiss() },
+        leadingIcon = { Icon(if (isContextExcluded) Icons.Default.AddCircleOutline else Icons.Default.RemoveCircleOutline, null) },
     )
     MessageActionRow(
         modifier = Modifier.fillMaxWidth(),
@@ -283,6 +298,8 @@ fun MessageBubble(
     userAvatarColor: String = "",
     userDisplayName: String = "",
     isBookmarked: Boolean = false,
+    isContextExcluded: Boolean = false,
+    canToggleContext: Boolean = true,
     canContinueReply: Boolean = false,
     canRegenerate: Boolean = false,
     isGenerating: Boolean = false,
@@ -354,6 +371,9 @@ fun MessageBubble(
                         message, isBookmarked, canContinueReply, canRegenerate, isGenerating,
                         imageAttachmentCount, isSavingImages, dismissMenu, onAction,
                         onSelectText = { showSelection = true },
+                        isContextExcluded = isContextExcluded,
+                        canToggleContext = canToggleContext && !readOnly,
+                        showContextAction = !readOnly,
                     )
                 }
             }

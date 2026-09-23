@@ -479,4 +479,19 @@ object Migrations {
         }
     }
 
+    val MIGRATION_21_22 = object : Migration(21, 22) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """CREATE TABLE IF NOT EXISTS `branch_context_exclusions` (
+                    `sessionId` INTEGER NOT NULL,
+                    `branchId` TEXT NOT NULL,
+                    `messageKey` TEXT NOT NULL,
+                    PRIMARY KEY(`sessionId`, `branchId`, `messageKey`),
+                    FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )""".trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_branch_context_exclusions_sessionId` ON `branch_context_exclusions` (`sessionId`)")
+        }
+    }
+
 }

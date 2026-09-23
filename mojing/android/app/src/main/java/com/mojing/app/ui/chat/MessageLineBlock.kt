@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mojing.app.data.local.entity.MessageAttachmentEntity
+import com.mojing.app.data.local.entity.contextSelectionKey
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
@@ -46,6 +47,7 @@ fun MessageLineBlock(
     userAvatarColor: String,
     userDisplayName: String,
     bookmarkedMessageIds: Set<Long>,
+    excludedContextKeys: Set<String> = emptySet(),
     currentChoiceMessageId: Long? = null,
     canContinueReply: Boolean = false,
     canRegenerate: Boolean = false,
@@ -174,6 +176,8 @@ fun MessageLineBlock(
                     userAvatarColor = userAvatarColor,
                     userDisplayName = userDisplayName,
                     isBookmarked = bookmarkedMessageIds.contains(msg.id),
+                    isContextExcluded = msg.contextSelectionKey() in excludedContextKeys,
+                    canToggleContext = msg.id == headerMsg.id && msg.includeInContext,
                     canContinueReply = canContinueReply && msg.id == headerMsg.id,
                     canRegenerate = canRegenerate && msg.id == headerMsg.id,
                     isGenerating = isGenerating,
@@ -211,6 +215,8 @@ fun MessageLineBlock(
                 userAvatarColor = userAvatarColor,
                 userDisplayName = userDisplayName,
                 isBookmarked = bookmarkedMessageIds.contains(msg.id),
+                isContextExcluded = msg.contextSelectionKey() in excludedContextKeys,
+                canToggleContext = msg.includeInContext,
                 canContinueReply = canContinueReply,
                 canRegenerate = canRegenerate,
                 isGenerating = isGenerating,
@@ -221,6 +227,14 @@ fun MessageLineBlock(
                 senderLabel = senderLabel,
                 showSenderHeader = showSenderHeader,
                 timeText = timeText,
+            )
+        }
+        if (!readOnly && headerMsg.contextSelectionKey() in excludedContextKeys) {
+            Text(
+                "不参与后续上下文",
+                modifier = Modifier.padding(horizontal = d.rowHorizontal, vertical = 2.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         if (canContinueReply && !isGenerating) {
