@@ -556,6 +556,17 @@ fun SessionListScreen(
     }
 
     if (showCreateDialog) {
+        var worldPickerOpen by remember { mutableStateOf(false) }
+        var characterPickerOpen by remember { mutableStateOf(false) }
+        val selectableCharacters = remember(selectedEncId, allBoundCharacters) {
+            when (val id = selectedEncId) {
+                null -> allBoundCharacters
+                else -> allBoundCharacters.filter { it.boundEncyclopediaId <= 0L || it.boundEncyclopediaId == id }
+            }
+        }
+        LaunchedEffect(selectedEncId, allBoundCharacters) {
+            selectedCharacterIds = openingCharacterSelection(selectableCharacters.map { it.id }.toSet(), selectedCharacterIds)
+        }
         ModalBottomSheet(
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             onDismissRequest = {
@@ -567,15 +578,6 @@ fun SessionListScreen(
             },
         ) {
             val newSessionScroll = rememberScrollState()
-            val selectableCharacters = remember(selectedEncId, allBoundCharacters) {
-                when (val id = selectedEncId) {
-                    null -> allBoundCharacters
-                    else -> allBoundCharacters.filter { it.boundEncyclopediaId <= 0L || it.boundEncyclopediaId == id }
-                }
-            }
-            LaunchedEffect(selectedEncId, allBoundCharacters) {
-                selectedCharacterIds = openingCharacterSelection(selectableCharacters.map { it.id }.toSet(), selectedCharacterIds)
-            }
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -659,25 +661,16 @@ fun SessionListScreen(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                var worldExpanded by remember { mutableStateOf(false) }
-                ExposedDropdownMenuBox(expanded = worldExpanded, onExpandedChange = { worldExpanded = it }) {
-                    OutlinedTextField(
-                        value = encyclopedias.firstOrNull { it.id == selectedEncId }?.name
+                OutlinedButton(onClick = { worldPickerOpen = true },
+                    enabled = !isCreatingSession && !isLoadingDialogData && dialogLoadError == null,
+                    modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("世界", style = MaterialTheme.typography.labelSmall)
+                        Text(encyclopedias.firstOrNull { it.id == selectedEncId }?.name
                             ?: selectedTemplate?.label ?: "不绑定世界",
-                        onValueChange = {}, readOnly = true, singleLine = true,
-                        label = { Text("世界") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(worldExpanded) },
-                        modifier = Modifier.fillMaxWidth().menuAnchor(),
-                    )
-                    ExposedDropdownMenu(expanded = worldExpanded, onDismissRequest = { worldExpanded = false }) {
-                        DropdownMenuItem(text = { Text("不绑定世界") }, onClick = { selectedTemplate = null; selectedEncId = null; worldExpanded = false })
-                        encyclopedias.forEach { enc ->
-                            DropdownMenuItem(text = { Text(enc.name) }, onClick = { selectedTemplate = null; selectedEncId = enc.id; worldExpanded = false })
-                        }
-                        templates.filter { it.id !in worldMappings && it.templateId != "custom" }.forEach { template ->
-                            DropdownMenuItem(text = { Text("${template.label} · 旧资料") }, onClick = { selectedTemplate = template; selectedEncId = null; worldExpanded = false })
-                        }
+                            maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
+                    Icon(Icons.Default.ExpandMore, contentDescription = "选择世界")
                 }
 
                 Text("参与角色", style = MaterialTheme.typography.labelLarge,
@@ -722,57 +715,13 @@ fun SessionListScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    var charExpanded by remember { mutableStateOf(false) }
-                    ExposedDropdownMenuBox(
-                        expanded = charExpanded,
-                        onExpandedChange = { charExpanded = it },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        OutlinedTextField(
-                            value = if (selectedCharacterIds.isEmpty()) "选择参与角色" else "${selectedCharacterIds.size}/${selectableCharacters.size} 人参与",
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("参与角色") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = charExpanded) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .menuAnchor(),
-                            singleLine = true,
-                        )
-                        ExposedDropdownMenu(
-                            expanded = charExpanded,
-                            onDismissRequest = { charExpanded = false },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text(if (selectedCharacterIds.size == selectableCharacters.size) "全不选" else "全选") },
-                                onClick = {
-                                    selectedCharacterIds =
-                                        if (selectedCharacterIds.size == selectableCharacters.size) {
-                                            emptySet()
-                                        } else {
-                                            selectableCharacters.map { it.id }.toSet()
-                                        }
-                                },
-                            )
-                            selectableCharacters.forEach { ch ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Checkbox(
-                                                checked = ch.id in selectedCharacterIds,
-                                                onCheckedChange = null,
-                                            )
-                                            Text(ch.name.ifBlank { "未命名" })
-                                        }
-                                    },
-                                    onClick = {
-                                        selectedCharacterIds = selectedCharacterIds.toMutableSet().apply {
-                                            if (ch.id in this) remove(ch.id) else add(ch.id)
-                                        }
-                                    },
-                                )
-                            }
-                        }
+                    OutlinedButton(onClick = { characterPickerOpen = true },
+                        enabled = !isCreatingSession && !isLoadingDialogData,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text(if (selectedCharacterIds.isEmpty()) "选择参与角色"
+                            else "${selectedCharacterIds.size}/${selectableCharacters.size} 人参与",
+                            Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Icon(Icons.Default.ExpandMore, contentDescription = "选择参与角色")
                     }
                 }
                 HorizontalDivider(Modifier.padding(top = 2.dp))
@@ -915,6 +864,24 @@ fun SessionListScreen(
                 }
             }
         }
+        if (worldPickerOpen) NewSessionWorldPicker(
+            encyclopedias = encyclopedias,
+            legacyTemplates = templates.filter { it.id !in worldMappings && it.templateId != "custom" },
+            selectedEncyclopediaId = selectedEncId,
+            selectedTemplateId = selectedTemplate?.id,
+            onSelect = { encyclopediaId, template ->
+                selectedEncId = encyclopediaId
+                selectedTemplate = template
+                worldPickerOpen = false
+            },
+            onDismiss = { worldPickerOpen = false },
+        )
+        if (characterPickerOpen) NewSessionCharacterPicker(
+            characters = selectableCharacters,
+            selectedIds = selectedCharacterIds,
+            onSelectionChange = { selectedCharacterIds = it },
+            onDismiss = { characterPickerOpen = false },
+        )
     }
 
     if (showQuickStartReplay) {

@@ -23,7 +23,8 @@ import androidx.compose.ui.unit.dp
 
 /** Search replaces the title row instead of adding a second toolbar. */
 @Composable
-internal fun ModelPickerHeader(title: String, query: String, onQueryChange: (String) -> Unit, onDismiss: () -> Unit) {
+internal fun ModelPickerHeader(title: String, query: String, onQueryChange: (String) -> Unit,
+    onDismiss: () -> Unit, searchLabel: String = "模型") {
     var searching by rememberSaveable { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
@@ -38,7 +39,7 @@ internal fun ModelPickerHeader(title: String, query: String, onQueryChange: (Str
             IconButton(onClick = collapseSearch) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "收起搜索") }
             MoJingTextField(query, onQueryChange,
                 modifier = Modifier.weight(1f).focusRequester(focusRequester).testTag("model-picker-search"),
-                placeholder = { Text("搜索模型") }, singleLine = true,
+                placeholder = { Text("搜索$searchLabel") }, singleLine = true,
                 textStyle = MaterialTheme.typography.bodyMedium,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
@@ -47,7 +48,7 @@ internal fun ModelPickerHeader(title: String, query: String, onQueryChange: (Str
         } else {
             Text(title, Modifier.weight(1f).padding(start = 8.dp),
                 style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            IconButton(onClick = { searching = true }) { Icon(Icons.Default.Search, "搜索模型") }
+            IconButton(onClick = { searching = true }) { Icon(Icons.Default.Search, "搜索$searchLabel") }
         }
         IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "关闭") }
     }
