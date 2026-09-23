@@ -8,6 +8,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -198,7 +199,10 @@ fun CharacterListScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("角色管理") },
+                title = { Text("角色") },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
                 navigationIcon = {
                     IconButton(onClick = { navController.returnToCreationHub() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回创作中心")
@@ -265,34 +269,33 @@ fun CharacterListScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surfaceContainerLowest)
                 .padding(padding),
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("筛选", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(end = 8.dp))
                 ExposedDropdownMenuBox(
                     expanded = filterMenuExpanded,
                     onExpandedChange = { filterMenuExpanded = it },
                     modifier = Modifier.weight(1f),
                 ) {
-                    OutlinedTextField(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor(),
-                        readOnly = true,
-                        value = when (val fid = filterEnc) {
-                            null -> "全部角色"
-                            else -> encOptions.find { it.id == fid }?.name?.ifBlank { null } ?: "百科 $fid"
-                        },
-                        onValueChange = {},
-                        label = { Text("百科") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = filterMenuExpanded) },
-                        singleLine = true,
-                    )
+                    Surface(Modifier.fillMaxWidth().menuAnchor(), shape = MaterialTheme.shapes.small,
+                        color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                        Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Icon(Icons.Default.Public, "按百科筛选", Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(when (val fid = filterEnc) {
+                                null -> "全部角色"
+                                else -> encOptions.find { it.id == fid }?.name?.ifBlank { null } ?: "百科 $fid"
+                            }, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = filterMenuExpanded)
+                        }
+                    }
                     ExposedDropdownMenu(
                         expanded = filterMenuExpanded,
                         onDismissRequest = { filterMenuExpanded = false },
@@ -318,7 +321,7 @@ fun CharacterListScreen(
             }
             LazyRow(
                 modifier = Modifier.fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -361,7 +364,10 @@ fun CharacterListScreen(
                     }
                 }
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+            HorizontalDivider(
+                modifier = Modifier.padding(top = 4.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+            )
             Box(modifier = Modifier.weight(1f)) {
                 if (visibleCharacters.isEmpty()) {
                     val selectedEncyclopedia = filterEnc?.let(encNameById::get)
@@ -600,14 +606,16 @@ private fun CharacterGridCard(
     Card(
         modifier = Modifier
             .fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Column {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(2f / 3f)
+                    .aspectRatio(4f / 5f)
+                    .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
             ) {
                 when {
                     mainPath.isNotEmpty() -> AsyncImage(
@@ -619,7 +627,7 @@ private fun CharacterGridCard(
                     else -> Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)),
+                            .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)),
                         contentAlignment = Alignment.Center
                     ) {
                         Surface(
@@ -656,7 +664,7 @@ private fun CharacterGridCard(
                     )
                 }
             }
-            Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     character.name.ifBlank { "未命名角色" },
                     style = MaterialTheme.typography.titleSmall,

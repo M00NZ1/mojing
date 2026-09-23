@@ -10,6 +10,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -189,7 +190,11 @@ fun CharacterEditScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             if (state.isLoaded && state.loadError == null && !isImeOpen) {
-                Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 3.dp,
+                    shadowElevation = 2.dp,
+                ) {
                     Column(
                         modifier = Modifier.fillMaxWidth().navigationBarsPadding()
                             .padding(horizontal = 16.dp, vertical = 10.dp),
@@ -287,6 +292,7 @@ fun CharacterEditScreen(
             Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surfaceContainerLowest)
                 .padding(padding)
                 .consumeWindowInsets(padding)
                 .imePadding()
@@ -297,7 +303,7 @@ fun CharacterEditScreen(
             if (isImeOpen) state.saveError?.let { error ->
                 Text(error, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
             }
-            Text("基本资料", style = MaterialTheme.typography.titleMedium)
+            CharacterEditorSectionTitle("基本资料", "名称与百科归属")
 
             OutlinedTextField(value = state.name, onValueChange = { viewModel.updateName(it) }, label = { Text("角色名") }, placeholder = { Text("如：林云") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
             var encBindExpanded by remember { mutableStateOf(false) }
@@ -342,8 +348,8 @@ fun CharacterEditScreen(
                     }
                 }
             }
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            Text("人设与表达", style = MaterialTheme.typography.titleMedium)
+            HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+            CharacterEditorSectionTitle("人设与表达", "决定角色如何理解和回应对话")
             if (state.personaRefreshError != null || state.isRefreshingPersona) {
                 Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.medium,
                     modifier = Modifier.fillMaxWidth()) {
@@ -403,8 +409,8 @@ fun CharacterEditScreen(
                 }
             }
 
-            HorizontalDivider()
-            Text("朗读", style = MaterialTheme.typography.titleMedium)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+            CharacterEditorSectionTitle("朗读", "为这个角色选择引擎与音色")
             var showVoiceChoice by remember { mutableStateOf(false) }
             val characterVoice = com.mojing.app.data.resolveVoiceChoice(state.voiceProvider, state.voiceModel,
                 com.mojing.app.data.VoiceChoice("inherit"))
@@ -815,6 +821,24 @@ fun CharacterEditScreen(
                     ) { Text("放弃修改", color = MaterialTheme.colorScheme.error) }
                 }
             },
+        )
+    }
+}
+
+@Composable
+private fun CharacterEditorSectionTitle(
+    title: String,
+    summary: String,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Text(title, style = MaterialTheme.typography.titleLarge)
+        Text(
+            summary,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

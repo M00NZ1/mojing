@@ -41,6 +41,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import com.mojing.app.ui.common.hideImeKeyboard
 
 /** Inserts [insertion] at the selected range and places the cursor after it. */
@@ -89,6 +92,7 @@ fun InputBar(
     var showMacros by remember { mutableStateOf(false) }
     var showNarratorDialog by remember { mutableStateOf(false) }
     var restoreInputFocus by remember { mutableStateOf(false) }
+    var inputFocused by remember { mutableStateOf(false) }
     val inputFocusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -167,14 +171,18 @@ fun InputBar(
             )
         }
         Surface(
-            shape = RoundedCornerShape(18.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLowest,
+            border = BorderStroke(1.dp, if (inputFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
         ) {
             Row(
-                Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                Modifier.fillMaxWidth().padding(4.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
+                IconButton(onClick = { dismissKeyboard(); showActionSheet = true },
+                    enabled = !isGenerating && !isAddingAttachment) {
+                    Icon(Icons.Default.Add, "更多输入工具", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 BasicTextField(
                     value = value,
                     onValueChange = onValueChange,
@@ -182,7 +190,9 @@ fun InputBar(
                         .weight(1f)
                         .heightIn(min = 48.dp, max = 144.dp)
                         .focusRequester(inputFocusRequester)
+                        .semantics { contentDescription = "消息输入" }
                         .onFocusChanged { focusState ->
+                            inputFocused = focusState.isFocused
                             if (focusState.isFocused) keyboard?.show()
                         },
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
@@ -212,7 +222,7 @@ fun InputBar(
                     onClick = if (isGenerating) onStop else onSend,
                     enabled = isGenerating || (!isAddingAttachment && (value.text.isNotBlank() || pendingAttachmentCount > 0)),
                     modifier = Modifier.size(48.dp),
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(12.dp),
                 ) {
                     if (isGenerating) Icon(Icons.Default.Stop, "停止")
                     else Icon(Icons.AutoMirrored.Filled.Send, "发送")
@@ -220,10 +230,6 @@ fun InputBar(
             }
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { dismissKeyboard(); showActionSheet = true },
-                enabled = !isGenerating && !isAddingAttachment) {
-                Icon(Icons.Default.Add, "更多输入工具", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
             Box(Modifier.weight(1f)) { modelSelector?.invoke() }
             if (isImeOpen) {
                 IconButton(onClick = ::dismissKeyboard) { Icon(Icons.Default.KeyboardHide, "收起键盘") }
@@ -232,81 +238,62 @@ fun InputBar(
     }
 
     if (showActionSheet && !isGenerating && !isAddingAttachment) {
-        ModalBottomSheet(onDismissRequest = { showActionSheet = false }) {
-            LazyColumn(
-                modifier = Modifier
-                    .padding(horizontal = 8.dp, vertical = 8.dp)
-                    .heightIn(max = 560.dp),
-            ) {
-                item {
-                    Text(
-                        "输入工具",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-                    )
+        ModalBottomSheet(onDismissRequest = { showActionSheet = false }, dragHandle = null,
+            containerColor = MaterialTheme.colorScheme.surface,
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+            Column(Modifier.fillMaxWidth().heightIn(max = 560.dp)) {
+                Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text("输入工具", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    IconButton(onClick = { showActionSheet = false }) { Icon(Icons.Default.Close, "关闭输入工具") }
                 }
-                item {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ChatToolTile("语音输入", "转成文字", Icons.Default.Mic, Modifier.weight(1f)) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth()) {
+                    item {
+                        ChatToolRow("语音输入", "转成文字", Icons.Default.Mic) {
                             showActionSheet = false
                             onVoiceClick()
                         }
-                        ChatToolTile("表情", "插入到消息", Icons.Default.EmojiEmotions, Modifier.weight(1f)) {
+                        ChatToolRow("表情", "插入到消息", Icons.Default.EmojiEmotions) {
                             showActionSheet = false
                             onOpenEmoji()
                         }
+                        ChatToolRow("添加图片", "选择本机图片", Icons.Default.AttachFile) {
+                            showActionSheet = false
+                            onAttachImageClick()
+                        }
+                        ChatToolRow("试听朗读", if (value.text.isBlank()) "输入文字后可试听" else "朗读输入框内容",
+                            Icons.AutoMirrored.Filled.VolumeUp, enabled = value.text.isNotBlank()) {
+                            showActionSheet = false
+                            onPreviewSpeak()
+                        }
                     }
-                }
-                item {
-                    Text("创作", style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ChatToolTile("生成旁白", "场景与剧情", Icons.Default.TheaterComedy, Modifier.weight(1f)) {
+                    item {
+                        Text("创作", style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp))
+                        ChatToolRow("生成旁白", "场景与剧情", Icons.Default.TheaterComedy) {
                             showNarratorDialog = true
                             showActionSheet = false
                         }
-                        ChatToolTile("生成配图", "描述画面", Icons.Default.Image, Modifier.weight(1f)) {
+                        ChatToolRow("生成配图", "描述画面", Icons.Default.Image) {
                             showActionSheet = false
                             onImageGenClick()
                         }
+                        ChatToolRow("快捷词", "角色名、时间与场景变量", Icons.Default.DataObject,
+                            trailingIcon = if (showMacros) Icons.Default.ExpandLess else Icons.Default.ExpandMore) {
+                            showMacros = !showMacros
+                        }
                     }
-                }
-                item {
-                    ListItem(
-                        headlineContent = { Text("添加图片") },
-                        leadingContent = { Icon(Icons.Default.AttachFile, null) },
-                        modifier = Modifier.clickable { showActionSheet = false; onAttachImageClick() },
-                    )
-                    ListItem(
-                        headlineContent = { Text("试听朗读") },
-                        supportingContent = { Text(if (value.text.isBlank()) "输入文字后可试听" else "朗读输入框内容") },
-                        leadingContent = { Icon(Icons.AutoMirrored.Filled.VolumeUp, null) },
-                        modifier = Modifier.clickable(enabled = value.text.isNotBlank()) {
-                            showActionSheet = false
-                            onPreviewSpeak()
-                        },
-                    )
-                    ListItem(
-                        headlineContent = { Text("快捷词") },
-                        supportingContent = { Text("角色名、时间与场景变量") },
-                        leadingContent = { Icon(Icons.Default.DataObject, null) },
-                        trailingContent = { Icon(if (showMacros) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null) },
-                        modifier = Modifier.clickable { showMacros = !showMacros },
-                    )
-                }
-                if (showMacros) {
-                    items(ChatMacroDefinitions.ALL) { m ->
-                        ListItem(
-                            headlineContent = { Text(m.label) },
-                            supportingContent = { Text(m.description) },
-                            leadingContent = { Icon(Icons.Default.DataObject, contentDescription = null) },
-                            modifier = Modifier.clickable(enabled = !isGenerating && !isAddingAttachment) {
-                                onInsertMacro(m.macro)
+                    if (showMacros) {
+                        items(ChatMacroDefinitions.ALL) { macro ->
+                            ChatToolRow(macro.label, macro.description, Icons.Default.DataObject,
+                                modifier = Modifier.padding(start = 20.dp), enabled = !isGenerating && !isAddingAttachment) {
+                                onInsertMacro(macro.macro)
                                 restoreInputFocus = true
                                 showActionSheet = false
-                            },
-                        )
+                            }
+                        }
                     }
                 }
             }
@@ -330,24 +317,29 @@ fun InputBar(
 }
 
 @Composable
-private fun ChatToolTile(
+private fun ChatToolRow(
     title: String,
     subtitle: String,
     icon: ImageVector,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    trailingIcon: ImageVector? = null,
     onClick: () -> Unit,
 ) {
-    Surface(
-        onClick = onClick,
-        modifier = modifier.heightIn(min = 100.dp),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val colors = MaterialTheme.colorScheme
+    Column(modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .heightIn(min = 64.dp).padding(horizontal = 20.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Icon(icon, null, Modifier.size(22.dp), tint = if (enabled) colors.onSurfaceVariant else colors.onSurface.copy(alpha = 0.38f))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall,
+                    color = if (enabled) colors.onSurface else colors.onSurface.copy(alpha = 0.38f))
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+            }
+            if (trailingIcon != null) Icon(trailingIcon, null, Modifier.size(20.dp), tint = colors.onSurfaceVariant)
         }
+        HorizontalDivider(Modifier.padding(start = 58.dp, end = 20.dp), color = colors.outlineVariant)
     }
 }
