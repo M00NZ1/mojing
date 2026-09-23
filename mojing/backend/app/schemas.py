@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import UUID
 
 import re
 from typing import Literal
@@ -228,6 +229,7 @@ class SessionParticipantUpdate(BaseModel):
 class SessionMessageCreate(BaseModel):
     content: str = Field(min_length=1)
     branch_id: str = "main"
+    client_message_id: UUID | None = None
 
 
 class SessionMessageEdit(SessionMessageCreate):
@@ -313,6 +315,7 @@ class SessionBranchCreate(BaseModel):
 
 class GenerateRequest(BaseModel):
     user_message: str | None = None
+    existing_user_message_id: int | None = Field(default=None, gt=0)
     character_ids: list[int] = []
     include_narrator: bool = False
     narrator_only: bool = False

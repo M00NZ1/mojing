@@ -357,6 +357,7 @@ def create_message(
     parent_message_id: int | None = None,
     regenerated_from_message_id: int | None = None,
     refresh_after_commit: bool = True,
+    client_message_id: str | None = None,
 ) -> MessageModel:
     """写入消息并顺手更新会话更新时间。"""
 
@@ -364,6 +365,7 @@ def create_message(
     resolve_branch_context(db, session_id, normalized_branch_id)
     message = MessageModel(
         session_id=session_id,
+        client_message_id=client_message_id,
         speaker_type=speaker_type,
         character_id=character_id,
         branch_id=normalized_branch_id,

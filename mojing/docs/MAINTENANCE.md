@@ -162,6 +162,8 @@ Web 迁移 `20260913_0013` 新增 `story_request_receipts`，保存版本 1 完�
 
 Web 迁移 `20260913_0014` 新增 `story_generation_drafts`，以版本 1 保存已校验正文、输入快照和生成时的世界背景。暂存先独立提交，成功创建会话后在会话事务内删除；保存失败保留暂存，重试只执行保存。升级支持重复执行，回退代码保留暂存表。数据库连暂存写入也无法完成时，当前请求返回保存错误。
 
+Web 迁移 `20260924_0017` 为消息增加可空的 `client_message_id` 与唯一索引。旧消息保持空值；升级前在数据库旁的 `backups/migrations/` 创建可校验回滚快照，快照失败不改表。升级可重复执行；旧版应用忽略新增字段，降级不删除编号及索引。若迁移失败，先保留正式库和快照并重试。确需回退时先停止本机 API，完整保留当前 `app.db` 及同名 WAL/SHM，校验快照后将包内 `database/app.db` 放入正式库路径，确保旧 WAL/SHM 不留在该路径，再启动旧版应用。
+
 Android 使用 Room migration，schema 位于 [app/schemas/](../android/app/schemas/)，迁移实现位于 [AppDatabase.kt](../android/app/src/main/java/com/mojing/app/data/local/AppDatabase.kt)。
 
 ## CI 与交付

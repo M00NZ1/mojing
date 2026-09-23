@@ -313,6 +313,7 @@ class MessageModel(Base):
     __tablename__ = "messages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    client_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True, unique=True, index=True)
     session_id: Mapped[int] = mapped_column(ForeignKey("chat_sessions.id", ondelete="CASCADE"), index=True)
     speaker_type: Mapped[str] = mapped_column(String(30), default="user")
     character_id: Mapped[int | None] = mapped_column(ForeignKey("characters.id"), nullable=True)

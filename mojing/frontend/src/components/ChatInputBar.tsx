@@ -20,6 +20,11 @@ interface ChatInputBarProps {
   errorMessage?: string;
   retryReplyAvailable?: boolean;
   onRetryReply?: () => void;
+  pendingSendPreview?: string;
+  pendingSendChecking?: boolean;
+  onCheckPendingSend?: () => void;
+  onRetryPendingSend?: () => void;
+  onForgetPendingSend?: () => void;
   onRefreshReplies?: () => void;
   refreshingReplies?: boolean;
   onSend: (event: FormEvent) => void;
@@ -42,7 +47,8 @@ interface ChatInputBarProps {
 export default function ChatInputBar({
   input, setInput, files, setFiles, fileUrls, submittingFiles = [],
   isGenerating, isPending, isError, errorMessage,
-  retryReplyAvailable, onRetryReply, onRefreshReplies, refreshingReplies = false,
+  retryReplyAvailable, onRetryReply, pendingSendPreview, pendingSendChecking = false,
+  onCheckPendingSend, onRetryPendingSend, onForgetPendingSend, onRefreshReplies, refreshingReplies = false,
   onSend, onStop, onQuickAction, quickActionPendingLabel, canCreateEntryFromMessage,
   settingConflictHint,
   quotingPreview, quotingAuthor, onClearQuote, onRequestNarrator, narratorEnabled, inputPlaceholder, narratorActionLabel,
@@ -391,12 +397,24 @@ export default function ChatInputBar({
             {isPending ? <><UiIcon name="loading" className="ui-icon-loading" /><span>发送中</span></> : '发送'}
           </button>}
         </div>
-        {isError && (
+        {isError && !pendingSendPreview && (
           <div className="chat-inputbar-error" role="alert">
             <UiIcon name="warning" />
             <div className="chat-inputbar-error-copy">
               <strong>消息发送失败</strong>
               <span>{streamErrorDetail(errorMessage)}</span>
+            </div>
+          </div>
+        )}
+        {pendingSendPreview && onRetryPendingSend && onCheckPendingSend && onForgetPendingSend && (
+          <div className="chat-inputbar-error chat-inputbar-retry chat-inputbar-pending" role="status">
+            <strong>上次发送尚未确认</strong>
+            <span className="chat-inputbar-pending-preview">{pendingSendPreview}</span>
+            <span>消息可能已保存。重试本次发送会沿用原编号，不会重复写入。</span>
+            <div className="chat-inputbar-pending-actions">
+              <button type="button" className="btn btn-primary btn-sm" onClick={onRetryPendingSend} disabled={isGenerating || isPending || pendingSendChecking}>重试本次发送</button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={onCheckPendingSend} disabled={isGenerating || isPending || pendingSendChecking}>{pendingSendChecking ? '正在核对…' : '检查对话记录'}</button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={onForgetPendingSend} disabled={isGenerating || isPending || pendingSendChecking}>已核对，不再重试</button>
             </div>
           </div>
         )}

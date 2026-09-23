@@ -51,6 +51,49 @@ export type ChatQuoteDraft = {
   content: string;
 };
 
+export type PendingChatSend = {
+  clientMessageId: string;
+  sessionId: number;
+  branchId: string;
+  content: string;
+  input: string;
+  quote: ChatQuoteDraft | null;
+};
+
+const pendingSendKey = (sessionId: number) => `mojing:pending-chat-send:v1:${sessionId}`;
+
+export function loadPendingChatSend(sessionId: number): PendingChatSend | null {
+  try {
+    const raw = getLocalStorage()?.getItem(pendingSendKey(sessionId));
+    if (!raw) return null;
+    const value = JSON.parse(raw) as PendingChatSend;
+    if (!value || value.sessionId !== sessionId
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value.clientMessageId)
+      || typeof value.branchId !== 'string' || !value.branchId
+      || typeof value.content !== 'string' || !value.content.trim()
+      || typeof value.input !== 'string'
+      || (value.quote !== null && (typeof value.quote !== 'object' || value.quote.session_id !== sessionId))) return null;
+    return value;
+  } catch { return null; }
+}
+
+export function savePendingChatSend(send: PendingChatSend): boolean {
+  try {
+    const storage = getLocalStorage();
+    if (!storage) return false;
+    storage.setItem(pendingSendKey(send.sessionId), JSON.stringify(send));
+    return true;
+  } catch { return false; }
+}
+
+export function clearPendingChatSend(sessionId: number, clientMessageId: string): void {
+  try {
+    const storage = getLocalStorage();
+    const saved = loadPendingChatSend(sessionId);
+    if (saved?.clientMessageId === clientMessageId) storage?.removeItem(pendingSendKey(sessionId));
+  } catch { /* A failed cleanup must not hide the saved message. */ }
+}
+
 const quoteKey = (sessionId: number) => `mojing:chat-quote:v1:${sessionId}`;
 
 export function loadChatQuote(sessionId: number): ChatQuoteDraft | null {

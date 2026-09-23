@@ -3651,6 +3651,34 @@ html[data-theme="paper"] .chat-bubble-text hr {
   flex-shrink: 0;
 }
 
+.chat-inputbar-pending {
+  display: grid;
+  justify-content: stretch;
+  gap: 5px;
+  max-height: 42vh;
+  overflow-y: auto;
+  border: 1px solid var(--line-soft);
+  background: var(--surface-2);
+  color: var(--text-1);
+  padding: 10px 12px;
+}
+
+.chat-inputbar-pending strong { font-size: 0.82rem; }
+.chat-inputbar-pending-preview {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.chat-inputbar-pending-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 3px;
+}
+
 .notice {
   padding: 10px 14px;
   border-radius: 8px;

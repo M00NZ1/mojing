@@ -6,6 +6,7 @@ from contextlib import closing
 from pathlib import Path
 from urllib.parse import quote
 from uuid import uuid4
+from uuid import UUID
 
 import anyio
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
@@ -721,10 +722,21 @@ def toggle_message_context(session_id: int, message_id: int, payload: MessageCon
 
 @router.post("/{session_id}/user-message")
 def add_user_message(session_id: int, payload: SessionMessageCreate, db: Session = Depends(get_db)):
+    client_message_id = str(payload.client_message_id) if payload.client_message_id else None
+    branch_id = (payload.branch_id or "main").strip() or "main"
+    if client_message_id:
+        begin_storyline_write(db)
+        existing = db.scalar(select(MessageModel).where(MessageModel.client_message_id == client_message_id))
+        if existing is not None:
+            if (existing.session_id != session_id or existing.branch_id != branch_id
+                    or existing.speaker_type != "user" or existing.content != payload.content):
+                db.rollback()
+                raise HTTPException(status_code=409, detail="发送编号已用于另一条消息，请重新发送。")
+            db.commit()
+            return serialize_message(existing)
     session = db.get(ChatSessionModel, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="会话不存在")
-    branch_id = (payload.branch_id or "main").strip() or "main"
     try:
         parent_message_id = get_visible_tail_message_id(db, session_id, branch_id)
         message = create_message(
@@ -733,9 +745,22 @@ def add_user_message(session_id: int, payload: SessionMessageCreate, db: Session
             speaker_type="user",
             content=payload.content,
             branch_id=branch_id,
-            parent_message_id=parent_message_id)
+            parent_message_id=parent_message_id,
+            client_message_id=client_message_id)
     except BranchContextError as exc:
         _raise_branch_http_error(exc)
+    return serialize_message(message)
+
+
+@router.get("/{session_id}/user-message/by-client-id/{client_message_id}")
+def get_user_message_by_client_id(session_id: int, client_message_id: UUID, db: Session = Depends(get_db)):
+    message = db.scalar(select(MessageModel).where(
+        MessageModel.client_message_id == str(client_message_id),
+        MessageModel.session_id == session_id,
+        MessageModel.speaker_type == "user",
+    ))
+    if message is None:
+        raise HTTPException(status_code=404, detail="未找到这次发送的消息")
     return serialize_message(message)
 
 
@@ -1085,6 +1110,16 @@ def generate_stream(session_id: int, payload: GenerateRequest, db: Session = Dep
     except BranchContextError as exc:
         _raise_branch_http_error(exc)
 
+    if payload.user_message and payload.existing_user_message_id is not None:
+        raise HTTPException(status_code=400, detail="本轮消息不能同时提交正文和已保存消息编号")
+    selection_text = payload.user_message or ""
+    if payload.existing_user_message_id is not None:
+        existing_user_message = db.get(MessageModel, payload.existing_user_message_id)
+        if (existing_user_message is None or existing_user_message.session_id != session_id
+                or existing_user_message.branch_id != branch_id or existing_user_message.speaker_type != "user"):
+            raise HTTPException(status_code=400, detail="本轮已保存消息不属于当前故事线")
+        selection_text = existing_user_message.content
+
     if payload.user_message:
         create_message(
             db,
@@ -1112,7 +1147,7 @@ def generate_stream(session_id: int, payload: GenerateRequest, db: Session = Dep
         target_ids, plan_reason = select_speakers_for_turn(
             db,
             session_id,
-            payload.user_message or "",
+            selection_text,
             payload.max_auto_speakers,
             payload.branch_id or "main")
     elif payload.character_ids:

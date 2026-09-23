@@ -26,7 +26,7 @@ import { friendlyFetchError } from '../utils/userFacingError';
 import { hasUnsavedEditMessage } from '../utils/editMessageDraft';
 import { extractChoicesFromMessage, mergeRoundChoices, stripChoicesFromMessageContent } from '../utils/chatChoiceParsing';
 import { getRegenerationBranchPoint } from '../utils/chatBranching';
-import { clearChatDraft, loadChatDraft, saveChatDraft, loadChatQuote, saveChatQuote, type ChatQuoteDraft } from '../utils/chatDraftStorage';
+import { clearChatDraft, loadChatDraft, saveChatDraft, loadChatQuote, saveChatQuote, clearPendingChatSend, loadPendingChatSend, savePendingChatSend, type ChatQuoteDraft, type PendingChatSend } from '../utils/chatDraftStorage';
 import { loadSpeakerTurnMode, saveSpeakerTurnMode, type SpeakerTurnMode } from '../utils/speakerTurnMode';
 import { canCreateEntryFromMessage, isPersistedMessageId } from '../utils/messageAvailability';
 import { removeSelectedFiles } from '../utils/fileSelection';
@@ -112,6 +112,9 @@ export default function ChatPage() {
   const inputDraftMirrorRef = useRef('');
   const inputDraftRevisionRef = useRef(0);
   const [input, setInput] = useState(() => (Number.isFinite(sessionId) ? loadChatDraft(sessionId) ?? '' : ''));
+  const [pendingSend, setPendingSend] = useState<PendingChatSend | null>(() =>
+    Number.isFinite(sessionId) ? loadPendingChatSend(sessionId) : null);
+  const [pendingSendChecking, setPendingSendChecking] = useState(false);
   const [inputFocusRequestKey, setInputFocusRequestKey] = useState(0);
   const [selectedCharacters, setSelectedCharacters] = useState<number[]>([]);
   const [playingClips, setPlayingClips] = useState<VoiceClip[]>([]);
@@ -282,8 +285,10 @@ export default function ChatPage() {
       const restoredDraft = draftInputBySessionRef.current[sessionId] ?? loadChatDraft(sessionId) ?? '';
       draftInputBySessionRef.current[sessionId] = restoredDraft;
       setInput(restoredDraft);
+      setPendingSend(loadPendingChatSend(sessionId));
     } else {
       setInput('');
+      setPendingSend(null);
     }
     quoteRevisionRef.current += 1;
     setQuoteState(loadChatQuote(sessionId));
@@ -476,6 +481,7 @@ export default function ChatPage() {
     ensureLatestMessages,
     retryMessages,
     appendOptimisticUserMessage,
+    confirmUserMessage,
     appendPlaceholderMessage,
     applyStreamingDelta,
     finalizePlaceholderMessage,
@@ -1000,11 +1006,19 @@ export default function ChatPage() {
     const submittedInputRevision = inputDraftRevisionRef.current;
     let outboundPersisted = false;
     let generationRequestStarted = false;
+    let activeClientMessageId: string | null = null;
+    let submittedMessageId: number | undefined;
     const markOutboundPersisted = () => {
       if (outboundPersisted) return;
       outboundPersisted = true;
+      if (activeClientMessageId) {
+        clearPendingChatSend(sessionId, activeClientMessageId);
+        setPendingSend((current) => current?.clientMessageId === activeClientMessageId ? null : current);
+      }
       if (userMessage !== undefined && sessionIdRef.current === sessionId
-        && quoteRevisionRef.current === submittedQuoteRevision) setQuotingMessage(null);
+        && quoteRevisionRef.current === submittedQuoteRevision
+        && (quotingMessage?.id ?? null) === (quoteMessage?.id ?? null)
+        && (quotingMessage?.content ?? null) === (quoteMessage?.content ?? null)) setQuotingMessage(null);
       if (
         userMessage !== undefined
         && sessionIdRef.current === sessionId
@@ -1043,24 +1057,54 @@ export default function ChatPage() {
       }
       generationRequestStarted = true;
       if (filesToSend.length > 0) {
-        await api.createUserMessageWithFiles(sessionId, {
+        const savedMessage = await api.createUserMessageWithFiles(sessionId, {
           content: outboundUserMessage ?? '',
           files: filesToSend,
           branch_id: branchId,
         }, abortController.signal);
-        markOutboundPersisted();
-      } else if (outboundUserMessage && effectiveNarratorOnly) {
-        appendOptimisticUserMessage(outboundUserMessage);
-        await api.addUserMessage(sessionId, outboundUserMessage, branchId);
+        submittedMessageId = savedMessage.id;
         markOutboundPersisted();
       } else if (outboundUserMessage) {
-        appendOptimisticUserMessage(outboundUserMessage);
+        const existingSend = loadPendingChatSend(sessionId)
+          ?? (pendingSend?.sessionId === sessionId ? pendingSend : null);
+        if (existingSend && (existingSend.branchId !== branchId || existingSend.content !== outboundUserMessage)) {
+          throw new Error('上次消息的发送结果尚未确认，请先核对或重试该条消息。');
+        }
+        const send = existingSend ?? {
+          clientMessageId: crypto.randomUUID(), sessionId, branchId,
+          content: outboundUserMessage, input: userMessage ?? '', quote: quoteMessage,
+        };
+        activeClientMessageId = send.clientMessageId;
+        if (!existingSend && !savePendingChatSend(send)) {
+          showToast('浏览器无法保存发送恢复信息，刷新前请核对对话记录。', 'warn');
+        }
+        setPendingSend(send);
+        const optimisticId = !existingSend && streamIntoCurrentList
+          ? appendOptimisticUserMessage(outboundUserMessage) : undefined;
+        let savedMessage: Message;
+        try {
+          savedMessage = await api.addUserMessage(sessionId, outboundUserMessage, branchId, send.clientMessageId);
+        } catch (sendError) {
+          try {
+            savedMessage = await api.getUserMessageByClientId(sessionId, send.clientMessageId);
+            if (savedMessage.content !== outboundUserMessage || savedMessage.branch_id !== branchId) throw sendError;
+          } catch {
+            throw sendError;
+          }
+        }
+        if (streamIntoCurrentList && sessionIdRef.current === sessionId && selectedBranchRef.current === branchId) {
+          confirmUserMessage(savedMessage, optimisticId);
+        }
+        submittedMessageId = savedMessage.id;
+        markOutboundPersisted();
+        if (abortController.signal.aborted) throw new DOMException('已停止生成', 'AbortError');
       }
 
       await api.streamGenerate(
         sessionId,
         {
-          user_message: effectiveNarratorOnly || filesToSend.length > 0 ? undefined : outboundUserMessage,
+          user_message: undefined,
+          existing_user_message_id: submittedMessageId,
           character_ids: effectiveNarratorOnly ? [] : resolveStreamCharacterIds(),
           include_narrator: effectiveNarratorOnly || runtimeWorld.narrator_enabled,
           narrator_only: effectiveNarratorOnly,
@@ -1272,6 +1316,16 @@ export default function ChatPage() {
       showToast('请先输入消息或选择附件后再发送', 'warn');
       return;
     }
+    const unresolvedSend = loadPendingChatSend(sessionId)
+      ?? (pendingSend?.sessionId === sessionId ? pendingSend : null);
+    const outbound = input.trim()
+      ? (quotingMessage ? buildQuotePrefix(quotingMessage) + input.trim() : input.trim())
+      : '';
+    if (unresolvedSend && (files.length > 0 || unresolvedSend.branchId !== selectedBranchId
+      || unresolvedSend.content !== outbound)) {
+      showToast('上次发送结果未确认，请先检查或重试该条消息。', 'warn');
+      return;
+    }
     const needsParticipant = !participantsQuery.isLoading
       && !participantsQuery.isError
       && (participantsQuery.data?.length ?? 0) === 0
@@ -1291,6 +1345,54 @@ export default function ChatPage() {
       filesToSend: [...files],
       quoteMessage: quotingMessage,
     });
+  }
+
+  async function checkPendingSend() {
+    const send = pendingSend;
+    if (!send || send.sessionId !== sessionId) return;
+    setPendingSendChecking(true);
+    try {
+      const saved = await api.getUserMessageByClientId(sessionId, send.clientMessageId);
+      if (saved.content !== send.content || saved.branch_id !== send.branchId) {
+        throw new Error('已保存的消息与待确认内容不一致，请检查对话记录。');
+      }
+      clearPendingChatSend(sessionId, send.clientMessageId);
+      setPendingSend((current) => current?.clientMessageId === send.clientMessageId ? null : current);
+      if (inputDraftMirrorRef.current === send.input && quotingMessage?.id === (send.quote?.id ?? undefined)) {
+        updateInput('');
+        setQuotingMessage(null);
+      }
+      if (selectedBranchRef.current === send.branchId) void reloadMessages();
+      setRetryReplyBranchId(send.branchId);
+      showToast('消息已保存，可从对话记录继续生成回复。', 'success');
+    } catch (error) {
+      showToast(`尚未确认消息已保存：${toastErrorMessage(error)}。沿用本次编号重试不会重复写入。`, 'warn');
+    } finally {
+      setPendingSendChecking(false);
+    }
+  }
+
+  async function retryPendingSend() {
+    const send = pendingSend;
+    if (!send || send.sessionId !== sessionId) return;
+    if (send.branchId !== selectedBranchRef.current) {
+      const result = await activateBranch(send.branchId);
+      if (!result.ok) return;
+    }
+    if (!reserveGeneration()) return;
+    setRetryReplyBranchId(null);
+    sendMutation.mutate({
+      sessionId, branchId: send.branchId, userMessage: send.input,
+      filesToSend: [], quoteMessage: send.quote,
+    });
+  }
+
+  function forgetPendingSend() {
+    const send = pendingSend;
+    if (!send || send.sessionId !== sessionId) return;
+    clearPendingChatSend(sessionId, send.clientMessageId);
+    setPendingSend(null);
+    showToast('已清除待确认标记；原请求仍可能写入，请先核对对话记录。', 'warn');
   }
 
   function useChoice(choice: string, sourceMessageId: number) {
@@ -1886,6 +1988,11 @@ export default function ChatPage() {
           errorMessage={sendMutation.error?.message}
           retryReplyAvailable={retryReplyBranchId === selectedBranchId}
           onRetryReply={retryLastReply}
+          pendingSendPreview={pendingSend?.sessionId === sessionId && !isGenerating ? pendingSend.input.trim().slice(0, 100) : undefined}
+          pendingSendChecking={pendingSendChecking}
+          onCheckPendingSend={() => { void checkPendingSend(); }}
+          onRetryPendingSend={() => { void retryPendingSend(); }}
+          onForgetPendingSend={forgetPendingSend}
           onRefreshReplies={() => { void reloadMessages(); }}
           refreshingReplies={messagesLoading}
           onSend={handleSend}

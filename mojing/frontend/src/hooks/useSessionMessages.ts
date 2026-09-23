@@ -176,6 +176,18 @@ export function useSessionMessages(sessionId: number, branchId: string) {
       }
       return next;
     });
+    return tempUserMessage.id;
+  }
+
+  function confirmUserMessage(savedMessage: Message, optimisticId?: number) {
+    updateMessagePages((pages) => {
+      const cleaned = pages.map((page) => page.filter((message) => message.id !== optimisticId));
+      if (cleaned.some((page) => page.some((message) => message.id === savedMessage.id))) return cleaned;
+      if (cleaned.length === 0) return [[savedMessage]];
+      const lastIndex = cleaned.length - 1;
+      cleaned[lastIndex] = [...cleaned[lastIndex], savedMessage];
+      return cleaned;
+    });
   }
 
   function appendPlaceholderMessage(message: Message) {
@@ -419,6 +431,7 @@ export function useSessionMessages(sessionId: number, branchId: string) {
     retryLoadMore: loadMore,
     retryLoadNewer: loadNewer,
     appendOptimisticUserMessage,
+    confirmUserMessage,
     appendPlaceholderMessage,
     applyStreamingDelta,
     finalizePlaceholderMessage,

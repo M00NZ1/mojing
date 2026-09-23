@@ -14,6 +14,7 @@ from .backup_service import BackupError, build_database_rollback_snapshot
 SESSION_BRANCH_MIGRATION_ID = "20260829_session_branch_checkpoints"
 SESSION_BRANCH_TABLE = "session_branches"
 COST_SCHEMA_MIGRATION_ID = "20260923_cost_pricing"
+MESSAGE_CLIENT_ID_MIGRATION_ID = "20260924_message_client_id"
 
 
 class SchemaMigrationError(RuntimeError):
@@ -45,6 +46,77 @@ class _SchemaRequirements:
 
 
 SnapshotBuilder = Callable[[Path, str], Path]
+
+
+def ensure_message_client_id_schema(
+    executor: Session | Connection,
+    *,
+    snapshot_builder: SnapshotBuilder = build_database_rollback_snapshot,
+) -> SchemaMigrationResult:
+    """Add an optional indexed send ID without rewriting existing messages."""
+    connection = _connection_for(executor)
+    if connection.engine.url.get_backend_name() != "sqlite":
+        raise SchemaMigrationError("消息去重结构仅支持本机 SQLite 数据库。")
+    if not _table_exists(connection, "messages"):
+        return SchemaMigrationResult(changed=False)
+
+    def requirements() -> tuple[bool, bool]:
+        columns = _column_names(connection, "messages")
+        if not {"id", "session_id", "speaker_type", "branch_id", "content"}.issubset(columns):
+            raise SchemaMigrationError("消息表缺少基础字段，已停止自动迁移。")
+        missing_column = "client_message_id" not in columns
+        missing_index = missing_column or not _has_index_shape(
+            _index_shapes(connection, "messages"), ("client_message_id",), True,
+        )
+        if not missing_column and missing_index:
+            duplicate = connection.exec_driver_sql(
+                "SELECT 1 FROM messages WHERE client_message_id IS NOT NULL "
+                "GROUP BY client_message_id HAVING COUNT(*) > 1 LIMIT 1"
+            ).first()
+            if duplicate is not None:
+                raise SchemaMigrationError("消息发送编号存在重复值，已停止自动迁移。")
+        return missing_column, missing_index
+
+    missing_column, missing_index = requirements()
+    if not (missing_column or missing_index):
+        return SchemaMigrationResult(changed=False)
+    snapshot_path: Path | None = None
+    try:
+        _begin_sqlite_write_transaction(connection)
+        missing_column, missing_index = requirements()
+        if not (missing_column or missing_index):
+            if isinstance(executor, Session):
+                executor.commit()
+            return SchemaMigrationResult(changed=False)
+        database = connection.engine.url.database
+        if database and database != ":memory:":
+            snapshot_path = snapshot_builder(_sqlite_database_path(connection), MESSAGE_CLIENT_ID_MIGRATION_ID)
+        if missing_column:
+            connection.exec_driver_sql("ALTER TABLE messages ADD COLUMN client_message_id VARCHAR(36)")
+        if missing_index:
+            connection.exec_driver_sql(
+                "CREATE UNIQUE INDEX ix_messages_client_message_id "
+                "ON messages (client_message_id)"
+            )
+        if isinstance(executor, Session):
+            executor.commit()
+    except BackupError as exc:
+        if isinstance(executor, Session):
+            executor.rollback()
+        raise SchemaMigrationError("无法创建迁移前回滚快照，消息表未修改。") from exc
+    except Exception as exc:
+        if isinstance(executor, Session):
+            executor.rollback()
+        raise SchemaMigrationError(
+            "消息发送编号迁移失败；已保留迁移前回滚快照。" if snapshot_path else "消息发送编号迁移失败，消息表未修改。",
+            snapshot_path=snapshot_path,
+        ) from exc
+    return SchemaMigrationResult(
+        changed=True,
+        snapshot_path=snapshot_path,
+        added_columns=("client_message_id",) if missing_column else (),
+        added_indexes=("ix_messages_client_message_id",) if missing_index else (),
+    )
 
 
 def ensure_cost_schema(

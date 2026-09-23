@@ -129,7 +129,8 @@ AI 驱动的角色扮演对话平台，**本地优先**设计，完整开源。
 
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
-        from .services.schema_migration_service import ensure_cost_schema
+        from .services.schema_migration_service import ensure_cost_schema, ensure_message_client_id_schema
+        ensure_message_client_id_schema(db)
         ensure_cost_schema(db)
         bootstrap_legacy_data(db, Path(__file__).resolve().parents[2])
         install_starter_catalog(db)

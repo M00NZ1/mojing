@@ -423,11 +423,14 @@ export const api = {
   getSession(sessionId: number) {
     return request<SessionItem>(`/sessions/${sessionId}`);
   },
-  addUserMessage(sessionId: number, content: string, branchId = 'main') {
+  addUserMessage(sessionId: number, content: string, branchId = 'main', clientMessageId?: string) {
     return request<Message>(`/sessions/${sessionId}/user-message`, {
       method: 'POST',
-      body: JSON.stringify({ content, branch_id: branchId }),
+      body: JSON.stringify({ content, branch_id: branchId, client_message_id: clientMessageId }),
     });
+  },
+  getUserMessageByClientId(sessionId: number, clientMessageId: string) {
+    return request<Message>(`/sessions/${sessionId}/user-message/by-client-id/${encodeURIComponent(clientMessageId)}`);
   },
   sessionTimeline(sessionId: number) {
     return request<{ entries: { title: string; description: string; entry_type: string; timestamp: string; era: string }[]; gameplay_mode: string }>(`/sessions/${sessionId}/timeline`);
@@ -1287,6 +1290,7 @@ export const api = {
     sessionId: number,
     payload: {
       user_message?: string;
+      existing_user_message_id?: number;
       character_ids?: number[];
       include_narrator?: boolean;
       auto_select_speakers?: boolean;
