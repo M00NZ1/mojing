@@ -10,6 +10,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -89,6 +92,9 @@ fun EntryEditScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var isCoverImporting by remember { mutableStateOf(false) }
     var advancedOpen by rememberSaveable { mutableStateOf(false) }
+    var sectionMenuOpen by remember { mutableStateOf(false) }
+    val sectionTargets = remember(entryId, encyclopediaId) { List(4) { BringIntoViewRequester() } }
+    val sectionLabels = listOf("基本资料", "正文与摘要", "条目封面", "高级设置")
     var showDiscardDialog by rememberSaveable { mutableStateOf(false) }
     val canSave = state.loadError == null && (!state.isPersisted || state.isDirty)
     val blockingBusy = state.isSaving || state.isGeneratingCover || isCoverImporting
@@ -178,6 +184,22 @@ fun EntryEditScreen(
                     }
                 },
                 actions = {
+                    if (subTab == EntryEditSubTab.EDIT && state.isLoaded && state.loadError == null) {
+                        Box {
+                            IconButton(onClick = { sectionMenuOpen = true }) {
+                                Icon(Icons.Default.Toc, "编辑目录")
+                            }
+                            DropdownMenu(expanded = sectionMenuOpen, onDismissRequest = { sectionMenuOpen = false }) {
+                                sectionLabels.forEachIndexed { index, label ->
+                                    DropdownMenuItem(text = { Text(label) }, onClick = {
+                                        sectionMenuOpen = false
+                                        hideImeKeyboard(keyboardController, focusManager)
+                                        scope.launch { sectionTargets[index].bringIntoView() }
+                                    })
+                                }
+                            }
+                        }
+                    }
                     if (isImeOpen) {
                         TextButton(onClick = { viewModel.save() }, enabled = saveEnabled) {
                             Text(saveLabel)
@@ -188,7 +210,7 @@ fun EntryEditScreen(
         },
         bottomBar = {
             if (!isImeOpen && state.isLoaded && state.loadError == null) {
-                Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp, shadowElevation = 2.dp) {
                     Column(Modifier.navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
                         Button(
                             onClick = { viewModel.save() },
@@ -220,7 +242,7 @@ fun EntryEditScreen(
                 }
             }
         } else {
-        Column(modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
+        Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(padding).consumeWindowInsets(padding).imePadding()) {
             val feedback = state.saveError ?: state.versionError
             if (feedback != null) {
                 Surface(color = MaterialTheme.colorScheme.errorContainer) {
@@ -270,7 +292,7 @@ fun EntryEditScreen(
                         .padding(top = 16.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("基本资料", style = MaterialTheme.typography.titleMedium)
+                    Text("基本资料", Modifier.bringIntoViewRequester(sectionTargets[0]), style = MaterialTheme.typography.titleLarge)
                     EntryConfidenceSelector(state.confidence, viewModel::updateConfidence, enabled = !pageBusy)
                     if (state.hasSourceMessage) {
                         OutlinedButton(onClick = viewModel::openSourcePreview) { Text("查看对话原文") }
@@ -307,7 +329,7 @@ fun EntryEditScreen(
                     }
 
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                    Text("正文与摘要", style = MaterialTheme.typography.titleMedium)
+                    Text("正文与摘要", Modifier.bringIntoViewRequester(sectionTargets[1]), style = MaterialTheme.typography.titleLarge)
                     if (state.isAiCompleting) {
                         EntryAiCompleteSkeletonBlock()
                     } else {
@@ -350,7 +372,7 @@ fun EntryEditScreen(
                     }
 
                     HorizontalDivider()
-                    Text("条目封面", style = MaterialTheme.typography.titleMedium)
+                    Text("条目封面", Modifier.bringIntoViewRequester(sectionTargets[2]), style = MaterialTheme.typography.titleLarge)
                     if (state.coverImagePath.isNotBlank()) {
                         AsyncImage(
                             model = avatarImageModel(LocalContext.current, state.coverImagePath),
@@ -409,9 +431,11 @@ fun EntryEditScreen(
 
                     OutlinedButton(
                         onClick = { advancedOpen = !advancedOpen },
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).bringIntoViewRequester(sectionTargets[3]),
                     ) {
                         Text(if (advancedOpen) "收起高级设置" else "高级设置")
+                        Spacer(Modifier.weight(1f))
+                        Icon(if (advancedOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
                     }
 
                     if (advancedOpen) {
