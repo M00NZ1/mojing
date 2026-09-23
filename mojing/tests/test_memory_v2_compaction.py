@@ -25,6 +25,7 @@ from backend.app.models import (
 )
 from backend.app.services import chat_service, export_service, memory_service, memory_v2_service, system_config_service
 from backend.app.services.memory_source_service import memory_invalidation_plan
+from backend.app.services.memory_compaction_checkpoint import checkpoint_key
 from backend.app.schemas import LocalConfigUpdate, MessageContextUpdate
 from pydantic import ValidationError
 
@@ -36,6 +37,13 @@ def _database(tmp_path, name="memory-v2.db"):
     )
     Base.metadata.create_all(engine)
     return engine, sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def _complete_memory_rounds(session_id: int, branch_id: str = "main", max_rounds: int = 20) -> int:
+    for round_number in range(1, max_rounds + 1):
+        if memory_service.compact_session_memory_v2(session_id, branch_id):
+            return round_number
+    raise AssertionError("记忆整理未能在限定轮次内完成")
 
 
 @pytest.fixture
@@ -205,13 +213,108 @@ def test_long_source_reaches_last_chunk_before_coverage_advances(tmp_path, monke
             continuation = f"\n[{source[-1].speaker_type} #{source[-1].id} 接续]\n"
             assert "".join(chunks).split(last_marker, 1)[1].replace(continuation, "") == source[-1].content
         calls = _install_memory_fakes(monkeypatch, Session)
-        assert memory_service.compact_session_memory_v2(session_id) is True
+        assert _complete_memory_rounds(session_id) > 1
         summary_prompts = [prompt for prompt in calls if "提取关键事件节点" not in prompt]
         assert len(summary_prompts) > 1
         assert any("结尾约定" in prompt for prompt in summary_prompts)
         with Session() as db:
             segment = db.scalar(select(SessionMemorySegmentModel))
             assert segment is not None and segment.end_message_id == source[-1].id
+    finally:
+        engine.dispose()
+
+
+def test_long_compaction_is_bounded_and_resumes_without_repeating_finished_chunks(tmp_path, monkeypatch):
+    engine, Session = _database(tmp_path, "memory-checkpoint.db")
+    try:
+        session_id, _ = _seed_session(Session)
+        with Session() as db:
+            last = db.scalar(select(MessageModel).where(MessageModel.session_id == session_id)
+                             .order_by(MessageModel.id.desc()).limit(1))
+            last.content = "长剧情" * 5000
+            db.commit()
+        calls = _install_memory_fakes(monkeypatch, Session)
+
+        assert memory_service.compact_session_memory_v2(session_id) is False
+        assert len(calls) == 4
+        with Session() as db:
+            checkpoint = db.scalar(select(AppSettingModel).where(
+                AppSettingModel.key == checkpoint_key(session_id, "main")))
+            assert checkpoint.value_json["phase"] == "events"
+            assert checkpoint.value_json["next_chunk"] == 0
+            assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 0
+            assert db.scalar(select(func.count()).select_from(SessionEventNodeModel)) == 0
+            status = sessions_routes.get_memory_compaction_status(session_id, "main", db)
+            assert status["ready"] is True and status["running"] is False
+            assert status["checkpoint_phase"] == "events"
+            started = []
+            monkeypatch.setattr(sessions_routes, "trigger_memory_compaction_async",
+                                lambda sid, branch: started.append((sid, branch)) or True)
+            assert sessions_routes.continue_memory_compaction(session_id, "main", db)["started"] is True
+            assert started == [(session_id, "main")]
+
+        assert memory_service.compact_session_memory_v2(session_id) is True
+        assert len(calls) == 8
+        assert sum("请将以下对话段落压缩" in prompt for prompt in calls) == 4
+        with Session() as db:
+            assert db.scalar(select(AppSettingModel).where(
+                AppSettingModel.key == checkpoint_key(session_id, "main"))) is None
+            assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 1
+            assert db.scalar(select(func.count()).select_from(SessionEventNodeModel)) <= 5
+    finally:
+        engine.dispose()
+
+
+def test_changed_source_discards_saved_progress_before_resuming(tmp_path, monkeypatch):
+    engine, Session = _database(tmp_path, "memory-checkpoint-source-change.db")
+    try:
+        session_id, _ = _seed_session(Session)
+        with Session() as db:
+            last = db.scalar(select(MessageModel).where(MessageModel.session_id == session_id)
+                             .order_by(MessageModel.id.desc()).limit(1))
+            last.content = "旧剧情" * 5000
+            db.commit()
+            last_id = last.id
+        calls = _install_memory_fakes(monkeypatch, Session)
+        assert memory_service.compact_session_memory_v2(session_id) is False
+        with Session() as db:
+            first_fingerprint = db.scalar(select(AppSettingModel.value_json).where(
+                AppSettingModel.key == checkpoint_key(session_id, "main")))["fingerprint"]
+            db.get(MessageModel, last_id).content = "新剧情" * 5000
+            db.commit()
+
+        assert memory_service.compact_session_memory_v2(session_id) is False
+        assert len(calls) == 8
+        assert all("请将以下对话段落压缩" in prompt for prompt in calls)
+        assert any("新剧情" in prompt for prompt in calls[4:])
+        with Session() as db:
+            assert db.scalar(select(AppSettingModel.value_json).where(
+                AppSettingModel.key == checkpoint_key(session_id, "main")))["fingerprint"] != first_fingerprint
+            assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 0
+        assert memory_service.compact_session_memory_v2(session_id) is True
+    finally:
+        engine.dispose()
+
+
+def test_session_deletion_removes_only_its_memory_checkpoint(tmp_path, monkeypatch):
+    engine, Session = _database(tmp_path, "memory-checkpoint-delete.db")
+    try:
+        session_id, _ = _seed_session(Session)
+        with Session() as db:
+            last = db.scalar(select(MessageModel).where(MessageModel.session_id == session_id)
+                             .order_by(MessageModel.id.desc()).limit(1))
+            last.content = "长剧情" * 5000
+            db.commit()
+        _install_memory_fakes(monkeypatch, Session)
+        assert memory_service.compact_session_memory_v2(session_id) is False
+        with Session() as db:
+            db.add(AppSettingModel(key="webXmemoryXcompactXv1:1:keep", value_json={"user": True}))
+            db.commit()
+            sessions_routes.delete_session(session_id, db)
+            assert db.scalar(select(AppSettingModel).where(
+                AppSettingModel.key == checkpoint_key(session_id, "main"))) is None
+            assert db.scalar(select(AppSettingModel).where(
+                AppSettingModel.key == "webXmemoryXcompactXv1:1:keep")) is not None
     finally:
         engine.dispose()
 
@@ -243,7 +346,7 @@ def test_late_summary_chunk_failure_leaves_sources_uncovered_for_retry(tmp_path,
             assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 0
             assert db.scalar(select(func.count()).select_from(SessionEventNodeModel)) == 0
         monkeypatch.setattr(memory_v2_service, "safe_non_streaming_call", working_call)
-        assert memory_service.compact_session_memory_v2(session_id) is True
+        assert _complete_memory_rounds(session_id) >= 1
         assert any("最终约定" in prompt for prompt in calls)
         with Session() as db:
             assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 1
@@ -279,7 +382,7 @@ def test_events_use_early_and_late_full_source_with_message_links(tmp_path, monk
             return json.dumps(events, ensure_ascii=False)
 
         monkeypatch.setattr(memory_v2_service, "safe_non_streaming_call", source_aware_events)
-        assert memory_service.compact_session_memory_v2(session_id) is True
+        assert _complete_memory_rounds(session_id) > 1
         assert len(event_prompts) > 1
         with Session() as db:
             assert {event.title: event.message_id for event in db.scalars(select(SessionEventNodeModel))} == {
@@ -317,7 +420,7 @@ def test_late_event_chunk_failure_keeps_summary_and_events_retriable(tmp_path, m
             assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 0
             assert db.scalar(select(func.count()).select_from(SessionEventNodeModel)) == 0
         monkeypatch.setattr(memory_v2_service, "safe_non_streaming_call", working_call)
-        assert memory_service.compact_session_memory_v2(session_id) is True
+        assert _complete_memory_rounds(session_id) >= 1
         with Session() as db:
             assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 1
     finally:
@@ -345,7 +448,7 @@ def test_event_candidates_keep_five_most_important_across_chunks(tmp_path, monke
             return json.dumps([{"title": f"事件{event_calls}", "importance": 1 if event_calls <= 5 else 5}])
 
         monkeypatch.setattr(memory_v2_service, "safe_non_streaming_call", ranked_events)
-        assert memory_service.compact_session_memory_v2(session_id) is True
+        assert _complete_memory_rounds(session_id) > 1
         assert event_calls > 5
         with Session() as db:
             titles = {event.title for event in db.scalars(select(SessionEventNodeModel))}
@@ -369,7 +472,7 @@ def test_failed_event_extraction_rolls_back_segment_and_is_retriable(tmp_path, m
 
         calls = _install_memory_fakes(monkeypatch, Session)
         assert memory_service.compact_session_memory_v2(session_id, "main") is True
-        assert len(calls) == 2
+        assert len(calls) == 1
         with Session() as db:
             assert db.scalar(select(func.count()).select_from(SessionMemorySegmentModel)) == 1
             assert db.scalar(select(func.count()).select_from(SessionEventNodeModel)) == 1
@@ -438,6 +541,32 @@ def test_same_branch_compaction_is_single_flight(tmp_path, monkeypatch):
         engine.dispose()
 
 
+def test_async_memory_triggers_coalesce_while_one_round_is_running(monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    follow_up = threading.Event()
+    calls = []
+
+    def fake_compaction(session_id, branch_id):
+        calls.append((session_id, branch_id))
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(3)
+        else:
+            follow_up.set()
+        return True
+
+    monkeypatch.setattr(memory_service, "compact_session_memory_v2", fake_compaction)
+    assert memory_service.schedule_memory_compaction(987654, "main") is True
+    assert entered.wait(2)
+    assert memory_service.is_memory_compaction_running(987654, "main") is True
+    assert memory_service.schedule_memory_compaction(987654, "main") is False
+    assert memory_service.schedule_memory_compaction(987654, "main") is False
+    release.set()
+    assert follow_up.wait(3)
+    assert calls == [(987654, "main"), (987654, "main")]
+
+
 def test_large_backlog_is_processed_in_bounded_batches(tmp_path, monkeypatch):
     engine, Session = _database(tmp_path, "memory-backlog.db")
     try:
@@ -465,21 +594,13 @@ def test_large_backlog_is_processed_in_bounded_batches(tmp_path, monkeypatch):
 def test_async_trigger_forwards_the_generation_branch(monkeypatch):
     captured = {}
 
-    class FakeThread:
-        def __init__(self, *, target, args, daemon):
-            captured.update(target=target, args=args, daemon=daemon)
+    def fake_schedule(session_id, branch_id):
+        captured.update(session_id=session_id, branch_id=branch_id)
+        return True
 
-        def start(self):
-            captured["started"] = True
-
-    monkeypatch.setattr(chat_service.threading, "Thread", FakeThread)
-
-    chat_service.trigger_memory_compaction_async(9, "branch-b")
-
-    assert captured["target"] is memory_service.compact_session_memory_v2
-    assert captured["args"] == (9, "branch-b")
-    assert captured["daemon"] is True
-    assert captured["started"] is True
+    monkeypatch.setattr(memory_service, "schedule_memory_compaction", fake_schedule)
+    assert chat_service.trigger_memory_compaction_async(9, "branch-b") is True
+    assert captured == {"session_id": 9, "branch_id": "branch-b"}
 
 
 def test_session_snapshot_is_generated_only_when_export_is_requested(tmp_path, isolated_export_storage):

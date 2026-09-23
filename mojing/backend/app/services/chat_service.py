@@ -2140,15 +2140,11 @@ def sse_event(data: dict) -> str:
     return f"data: {json.dumps(safe_data, ensure_ascii=False)}\n\n"
 
 
-def trigger_memory_compaction_async(session_id: int, branch_id: str = "main") -> None:
+def trigger_memory_compaction_async(session_id: int, branch_id: str = "main") -> bool:
     """后台触发历史压缩，不阻塞当前响应。v2版本：分段记忆+事件树。"""
-    from .memory_service import compact_session_memory_v2
+    from .memory_service import schedule_memory_compaction
 
-    threading.Thread(
-        target=compact_session_memory_v2,
-        args=(session_id, branch_id),
-        daemon=True,
-    ).start()
+    return schedule_memory_compaction(session_id, branch_id)
 
 
 def _maybe_generate_inline_image(

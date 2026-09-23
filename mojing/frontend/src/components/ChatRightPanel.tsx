@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import type { MemoryCorrection, MemorySegment, Participant, SessionCharacterState, SessionEventPage, WorldTemplate } from '../types';
+import type { MemoryCompactionStatus, MemoryCorrection, MemorySegment, Participant, SessionCharacterState, SessionEventPage, WorldTemplate } from '../types';
 import type { SpeakerTurnMode } from '../utils/speakerTurnMode';
 import { findStoryLineDisplayLabel, storyLineDisplayLabel } from '../utils/storyLinePresentation';
 import InlineQueryError, { type RefreshableQuery } from './InlineQueryError';
@@ -47,6 +47,9 @@ interface ChatRightPanelProps {
   branchOptions: { branch_id: string; label?: string; message_count: number }[];
   memoryStateQuery: RefreshableQuery<SessionCharacterState[]>;
   memorySegmentsQuery: RefreshableQuery<MemorySegment[]>;
+  memoryCompactionQuery: RefreshableQuery<MemoryCompactionStatus>;
+  memoryContinuePending: boolean;
+  onContinueMemory: () => void;
   memoryCorrectionsQuery: RefreshableQuery<MemoryCorrection[]>;
   onLocateMemorySource: (messageId: number) => void;
   onCreateMemoryCorrection: (body: MemoryCorrectionPayload) => Promise<void>;
@@ -108,7 +111,8 @@ export default function ChatRightPanel({
   onSaveWorld, worldReady, worldLoading, worldLoadError, onRetryWorldLoad,
   worldSaving, worldDirty, worldSaveError,
   selectedBranchId, onBranchChange, branchSwitchDisabled = false, branchOptions,
-  memoryStateQuery, memorySegmentsQuery, memoryCorrectionsQuery, onLocateMemorySource,
+  memoryStateQuery, memorySegmentsQuery, memoryCompactionQuery, memoryContinuePending, onContinueMemory,
+  memoryCorrectionsQuery, onLocateMemorySource,
   onCreateMemoryCorrection, onUpdateMemoryCorrection, onDeleteMemoryCorrection,
   promptTraceQuery, tokenUsageQuery, getStorageUrl,
   speakerTurnMode, onSpeakerTurnModeChange, maxAutoSpeakers, onMaxAutoSpeakersChange,
@@ -434,6 +438,29 @@ export default function ChatRightPanel({
             </div>
             <div className="hint">自动摘要用于辅助回顾；已锁定的纠正不会被自动摘要或重建改写。</div>
           </div>
+          {memoryCompactionQuery.isError ? (
+            <InlineQueryError message="整理状态读取失败" error={memoryCompactionQuery.error}
+              retrying={memoryCompactionQuery.isFetching}
+              onRetry={() => { void memoryCompactionQuery.refetch(); }} />
+          ) : memoryCompactionQuery.isLoading ? (
+            <div className="hint" style={{ marginBottom: 8 }}>正在读取整理状态…</div>
+          ) : memoryCompactionQuery.data && (
+            <div className="mini-card" style={{ marginBottom: 8 }}>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>自动整理</div>
+              <div className="hint" role="status">
+                {memoryCompactionQuery.data.running ? '后台正在整理，完成后会更新本页摘要。'
+                  : memoryCompactionQuery.data.checkpoint_phase ? `发现未完成进度：${memoryCompactionQuery.data.checkpoint_phase === 'summary' ? '摘要' : '事件'}已处理 ${memoryCompactionQuery.data.processed_chunks} 段，继续时会复核原文。`
+                    : memoryCompactionQuery.data.ready ? '已有足够的未整理消息，可以继续整理。'
+                      : `尚未达到 ${memoryCompactionQuery.data.threshold} 条消息的自动整理间隔。`}
+              </div>
+              {memoryCompactionQuery.data.ready && !memoryCompactionQuery.data.running && (
+                <button type="button" className="ghost-button" style={{ marginTop: 8 }}
+                  disabled={memoryContinuePending} onClick={onContinueMemory}>
+                  {memoryContinuePending ? '启动中…' : memoryCompactionQuery.data.checkpoint_phase ? '继续整理' : '整理未归档消息'}
+                </button>
+              )}
+            </div>
+          )}
           {correctionForm}
           {correctionError && !correctionDraft && <div className="inline-query-error" role="alert" style={{ marginBottom: 8 }}>{correctionError}</div>}
           {!correctionDraft && <button type="button" className="ghost-button" style={{ marginBottom: 8 }} onClick={() => beginCorrection()}>新增记忆纠正</button>}

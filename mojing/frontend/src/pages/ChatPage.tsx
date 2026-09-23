@@ -400,6 +400,26 @@ export default function ChatPage() {
     enabled: Number.isFinite(sessionId) && showRightPanel && rightPanelTab === 'memory',
     refetchInterval: (query) => query.state.status === 'error' ? false : 10_000,
   });
+  const memoryCompactionQuery = useQuery({
+    queryKey: ['memory-compaction', sessionId, selectedBranchId],
+    queryFn: () => api.getMemoryCompactionStatus(sessionId, selectedBranchId),
+    enabled: Number.isFinite(sessionId) && showRightPanel && rightPanelTab === 'memory',
+    retry: false,
+    refetchInterval: (query) => query.state.status === 'error' ? false : query.state.data?.running ? 3_000 : 10_000,
+  });
+  const continueMemoryMutation = useMutation({
+    mutationFn: ({ currentSessionId, branchId }: { currentSessionId: number; branchId: string }) =>
+      api.continueMemoryCompaction(currentSessionId, branchId),
+    onSuccess: (result, { currentSessionId, branchId }) => {
+      if (result.started) {
+        queryClient.setQueryData(['memory-compaction', currentSessionId, branchId], { ...result, running: true });
+        showToast('已继续后台记忆整理', 'success');
+      } else {
+        void queryClient.invalidateQueries({ queryKey: ['memory-compaction', currentSessionId, branchId] });
+      }
+    },
+    onError: (error) => showToast(toastErrorMessage(error), 'error'),
+  });
 
   const memoryCorrectionsQuery = useQuery({
     queryKey: ['memory-corrections', sessionId, selectedBranchId],
@@ -1950,6 +1970,9 @@ export default function ChatPage() {
         branchOptions={branchOptions}
         memoryStateQuery={memoryStateQuery}
         memorySegmentsQuery={memorySegmentsQuery}
+        memoryCompactionQuery={memoryCompactionQuery}
+        memoryContinuePending={continueMemoryMutation.isPending}
+        onContinueMemory={() => continueMemoryMutation.mutate({ currentSessionId: sessionId, branchId: selectedBranchId })}
         memoryCorrectionsQuery={memoryCorrectionsQuery}
         onLocateMemorySource={(messageId) => { void locateMemorySource(messageId); }}
         onCreateMemoryCorrection={(body) => createMemoryCorrectionMutation.mutateAsync(body).then(() => undefined)}

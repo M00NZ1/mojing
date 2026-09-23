@@ -21,6 +21,14 @@ from ..models import (
 from .llm_client import build_client, resolve_text_model
 from .llm_retry import safe_non_streaming_call
 from .memory_source_service import MemorySourceChanged, source_snapshot, validate_compaction_sources
+from .memory_compaction_checkpoint import (
+    CompactionPaused,
+    MAX_MODEL_CALLS_PER_RUN,
+    clear_checkpoint,
+    read_checkpoint,
+    save_checkpoint,
+    source_fingerprint,
+)
 from .system_config_service import (
     DEFAULT_LOCAL_CONFIG,
     LOCAL_CONFIG_KEY,
@@ -46,12 +54,49 @@ logger = logging.getLogger(__name__)
 MEMORY_COMPACTION_BATCH_SIZE = 40
 _compaction_locks_guard = threading.Lock()
 _compaction_locks: dict[tuple[int, str], threading.Lock] = {}
+_compaction_schedule_guard = threading.Lock()
+_compaction_scheduled: set[tuple[int, str]] = set()
+_compaction_rerun: set[tuple[int, str]] = set()
 
 
 def _get_compaction_lock(session_id: int, branch_id: str) -> threading.Lock:
     key = (session_id, branch_id)
     with _compaction_locks_guard:
         return _compaction_locks.setdefault(key, threading.Lock())
+
+
+def schedule_memory_compaction(session_id: int, branch_id: str = "main") -> bool:
+    """Coalesce overlapping triggers into one active round and one follow-up."""
+    key = (session_id, (branch_id or "main").strip() or "main")
+    with _compaction_schedule_guard:
+        if key in _compaction_scheduled:
+            _compaction_rerun.add(key)
+            return False
+        _compaction_scheduled.add(key)
+
+    def run() -> None:
+        try:
+            while True:
+                compact_session_memory_v2(*key)
+                with _compaction_schedule_guard:
+                    if key in _compaction_rerun:
+                        _compaction_rerun.remove(key)
+                    else:
+                        _compaction_scheduled.remove(key)
+                        return
+        except Exception:
+            with _compaction_schedule_guard:
+                _compaction_scheduled.discard(key)
+                _compaction_rerun.discard(key)
+            logger.exception("记忆整理后台调度失败 session_id=%s branch_id=%s", *key)
+
+    try:
+        threading.Thread(target=run, daemon=True).start()
+    except Exception:
+        with _compaction_schedule_guard:
+            _compaction_scheduled.discard(key)
+        raise
+    return True
 
 
 def import_character_profile(db: Session, character_id: int, source_text: str, source_filename: str, merge_into_persona_prompt: bool) -> CharacterProfileModel:
@@ -429,19 +474,39 @@ def compact_session_memory_v2(session_id: int, branch_id: str = "main") -> bool:
                     .limit(MEMORY_COMPACTION_BATCH_SIZE)
                 )
             )
-            if len(recent_messages) < threshold:
-                return True
-            snapshot = source_snapshot(recent_messages)
-
             summarizer = db.get(CharacterModel, participant_ids[0])
             if summarizer is None:
                 logger.warning("记忆压缩跳过：会话 %s 缺少可用参与角色", session_id)
                 return False
 
-            from .memory_v2_service import create_memory_segment, extract_event_nodes
+            from .memory_v2_service import _memory_input_chunks, create_memory_segment, extract_event_nodes
 
-            client = build_client(summarizer, db)
             model = resolve_text_model(summarizer, db)
+            snapshot = source_snapshot(recent_messages)
+            fingerprint = source_fingerprint(snapshot, last_end_id, model)
+            progress_state = read_checkpoint(
+                db, session_id, normalized_branch_id, fingerprint,
+                {message.id for message in recent_messages},
+            )
+            if len(recent_messages) < threshold and progress_state is None:
+                return True
+            chunk_count = sum(1 for _ in _memory_input_chunks(recent_messages))
+            if progress_state is not None and progress_state["next_chunk"] > chunk_count:
+                progress_state = None
+            client = build_client(summarizer, db)
+            calls_left = MAX_MODEL_CALLS_PER_RUN
+
+            def checkpoint_chunk(state: dict, more_work: bool) -> None:
+                nonlocal progress_state, calls_left
+                save_checkpoint(
+                    db, session_id, normalized_branch_id, fingerprint,
+                    snapshot, last_end_id, state,
+                )
+                progress_state = state
+                calls_left -= 1
+                if calls_left <= 0 and more_work:
+                    raise CompactionPaused
+
             segment = create_memory_segment(
                 db,
                 session_id,
@@ -450,6 +515,10 @@ def compact_session_memory_v2(session_id: int, branch_id: str = "main") -> bool:
                 recent_messages[-1].id,
                 client=client,
                 model=model,
+                messages=recent_messages,
+                checkpoint=progress_state,
+                total_chunks=chunk_count,
+                on_chunk_complete=checkpoint_chunk,
             )
             if segment is None:
                 db.rollback()
@@ -470,6 +539,9 @@ def compact_session_memory_v2(session_id: int, branch_id: str = "main") -> bool:
                 before_write=lambda: validate_compaction_sources(
                     db, session_id, normalized_branch_id, snapshot, last_end_id,
                 ),
+                checkpoint=progress_state,
+                total_chunks=chunk_count,
+                on_chunk_complete=checkpoint_chunk,
             )
             if events is None:
                 db.rollback()
@@ -482,6 +554,8 @@ def compact_session_memory_v2(session_id: int, branch_id: str = "main") -> bool:
 
             # Empty event extraction must still persist the validated segment
             # before calculating the compatible main-story overview.
+            db.add(segment)
+            clear_checkpoint(db, session_id, normalized_branch_id)
             db.flush()
             if normalized_branch_id == "main":
                 # 只维护主线兼容摘要；非主线不能把分支事实写进全局摘要。
@@ -517,6 +591,10 @@ def compact_session_memory_v2(session_id: int, branch_id: str = "main") -> bool:
 
             db.commit()
             return True
+        except CompactionPaused:
+            db.rollback()
+            logger.info("记忆整理已保存续跑点 session_id=%s branch_id=%s", session_id, normalized_branch_id)
+            return False
         except MemorySourceChanged:
             db.rollback()
             logger.info('记忆来源已变化，保留原文并等待下次整理 session_id=%s branch_id=%s', session_id, normalized_branch_id)
@@ -531,3 +609,14 @@ def compact_session_memory_v2(session_id: int, branch_id: str = "main") -> bool:
             return False
         finally:
             db.close()
+
+
+def is_memory_compaction_running(session_id: int, branch_id: str = "main") -> bool:
+    normalized_branch_id = (branch_id or "main").strip() or "main"
+    key = (session_id, normalized_branch_id)
+    with _compaction_schedule_guard:
+        if key in _compaction_scheduled:
+            return True
+    with _compaction_locks_guard:
+        lock = _compaction_locks.get(key)
+        return bool(lock and lock.locked())

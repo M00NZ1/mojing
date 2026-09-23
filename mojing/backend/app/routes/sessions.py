@@ -14,16 +14,20 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from ..services.message_deletion_service import begin_storyline_write, deletion_impact, remove_unreferenced_message
 from ..services.memory_source_service import memory_invalidation_plan, invalidate_source_memory
+from ..services.memory_compaction_checkpoint import clear_session_checkpoints
+from ..services.memory_compaction_checkpoint import CHECKPOINT_VERSION, checkpoint_key
 from ..database import get_db
 from ..config import STORAGE_DIR
 from ..models import (
     CharacterModel,
     ChatSessionModel,
+    AppSettingModel,
     MessageBookmarkModel,
     MessageModel,
     SessionBranchModel,
     SessionCharacterStateModel,
     SessionMemoryCorrectionModel,
+    SessionMemorySegmentModel,
     SessionParticipantModel,
     SessionWorldModel,
     WorldEncyclopediaModel,
@@ -78,7 +82,7 @@ from ..services.backup_service import BackupError, build_portable_project_backup
 from ..services.export_service import build_session_export_archive
 from ..services.session_exchange_service import SessionExchangeError, import_session_archive
 from ..services.tavern_chat_import_service import parse_tavern_chat_file
-from ..services.memory_service import ensure_session_character_state
+from ..services.memory_service import ensure_session_character_state, is_memory_compaction_running
 from ..services.system_config_service import get_local_config, set_setting
 from ..services.model_platform_service import (
     ModelChoiceWrite, ModelSelection, get_model_choice, resolve_selection,
@@ -281,6 +285,7 @@ def delete_session(session_id: int, db: Session = Depends(get_db)):
     session = db.get(ChatSessionModel, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="会话不存在")
+    clear_session_checkpoints(db, session_id)
     db.delete(session)
     db.commit()
     return {"ok": True}
@@ -1262,6 +1267,55 @@ def get_memory_segments(
         return get_visible_memory_segments(db, session_id, branch_id, limit=limit)
     except BranchContextError as exc:
         _raise_branch_http_error(exc)
+
+
+def _memory_compaction_status(session_id: int, branch_id: str, db: Session) -> dict:
+    if db.get(ChatSessionModel, session_id) is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    branch_id = (branch_id or "main").strip() or "main"
+    if branch_id != "main" and db.scalar(select(SessionBranchModel.id).where(
+        SessionBranchModel.session_id == session_id,
+        SessionBranchModel.branch_id == branch_id,
+    )) is None:
+        raise HTTPException(status_code=404, detail="故事线不存在")
+    threshold = get_local_config(db)["memory_compact_threshold"]
+    last_end_id = db.scalar(select(func.max(SessionMemorySegmentModel.end_message_id)).where(
+        SessionMemorySegmentModel.session_id == session_id,
+        SessionMemorySegmentModel.branch_id == branch_id,
+    )) or 0
+    pending_ids = list(db.scalars(select(MessageModel.id).where(
+        MessageModel.session_id == session_id,
+        MessageModel.branch_id == branch_id,
+        MessageModel.include_in_context == True,
+        MessageModel.id > last_end_id,
+    ).order_by(MessageModel.id).limit(threshold)))
+    checkpoint = db.scalar(select(AppSettingModel.value_json).where(
+        AppSettingModel.key == checkpoint_key(session_id, branch_id),
+    ))
+    checkpoint = checkpoint if isinstance(checkpoint, dict) and checkpoint.get("version") == CHECKPOINT_VERSION and checkpoint.get("branch_id") == branch_id else None
+    has_participant = db.scalar(select(SessionParticipantModel.id).where(
+        SessionParticipantModel.session_id == session_id,
+    ).limit(1)) is not None
+    return {
+        "running": is_memory_compaction_running(session_id, branch_id),
+        "ready": has_participant and (len(pending_ids) >= threshold or checkpoint is not None),
+        "checkpoint_phase": checkpoint.get("phase") if checkpoint else None,
+        "processed_chunks": checkpoint.get("next_chunk", 0) if checkpoint else 0,
+        "threshold": threshold,
+    }
+
+
+@router.get("/{session_id}/memory-compaction")
+def get_memory_compaction_status(session_id: int, branch_id: str = "main", db: Session = Depends(get_db)):
+    return _memory_compaction_status(session_id, branch_id, db)
+
+
+@router.post("/{session_id}/memory-compaction/continue")
+def continue_memory_compaction(session_id: int, branch_id: str = "main", db: Session = Depends(get_db)):
+    status = _memory_compaction_status(session_id, branch_id, db)
+    if status["ready"] and not status["running"]:
+        return {**status, "started": trigger_memory_compaction_async(session_id, branch_id)}
+    return {**status, "started": False}
 
 
 def _validate_memory_correction_scope(

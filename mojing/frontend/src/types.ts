@@ -805,6 +805,14 @@ export type MemorySegment = {
   created_at: string;
 };
 
+export type MemoryCompactionStatus = {
+  running: boolean;
+  ready: boolean;
+  checkpoint_phase: 'summary' | 'events' | null;
+  processed_chunks: number;
+  threshold: number;
+};
+
 export type MemoryCorrection = {
   id: number;
   session_id: number;

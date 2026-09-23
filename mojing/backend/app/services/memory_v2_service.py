@@ -119,12 +119,16 @@ def create_memory_segment(
     *,
     client,
     model: str,
+    messages: list[MessageModel] | None = None,
+    checkpoint: dict | None = None,
+    total_chunks: int | None = None,
+    on_chunk_complete: Callable[[dict, bool], None] | None = None,
 ) -> SessionMemorySegmentModel | None:
     """
     为一段消息范围创建分段摘要。
-    不覆盖旧分段，追加新分段。
+    不覆盖旧分段；返回未持久化的结果，交由调用方与事件一起提交。
     """
-    messages = _get_messages_in_range(db, session_id, branch_id, start_msg_id, end_msg_id)
+    messages = messages if messages is not None else _get_messages_in_range(db, session_id, branch_id, start_msg_id, end_msg_id)
     if not messages:
         return None
 
@@ -135,11 +139,17 @@ def create_memory_segment(
         )
     ) or 0
 
-    summary = ""
-    key_facts: list[str] = []
-    key_characters: list[str] = []
-    emotional_tone = "中性"
-    for chunk in _memory_input_chunks(messages):
+    summary = checkpoint["summary"] if checkpoint else ""
+    key_facts: list[str] = list(checkpoint["key_facts"]) if checkpoint else []
+    key_characters: list[str] = list(checkpoint["key_characters"]) if checkpoint else []
+    emotional_tone = checkpoint["emotional_tone"] if checkpoint else "中性"
+    start_chunk = checkpoint["next_chunk"] if checkpoint and checkpoint["phase"] == "summary" else 0
+    chunk_count = total_chunks if total_chunks is not None else sum(1 for _ in _memory_input_chunks(messages))
+    if start_chunk > chunk_count:
+        return None
+    for index, chunk in enumerate(_memory_input_chunks(messages)):
+        if (checkpoint and checkpoint["phase"] == "events") or index < start_chunk:
+            continue
         carried = json.dumps(
             {"summary": summary, "key_facts": key_facts[-8:], "key_characters": key_characters[-8:]},
             ensure_ascii=False,
@@ -188,6 +198,17 @@ def create_memory_segment(
                         target.append(value[:width])
                 del target[:-20]
         emotional_tone = str(result.get("emotional_tone") or "中性")[:60]
+        if on_chunk_complete is not None:
+            on_chunk_complete({
+                "phase": "summary" if index + 1 < chunk_count else "events",
+                "next_chunk": index + 1 if index + 1 < chunk_count else 0,
+                "summary": summary,
+                "key_facts": key_facts,
+                "key_characters": key_characters,
+                "emotional_tone": emotional_tone,
+                "events": [],
+                "event_sequence": 0,
+            }, True)
 
     segment = SessionMemorySegmentModel(
         session_id=session_id,
@@ -200,7 +221,6 @@ def create_memory_segment(
         key_characters=key_characters,
         emotional_tone=emotional_tone,
     )
-    db.add(segment)
     return segment
 
 
@@ -261,6 +281,9 @@ def extract_event_nodes(
     client,
     model: str,
     before_write: Callable[[], None] | None = None,
+    checkpoint: dict | None = None,
+    total_chunks: int | None = None,
+    on_chunk_complete: Callable[[dict, bool], None] | None = None,
 ) -> list[SessionEventNodeModel] | None:
     """从消息中提取事件节点，构建因果树。"""
     if not messages:
@@ -290,9 +313,18 @@ def extract_event_nodes(
     title_to_id = {(ev.title or "").lower(): ev.id for ev in existing_events}
     seen_titles = set(title_to_id)
     source_ids = {message.id for message in messages}
-    candidates: list[tuple[int, int, dict]] = []
-    sequence = 0
-    for chunk in _memory_input_chunks(messages):
+    candidates: list[tuple[int, int, dict]] = [
+        (item[0], item[1], item[2]) for item in checkpoint["events"]
+    ] if checkpoint and checkpoint["phase"] == "events" else []
+    seen_titles.update(candidate[2]["title"].lower() for candidate in candidates)
+    sequence = checkpoint["event_sequence"] if checkpoint and checkpoint["phase"] == "events" else 0
+    start_chunk = checkpoint["next_chunk"] if checkpoint and checkpoint["phase"] == "events" else 0
+    chunk_count = total_chunks if total_chunks is not None else sum(1 for _ in _memory_input_chunks(messages))
+    if start_chunk > chunk_count:
+        return None
+    for index, chunk in enumerate(_memory_input_chunks(messages)):
+        if index < start_chunk:
+            continue
         known_titles = existing_titles + [candidate[2]["title"] for candidate in candidates]
         prompt = f"""从以下对话中提取关键事件节点。消息标记中的接续属于同一条消息。
 
@@ -354,13 +386,24 @@ def extract_event_nodes(
                 "title": title,
                 "event_type": str(ev.get("event_type") or "action")[:60],
                 "description": str(ev.get("description") or "")[:2000],
-                "parent_event_title": str(ev.get("parent_event_title") or "").strip(),
+                "parent_event_title": str(ev.get("parent_event_title") or "").strip()[:200],
                 "message_id": source_id,
             }))
             sequence += 1
             seen_titles.add(title.lower())
         candidates.sort(key=lambda candidate: (-candidate[0], candidate[1]))
         del candidates[5:]
+        if on_chunk_complete is not None:
+            on_chunk_complete({
+                "phase": "events",
+                "next_chunk": index + 1,
+                "summary": checkpoint["summary"],
+                "key_facts": checkpoint["key_facts"],
+                "key_characters": checkpoint["key_characters"],
+                "emotional_tone": checkpoint["emotional_tone"],
+                "events": [[importance, order, item] for importance, order, item in candidates],
+                "event_sequence": sequence,
+            }, index + 1 < chunk_count)
 
     if before_write is not None:
         before_write()

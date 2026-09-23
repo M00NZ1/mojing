@@ -22,6 +22,7 @@ import type {
   WorldJobSummary,
   MacroItem,
   MemoryCorrection,
+  MemoryCompactionStatus,
   MemorySegment,
   Message,
   MessageSearchHit,
@@ -659,6 +660,14 @@ export const api = {
   listMemorySegments(sessionId: number, branchId: string) {
     const search = new URLSearchParams({ branch_id: branchId });
     return request<MemorySegment[]>(`/sessions/${sessionId}/memory-segments?${search.toString()}`);
+  },
+  getMemoryCompactionStatus(sessionId: number, branchId: string) {
+    const search = new URLSearchParams({ branch_id: branchId });
+    return request<MemoryCompactionStatus>(`/sessions/${sessionId}/memory-compaction?${search.toString()}`);
+  },
+  continueMemoryCompaction(sessionId: number, branchId: string) {
+    const search = new URLSearchParams({ branch_id: branchId });
+    return request<MemoryCompactionStatus & { started: boolean }>(`/sessions/${sessionId}/memory-compaction/continue?${search.toString()}`, { method: 'POST' });
   },
   listMemoryCorrections(sessionId: number, branchId: string) {
     const search = new URLSearchParams({ branch_id: branchId });
