@@ -137,6 +137,18 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, '390px 下页面不应横向溢出');
   for (const viewport of [{ width: 390, height: 760 }, { width: 1440, height: 900 }]) {
     await page.setViewportSize(viewport);
+    const navItems = await page.locator('nav.sidebar .nav-btn').evaluateAll((elements) => elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      const icon = element.querySelector('.ui-icon').getBoundingClientRect();
+      return { width: rect.width, height: rect.height, iconWidth: icon.width, iconHeight: icon.height };
+    }));
+    assert.equal(navItems.length, 3);
+    assert.equal(await page.locator('nav.sidebar [aria-current="page"]').count(), 1);
+    assert.equal(await page.locator('nav.sidebar [aria-current="page"]').getAttribute('href'), '/create');
+    for (const item of navItems) {
+      assert.ok(item.width >= 44 && item.height >= 44 && item.height <= 64, '切换屏宽后导航项不应被纵向拉伸');
+      assert.ok(item.iconWidth >= 20 && item.iconHeight >= 20, '导航图标应保持可辨认尺寸');
+    }
     const body = page.locator('.character-editor .secondary-detail-body');
     await body.evaluate((element) => { element.scrollTop = 0; });
     const before = await actionRegion.boundingBox();

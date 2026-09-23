@@ -635,7 +635,7 @@ input[type="range"]::-moz-range-thumb {
 
 
 .sidebar {
-  width: 48px;
+  width: 64px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -667,9 +667,9 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .nav-btn {
-  width: 44px;
-  height: 44px;
-  border-radius: var(--radius-sm);
+  width: 52px;
+  height: 56px;
+  border-radius: 12px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--muted);
@@ -679,19 +679,18 @@ input[type="range"]::-moz-range-thumb {
   align-items: center;
   justify-content: center;
   position: relative;
-  transition: all 0.2s;
+  transition: color 0.16s, background-color 0.16s, border-color 0.16s;
   line-height: 1;
   text-decoration: none;
-  flex-shrink: 0;
+  flex: 0 0 auto;
   overflow: visible;
-  gap: 1px;
+  gap: 4px;
 }
 
 .nav-label {
-  font-size: 0.58rem;
-  color: var(--muted);
-  line-height: 1;
-  opacity: 0.8;
+  font-size: 0.68rem;
+  color: inherit;
+  line-height: 1.2;
 }
 
 .nav-btn:hover {
@@ -796,7 +795,9 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .nav-btn > .ui-icon {
-  font-size: 1.05rem;
+  width: 22px;
+  height: 22px;
+  flex: none;
 }
 
 .creation-workspace-title,
@@ -5789,14 +5790,14 @@ html[data-theme="paper"] .chat-bubble-text hr {
     height: 56px;
     flex: 1;
     flex-direction: column;
-    gap: 0;
+    gap: 3px;
     font-size: 1.15rem;
     border-radius: 0;
     border: none;
     background: transparent;
     padding: 2px 0;
   }
-  .nav-label { font-size: 0.6rem; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; color: var(--text-2); opacity: 1; }
+  .nav-label { font-size: 0.68rem; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; color: inherit; }
 
   .app-shell { padding-bottom: 60px; min-height: 100vh; }
 
@@ -6264,7 +6265,7 @@ html[data-theme="paper"] .chat-bubble-text hr {
 @media (max-width: 480px) {
   .sidebar { height: 56px; }
   .nav-btn { height: 50px; font-size: 1rem; }
-  .nav-label { display: block; font-size: 0.5rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .nav-label { display: block; font-size: 0.68rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
   .app-shell { padding-bottom: 56px; }
   .chat-inputbar { bottom: 56px; padding: 4px 8px; }
   .chat-inputbar-error { bottom: calc(56px + 48px); }

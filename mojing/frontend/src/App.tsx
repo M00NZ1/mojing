@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { api } from './api/client';
 import SessionSidebar from './components/SessionSidebar';
@@ -223,14 +223,15 @@ function AppLayout() {
       <nav className="sidebar" aria-label="主导航">
         <div className="sidebar-logo" aria-hidden="true">墨</div>
         {primaryNavigation.map((item) => (
-          <NavLink
+          <Link
             key={item.to}
             to={item.to}
-            className={() => `nav-btn ${item.paths.some((path) => location.pathname.startsWith(path)) ? 'active' : ''}`}
+            className={`nav-btn ${item.paths.some((path) => location.pathname.startsWith(path)) ? 'active' : ''}`}
+            aria-current={item.paths.some((path) => location.pathname.startsWith(path)) ? 'page' : undefined}
             title={item.label}
           >
             <UiIcon name={item.icon} /><span className="nav-label">{item.label}</span>
-          </NavLink>
+          </Link>
         ))}
       </nav>
 
