@@ -26,6 +26,7 @@ internal fun SamplingParameterField(
     modifier: Modifier = Modifier,
     integer: Boolean = false,
     signed: Boolean = false,
+    description: String? = null,
 ) {
     val error = samplingParameterError(value, integer)
     val focusManager = LocalFocusManager.current
@@ -47,6 +48,6 @@ internal fun SamplingParameterField(
             keyboard?.hide()
         }),
         isError = error != null,
-        supportingText = error?.let { { Text(it) } },
+        supportingText = (error ?: description)?.let { hint -> { Text(hint) } },
     )
 }

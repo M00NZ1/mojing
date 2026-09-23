@@ -13,6 +13,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -94,6 +95,7 @@ fun CharacterEditScreen(
     var appearanceOpen by rememberSaveable { mutableStateOf(false) }
     var routesOpen by rememberSaveable { mutableStateOf(false) }
     var advancedOpen by rememberSaveable { mutableStateOf(false) }
+    var cardJsonOpen by rememberSaveable { mutableStateOf(false) }
     var pendingExit by rememberSaveable { mutableStateOf<String?>(null) }
     var showManualCharChatUrlModel by rememberSaveable { mutableStateOf(false) }
     var showManualCharImageUrlModel by rememberSaveable { mutableStateOf(false) }
@@ -711,36 +713,51 @@ fun CharacterEditScreen(
                 }
 
                 HorizontalDivider()
-                Text("扩展设定（JSON）", style = MaterialTheme.typography.titleMedium)
-                OutlinedTextField(
-                    value = state.characterCardJsonRaw,
-                    onValueChange = { viewModel.updateCharacterCardJsonRaw(it) },
-                    label = { Text("扩展设定 JSON") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 4,
-                    maxLines = 18,
+                CharacterEditorSectionHeader(
+                    title = "扩展设定",
+                    summary = "角色卡 JSON · ${if (state.characterCardJsonRaw.isEmpty()) "尚无内容" else "已填写"}",
+                    expanded = cardJsonOpen,
+                    onClick = { focusManager.clearFocus(); cardJsonOpen = !cardJsonOpen },
                 )
+                if (cardJsonOpen) {
+                    OutlinedTextField(
+                        value = state.characterCardJsonRaw,
+                        onValueChange = { viewModel.updateCharacterCardJsonRaw(it) },
+                        label = { Text("扩展设定 JSON") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 4,
+                        maxLines = 18,
+                    )
+                }
             }
 
             HorizontalDivider()
             Text("采样参数", style = MaterialTheme.typography.titleMedium)
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                SamplingParameterField(state.temperature, viewModel::updateTemperature, "温度", Modifier.weight(1f))
-                SamplingParameterField(state.maxTokens, viewModel::updateMaxTokens, "最大 Token", Modifier.weight(1f), integer = true)
-            }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                SamplingParameterField(state.topP, viewModel::updateTopP, "Top P", Modifier.weight(1f))
-                SamplingParameterField(state.presencePenalty, viewModel::updatePresencePenalty, "存在惩罚", Modifier.weight(1f), signed = true)
-            }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                SamplingParameterField(
-                    value = state.frequencyPenalty,
-                    onValueChange = viewModel::updateFrequencyPenalty,
-                    label = "频率惩罚",
-                    modifier = Modifier.weight(1f),
-                    signed = true,
-                )
-                Spacer(modifier = Modifier.weight(1f))
+            Text("控制回复的变化、长度和重复程度", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val compact = maxWidth < 340.dp
+                if (compact) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        SamplingParameterField(state.temperature, viewModel::updateTemperature, "温度", Modifier.fillMaxWidth(), description = "越低越稳定")
+                        SamplingParameterField(state.topP, viewModel::updateTopP, "Top P", Modifier.fillMaxWidth(), description = "控制候选词范围")
+                        SamplingParameterField(state.maxTokens, viewModel::updateMaxTokens, "最大 Token", Modifier.fillMaxWidth(), integer = true, description = "单次回复的输出上限")
+                        SamplingParameterField(state.presencePenalty, viewModel::updatePresencePenalty, "存在惩罚", Modifier.fillMaxWidth(), signed = true, description = "减少重复主题")
+                        SamplingParameterField(state.frequencyPenalty, viewModel::updateFrequencyPenalty, "频率惩罚", Modifier.fillMaxWidth(), signed = true, description = "减少重复用词")
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            SamplingParameterField(state.temperature, viewModel::updateTemperature, "温度", Modifier.weight(1f), description = "越低越稳定")
+                            SamplingParameterField(state.topP, viewModel::updateTopP, "Top P", Modifier.weight(1f), description = "控制候选词范围")
+                        }
+                        SamplingParameterField(state.maxTokens, viewModel::updateMaxTokens, "最大 Token", Modifier.fillMaxWidth(), integer = true, description = "单次回复的输出上限")
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            SamplingParameterField(state.presencePenalty, viewModel::updatePresencePenalty, "存在惩罚", Modifier.weight(1f), signed = true, description = "减少重复主题")
+                            SamplingParameterField(state.frequencyPenalty, viewModel::updateFrequencyPenalty, "频率惩罚", Modifier.weight(1f), signed = true, description = "减少重复用词")
+                        }
+                    }
+                }
             }
             Spacer(modifier = Modifier.height(8.dp))
                 }
