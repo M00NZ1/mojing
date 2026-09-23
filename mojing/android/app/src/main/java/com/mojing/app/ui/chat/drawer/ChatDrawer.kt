@@ -412,11 +412,17 @@ fun WorldConfigTab(
     var routeDetailsOpen by remember(w.id) { mutableStateOf(false) }
     var voiceDetailsOpen by remember(w.id) { mutableStateOf(false) }
 
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .imePadding(),
+    ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
+            .padding(horizontal = 16.dp)
+            .padding(top = 16.dp, bottom = if (routeDetailsOpen) 92.dp else 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (isGenerating) {
@@ -426,7 +432,7 @@ fun WorldConfigTab(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        if (credentialDirty) {
+        if (credentialDirty && !routeDetailsOpen) {
             AssistChip(onClick = {}, enabled = false, label = { Text("未保存") })
         }
         Text("本场玩法", style = MaterialTheme.typography.titleMedium)
@@ -587,14 +593,33 @@ fun WorldConfigTab(
                 singleLine = true,
             )
             Text("朗读引擎和音色请在对话输入框下方的「语音」中选择。", style = MaterialTheme.typography.bodySmall)
-            Button(
-                onClick = { emitSave() },
-                enabled = !isGenerating,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("保存本场线路") }
-
         }
 
+    }
+    if (routeDetailsOpen) {
+        Surface(
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+            tonalElevation = 3.dp,
+            shadowElevation = 2.dp,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    if (credentialDirty) "线路草稿未保存" else "线路配置已保存",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (credentialDirty) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                Button(
+                    onClick = { emitSave() },
+                    enabled = !isGenerating,
+                ) { Text("保存线路") }
+            }
+        }
+    }
     }
 }
 

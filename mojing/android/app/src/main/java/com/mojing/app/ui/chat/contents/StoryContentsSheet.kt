@@ -54,6 +54,7 @@ fun StoryContentsSheet(
                 enabled = !saving,
                 label = { Text(if (creatingChapter) "章节名（可由模型生成）" else "名称") })
             if (creatingChapter) com.mojing.app.ui.common.MoJingTextField(value = direction, onValueChange = { direction = it.take(4000) },
+                enabled = !saving,
                 label = { Text("剧情走向（可选）") }, minLines = 2, maxLines = 5)
             if (!creatingChapter) saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         } },
@@ -89,7 +90,8 @@ fun StoryContentsSheet(
                 item(key = "novel-title") {
                     Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 16.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(novelTitle.ifBlank { "未命名小说" }, style = MaterialTheme.typography.headlineSmall)
+                            Text(novelTitle.ifBlank { "未命名小说" }, style = MaterialTheme.typography.headlineSmall,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis)
                             Text(if (state.hasMore) "已加载 ${state.entries.size} 条目录 · 最近内容在前" else "${state.entries.size} 条目录 · 最近内容在前",
                                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
