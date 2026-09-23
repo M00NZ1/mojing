@@ -96,6 +96,7 @@ fun EntryEditScreen(
     val saveEnabled = state.isLoaded && canSave && !pageBusy && !state.isLoadingVersions
     val saveLabel = when {
         state.isSaving -> "正在保存…"
+        state.saveError != null -> "重试保存"
         !state.isPersisted -> "保存条目"
         state.isDirty -> "保存修改"
         else -> "已保存"
@@ -220,6 +221,28 @@ fun EntryEditScreen(
             }
         } else {
         Column(modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
+            val feedback = state.saveError ?: state.versionError
+            if (feedback != null) {
+                Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                    Column(
+                        Modifier.fillMaxWidth().heightIn(max = 160.dp)
+                            .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
+                    ) {
+                        Text(feedback, color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodyMedium)
+                        TextButton(
+                            onClick = {
+                                if (state.saveError != null) viewModel.save()
+                                else viewModel.loadVersionPage(older = false)
+                            },
+                            enabled = if (state.saveError != null) saveEnabled else !pageBusy && !state.isLoadingVersions,
+                        ) {
+                            Text(if (state.saveError != null) "重试保存" else "刷新历史版本",
+                                color = MaterialTheme.colorScheme.onErrorContainer)
+                        }
+                    }
+                }
+            }
             ScrollableTabRow(
                 selectedTabIndex = subTab.ordinal,
                 edgePadding = 12.dp,

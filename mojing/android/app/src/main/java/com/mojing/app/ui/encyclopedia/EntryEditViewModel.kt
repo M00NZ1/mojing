@@ -50,6 +50,8 @@ data class EntryEditState(
     val coverPromptHint: String = "",
     val isAiCompleting: Boolean = false,
     val isSaving: Boolean = false,
+    val saveError: String? = null,
+    val versionError: String? = null,
     val isGeneratingCover: Boolean = false,
     val isLoaded: Boolean = false,
     val loadError: String? = null,
@@ -171,7 +173,7 @@ class EntryEditViewModel @Inject constructor(
 
     private fun updateDraft(transform: (EntryEditState) -> EntryEditState) {
         val next = transform(_state.value)
-        _state.value = next.copy(isDirty = next.toDraftSnapshot() != savedDraft)
+        _state.value = next.copy(isDirty = next.toDraftSnapshot() != savedDraft, saveError = null)
     }
 
     fun consumeSnackbar() {
@@ -390,15 +392,15 @@ class EntryEditViewModel @Inject constructor(
             (submittedState.isPersisted && !submittedState.isDirty)) return
         val submittedDraft = submittedState.toDraftSnapshot()
         if (submittedState.title.isBlank()) {
-            showSnackbar(UserFacingStrings.entryTitleRequired())
+            _state.value = submittedState.copy(saveError = UserFacingStrings.entryTitleRequired())
             return
         }
         val parsedMeta = runCatching { JsonParser.parseString(submittedState.metaJson.ifBlank { "{}" }) }.getOrNull()
         if (parsedMeta == null || !parsedMeta.isJsonObject) {
-            showSnackbar("扩展资料 JSON 须为对象 {…}，请修正后重试")
+            _state.value = submittedState.copy(saveError = "扩展资料 JSON 须为对象 {…}，请修正后重试")
             return
         }
-        _state.value = submittedState.copy(isSaving = true)
+        _state.value = submittedState.copy(isSaving = true, saveError = null)
         viewModelScope.launch {
             try {
                 val base = currentEntry ?: EncyclopediaEntryEntity(encyclopediaId = encId)
@@ -418,36 +420,42 @@ class EntryEditViewModel @Inject constructor(
                 )
                 val saved = saveCharacterEntry.saveEdited(toSave)
                 currentEntry = saved
-                val versionPage = entryVersionDao.getPage(saved.id, Long.MAX_VALUE, 11)
-                val versions = versionPage.take(10)
                 val latest = _state.value
                 val persisted = latest.withPersistedEntry(saved).copy(
-                    versions = versions,
-                    hasOlderVersions = versionPage.size > 10,
-                    isOlderVersionPage = false,
-                    isSaving = false,
                     isDirty = false,
+                    saveError = null,
                 )
                 savedDraft = persisted.toDraftSnapshot()
                 val result = if (latest.toDraftSnapshot() != submittedDraft) {
                     latest.copy(
-                        versions = versions,
-                        hasOlderVersions = versionPage.size > 10,
-                        isOlderVersionPage = false,
-                        isSaving = false,
                         isPersisted = true,
+                        saveError = null,
                         snackbar = "已保存，当前还有未保存的修改",
                     )
                 } else {
                     persisted.copy(snackbar = UserFacingStrings.entrySaved())
                 }
                 _state.value = result.copy(isDirty = result.toDraftSnapshot() != savedDraft)
+                // 正文已提交；版本读取失败不能使表单重新变成未保存。
+                try {
+                    val versionPage = entryVersionDao.getPage(saved.id, Long.MAX_VALUE, 11)
+                    _state.value = _state.value.copy(
+                        versions = versionPage.take(10),
+                        hasOlderVersions = versionPage.size > 10,
+                        isOlderVersionPage = false,
+                        versionError = null,
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    _state.value = _state.value.copy(versionError = "条目已保存，历史版本刷新失败")
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
                 _state.value = _state.value.copy(
                     isSaving = false,
-                    snackbar = UserFacingStrings.localSaveFailed("条目"),
+                    saveError = UserFacingStrings.localSaveFailed("条目"),
                 )
             } finally {
                 _state.value = _state.value.copy(isSaving = false)
@@ -460,14 +468,14 @@ class EntryEditViewModel @Inject constructor(
         val entry = currentEntry ?: return
         if (state.isLoadingVersions || state.isSaving || (older && !state.hasOlderVersions)) return
         val beforeId = if (older) state.versions.lastOrNull()?.id ?: return else Long.MAX_VALUE
-        _state.value = state.copy(isLoadingVersions = true)
+        _state.value = state.copy(isLoadingVersions = true, versionError = null)
         viewModelScope.launch {
             try {
                 val page = entryVersionDao.getPage(entry.id, beforeId, 11)
                 _state.value = _state.value.copy(versions = page.take(10), hasOlderVersions = page.size > 10,
                     isOlderVersionPage = older)
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { showSnackbar("版本读取失败，请重试") }
+            catch (_: Exception) { _state.value = _state.value.copy(versionError = "历史版本读取失败，请刷新重试") }
             finally { _state.value = _state.value.copy(isLoadingVersions = false) }
         }
     }

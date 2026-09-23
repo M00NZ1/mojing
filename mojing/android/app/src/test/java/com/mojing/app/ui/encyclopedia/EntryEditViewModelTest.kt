@@ -42,10 +42,14 @@ class EntryEditViewModelTest {
         vm.updateConfidence("confirmed")
         vm.save()
         assertTrue(vm.state.value.isDirty)
+        assertNotNull(vm.state.value.saveError)
+        vm.consumeSnackbar()
+        assertNotNull(vm.state.value.saveError)
         assertEquals("confirmed", vm.state.value.confidence)
         coEvery { saver.saveEdited(any()) } answers { firstArg<EncyclopediaEntryEntity>() }
         vm.save()
         assertFalse(vm.state.value.isDirty)
+        assertEquals(null, vm.state.value.saveError)
         assertTrue(vm.state.value.isConversationNote)
         coVerify(exactly = 2) { saver.saveEdited(match {
             it.confidence == "confirmed" && it.sourceSessionId == 42L && it.sourceMessageId == 9L && it.metaJson == entry.metaJson
@@ -314,6 +318,34 @@ class EntryEditViewModelTest {
         viewModel.save()
         assertTrue(viewModel.state.value.isPersisted)
         assertFalse(viewModel.state.value.isDirty)
+    }
+
+    @Test
+    fun versionRefreshFailureKeepsCommittedEntryAndRetriesOnlyRead() = runTest(dispatcher) {
+        val saved = EncyclopediaEntryEntity(id = 12L, encyclopediaId = 3L, title = "潮汐钟")
+        val versions = mockk<EntryVersionDao> {
+            coEvery { getPage(12L, any(), any()) } throws IllegalStateException("read")
+        }
+        val saver = mockk<SaveCharacterEntryUseCase> {
+            coEvery { saveEdited(any()) } returns saved
+        }
+        val vm = createViewModel(encyclopediaDao(), mockk(relaxed = true), versions, saver)
+        vm.load(3L, 0L)
+        vm.updateTitle("潮汐钟")
+        vm.save()
+        assertTrue(vm.state.value.isPersisted)
+        assertFalse(vm.state.value.isDirty)
+        assertFalse(vm.state.value.isSaving)
+        assertEquals(null, vm.state.value.saveError)
+        assertNotNull(vm.state.value.versionError)
+        vm.save()
+        vm.updateContent("刷新时保留的新修改")
+        coEvery { versions.getPage(12L, any(), any()) } returns emptyList()
+        vm.loadVersionPage(older = false)
+        assertEquals(null, vm.state.value.versionError)
+        assertEquals("刷新时保留的新修改", vm.state.value.content)
+        assertTrue(vm.state.value.isDirty)
+        coVerify(exactly = 1) { saver.saveEdited(any()) }
     }
 
     @Test
