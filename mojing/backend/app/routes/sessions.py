@@ -68,7 +68,7 @@ from ..services.chat_service import (
     get_session_messages_after_page,
     get_session_message_window,
     list_visible_messages,
-    last_message_previews_by_session_ids,
+    last_message_details_by_session_ids,
     list_sessions_with_counts,
     search_session_messages,
     resolve_branch_context,
@@ -214,6 +214,7 @@ def create_session(payload: SessionCreate, db: Session = Depends(get_db)):
         "participant_count": len(character_ids),
         "think_max_enabled": bool(session.think_max_enabled),
         "last_message_preview": None,
+        "last_message_branch_id": None,
         "world": session.world,
     }
 
@@ -236,6 +237,7 @@ def get_session(session_id: int, db: Session = Depends(get_db)):
     session = db.get(ChatSessionModel, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="会话不存在")
+    preview, branch_id = last_message_details_by_session_ids(db, [session_id])[session_id]
     return {
         "id": session.id,
         "title": session.title,
@@ -245,7 +247,8 @@ def get_session(session_id: int, db: Session = Depends(get_db)):
         "message_count": db.scalar(select(func.count()).where(MessageModel.session_id == session_id)) or 0,
         "participant_count": db.scalar(select(func.count()).where(SessionParticipantModel.session_id == session_id)) or 0,
         "think_max_enabled": bool(session.think_max_enabled),
-        "last_message_preview": last_message_previews_by_session_ids(db, [session_id]).get(session_id),
+        "last_message_preview": preview,
+        "last_message_branch_id": branch_id,
         "world": session.world,
     }
 
@@ -267,6 +270,7 @@ def update_session(session_id: int, payload: SessionUpdate, db: Session = Depend
         session.think_max_enabled = payload.think_max_enabled
     db.commit()
     db.refresh(session)
+    preview, branch_id = last_message_details_by_session_ids(db, [session_id])[session_id]
     return {
         "id": session.id,
         "title": session.title,
@@ -276,7 +280,8 @@ def update_session(session_id: int, payload: SessionUpdate, db: Session = Depend
         "message_count": db.scalar(select(func.count()).where(MessageModel.session_id == session_id)) or 0,
         "participant_count": db.scalar(select(func.count()).where(SessionParticipantModel.session_id == session_id)) or 0,
         "think_max_enabled": bool(session.think_max_enabled),
-        "last_message_preview": last_message_previews_by_session_ids(db, [session_id]).get(session_id),
+        "last_message_preview": preview,
+        "last_message_branch_id": branch_id,
         "world": session.world,
     }
 

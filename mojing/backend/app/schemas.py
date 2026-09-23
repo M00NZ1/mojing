@@ -167,6 +167,7 @@ class SessionRead(BaseModel):
     participant_count: int = 0
     think_max_enabled: bool = False
     last_message_preview: str | None = Field(default=None, description="各会话全局最新一条消息摘要（跨分支）")
+    last_message_branch_id: str | None = Field(default=None, description="最新消息所属故事线；无消息时为空")
     world: SessionWorldRead | None = None
 
 

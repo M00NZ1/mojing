@@ -14,8 +14,8 @@ from backend.app.models import (
     SessionEventNodeModel,
     SessionMemorySegmentModel,
 )
-from backend.app.routes.sessions import add_user_message, create_session_branch, generate_stream, list_session_branches, update_message
-from backend.app.schemas import GenerateRequest, SessionBranchCreate, SessionMessageCreate, SessionMessageEdit
+from backend.app.routes.sessions import add_user_message, create_session_branch, generate_stream, get_session, list_session_branches, update_message
+from backend.app.schemas import GenerateRequest, SessionBranchCreate, SessionMessageCreate, SessionMessageEdit, SessionRead
 from backend.app.services.macro_actions import _action_summarize_session
 from backend.app.services.chat_service import (
     BranchContextError,
@@ -24,6 +24,7 @@ from backend.app.services.chat_service import (
     create_message,
     get_session_message_window,
     get_session_messages_page,
+    list_sessions_with_counts,
     resolve_branch_context,
     search_session_messages,
 )
@@ -48,6 +49,41 @@ def _message(db, session_id, content, branch_id="main"):
     db.add(row)
     db.flush()
     return row
+
+
+def test_session_preview_resumes_the_storyline_that_supplied_it(tmp_path):
+    engine, Session = _db(tmp_path)
+    try:
+        with Session() as db:
+            session = _session(db)
+            empty = _session(db, "empty")
+            source = _message(db, session.id, "main source")
+            db.add(SessionBranchModel(
+                session_id=session.id,
+                branch_id="story-a",
+                source_message_id=source.id,
+                parent_branch_id="main",
+            ))
+            _message(db, session.id, "branch\nlatest", "story-a")
+            db.commit()
+
+            items = {item["id"]: SessionRead.model_validate(item) for item in list_sessions_with_counts(db)}
+            assert items[session.id].last_message_preview == "branch latest"
+            assert items[session.id].last_message_branch_id == "story-a"
+            assert items[empty.id].last_message_preview is None
+            assert items[empty.id].last_message_branch_id is None
+
+            detail = SessionRead.model_validate(get_session(session.id, db))
+            assert detail.last_message_branch_id == "story-a"
+            _message(db, session.id, "main latest")
+            db.commit()
+            latest = SessionRead.model_validate(next(
+                item for item in list_sessions_with_counts(db) if item["id"] == session.id
+            ))
+            assert latest.last_message_preview == "main latest"
+            assert latest.last_message_branch_id == "main"
+    finally:
+        engine.dispose()
 
 
 def test_user_message_writes_to_selected_branch_and_binds_visible_parent(tmp_path):

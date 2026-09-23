@@ -512,8 +512,8 @@ def get_session_message_window(
     return rows, older_cursor, newer_cursor
 
 
-def last_message_previews_by_session_ids(db: Session, session_ids: list[int]) -> dict[int, str | None]:
-    """各会话「当前库中 id 最大」的一条消息正文摘要；用于列表预览。"""
+def last_message_details_by_session_ids(db: Session, session_ids: list[int]) -> dict[int, tuple[str | None, str | None]]:
+    """各会话最新消息的预览与所属故事线，用于列表续聊入口。"""
     if not session_ids:
         return {}
     sid_set = [int(x) for x in session_ids]
@@ -524,23 +524,24 @@ def last_message_previews_by_session_ids(db: Session, session_ids: list[int]) ->
         .subquery()
     )
     rows = db.execute(
-        select(MessageModel.session_id, MessageModel.content)
+        select(MessageModel.session_id, MessageModel.branch_id, MessageModel.content)
         .select_from(MessageModel)
         .join(
             mid_sq,
             (MessageModel.session_id == mid_sq.c.sid) & (MessageModel.id == mid_sq.c.mid),
         )
     ).all()
-    out: dict[int, str | None] = {sid: None for sid in sid_set}
-    for sid, content in rows:
+    out: dict[int, tuple[str | None, str | None]] = {sid: (None, None) for sid in sid_set}
+    for sid, branch_id, content in rows:
         sid_i = int(sid)
         raw = (content or "").replace("\r\n", "\n").replace("\n", " ").strip()
         if not raw:
-            out[sid_i] = None
+            preview = None
         elif len(raw) > 120:
-            out[sid_i] = raw[:120] + "…"
+            preview = raw[:120] + "…"
         else:
-            out[sid_i] = raw
+            preview = raw
+        out[sid_i] = (preview, branch_id or "main")
     return out
 
 
@@ -579,9 +580,10 @@ def list_sessions_with_counts(db: Session, search_query: str = "") -> list[dict]
     stmt = stmt.order_by(ChatSessionModel.updated_at.desc())
     session_rows: list[tuple[ChatSessionModel, int, int]] = list(db.execute(stmt).all())
     ids = [s[0].id for s in session_rows]
-    previews = last_message_previews_by_session_ids(db, ids)
+    latest_messages = last_message_details_by_session_ids(db, ids)
     results = []
     for session, message_count, participant_count in session_rows:
+        preview, branch_id = latest_messages.get(session.id, (None, None))
         results.append(
             {
                 "id": session.id,
@@ -592,7 +594,8 @@ def list_sessions_with_counts(db: Session, search_query: str = "") -> list[dict]
                 "message_count": message_count,
                 "participant_count": participant_count,
                 "think_max_enabled": bool(getattr(session, "think_max_enabled", False)),
-                "last_message_preview": previews.get(session.id),
+                "last_message_preview": preview,
+                "last_message_branch_id": branch_id,
             }
         )
     return results

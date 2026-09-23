@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import InlineQueryError from '../components/InlineQueryError';
 import UiIcon from '../components/UiIcon';
 import type { SessionItem } from '../types';
+import { sessionChatPath } from '../utils/sessionRoute';
 import './ChatLandingPage.css';
 
 function sessionDate(value: string): string {
@@ -85,12 +86,12 @@ export default function ChatLandingPage() {
                     <h3>{latest.title?.trim() || '未命名对话'}</h3>
                     {latestPreview && <p className="story-landing-summary">{latestPreview}</p>}
                     <SessionMeta session={latest} />
-                    <Link className="btn btn-primary story-landing-continue" to={`/chat/${latest.id}`}>继续对话</Link>
+                    <Link className="btn btn-primary story-landing-continue" to={sessionChatPath(latest)}>继续对话</Link>
                   </article>
                   {recent.length > 1 && (
                     <div className="story-landing-more" aria-label="其他最近对话">
                       {recent.slice(1).map((session) => (
-                        <Link key={session.id} to={`/chat/${session.id}`} className="story-landing-row">
+                        <Link key={session.id} to={sessionChatPath(session)} className="story-landing-row">
                           <span className="story-landing-row-title">{session.title?.trim() || '未命名对话'}</span>
                           <SessionMeta session={session} />
                           <span className="story-landing-row-open" aria-hidden="true">打开</span>

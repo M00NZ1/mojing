@@ -18,6 +18,7 @@ export type SessionItem = {
   think_max_enabled?: boolean;
   /** 与 Android SessionCard：会话内最新一条消息摘要 */
   last_message_preview?: string | null;
+  last_message_branch_id?: string | null;
   world?: SessionWorld | null;
 };
 

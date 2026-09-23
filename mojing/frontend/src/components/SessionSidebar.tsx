@@ -8,6 +8,7 @@ import { useUndoDelete } from './UndoToast';
 import { useToast } from '../hooks/useToast';
 import UiIcon from './UiIcon';
 import { buildWorldSelectorItems, resolveWorldSelectorValue, worldSelectorValue } from '../utils/worldSelector';
+import { sessionChatPath } from '../utils/sessionRoute';
 
 const OPENING_OPTIONS = [
   { key: 'narrator_enabled', configKey: 'default_narrator_enabled', label: '旁白', description: '加入场景叙述与剧情推进', fallback: false },
@@ -388,7 +389,7 @@ export default function SessionSidebar() {
             <button
               type="button"
               className={`session-item ${String(session.id) === sessionId ? 'active' : ''}`}
-              onClick={() => navigate(`/chat/${session.id}`)}
+              onClick={() => navigate(sessionChatPath(session))}
             >
               <span className="session-item-avatar">{session.title?.trim()?.[0] || '未'}</span>
               <span className="session-item-info">
