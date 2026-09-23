@@ -105,6 +105,8 @@ object ChatContract {
         val memoryCorrections: List<SessionMemoryCorrectionEntity> = emptyList(),
         val lastMemoryCorrectionPromptTrace: MemoryCorrectionPromptTrace? = null,
         val eventNodes: List<SessionEventNodeEntity> = emptyList(),
+        val eventBusyIds: Set<Long> = emptySet(),
+        val eventActionErrors: Map<Long, String> = emptyMap(),
         val characterNames: Map<Long, String> = emptyMap(),
         val characterAvatars: Map<Long, String> = emptyMap(),
         /** 竖版封面本地路径；对话气泡只显示头像，点此路径用于「点头像看封面」 */

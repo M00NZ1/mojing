@@ -5,6 +5,7 @@ import com.mojing.app.ui.common.MoJingButton as Button
 import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
@@ -47,6 +48,8 @@ fun ChatDrawer(
     currentBranchId: String = "main",
     isGenerating: Boolean = false,
     eventNodes: List<SessionEventNodeEntity> = emptyList(),
+    eventBusyIds: Set<Long> = emptySet(),
+    eventActionErrors: Map<Long, String> = emptyMap(),
     characterNames: Map<Long, String> = emptyMap(),
     bookmarks: List<MessageBookmarkEntity> = emptyList(),
     bookmarkBusyIds: Set<Long> = emptySet(),
@@ -146,6 +149,9 @@ fun ChatDrawer(
                 onToggleEventResolved,
                 onDeleteEventNode,
                 onJumpToMemorySource,
+                busyIds = eventBusyIds,
+                actionErrors = eventActionErrors,
+                currentBranchId = currentBranchId,
             )
             4 -> BookmarksTab(bookmarks, bookmarkPreviews, onJumpToBookmark, onRemoveBookmark, bookmarkBusyIds, bookmarkLocatingId)
         }
@@ -805,43 +811,71 @@ fun TimelineTab(
     onToggleResolved: (Long) -> Unit,
     onDelete: (Long) -> Unit,
     onJumpToSource: (Long) -> Unit,
+    busyIds: Set<Long> = emptySet(),
+    actionErrors: Map<Long, String> = emptyMap(),
+    currentBranchId: String = "main",
 ) {
-    var deleteTarget by remember { mutableStateOf<Long?>(null) }
+    var deleteTarget by remember(currentBranchId) { mutableStateOf<Long?>(null) }
+    var selectedFilter by remember(currentBranchId) { mutableStateOf(0) }
+    val visibleEvents = remember(events, selectedFilter) {
+        events.filter { selectedFilter == 0 || it.resolved == (selectedFilter == 2) }
+            .sortedWith(compareBy({ it.createdAt }, { it.id }))
+    }
+    val timeFormat = remember { java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()) }
     val pendingDelete = events.firstOrNull { it.id == deleteTarget }
     LaunchedEffect(pendingDelete?.id) { if (pendingDelete == null) deleteTarget = null }
     pendingDelete?.let { event ->
         AlertDialog(
-            onDismissRequest = { deleteTarget = null },
+            onDismissRequest = { if (event.id !in busyIds) deleteTarget = null },
             title = { Text("删除这条事件？") },
-            text = { Text("${event.title}\n\n仅删除事件记录，原对话与百科资料保留。") },
-            confirmButton = { TextButton(onClick = { deleteTarget = null; onDelete(event.id) }) { Text("删除事件") } },
-            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("保留事件") } },
+            text = {
+                Column(Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState())) {
+                    Text("${event.title}\n\n仅删除事件记录，原对话与百科资料保留。")
+                    actionErrors[event.id]?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 12.dp)) }
+                }
+            },
+            confirmButton = { TextButton(enabled = event.id !in busyIds, onClick = { onDelete(event.id) }) { Text(if (event.id in busyIds) "正在删除…" else if (actionErrors[event.id] != null) "重试删除" else "删除事件") } },
+            dismissButton = { TextButton(enabled = event.id !in busyIds, onClick = { deleteTarget = null }) { Text("保留事件") } },
         )
     }
-    if (events.isEmpty()) {
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)
+            .horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("全部 ${events.size}", "待跟进 ${events.count { !it.resolved }}", "已解决 ${events.count { it.resolved }}").forEachIndexed { index, label ->
+                FilterChip(selected = selectedFilter == index, onClick = { selectedFilter = index }, label = { Text(label) })
+            }
+        }
+        HorizontalDivider()
+    if (visibleEvents.isEmpty()) {
         Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-            Text("当前故事线暂无事件。对话推进后会自动整理，可从事件返回原文。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(if (events.isEmpty()) "当前故事线暂无事件。对话推进后会自动整理，可从事件返回原文。" else "当前分类暂无事件，可切换分类查看。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     } else {
-        LazyColumn(modifier = Modifier.fillMaxWidth()) {
-            items(events.sortedWith(compareBy({ it.createdAt }, { it.id })), key = { it.id }) { event ->
-                Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                    Column(modifier = Modifier.padding(12.dp)) {
+        androidx.compose.runtime.key(currentBranchId, selectedFilter) {
+        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            items(visibleEvents, key = { it.id }) { event ->
+                val busy = event.id in busyIds
+                val inherited = event.branchId != currentBranchId
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(when (event.eventType) { "action" -> Icons.Default.DirectionsRun; "discovery" -> Icons.Default.Search; "relationship_change" -> Icons.Default.Favorite; else -> Icons.Default.Circle }, null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(8.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(event.title, style = MaterialTheme.typography.titleMedium)
+                                Text(event.title, style = MaterialTheme.typography.titleSmall)
                                 Text(if (event.resolved) "已解决" else "待跟进", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(
-                                    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
-                                        .format(java.util.Date(event.createdAt)),
+                                    timeFormat.format(java.util.Date(event.createdAt)),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            repeat(event.importance.coerceIn(1, 5)) { Text("★", color = MaterialTheme.colorScheme.primary) }
+                            Text("重要度 ${event.importance.coerceIn(1, 5)}", style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
+                        if (inherited) Text("继承事件 · 在来源故事线中管理", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                        actionErrors[event.id]?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                         if (event.description.isNotBlank()) {
                             Spacer(Modifier.height(4.dp))
                             ExpandableMemoryText(event.description, collapsedLines = 3)
@@ -863,18 +897,21 @@ fun TimelineTab(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            TextButton(onClick = { onToggleResolved(event.id) }) {
+                            TextButton(enabled = !busy && !inherited, onClick = { onToggleResolved(event.id) }) {
                                 Text(if (event.resolved) "标为未解决" else "标为已解决")
                             }
                             Spacer(Modifier.weight(1f))
-                            IconButton(onClick = { deleteTarget = event.id }) {
-                                Icon(Icons.Default.Delete, "删除事件", tint = MaterialTheme.colorScheme.error)
+                            IconButton(enabled = !busy && !inherited, onClick = { deleteTarget = event.id }) {
+                                Icon(Icons.Default.DeleteOutline, "删除事件")
                             }
                         }
                     }
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp))
                 }
             }
         }
+        }
+    }
     }
 }
 

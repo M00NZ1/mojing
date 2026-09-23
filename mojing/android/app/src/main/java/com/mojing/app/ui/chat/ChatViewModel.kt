@@ -3525,27 +3525,47 @@ class ChatViewModel @Inject constructor(
 
     fun deleteEventNode(nodeId: Long) {
         val branchId = currentBranchId()
-        if (_state.value.eventNodes.none { it.id == nodeId }) return
+        if (nodeId in _state.value.eventBusyIds) return
+        val target = _state.value.eventNodes.firstOrNull { it.id == nodeId } ?: return
+        if (target.branchId != branchId) {
+            _state.update { it.copy(eventActionErrors = it.eventActionErrors + (nodeId to "请在来源故事线中删除这条继承事件")) }
+            return
+        }
+        _state.update { it.copy(eventBusyIds = it.eventBusyIds + nodeId, eventActionErrors = it.eventActionErrors - nodeId) }
         viewModelScope.launch {
             try {
                 eventNodeDao.deleteById(nodeId)
                 _state.update { if (it.currentBranchId == branchId) it.copy(eventNodes = it.eventNodes.filter { event -> event.id != nodeId }) else it }
-                refreshEventNodesForBranch(branchId, reportFailure = true)
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { _state.update { if (it.currentBranchId == branchId) it.copy(error = "事件删除失败，请重试") else it } }
+            catch (_: Exception) {
+                _state.update { if (it.currentBranchId == branchId) it.copy(eventActionErrors = it.eventActionErrors + (nodeId to "事件删除失败，请重试")) else it }
+                return@launch
+            }
+            finally { _state.update { it.copy(eventBusyIds = it.eventBusyIds - nodeId) } }
+            refreshEventNodesForBranch(branchId, reportFailure = true)
         }
     }
 
     fun toggleEventNodeResolved(nodeId: Long) {
         val branchId = currentBranchId()
+        if (nodeId in _state.value.eventBusyIds) return
         val target = _state.value.eventNodes.firstOrNull { it.id == nodeId } ?: return
+        if (target.branchId != branchId) {
+            _state.update { it.copy(eventActionErrors = it.eventActionErrors + (nodeId to "请在来源故事线中修改这条继承事件")) }
+            return
+        }
+        _state.update { it.copy(eventBusyIds = it.eventBusyIds + nodeId, eventActionErrors = it.eventActionErrors - nodeId) }
         viewModelScope.launch {
             try {
                 eventNodeDao.setResolved(nodeId, !target.resolved)
                 _state.update { if (it.currentBranchId == branchId) it.copy(eventNodes = it.eventNodes.map { event -> if (event.id == nodeId) event.copy(resolved = !target.resolved) else event }) else it }
-                refreshEventNodesForBranch(branchId, reportFailure = true)
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { _state.update { if (it.currentBranchId == branchId) it.copy(error = "事件状态保存失败，请重试") else it } }
+            catch (_: Exception) {
+                _state.update { if (it.currentBranchId == branchId) it.copy(eventActionErrors = it.eventActionErrors + (nodeId to "事件状态保存失败，请重试")) else it }
+                return@launch
+            }
+            finally { _state.update { it.copy(eventBusyIds = it.eventBusyIds - nodeId) } }
+            refreshEventNodesForBranch(branchId, reportFailure = true)
         }
     }
 

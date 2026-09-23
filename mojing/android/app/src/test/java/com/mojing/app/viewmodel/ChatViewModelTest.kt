@@ -2304,6 +2304,49 @@ class ChatViewModelTest {
         coVerify(exactly = 0) { attachmentDao.countByStoragePath(any()) }
     }
 
+    @Test fun eventWriteBlocksDuplicateActionsAndRetainsFailureForRetry() = runTest(testDispatcher) {
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        val source = SessionEventNodeEntity(id = 1, sessionId = 42, title = "事件")
+        coEvery { events.getForBranch(42, "main") } returns listOf(source)
+        val gate = CompletableDeferred<Unit>()
+        coEvery { events.deleteById(1) } coAnswers { gate.await(); throw IllegalStateException("write failed") }
+        val vm = createViewModel(eventNodeDao = events)
+        advanceUntilIdle()
+        vm.deleteEventNode(1)
+        runCurrent()
+        vm.deleteEventNode(1)
+        vm.toggleEventNodeResolved(1)
+        assertTrue(1L in vm.state.value.eventBusyIds)
+        coVerify(exactly = 1) { events.deleteById(1) }
+        coVerify(exactly = 0) { events.setResolved(any(), any()) }
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.eventBusyIds.isEmpty())
+        assertNotNull(vm.state.value.eventActionErrors[1])
+        assertEquals(listOf(source), vm.state.value.eventNodes)
+        coEvery { events.deleteById(1) } returns Unit
+        coEvery { events.getForBranch(42, "main") } returns emptyList()
+        vm.deleteEventNode(1)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.eventActionErrors.isEmpty())
+        assertTrue(vm.state.value.eventNodes.isEmpty())
+    }
+
+    @Test fun inheritedEventsCannotModifyTheirSourceFromAnotherStoryline() = runTest(testDispatcher) {
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        val source = SessionEventNodeEntity(id = 1, sessionId = 42, branchId = "source", title = "继承事件")
+        coEvery { events.getForBranch(42, "main") } returns listOf(source)
+        val vm = createViewModel(eventNodeDao = events)
+        advanceUntilIdle()
+        vm.toggleEventNodeResolved(1)
+        vm.deleteEventNode(1)
+        advanceUntilIdle()
+        coVerify(exactly = 0) { events.setResolved(any(), any()) }
+        coVerify(exactly = 0) { events.deleteById(any()) }
+        assertEquals(listOf(source), vm.state.value.eventNodes)
+        assertTrue(vm.state.value.eventActionErrors[1].orEmpty().contains("来源故事线"))
+    }
+
     @Test fun eventStatusUsesCurrentStorylineAndKeepsSavedStateIfReadbackFails() = runTest(testDispatcher) {
         val events = mockk<SessionEventNodeDao>(relaxed = true)
         val source = SessionEventNodeEntity(id = 1, sessionId = 42, title = "当前线事件")
