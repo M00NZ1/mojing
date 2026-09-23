@@ -5,9 +5,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ElevatedCard
+import com.mojing.app.ui.common.MoJingButton as Button
+import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.Icon
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -42,9 +48,9 @@ fun VoiceSettingsCard(
     // retained while the same engine remains selected, but returning to Azure
     // makes its required connection section visible again.
     var azureExpanded by remember(choice.engineId) { mutableStateOf(choice.engineId == "azure") }
-    ElevatedCard(
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        color = MaterialTheme.colorScheme.surface,
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
@@ -54,7 +60,7 @@ fun VoiceSettingsCard(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text("朗读与语音", style = MaterialTheme.typography.titleMedium)
+                Text("默认朗读", style = MaterialTheme.typography.titleMedium)
                 Text(
                     "作为默认朗读引擎与音色；角色也可以单独设置。",
                     style = MaterialTheme.typography.bodySmall,
@@ -63,20 +69,21 @@ fun VoiceSettingsCard(
             }
             Surface(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                color = MaterialTheme.colorScheme.surfaceContainer,
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
                 shape = MaterialTheme.shapes.medium,
             ) {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text("当前朗读", style = MaterialTheme.typography.labelLarge)
                     Text(
                         choice.label(),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
-                    Button(onClick = { pickerVisible = true }, enabled = !saving, modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = { pickerVisible = true }, enabled = !saving, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.VolumeUp, null)
+                        Spacer(Modifier.width(8.dp))
                         Text("选择引擎与音色")
                     }
                 }
@@ -86,7 +93,7 @@ fun VoiceSettingsCard(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text("微软 Azure 连接", style = MaterialTheme.typography.titleSmall)
+                Text("微软 Azure 连接", style = MaterialTheme.typography.titleMedium)
                 Text(
                     if (choice.engineId == "azure") {
                         "当前引擎需要 Azure 区域和 Speech Key。"
@@ -97,6 +104,8 @@ fun VoiceSettingsCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 TextButton(onClick = { azureExpanded = !azureExpanded }, enabled = !saving) {
+                    Icon(if (azureExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
+                    Spacer(Modifier.width(8.dp))
                     Text(if (azureExpanded) "收起连接设置" else "查看连接设置")
                 }
                 if (azureExpanded) {
@@ -123,7 +132,7 @@ fun VoiceSettingsCard(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End,
                     ) {
-                        Button(onClick = onSave, enabled = !saving) {
+                        Button(onClick = onSave, enabled = !saving, modifier = Modifier.fillMaxWidth()) {
                             Text(if (saving) "保存中…" else "保存 Azure 设置")
                         }
                     }
