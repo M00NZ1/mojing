@@ -18,7 +18,8 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mojing.app.data.local.dao.EncyclopediaEntryOption
-import com.mojing.app.ui.common.MoJingTextField
+import com.mojing.app.ui.common.SearchBar
+import com.mojing.app.ui.common.searchHighlightedLabel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
@@ -60,19 +61,17 @@ internal fun EncyclopediaEntryPicker(encyclopediaId: Long, selectedId: Long?,
                 Text("选择条目", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                 TextButton(onClick = onDismiss) { Text("关闭") }
             }
-            MoJingTextField(
-                value = query,
-                onValueChange = { query = it; cursors = listOf(0L) },
-                singleLine = true,
-                label = { Text("搜索条目名称") },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
-                trailingIcon = {
-                    if (query.isNotEmpty()) IconButton(onClick = { query = ""; cursors = listOf(0L) }) {
-                        Icon(Icons.Default.Close, "清空搜索")
-                    }
-                },
+            SearchBar(
+                query = query,
+                onQueryChange = { query = it; cursors = listOf(0L) },
+                placeholder = "搜索条目名称",
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             )
+            rows?.takeIf { error == null }?.let { page ->
+                Text("本页 ${page.size.coerceAtMost(50)} 项${if (page.size > 50) " · 还有更多" else ""}",
+                    Modifier.padding(horizontal = 20.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 when {
                     error != null -> Column(
@@ -109,7 +108,7 @@ internal fun EncyclopediaEntryPicker(encyclopediaId: Long, selectedId: Long?,
                                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 ) {
                                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Text(entry.title.ifBlank { "未命名条目" }, style = MaterialTheme.typography.bodyLarge,
+                                        Text(searchHighlightedLabel(entry.title.ifBlank { "未命名条目" }, query), style = MaterialTheme.typography.bodyLarge,
                                             maxLines = 2, overflow = TextOverflow.Ellipsis)
                                         Text(ENTRY_TYPE_LABELS[entry.entryType] ?: "其他", style = MaterialTheme.typography.labelMedium,
                                             color = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
