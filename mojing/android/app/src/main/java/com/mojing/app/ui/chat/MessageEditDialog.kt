@@ -48,14 +48,16 @@ internal fun MessageEditDialog(
         containerColor = MaterialTheme.colorScheme.surface,
         contentWindowInsets = { WindowInsets.safeDrawing },
     ) {
-        Column(Modifier.fillMaxWidth().fillMaxHeight(0.95f).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("编辑消息", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+        Column(Modifier.fillMaxWidth().fillMaxHeight(0.95f).imePadding(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("编辑消息", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                 IconButton(onClick = requestDismiss, enabled = !saving) { Icon(Icons.Default.Close, "关闭消息编辑") }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             if (!WindowInsets.isImeVisible) Text(
                 if (isUser) "保存到新故事线，并重新生成回复。" else "保存到新故事线，保留原故事线。",
+                modifier = Modifier.padding(horizontal = 20.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -63,12 +65,13 @@ internal fun MessageEditDialog(
                 value = content,
                 onValueChange = onContentChange,
                 enabled = !saving && !committed,
-                modifier = Modifier.fillMaxWidth().weight(1f),
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 16.dp),
                 label = "消息正文",
                 placeholder = "输入消息正文",
             )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (failure != null) Text(failure, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     MoJingButton(onClick = onSave, enabled = canSave && !saving && !committed, modifier = Modifier.fillMaxWidth()) {
                         Text(if (saving) "正在保存…" else if (committed) "已保存" else "创建编辑分支")
