@@ -4,7 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.StoryOpeningDraftStore
+import com.mojing.app.data.StoryOpeningInputDraft
+import com.mojing.app.data.StoryOpeningInputDraftStore
 import com.mojing.app.data.UnreadableStoryDraft
+import com.mojing.app.data.UnreadableStoryInputDraft
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.WorldTemplateDao
@@ -47,7 +50,7 @@ data class StoryOptionLoadState<T>(
 data class StorySimulationState(
     val premise: String = "",
     val direction: String = "",
-    val tone: String = "有画面感、人物动机清楚、适合连续长篇创作",
+    val tone: String = StoryOpeningInputDraft.DEFAULT_TONE,
     val chapterCount: Int = 2,
     val templates: StoryOptionLoadState<WorldTemplateEntity> = StoryOptionLoadState(),
     val encyclopedias: StoryOptionLoadState<EncyclopediaEntity> = StoryOptionLoadState(),
@@ -65,6 +68,8 @@ data class StorySimulationState(
     val recoveryError: String? = null,
     val canCopyRecoveryData: Boolean = false,
     val recoveredStory: Boolean = false,
+    val recoveredInputDraft: Boolean = false,
+    val hasInputDraft: Boolean = false,
     val storyTitle: String = "",
     val draftPersisted: Boolean = false,
     val error: String? = null,
@@ -77,6 +82,15 @@ data class StorySimulationState(
     val requestToken: Long = 0L,
     val inputRevision: Long = 0L,
 )
+
+internal fun StorySimulationState.hasUnavailableSelections(): Boolean =
+    (selectedTemplateId != null && templates.items.none { it.id == selectedTemplateId }) ||
+        (selectedEncyclopediaId != null && encyclopedias.items.none { it.id == selectedEncyclopediaId }) ||
+        selectedCharacterIds.any { id ->
+            val character = characters.items.firstOrNull { it.id == id }
+            character == null || (selectedEncyclopediaId != null && character.boundEncyclopediaId > 0L &&
+                character.boundEncyclopediaId != selectedEncyclopediaId)
+        }
 
 private data class StoryCreationContext(
     val premise: String,
@@ -97,6 +111,7 @@ class StorySimulationViewModel @Inject constructor(
     private val characterDao: CharacterDao,
     private val createSession: CreateSessionUseCase,
     private val draftStore: StoryOpeningDraftStore,
+    private val inputDraftStore: StoryOpeningInputDraftStore,
 ) : ViewModel() {
     private val _state = MutableStateFlow(StorySimulationState())
     val state: StateFlow<StorySimulationState> = _state.asStateFlow()
@@ -107,6 +122,7 @@ class StorySimulationViewModel @Inject constructor(
     private var pendingStory: StoryOpeningDraft? = null
     private var savedDraftId: String? = null
     private var unreadableDraft: String? = null
+    private var unreadableInputDraft: String? = null
     private var restoreJob: Job? = null
     private var generationToken = 0L
     private var generationStartedAtNanos = 0L
@@ -125,14 +141,27 @@ class StorySimulationViewModel @Inject constructor(
             try {
                 val record = draftStore.load()
                 unreadableDraft = null
+                unreadableInputDraft = null
                 when (record) {
-                    null -> _state.update { it.copy(isRestoring = false, canCopyRecoveryData = false) }
+                    null -> {
+                        val input = inputDraftStore.load()
+                        _state.update { current ->
+                            if (input == null) current.copy(isRestoring = false, canCopyRecoveryData = false)
+                            else current.copy(isRestoring = false, canCopyRecoveryData = false, recoveredInputDraft = true,
+                                hasInputDraft = true, premise = input.premise, direction = input.direction, tone = input.tone,
+                                chapterCount = input.chapterCount, selectedTemplateId = input.templateId,
+                                selectedEncyclopediaId = input.encyclopediaId, selectedCharacterIds = input.characterIds)
+                        }
+                    }
                     is StoryOpeningRecord.Pending -> {
                         val draft = record.draft
                         pendingStory = draft
                         _state.update { it.copy(isRestoring = false, hasPendingStory = true, recoveredStory = true,
-                            draftPersisted = true, premise = draft.premise, direction = draft.direction, tone = draft.tone,
+                            recoveredInputDraft = true, draftPersisted = true, hasInputDraft = true,
+                            premise = draft.premise, direction = draft.direction, tone = draft.tone,
                             chapterCount = draft.result.chapters.size, storyTitle = draft.result.title,
+                            selectedTemplateId = draft.template?.id, selectedEncyclopediaId = draft.encyclopediaId,
+                            selectedCharacterIds = draft.characterIds.toSet(),
                             generationModel = draft.model, generationStage = "待保存的小说", canCopyRecoveryData = false,
                             preview = draft.result.chapters.joinToString("\n\n") { chapter -> chapter.content }.takeLast(MAX_PREVIEW_CHARS)) }
                     }
@@ -146,8 +175,9 @@ class StorySimulationViewModel @Inject constructor(
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 unreadableDraft = (error as? UnreadableStoryDraft)?.raw
+                unreadableInputDraft = (error as? UnreadableStoryInputDraft)?.raw
                 _state.update { it.copy(isRestoring = false, recoveryError = "上次创作暂时无法读取，请重试。",
-                    canCopyRecoveryData = unreadableDraft != null) }
+                    canCopyRecoveryData = unreadableDraft != null || unreadableInputDraft != null) }
             }
         }
     }
@@ -163,7 +193,8 @@ class StorySimulationViewModel @Inject constructor(
                     current.copy(
                         templates = StoryOptionLoadState(items = items, isLoading = false),
                         worldMappings = mappings,
-                        selectedTemplateId = current.selectedTemplateId?.takeIf { selected -> items.any { it.id == selected } },
+                        selectedTemplateId = if (current.recoveredInputDraft) current.selectedTemplateId
+                            else current.selectedTemplateId?.takeIf { selected -> items.any { it.id == selected } },
                     )
                 }
             } catch (_: Exception) {
@@ -179,12 +210,17 @@ class StorySimulationViewModel @Inject constructor(
             try {
                 val items = encyclopediaDao.getAll()
                 _state.update { current ->
-                    val selectedId = current.selectedEncyclopediaId?.takeIf { selected -> items.any { it.id == selected } }
+                    val selectedId = if (current.recoveredInputDraft) current.selectedEncyclopediaId
+                        else current.selectedEncyclopediaId?.takeIf { selected -> items.any { it.id == selected } }
                     current.copy(
                         encyclopedias = StoryOptionLoadState(items = items, isLoading = false),
                         selectedEncyclopediaId = selectedId,
-                        selectedCharacterIds = current.selectedCharacterIds.filterTo(mutableSetOf()) { characterId ->
-                            selectedId == null || current.characters.items.firstOrNull { it.id == characterId }?.let { it.boundEncyclopediaId <= 0L || it.boundEncyclopediaId == selectedId } == true
+                        selectedCharacterIds = if (current.recoveredInputDraft) current.selectedCharacterIds
+                        else current.selectedCharacterIds.filterTo(mutableSetOf()) { characterId ->
+                            selectedId == null || current.characters.isLoading || current.characters.error != null ||
+                                current.characters.items.firstOrNull { it.id == characterId }?.let {
+                                    it.boundEncyclopediaId <= 0L || it.boundEncyclopediaId == selectedId
+                                } == true
                         },
                     )
                 }
@@ -203,7 +239,8 @@ class StorySimulationViewModel @Inject constructor(
                 _state.update { current ->
                     current.copy(
                         characters = StoryOptionLoadState(items = items, isLoading = false),
-                        selectedCharacterIds = current.selectedCharacterIds.filterTo(mutableSetOf()) { characterId ->
+                        selectedCharacterIds = if (current.recoveredInputDraft) current.selectedCharacterIds
+                        else current.selectedCharacterIds.filterTo(mutableSetOf()) { characterId ->
                             items.firstOrNull { it.id == characterId }?.let { character ->
                                 current.selectedEncyclopediaId == null || character.boundEncyclopediaId <= 0L || character.boundEncyclopediaId == current.selectedEncyclopediaId
                             } == true
@@ -229,6 +266,7 @@ class StorySimulationViewModel @Inject constructor(
     )
 
     private fun updateInput(transform: (StorySimulationState) -> StorySimulationState) {
+        var changedState: StorySimulationState? = null
         _state.update { current ->
             if (current.isRestoring || current.recoveryError != null || current.hasPendingStory || current.isSaving || current.savedSessionId != null) current
             else {
@@ -237,10 +275,20 @@ class StorySimulationViewModel @Inject constructor(
                     next.tone != current.tone || next.chapterCount != current.chapterCount ||
                     next.selectedTemplateId != current.selectedTemplateId || next.selectedEncyclopediaId != current.selectedEncyclopediaId ||
                     next.selectedCharacterIds != current.selectedCharacterIds
-                next.copy(error = null, inputRevision = current.inputRevision + if (changed) 1 else 0)
+                next.copy(error = null, inputRevision = current.inputRevision + if (changed) 1 else 0,
+                    hasInputDraft = if (changed) next.inputDraft() != StoryOpeningInputDraft.EMPTY else current.hasInputDraft)
+                    .also { if (changed) changedState = it }
             }
         }
+        changedState?.let { changed ->
+            try { inputDraftStore.save(changed.inputDraft()) }
+            catch (_: Exception) { _state.update { it.copy(error = "创作设定暂存失败，请重试编辑或生成前检查本机存储。") } }
+        }
     }
+
+    private fun StorySimulationState.inputDraft() = StoryOpeningInputDraft(
+        premise, direction, tone, chapterCount, selectedTemplateId, selectedEncyclopediaId, selectedCharacterIds,
+    )
 
     fun updatePremise(value: String) = updateInput { it.copy(premise = value) }
     fun updateDirection(value: String) = updateInput { it.copy(direction = value) }
@@ -293,6 +341,10 @@ class StorySimulationViewModel @Inject constructor(
             _state.update { it.copy(error = "请先填写故事背景") }
             return
         }
+        if (snapshot.hasUnavailableSelections()) {
+            _state.update { it.copy(error = "所选世界或角色当前不可用，请重新选择或重试加载") }
+            return
+        }
         val apiKey = secureStorage.publicApiKey.trim()
         val baseUrl = secureStorage.publicBaseUrl.trim()
         val model = secureStorage.publicModel.trim()
@@ -310,6 +362,12 @@ class StorySimulationViewModel @Inject constructor(
                 val token = ++generationToken
                 generationStartedAtNanos = System.nanoTime()
                 _state.update { it.copy(isGenerating = true, isSaving = false, error = null, generationStage = "等待模型响应", generationModel = model, generationElapsedMs = 0L, firstContentDelayMs = null, receivedChars = 0, preview = "", requestToken = token) }
+                try { inputDraftStore.commit(snapshot.inputDraft()) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) {
+                    _state.update { it.copy(error = "创作设定暂存失败，请重试后再生成。", generationStage = "暂存失败") }
+                    return@launch
+                }
                 launch(kotlinx.coroutines.Dispatchers.Default) {
                     while (isActive && _state.value.requestToken == token && _state.value.isGenerating) {
                         _state.update { current -> if (current.requestToken == token && current.isGenerating) current.copy(generationElapsedMs = maxOf(current.generationElapsedMs, elapsedMs())) else current }
@@ -465,6 +523,7 @@ class StorySimulationViewModel @Inject constructor(
         val pending = pendingStory ?: return false
         _state.update { it.copy(isSaving = true) }
         return try {
+            inputDraftStore.commit(_state.value.inputDraft())
             if (_state.value.draftPersisted) draftStore.discard(pending.id)
             pendingStory = null
             _state.update { it.copy(hasPendingStory = false, error = null, preview = "", generationStage = null,
@@ -475,7 +534,40 @@ class StorySimulationViewModel @Inject constructor(
         finally { _state.update { it.copy(isSaving = false) } }
     }
 
-    fun recoveryDataText(): String = unreadableDraft.orEmpty()
+    fun recoveryDataText(): String = unreadableDraft ?: unreadableInputDraft.orEmpty()
+
+    suspend fun flushInputDraftBeforeLeaving(): Boolean {
+        val current = _state.value
+        if (current.isRestoring || current.recoveryError != null || current.isGenerating || current.isSaving) return false
+        if (current.hasPendingStory || current.savedSessionId != null) return true
+        return try { inputDraftStore.commit(current.inputDraft()); true }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { _state.update { it.copy(error = "创作设定暂存失败，请重试后再离开。") }; false }
+    }
+
+    fun clearUnavailableSelections() = updateInput { current ->
+        val templateId = current.selectedTemplateId?.takeIf { id -> current.templates.items.any { it.id == id } }
+        val encyclopediaId = current.selectedEncyclopediaId?.takeIf { id -> current.encyclopedias.items.any { it.id == id } }
+        current.copy(selectedTemplateId = templateId, selectedEncyclopediaId = encyclopediaId,
+            selectedCharacterIds = current.selectedCharacterIds.filterTo(mutableSetOf()) { id ->
+                current.characters.items.firstOrNull { it.id == id }?.let { character ->
+                    encyclopediaId == null || character.boundEncyclopediaId <= 0L || character.boundEncyclopediaId == encyclopediaId
+                } == true
+            })
+    }
+
+    suspend fun clearInputDraft(): Boolean {
+        if (_state.value.isRestoring || _state.value.isGenerating || _state.value.isSaving || _state.value.hasPendingStory || _state.value.savedSessionId != null) return false
+        _state.update { it.copy(isSaving = true) }
+        return try {
+            inputDraftStore.clear()
+            _state.update { current -> StorySimulationState(isRestoring = false, templates = current.templates,
+                encyclopedias = current.encyclopedias, characters = current.characters, worldMappings = current.worldMappings) }
+            true
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { _state.update { it.copy(error = "草稿未能清除，请重试。") }; false }
+        finally { _state.update { it.copy(isSaving = false) } }
+    }
 
     fun startNewStory() {
         if (_state.value.isSaving || _state.value.isRestoring || creationJob.get() != null) return
@@ -483,9 +575,11 @@ class StorySimulationViewModel @Inject constructor(
         viewModelScope.launch {
             _state.update { it.copy(isSaving = true) }
             try {
+                inputDraftStore.clear()
                 draftStore.clearSavedReceipt(id)
                 savedDraftId = null
-                _state.update { StorySimulationState(isRestoring = false, templates = it.templates, encyclopedias = it.encyclopedias, characters = it.characters) }
+                _state.update { StorySimulationState(isRestoring = false, templates = it.templates, encyclopedias = it.encyclopedias,
+                    characters = it.characters, worldMappings = it.worldMappings) }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { _state.update { it.copy(error = "暂时无法开始新作，请重试。") } }
             finally { _state.update { it.copy(isSaving = false) } }
@@ -493,12 +587,14 @@ class StorySimulationViewModel @Inject constructor(
     }
 
     suspend fun discardUnreadableDraft(): Boolean {
-        val raw = unreadableDraft ?: return false
+        val raw = unreadableDraft ?: unreadableInputDraft ?: return false
         if (_state.value.isRestoring || _state.value.isSaving) return false
         _state.update { it.copy(isSaving = true) }
         return try {
-            draftStore.discardUnreadable(raw)
+            if (unreadableDraft != null) draftStore.discardUnreadable(raw)
+            else inputDraftStore.discardUnreadable(raw)
             unreadableDraft = null
+            unreadableInputDraft = null
             _state.update { it.copy(recoveryError = null, canCopyRecoveryData = false) }
             true
         } catch (cancelled: CancellationException) { throw cancelled }

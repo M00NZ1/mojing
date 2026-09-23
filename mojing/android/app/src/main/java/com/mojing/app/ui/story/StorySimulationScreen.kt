@@ -60,6 +60,8 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import com.mojing.app.ui.navigation.MainAppBottomNavigation
@@ -95,7 +97,13 @@ fun StorySimulationScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var showDiscardUnreadableDialog by remember { mutableStateOf(false) }
-    val isBusy = state.isGenerating || state.isSaving || state.isRestoring || state.recoveryError != null || state.hasPendingStory || state.savedSessionId != null
+    var showClearInputDialog by remember { mutableStateOf(false) }
+    var isLeaving by remember { mutableStateOf(false) }
+    val isBusy = isLeaving || state.isGenerating || state.isSaving || state.isRestoring || state.recoveryError != null || state.hasPendingStory || state.savedSessionId != null
+
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        scope.launch { viewModel.flushInputDraftBeforeLeaving() }
+    }
 
     fun dismissStopDialog() {
         showStopAndLeaveDialog = false
@@ -103,13 +111,21 @@ fun StorySimulationScreen(
     }
 
     fun requestNavigation(action: () -> Unit) {
+        if (isLeaving) return
         when {
             state.isSaving -> showSavingDialog = true
             state.isGenerating || (state.hasPendingStory && !state.draftPersisted) -> {
                 pendingNavigation = action
                 showStopAndLeaveDialog = true
             }
-            else -> action()
+            state.isRestoring || state.recoveryError != null -> action()
+            else -> {
+                isLeaving = true
+                scope.launch {
+                    try { if (viewModel.flushInputDraftBeforeLeaving()) action() }
+                    finally { isLeaving = false }
+                }
+            }
         }
     }
 
@@ -178,7 +194,7 @@ fun StorySimulationScreen(
                                     state.savedSessionId != null -> Unit
                                     else -> Button(
                                         onClick = { focusManager.clearFocus(); viewModel.createStory(onOpenSession) },
-                                        enabled = state.premise.isNotBlank(),
+                                        enabled = !isBusy && state.premise.isNotBlank(),
                                         modifier = Modifier.fillMaxWidth(),
                                     ) {
                                         Icon(Icons.Default.AutoAwesome, contentDescription = null)
@@ -216,6 +232,25 @@ fun StorySimulationScreen(
                 onDiscardUnreadable = { showDiscardUnreadableDialog = true })
             if (!state.hasPendingStory && state.savedSessionId == null && !state.isRestoring && state.recoveryError == null) {
             Text("写下大致故事背景和开篇走向，AI 会结合已选人物直接生成小说正文。完成后自动进入创作会话，可继续输入后续走向或连续续写。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (state.hasInputDraft) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(if (state.recoveredInputDraft) "已恢复上次填写的创作设定" else "创作设定已在本机暂存",
+                        modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = { showClearInputDialog = true }, enabled = !isBusy) { Text("清空草稿") }
+                }
+                if (!state.templates.isLoading && !state.encyclopedias.isLoading && !state.characters.isLoading &&
+                    state.hasUnavailableSelections()) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("草稿选择的世界或角色当前不可用，请重新选择或重试加载。",
+                            modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error)
+                        TextButton(onClick = viewModel::clearUnavailableSelections, enabled = !isBusy) { Text("移除失效选择") }
+                    }
+                }
+            }
             StoryGenerationProgressCard(state, onStop = { viewModel.stopGeneration() }, onCopy = clipboardManager::setText,
                 onRetry = { viewModel.createStory(onOpenSession) })
             OutlinedTextField(
@@ -413,6 +448,16 @@ fun StorySimulationScreen(
                 if (viewModel.discardUnreadableDraft()) showDiscardUnreadableDialog = false
             } }) { Text("清除草稿") } },
             dismissButton = { TextButton(onClick = { showDiscardUnreadableDialog = false }) { Text("保留草稿") } })
+    }
+
+    if (showClearInputDialog) {
+        AlertDialog(onDismissRequest = { showClearInputDialog = false },
+            title = { Text("清空创作设定？") },
+            text = { Text("背景、走向、风格及本次选择的世界和角色会从草稿中移除。已保存的会话不受影响。") },
+            confirmButton = { TextButton(enabled = !state.isSaving, onClick = { scope.launch {
+                if (viewModel.clearInputDraft()) showClearInputDialog = false
+            } }) { Text("清空草稿") } },
+            dismissButton = { TextButton(onClick = { showClearInputDialog = false }) { Text("继续编辑") } })
     }
 
     if (showSavingDialog) {

@@ -105,7 +105,7 @@ class RealProviderStoryTest {
             vm = StorySimulationViewModel(StoryWritingUseCase(retry), storage,
                 database.worldTemplateDao(), database.encyclopediaDao(), database.characterDao(),
                 CreateSessionUseCase(SessionCreationTransaction(database), database.characterDao(), database.worldTemplateDao(), storage, database.legacyWorldMappingDao(), database.encyclopediaDao()),
-                com.mojing.app.data.StoryOpeningDraftStore(database))
+                com.mojing.app.data.StoryOpeningDraftStore(database), com.mojing.app.data.StoryOpeningInputDraftStore(isolated))
             store.put("provider-story", vm)
         }
         rule.setContent { MoJingTheme { StorySimulationScreen(rememberNavController(), { openedSession = it }, vm) } }

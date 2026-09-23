@@ -2,6 +2,9 @@ package com.mojing.app.ui.story
 
 import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.StoryOpeningDraftStore
+import com.mojing.app.data.StoryOpeningInputDraftStore
+import com.mojing.app.data.StoryOpeningInputDraft
+import com.mojing.app.data.UnreadableStoryInputDraft
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.MessageDao
@@ -20,6 +23,7 @@ import com.mojing.app.domain.story.StoryOpeningRecord
 import com.mojing.app.domain.usecase.CreateSessionUseCase
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
@@ -625,6 +629,88 @@ class StorySimulationViewModelTest {
     }
 
     @Test
+    fun inputDraftRestoresBeforeEditingAndKeepsSelections() = runTest(dispatcher) {
+        val input = StoryOpeningInputDraft("雾港灯塔", "先调查失踪者", "克制", 3, null, 7L, setOf(9L))
+        val drafts = mockk<StoryOpeningInputDraftStore>(relaxed = true) { coEvery { load() } returns input }
+        val worlds = mockk<EncyclopediaDao> { coEvery { getAll() } returns listOf(EncyclopediaEntity(id = 7, name = "雾港")) }
+        var availableCharacters = listOf(CharacterEntity(id = 9, name = "守塔人", boundEncyclopediaId = 7))
+        val characters = mockk<CharacterDao> { coEvery { getAll() } answers { availableCharacters } }
+        val vm = createViewModel(mockk(relaxed = true), worlds, characters, inputDraftStore = drafts)
+        runCurrent()
+        assertTrue(vm.state.value.recoveredInputDraft)
+        assertEquals("雾港灯塔", vm.state.value.premise)
+        assertEquals("先调查失踪者", vm.state.value.direction)
+        assertEquals(3, vm.state.value.chapterCount)
+        assertEquals(7L, vm.state.value.selectedEncyclopediaId)
+        assertEquals(setOf(9L), vm.state.value.selectedCharacterIds)
+        vm.updateDirection("先去码头")
+        coVerify { drafts.save(match { it.direction == "先去码头" && it.encyclopediaId == 7L && it.characterIds == setOf(9L) }) }
+        assertTrue(vm.flushInputDraftBeforeLeaving())
+        coVerify(exactly = 1) { drafts.commit(match { it.direction == "先去码头" && it.encyclopediaId == 7L && it.characterIds == setOf(9L) }) }
+        availableCharacters = emptyList()
+        vm.retryCharacters(); runCurrent()
+        assertEquals(setOf(9L), vm.state.value.selectedCharacterIds)
+        assertTrue(vm.state.value.hasUnavailableSelections())
+        vm.clearUnavailableSelections()
+        assertTrue(vm.state.value.selectedCharacterIds.isEmpty())
+        coVerify { drafts.save(match { it.characterIds.isEmpty() && it.direction == "先去码头" }) }
+    }
+
+    @Test
+    fun inputDraftMustBeDurableBeforeModelRequest() = runTest(dispatcher) {
+        val drafts = mockk<StoryOpeningInputDraftStore>(relaxed = true) {
+            coEvery { load() } returns null
+            coEvery { commit(any()) } throws IllegalStateException("disk full")
+        }
+        val writing = mockk<StoryWritingUseCase>(relaxed = true)
+        val storage = mockk<SecureStorage>(relaxed = true) {
+            every { publicApiKey } returns "key"; every { publicBaseUrl } returns "https://example.com"; every { publicModel } returns "model"
+        }
+        val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), writing, storage,
+            inputDraftStore = drafts)
+        runCurrent(); vm.updatePremise("雾港灯塔"); vm.createStory {}; runCurrent()
+        assertFalse(vm.state.value.isGenerating)
+        assertEquals("暂存失败", vm.state.value.generationStage)
+        coVerify(exactly = 0) { writing.write(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 1) { drafts.commit(match { it.premise == "雾港灯塔" }) }
+    }
+
+    @Test
+    fun clearingInputDraftPreservesReferenceListsAndSavedReceiptClearsOldInput() = runTest(dispatcher) {
+        val input = StoryOpeningInputDraft("旧设定", "旧走向", "悬疑", 2, null, null, emptySet())
+        val drafts = mockk<StoryOpeningInputDraftStore>(relaxed = true) { coEvery { load() } returns input }
+        val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), inputDraftStore = drafts)
+        runCurrent()
+        assertTrue(vm.clearInputDraft())
+        assertEquals("", vm.state.value.premise)
+        assertFalse(vm.state.value.hasInputDraft)
+        coVerify(exactly = 1) { drafts.clear() }
+
+        val id = java.util.UUID.randomUUID().toString()
+        val receipt = mockk<StoryOpeningDraftStore>(relaxed = true) { coEvery { load() } returns StoryOpeningRecord.Saved(id, 18L, "已保存") }
+        val savedVm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true),
+            draftStore = receipt, inputDraftStore = drafts)
+        runCurrent(); savedVm.startNewStory(); runCurrent()
+        coVerifyOrder { drafts.clear(); receipt.clearSavedReceipt(id) }
+    }
+
+    @Test
+    fun unreadableInputDraftIsPreservedUntilExplicitDiscard() = runTest(dispatcher) {
+        val raw = "{corrupt input draft}"
+        val drafts = mockk<StoryOpeningInputDraftStore>(relaxed = true) {
+            coEvery { load() } throws UnreadableStoryInputDraft(raw)
+        }
+        val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), inputDraftStore = drafts)
+        runCurrent()
+        assertTrue(vm.state.value.canCopyRecoveryData)
+        assertEquals(raw, vm.recoveryDataText())
+        coVerify(exactly = 0) { drafts.clear() }
+        assertTrue(vm.discardUnreadableDraft())
+        coVerify(exactly = 1) { drafts.discardUnreadable(raw) }
+        assertNull(vm.state.value.recoveryError)
+    }
+
+    @Test
     fun refreshedReferenceDataDoesNotDiscardResultOrReplaceSubmittedWorld() = runTest(dispatcher) {
         val templates = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
         val characters = mockk<CharacterDao>()
@@ -696,6 +782,7 @@ class StorySimulationViewModelTest {
         sessionDao: SessionDao = mockk(relaxed = true),
         messageDao: MessageDao = mockk(relaxed = true),
         draftStore: StoryOpeningDraftStore = mockk(relaxed = true) { coEvery { load() } returns null },
+        inputDraftStore: StoryOpeningInputDraftStore = mockk(relaxed = true) { coEvery { load() } returns null },
     ) = StorySimulationViewModel(
         storyWriting = storyWriting,
         secureStorage = secureStorage,
@@ -704,5 +791,6 @@ class StorySimulationViewModelTest {
         characterDao = characterDao,
         createSession = createSession,
         draftStore = draftStore,
+        inputDraftStore = inputDraftStore,
     )
 }
