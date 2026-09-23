@@ -4,6 +4,7 @@ import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingButton as Button
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -383,29 +385,18 @@ fun DefaultsTab(viewModel: SettingsViewModel) {
             enabled = !creationOptionsLoading && creationOptionsError == null,
             onSelect = viewModel::updateDefaultEncyclopediaIdForAi,
         )
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("旁白", style = MaterialTheme.typography.bodyMedium)
-            }
-            Switch(checked = defaultNarrator, onCheckedChange = { viewModel.updateDefaultNarratorEnabled(it) })
-        }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("本回合选项", style = MaterialTheme.typography.bodyMedium)
-            }
-            Switch(checked = defaultChoice, onCheckedChange = { viewModel.updateDefaultChoiceGenerationEnabled(it) })
-        }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("保持角色与世界规则", style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    "减少角色或世界设定被临时要求带偏的情况",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Switch(checked = defaultAnti, onCheckedChange = { viewModel.updateDefaultAntiCheatEnabled(it) })
-        }
+        SettingsDividerLabel("对话方式")
+        SettingsToggleRow("旁白", "回复时包含场景旁白", defaultNarrator, viewModel::updateDefaultNarratorEnabled)
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        SettingsToggleRow("本回合选项", "在回复后提供可选行动", defaultChoice, viewModel::updateDefaultChoiceGenerationEnabled)
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        SettingsToggleRow(
+            "保持角色与世界规则",
+            "减少角色或世界设定被临时要求带偏的情况",
+            defaultAnti,
+            viewModel::updateDefaultAntiCheatEnabled,
+        )
+        SettingsDividerLabel("参与角色")
         OutlinedTextField(
             value = maxAuto,
             onValueChange = { viewModel.updateMaxAutoSpeakers(it) },
@@ -450,6 +441,31 @@ fun DefaultsTab(viewModel: SettingsViewModel) {
             OutlinedTextField(value = maxTokens, onValueChange = { viewModel.updateDefaultMaxTokens(it) }, label = { Text("最大回复长度（Token）") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), isError = maxTokensError, supportingText = if (maxTokensError) { { Text("请输入 1 到 200000 之间的整数") } } else null)
             OutlinedTextField(value = topP, onValueChange = { viewModel.updateDefaultTopP(it) }, label = { Text("Top P") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), isError = topPError, supportingText = if (topPError) { { Text("请输入 0 到 1 之间的数字") } } else null)
         }
+    }
+}
+
+@Composable
+private fun SettingsToggleRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().toggleable(
+            value = checked,
+            role = Role.Switch,
+            onValueChange = onCheckedChange,
+        ).padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text(description, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 
