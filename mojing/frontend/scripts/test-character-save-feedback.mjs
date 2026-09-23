@@ -4,6 +4,8 @@ import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -133,6 +135,24 @@ try {
   const bounds = await actionRegion.boundingBox();
   assert.ok(bounds && bounds.y >= 0 && bounds.y + bounds.height <= 760, '390px 下保存操作区应在可视范围内');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, '390px 下页面不应横向溢出');
+  for (const viewport of [{ width: 390, height: 760 }, { width: 1440, height: 900 }]) {
+    await page.setViewportSize(viewport);
+    const body = page.locator('.character-editor .secondary-detail-body');
+    await body.evaluate((element) => { element.scrollTop = 0; });
+    const before = await actionRegion.boundingBox();
+    await body.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    const after = await actionRegion.boundingBox();
+    assert.ok(before && after && Math.abs(before.y - after.y) < 1, '滚动正文时保存栏应保持原位');
+    assert.ok(after.y >= 0 && after.y + after.height <= viewport.height, '保存栏应完整可见');
+    assert.equal(await body.evaluate((element) => element.scrollHeight > element.clientHeight), true, '长表单应在正文区域内滚动');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, '编辑页不应横向溢出');
+    if (process.env.UI_SCREENSHOT_DIR) {
+      await page.locator('.toast-close').evaluateAll((buttons) => buttons.forEach((button) => button.click()));
+      await mkdir(process.env.UI_SCREENSHOT_DIR, { recursive: true });
+      await body.evaluate((element) => { element.scrollTop = 0; });
+      await page.screenshot({ path: join(process.env.UI_SCREENSHOT_DIR, `character-editor-${viewport.width}.png`) });
+    }
+  }
   assert.deepEqual(pageErrors, []);
   console.log('PASS: character edit/create save failures show inline feedback, retry the current draft, avoid duplicate creation, and keep 390px save actions reachable.');
 } finally {

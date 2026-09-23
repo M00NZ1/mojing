@@ -1,0 +1,71 @@
+.characters-layout .secondary-main:has(.character-editor) {
+  display: flex;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.character-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.character-editor .secondary-detail-header {
+  flex: none;
+  gap: 16px;
+  margin: 0;
+  padding: 18px 24px 12px;
+}
+
+.character-editor .secondary-detail-title,
+.character-editor .secondary-detail-title > div { min-width: 0; }
+.character-editor .secondary-detail-title h2 { overflow-wrap: anywhere; }
+.character-editor .secondary-detail-header .button-row { flex: none; }
+
+.character-editor .secondary-tabs {
+  position: static;
+  flex: none;
+  margin: 0;
+  padding: 0 16px;
+  overflow-x: auto;
+}
+.character-editor .secondary-tab { min-height: 44px; }
+
+.character-editor .secondary-detail-body {
+  flex: 1;
+  min-height: 0;
+  max-width: none;
+  padding: 24px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+.character-editor .secondary-detail-body > * { max-width: 760px; margin-inline: auto; }
+.character-editor .form-section { border-radius: 12px; }
+
+.character-editor .character-save-actions {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) auto auto;
+  justify-content: end;
+  flex: none;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 24px;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+}
+.character-editor .character-save-actions .btn { min-height: 44px; width: auto; min-width: 0; }
+.character-editor .character-save-error { grid-column: 1 / -1; }
+.character-editor .btn { border-radius: 10px; }
+
+@media (max-width: 900px) {
+  .characters-layout .character-editor .secondary-detail-header { padding: 12px 16px 8px; gap: 8px; }
+  .characters-layout .character-editor .secondary-detail-header .button-row { width: auto; margin-left: auto; }
+  .character-editor .secondary-tabs { padding-inline: 8px; }
+  .character-editor .secondary-detail-body { padding: 16px; }
+  .characters-layout .character-editor .character-save-actions { margin: 0; padding: 10px 16px; grid-template-columns: minmax(0, 1fr) auto auto; }
+}

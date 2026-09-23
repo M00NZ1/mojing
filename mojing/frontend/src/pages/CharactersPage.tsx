@@ -19,6 +19,7 @@ import type { Character } from '../types';
 import { readMoJingStorage, writeMoJingStorage } from '../utils/mojingStorage';
 import { mergeCharacterAiPersona } from '../utils/characterAiCompletion';
 import { mergeSavedCharacterDraft } from '../utils/characterSaveDraft';
+import './CharactersPage.css';
 
 const emptyCharacter: Partial<Character> = {
   name: '',
@@ -669,7 +670,7 @@ export default function CharactersPage() {
             <button type="button" className="btn btn-primary" onClick={handleNew}><UiIcon name="plus" />新建角色</button>
           </div>
         ) : (
-          <form onSubmit={handleSubmit}>
+          <form className="character-editor" onSubmit={handleSubmit}>
             <div className="secondary-detail-header">
               <div className="secondary-detail-title">
                 <button className="btn-icon mobile-only" type="button" onClick={closeEditor} style={{ marginRight: 8, flexShrink: 0 }} aria-label="返回角色列表">←</button>
@@ -682,23 +683,15 @@ export default function CharactersPage() {
                 </div>
               </div>
               <div className="button-row">
-                <button className="btn btn-primary btn-sm" type="submit" disabled={saveMutation.isPending} title={!editing.name?.trim() ? '请填写角色名字' : saveMutation.isPending ? '保存中…' : ''}>
-                  {saveMutation.isPending ? '保存中...' : editing.id ? '保存修改' : '创建角色'}
-                </button>
                 {editing.id && (
                   <button
-                    className="btn btn-primary btn-sm"
+                    className="btn btn-ghost btn-sm"
                     type="button"
                     disabled={startChatMutation.isPending || isCharacterDirty}
                     title={isCharacterDirty ? '请先保存角色修改' : ''}
                     onClick={() => startChatMutation.mutate(editing as Character)}
                   >
                     {startChatMutation.isPending ? <><UiIcon name="loading" className="ui-icon-loading" />正在创建…</> : <><UiIcon name="chat" />开始对话</>}
-                  </button>
-                )}
-                {editing.id && (
-                  <button className="btn btn-ghost btn-sm btn-danger" type="button" onClick={() => { triggerDelete(editing.name || '角色', () => deleteMutation.mutate(editing.id!), () => {}); }}>
-                    删除
                   </button>
                 )}
               </div>
@@ -1333,12 +1326,17 @@ export default function CharactersPage() {
               )}
             </div>
 
-            <div className="button-row full-row character-save-actions" style={{ marginTop: 16, padding: '12px 0', borderTop: '1px solid var(--line)' }}>
+            <div className="button-row full-row character-save-actions">
               {currentSaveError && <span className="character-save-error" role="status">保存失败，修改仍在。请重试保存。</span>}
               <button className="btn btn-primary" type="submit" disabled={saveMutation.isPending}>
                 {saveMutation.isPending ? '保存中...' : currentSaveError ? '重试保存' : editing.id ? '保存修改' : '创建角色'}
               </button>
               <button className="btn btn-ghost" type="button" onClick={() => { void closeEditor(); }}>取消</button>
+              {editing.id && (
+                <button className="btn btn-ghost btn-danger character-delete" type="button" onClick={() => { triggerDelete(editing.name || '角色', () => deleteMutation.mutate(editing.id!), () => {}); }}>
+                  删除角色
+                </button>
+              )}
             </div>
           </form>
         )}
