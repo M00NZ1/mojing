@@ -22,6 +22,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -42,9 +43,13 @@ fun BookmarksTab(
     onRemove: (Long) -> Unit,
     busyIds: Set<Long> = emptySet(),
     locatingId: Long? = null,
+    hasMore: Boolean = false,
+    loadingMore: Boolean = false,
+    loadError: String? = null,
+    onLoadMore: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
-        if (bookmarks.isEmpty()) {
+        if (bookmarks.isEmpty() && !hasMore && !loadingMore && loadError == null) {
             Column(Modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Icons.Default.BookmarkBorder, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("还没有收藏", style = MaterialTheme.typography.titleMedium)
@@ -52,7 +57,7 @@ fun BookmarksTab(
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
-            Text("${bookmarks.size} 条收藏", Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+            Text("已加载 ${bookmarks.size} 条收藏${if (hasMore) " · 还有更早记录" else ""}", Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyColumn(modifier = Modifier.fillMaxWidth()) {
                 items(bookmarks, key = { it.id }) { b ->
@@ -84,6 +89,15 @@ fun BookmarksTab(
                         }
                     }
                     HorizontalDivider(Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                }
+                if (hasMore || loadingMore || loadError != null) item(key = "bookmark-load-more") {
+                    Column(Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        if (loadingMore) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        loadError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+                        if (hasMore && !loadingMore) TextButton(onClick = onLoadMore, modifier = Modifier.heightIn(min = 48.dp)) {
+                            Text(if (loadError == null) "加载更早收藏" else "重试加载")
+                        }
+                    }
                 }
             }
         }

@@ -280,20 +280,50 @@ class ChatViewModelTest {
     fun bookmarkFailureKeepsSelectionAndAllowsRetry() = runTest(testDispatcher) {
         val mark = MessageBookmarkEntity(id = 1L, sessionId = 42L, messageId = 501L)
         val bookmarks = mockk<BookmarkDao>(relaxed = true)
-        coEvery { bookmarks.getBySession(42L) } returns listOf(mark)
+        coEvery { bookmarks.getFirstPage(42L, any()) } returns listOf(mark)
         coEvery { bookmarks.getByMessageId(501L) } returns mark
         coEvery { bookmarks.deleteByMessageId(501L) } throws IllegalStateException("storage unavailable")
         val vm = createViewModel(bookmarkDao = bookmarks)
         advanceUntilIdle()
         vm.removeBookmark(501L)
         advanceUntilIdle()
-        assertTrue(501L in vm.state.value.bookmarkedMessageIds)
+        assertTrue(vm.state.value.bookmarks.any { it.messageId == 501L })
         assertTrue(vm.state.value.bookmarkBusyIds.isEmpty())
         assertEquals("取消收藏失败，请重试", vm.state.value.error)
         coEvery { bookmarks.deleteByMessageId(501L) } returns Unit
         vm.removeBookmark(501L)
         advanceUntilIdle()
-        assertFalse(501L in vm.state.value.bookmarkedMessageIds)
+        assertTrue(vm.state.value.bookmarks.none { it.messageId == 501L })
+    }
+
+    @Test
+    fun bookmarkPagesLoadOnlyVisibleRowsAndKeepWindowFlags() = runTest(testDispatcher) {
+        val marks = (1L..41L).map { id ->
+            MessageBookmarkEntity(id = id, sessionId = 42L, messageId = id, createdAt = 1000L - id)
+        }
+        val bookmarks = mockk<BookmarkDao>(relaxed = true)
+        coEvery { bookmarks.getFirstPage(42L, 41) } returns marks
+        coEvery { bookmarks.getBefore(42L, marks[39].createdAt, marks[39].id, 41) } returns marks.drop(40)
+        coEvery { bookmarks.getBookmarkedMessageIds(42L, listOf(41L)) } returns listOf(41L)
+        coEvery { bookmarks.getBookmarkedMessageIds(42L, listOf(1L)) } returns listOf(1L)
+        val messages = mockk<MessageDao>(relaxed = true)
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(MessageEntity(id = 41L, sessionId = 42L, content = "可见原文"))
+        coEvery { messages.getMainMessageById(42L, 1L) } returns MessageEntity(id = 1L, sessionId = 42L, content = "较早原文")
+        val vm = createViewModel(messageDao = messages, bookmarkDao = bookmarks)
+        advanceUntilIdle()
+
+        assertEquals(40, vm.state.value.bookmarks.size)
+        assertTrue(vm.state.value.bookmarksHasMore)
+        assertEquals(setOf(41L), vm.state.value.bookmarkedMessageIds)
+        vm.loadMoreBookmarks()
+        advanceUntilIdle()
+        assertEquals(41, vm.state.value.bookmarks.size)
+        assertFalse(vm.state.value.bookmarksHasMore)
+        assertEquals(setOf(41L), vm.state.value.bookmarkedMessageIds)
+        assertTrue(vm.openMessageInHistory(1L))
+        advanceUntilIdle()
+        assertEquals(setOf(1L), vm.state.value.bookmarkedMessageIds)
+        coVerify(exactly = 1) { bookmarks.getBefore(42L, marks[39].createdAt, marks[39].id, 41) }
     }
 
     @Test
@@ -2259,6 +2289,10 @@ class ChatViewModelTest {
             every { context.filesDir } returns root
             val messageDao = mockk<MessageDao>(relaxed = true)
             val attachmentDao = mockk<AttachmentDao>(relaxed = true)
+            val bookmarks = mockk<BookmarkDao>(relaxed = true)
+            coEvery { bookmarks.getFirstPage(42L, 41) } returns listOf(8L, 9L, 10L).map { id ->
+                MessageBookmarkEntity(id = id, sessionId = 42L, messageId = id)
+            }
             coEvery { messageDao.recallInSession(42L, 8L) } returns MessageRecallResult(
                 deleted = true,
                 deletedMessageIds = listOf(9L, 8L),
@@ -2270,9 +2304,11 @@ class ChatViewModelTest {
             val vm = createViewModel(
                 messageDao = messageDao,
                 attachmentDao = attachmentDao,
+                bookmarkDao = bookmarks,
                 appContext = context,
             )
             advanceUntilIdle()
+            assertEquals(listOf(8L, 9L, 10L), vm.state.value.bookmarks.map { it.messageId })
 
             val recalled = CompletableDeferred<Boolean>()
             vm.deleteMessage(8L) { recalled.complete(it) }
@@ -2280,6 +2316,7 @@ class ChatViewModelTest {
 
             coVerify(exactly = 1) { messageDao.recallInSession(42L, 8L) }
             coVerify(exactly = 0) { messageDao.delete(8L) }
+            assertEquals(listOf(10L), vm.state.value.bookmarks.map { it.messageId })
             assertFalse(disposable.exists())
             assertTrue(stillReferenced.exists())
         } finally {

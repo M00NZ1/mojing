@@ -85,6 +85,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import java.io.OutputStream
@@ -174,6 +176,7 @@ class ChatViewModel @Inject constructor(
     private companion object {
         const val INITIAL_MESSAGE_WINDOW_SIZE = 80
         const val MESSAGE_PAGE_SIZE = 40
+        const val BOOKMARK_PAGE_SIZE = 40
         const val MAX_MESSAGE_WINDOW_SIZE = 200
         const val SEARCH_RESULT_LIMIT = 100
         const val MODEL_CONTEXT_MESSAGE_LIMIT = 400
@@ -184,7 +187,7 @@ class ChatViewModel @Inject constructor(
     private val sourceMessageId: Long = savedStateHandle["sourceMessageId"] ?: 0L
     private val sourceBranchId: String = savedStateHandle["sourceBranchId"] ?: ""
     private val _state = MutableStateFlow(ChatContract.State(sessionId = sessionId))
-    private val bookmarkRefreshRevision = java.util.concurrent.atomic.AtomicLong()
+    private val bookmarkMutex = Mutex()
     private val eventRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     private val correctionRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     private var manualCompactionJob: Job? = null
@@ -855,9 +858,10 @@ class ChatViewModel @Inject constructor(
             .sumOf { TokenCounter.estimateScaledPrefix(ConversationMessageText.forDerivedContext(it)) }
 
         val attMap = attachmentsForMessages(msgs)
-        val marks = bookmarkDao.getBySession(sessionId)
-        val bookmarkIds = marks.map { it.messageId }.toSet()
-        val previews = messagePreviews(bookmarkIds, maxChars = 120)
+        val bookmarkPage = bookmarkDao.getFirstPage(sessionId, BOOKMARK_PAGE_SIZE + 1)
+        val marks = bookmarkPage.take(BOOKMARK_PAGE_SIZE)
+        val bookmarkIds = bookmarkedIdsForWindow(msgs)
+        val previews = messagePreviews(marks.mapTo(mutableSetOf()) { it.messageId }, maxChars = 120)
         val roundChoices = buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
 
         _state.value = _state.value.copy(
@@ -882,6 +886,7 @@ class ChatViewModel @Inject constructor(
             characterCardImages = maps.cardImages,
             characterColors = maps.colors,
             bookmarks = marks,
+            bookmarksHasMore = bookmarkPage.size > BOOKMARK_PAGE_SIZE,
             bookmarkedMessageIds = bookmarkIds,
             excludedContextKeys = excludedKeys,
             bookmarkPreviews = previews,
@@ -982,6 +987,11 @@ class ChatViewModel @Inject constructor(
             })
         }
         return previews
+    }
+
+    private suspend fun bookmarkedIdsForWindow(messages: List<MessageEntity>): Set<Long> {
+        val ids = messages.map(MessageEntity::id)
+        return if (ids.isEmpty()) emptySet() else bookmarkDao.getBookmarkedMessageIds(sessionId, ids).toSet()
     }
 
     /** 从数据库重新拉取参与者对应角色的头像/名称（编辑角色后返回聊天页时调用） */
@@ -1271,7 +1281,6 @@ class ChatViewModel @Inject constructor(
     }
 
     private suspend fun refreshMessagesUi(requestedBranchId: String = currentBranchId(), anchorMessageId: Long? = null) {
-        val bookmarkRevision = bookmarkRefreshRevision.get()
         val eventRevision = eventRefreshRevision.incrementAndGet()
         val correctionRevision = correctionRefreshRevision.incrementAndGet()
         val branches = sessionBranchDao.getBySession(sessionId)
@@ -1301,9 +1310,6 @@ class ChatViewModel @Inject constructor(
             }
         val sourcePreviews = branchSourcePreviews(branches)
         val map = attachmentsForMessages(msgs)
-        val marks = bookmarkDao.getBySession(sessionId)
-        val bookmarkIds = marks.map { it.messageId }.toSet()
-        val previews = messagePreviews(bookmarkIds, maxChars = 120)
         val sess = sessionDao.getById(sessionId)
         val participants = participantDao.getBySession(sessionId)
         val firstChar = participants.firstOrNull()?.characterId?.let { characterDao.getById(it) }
@@ -1316,7 +1322,9 @@ class ChatViewModel @Inject constructor(
         val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, branchId)
         val roundChoices = buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
         val events = eventNodeDao.getForBranch(sessionId, branchId)
-        _state.update { current -> current.copy(
+        bookmarkMutex.withLock {
+            val bookmarkIds = bookmarkedIdsForWindow(msgs)
+            _state.update { current -> current.copy(
             messages = msgs,
             excludedContextKeys = excludedKeys,
             displayLines = msgs.toChatDisplayLines(),
@@ -1327,9 +1335,7 @@ class ChatViewModel @Inject constructor(
             searchResults = emptyList(),
             isSearchingMessages = false,
             messageAttachments = map,
-            bookmarks = if (bookmarkRefreshRevision.get() == bookmarkRevision) marks else current.bookmarks,
-            bookmarkedMessageIds = if (bookmarkRefreshRevision.get() == bookmarkRevision) bookmarkIds else current.bookmarkedMessageIds,
-            bookmarkPreviews = if (bookmarkRefreshRevision.get() == bookmarkRevision) previews else current.bookmarkPreviews,
+            bookmarkedMessageIds = bookmarkIds,
             branches = branches,
             branchSourcePreviews = sourcePreviews,
             currentBranchId = branchId,
@@ -1348,7 +1354,8 @@ class ChatViewModel @Inject constructor(
             characterForcesThinkMax = firstChar?.thinkMaxEnabled == true,
             displayContextTokenLimit = displayCap,
             conversationTokenEstimate = convEst,
-        ) }
+            ) }
+        }
     }
 
     private fun launchHistoryLoad(
@@ -1400,7 +1407,9 @@ class ChatViewModel @Inject constructor(
             .asSequence()
             .filter { it.includeInContext && it.contextSelectionKey() !in excludedKeys }
             .sumOf { TokenCounter.estimateScaledPrefix(it.content) }
-        _state.update { current ->
+        bookmarkMutex.withLock {
+            val bookmarkIds = bookmarkedIdsForWindow(normalized)
+            _state.update { current ->
             if (current.currentBranchId != branchId) return@update current
             val roundChoices = if (hasNewerMessages) {
                 RoundChoiceSnapshot()
@@ -1414,11 +1423,13 @@ class ChatViewModel @Inject constructor(
                 hasOlderMessages = hasOlderMessages,
                 hasNewerMessages = hasNewerMessages,
                 messageAttachments = attachments,
+                bookmarkedMessageIds = bookmarkIds,
                 focusedMessageId = focusedMessageId,
                 roundChoiceOptions = roundChoices.options,
                 roundChoiceMessageId = roundChoices.sourceMessageId,
                 conversationTokenEstimate = tokenEstimate,
             )
+            }
         }
     }
 
@@ -3223,6 +3234,14 @@ class ChatViewModel @Inject constructor(
                     return@launchBranchTransition
                 }
                 committed = true
+                val deletedIds = result.deletedMessageIds.toSet()
+                bookmarkMutex.withLock {
+                    _state.update { current -> current.copy(
+                        bookmarks = current.bookmarks.filterNot { it.messageId in deletedIds },
+                        bookmarkedMessageIds = current.bookmarkedMessageIds - deletedIds,
+                        bookmarkPreviews = current.bookmarkPreviews.filterKeys { it !in deletedIds },
+                    ) }
+                }
                 var cleanupFailed = false
                 for (path in result.attachmentStoragePaths.distinct()) {
                     try {
@@ -3492,12 +3511,40 @@ class ChatViewModel @Inject constructor(
 
     fun removeBookmark(messageId: Long) = setBookmark(messageId, false)
 
+    fun loadMoreBookmarks() {
+        val current = _state.value
+        if (!current.isReady || !current.bookmarksHasMore || current.bookmarksLoadingMore) return
+        _state.update { it.copy(bookmarksLoadingMore = true, bookmarksLoadError = null) }
+        viewModelScope.launch {
+            try {
+                bookmarkMutex.withLock {
+                    val tail = _state.value.bookmarks.lastOrNull()
+                    val page = if (tail == null) bookmarkDao.getFirstPage(sessionId, BOOKMARK_PAGE_SIZE + 1)
+                        else bookmarkDao.getBefore(sessionId, tail.createdAt, tail.id, BOOKMARK_PAGE_SIZE + 1)
+                    val next = page.take(BOOKMARK_PAGE_SIZE)
+                    val previews = messagePreviews(next.mapTo(mutableSetOf()) { it.messageId }, maxChars = 120)
+                    _state.update { state ->
+                        val combined = (state.bookmarks + next).distinctBy { it.id }
+                            .sortedWith(compareByDescending<MessageBookmarkEntity> { it.createdAt }.thenByDescending { it.id })
+                        state.copy(
+                            bookmarks = combined,
+                            bookmarksHasMore = page.size > BOOKMARK_PAGE_SIZE,
+                            bookmarkPreviews = state.bookmarkPreviews + previews,
+                        )
+                    }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { _state.update { it.copy(bookmarksLoadError = "较早收藏读取失败，请重试") } }
+            finally { _state.update { it.copy(bookmarksLoadingMore = false) } }
+        }
+    }
+
     private fun setBookmark(messageId: Long, bookmarked: Boolean) {
         if (!_state.value.isReady || messageId in _state.value.bookmarkBusyIds) return
         _state.update { it.copy(bookmarkBusyIds = it.bookmarkBusyIds + messageId) }
-        bookmarkRefreshRevision.incrementAndGet()
         viewModelScope.launch {
             try {
+                bookmarkMutex.withLock {
                 val existing = bookmarkDao.getByMessageId(messageId)
                 check(existing == null || existing.sessionId == sessionId)
                 val mark: MessageBookmarkEntity?
@@ -3515,16 +3562,17 @@ class ChatViewModel @Inject constructor(
                     bookmarkDao.deleteByMessageId(messageId)
                     mark = null
                 }
-                bookmarkRefreshRevision.incrementAndGet()
                 _state.update { current ->
                     val marks = (current.bookmarks.filterNot { it.messageId == messageId } + listOfNotNull(mark))
                         .sortedWith(compareByDescending<MessageBookmarkEntity> { it.createdAt }.thenByDescending { it.id })
                     current.copy(
                         bookmarks = marks,
-                        bookmarkedMessageIds = marks.mapTo(mutableSetOf()) { it.messageId },
+                        bookmarkedMessageIds = if (bookmarked) current.bookmarkedMessageIds + messageId
+                            else current.bookmarkedMessageIds - messageId,
                         bookmarkPreviews = if (preview != null) current.bookmarkPreviews + (messageId to preview)
                             else current.bookmarkPreviews - messageId,
                     )
+                }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled

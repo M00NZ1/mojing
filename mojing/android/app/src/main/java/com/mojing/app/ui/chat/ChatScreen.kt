@@ -632,6 +632,9 @@ fun ChatScreen(
                             eventNodes = state.eventNodes,
                             characterNames = state.characterNames,
                             bookmarks = state.bookmarks,
+                            bookmarksHasMore = state.bookmarksHasMore,
+                            bookmarksLoadingMore = state.bookmarksLoadingMore,
+                            bookmarksLoadError = state.bookmarksLoadError,
                             bookmarkBusyIds = state.bookmarkBusyIds,
                             bookmarkLocatingId = state.bookmarkLocatingId,
                             bookmarkPreviews = state.bookmarkPreviews,
@@ -645,6 +648,7 @@ fun ChatScreen(
                                 }
                             },
                             onRemoveBookmark = { mid -> viewModel.removeBookmark(mid) },
+                            onLoadMoreBookmarks = viewModel::loadMoreBookmarks,
                             onToggleMute = { viewModel.toggleMute(it) },
                             onUpdateTalkativeness = { id, value, onResult ->
                                 viewModel.updateParticipantTalkativeness(id, value, onResult)

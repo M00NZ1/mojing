@@ -54,11 +54,15 @@ fun ChatDrawer(
     eventActionErrors: Map<Long, String> = emptyMap(),
     characterNames: Map<Long, String> = emptyMap(),
     bookmarks: List<MessageBookmarkEntity> = emptyList(),
+    bookmarksHasMore: Boolean = false,
+    bookmarksLoadingMore: Boolean = false,
+    bookmarksLoadError: String? = null,
     bookmarkBusyIds: Set<Long> = emptySet(),
     bookmarkLocatingId: Long? = null,
     bookmarkPreviews: Map<Long, String> = emptyMap(),
     onJumpToBookmark: (Long) -> Unit,
     onRemoveBookmark: (Long) -> Unit,
+    onLoadMoreBookmarks: () -> Unit,
     onToggleMute: (Long) -> Unit,
     onUpdateTalkativeness: (Long, Float, (Boolean) -> Unit) -> Unit,
     onRemoveParticipant: (Long) -> Unit,
@@ -161,7 +165,11 @@ fun ChatDrawer(
                 actionErrors = eventActionErrors,
                 currentBranchId = currentBranchId,
             )
-            4 -> BookmarksTab(bookmarks, bookmarkPreviews, onJumpToBookmark, onRemoveBookmark, bookmarkBusyIds, bookmarkLocatingId)
+            4 -> BookmarksTab(
+                bookmarks, bookmarkPreviews, onJumpToBookmark, onRemoveBookmark,
+                bookmarkBusyIds, bookmarkLocatingId, bookmarksHasMore, bookmarksLoadingMore,
+                bookmarksLoadError, onLoadMoreBookmarks,
+            )
         }
     }
     pendingTab?.let { target ->
