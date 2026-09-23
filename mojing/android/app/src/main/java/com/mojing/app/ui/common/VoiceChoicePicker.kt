@@ -14,11 +14,13 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -80,6 +82,7 @@ fun VoiceChoicePicker(
     var engines by remember { mutableStateOf<List<VoiceEngineOption>>(emptyList()) }
     var selectedEngine by remember(choice.engineId) { mutableStateOf(choice.engineId) }
     var query by remember { mutableStateOf("") }
+    var searchExpanded by remember { mutableStateOf(false) }
     var voices by remember { mutableStateOf<List<VoiceOption>>(emptyList()) }
     var loading by remember { mutableStateOf(choice.engineId != "inherit") }
     var engineLoading by remember { mutableStateOf(false) }
@@ -95,6 +98,8 @@ fun VoiceChoicePicker(
     var previewName by remember { mutableStateOf("") }
     var previewError by remember { mutableStateOf<String?>(null) }
     var previewGeneration by remember { mutableIntStateOf(0) }
+    val voiceListState = rememberLazyListState()
+    LaunchedEffect(loadGeneration) { voiceListState.scrollToItem(0) }
 
     fun stopPreview() {
         previewGeneration++
@@ -161,6 +166,7 @@ fun VoiceChoicePicker(
         voiceLoadJob?.cancel()
         selectedEngine = engineId
         query = ""
+        searchExpanded = false
         loading = true
         error = null
         voices = emptyList()
@@ -224,11 +230,7 @@ fun VoiceChoicePicker(
                 modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("选择朗读音色", style = MaterialTheme.typography.titleMedium)
-                    Text(description, style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
-                }
+                Text("选择朗读音色", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                 IconButton(enabled = !saving, onClick = { loadEngines(); if (selectedEngine != "inherit") load(selectedEngine) }) {
                     Icon(Icons.Default.Refresh, contentDescription = "刷新引擎和音色")
                 }
@@ -237,6 +239,16 @@ fun VoiceChoicePicker(
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
+                state = voiceListState,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 12.dp),
+            ) {
+            item(key = "voice-controls") {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(description, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp))
             if (saving || saveError != null) {
                 Text(
                     if (saving) "正在保存语音选择…" else saveError.orEmpty(),
@@ -322,15 +334,28 @@ fun VoiceChoicePicker(
                         TextButton(onClick = { load(selectedEngine) }) { Text("重试") }
                     }
                 } else {
-                    Text("音色", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 20.dp))
-                    if (voices.size > 8) MoJingTextField(
+                    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 20.dp, end = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text("音色", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        Text("${displayVoices.size}", style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (voices.size > 8) IconButton(onClick = {
+                            searchExpanded = !searchExpanded
+                            if (!searchExpanded) query = ""
+                        }) {
+                            Icon(if (searchExpanded) Icons.Default.Close else Icons.Default.Search,
+                                if (searchExpanded) "收起音色搜索" else "搜索音色")
+                        }
+                    }
+                    if (voices.size > 8 && searchExpanded) MoJingTextField(
                         value = query, onValueChange = { query = it }, singleLine = true,
                         placeholder = { Text("搜索音色") }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     )
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 12.dp),
-                    ) {
+                }
+            }
+            }
+            }
+            if (selectedEngine != "inherit" && !loading && error == null) {
                         if (displayVoices.isEmpty()) {
                             item {
                                 Text("没有匹配的音色，请更换关键词", color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -368,8 +393,7 @@ fun VoiceChoicePicker(
                             }
                             HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
                         }
-                    }
-                }
+            }
             }
         }
     }
