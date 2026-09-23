@@ -144,7 +144,7 @@ class SecureStorage {
 
     /** 与 Web `memory_compact_threshold`：当前故事线累计新增该数量的剧情消息后尝试触发摘要。 */
     var memoryCompactThreshold: Int
-        get() = prefs?.getInt("memory_compact_threshold", 120) ?: 120
+        get() = prefs?.getInt("memory_compact_threshold", 120)?.coerceIn(10, 2000) ?: 120
         set(value) { prefs?.edit()?.putInt("memory_compact_threshold", value.coerceIn(10, 2000))?.apply() }
 
     /** 是否启用通用高密度剧情记忆（UCM）。关闭后不注入、不更新。 */

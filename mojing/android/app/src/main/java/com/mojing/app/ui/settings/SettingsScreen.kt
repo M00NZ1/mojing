@@ -326,7 +326,7 @@ fun DefaultsTab(viewModel: SettingsViewModel) {
     val tempError = temp.toFloatOrNull()?.let { it !in 0f..2f } != false
     val maxTokensError = maxTokens.toIntOrNull()?.let { it !in 1..200_000 } != false
     val topPError = topP.toFloatOrNull()?.let { it !in 0f..1f } != false
-    val memoryError = memoryCompact.toIntOrNull()?.let { it !in 20..10_000 } != false
+    val memoryError = memoryCompact.toIntOrNull()?.let { it !in 10..2000 } != false
     val uploadError = maxUpload.toIntOrNull()?.let { it !in 1..200 } != false
     val autoError = maxAuto.toIntOrNull()?.let { it !in 1..10 } != false
     val templateOptions = buildList {
@@ -422,7 +422,8 @@ fun DefaultsTab(viewModel: SettingsViewModel) {
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 isError = memoryError,
-                supportingText = if (memoryError) { { Text("请输入 20 到 10000 之间的整数") } } else null,
+                supportingText = if (memoryError) { { Text("请输入 10 到 2000 之间的整数") } }
+                    else { { Text("长篇整理分段进行，每轮回复前最多处理 4 段，后续继续。") } },
             )
             OutlinedTextField(
                 value = maxUpload,

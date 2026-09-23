@@ -76,6 +76,18 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun memoryIntervalOnlyPersistsEffectiveRange() = runTest {
+        viewModel.updateMemoryCompactThreshold("2500")
+        assertEquals("2500", viewModel.memoryCompactThreshold.value)
+        verify(exactly = 0) { secureStorage.memoryCompactThreshold = any() }
+
+        viewModel.updateMemoryCompactThreshold("120")
+        verify(exactly = 1) { secureStorage.memoryCompactThreshold = 120 }
+        viewModel.updateMemoryCompactThreshold("")
+        verify(exactly = 1) { secureStorage.memoryCompactThreshold = any() }
+    }
+
+    @Test
     fun updateBaseUrl() = runTest {
         viewModel.updateBaseUrl("https://api.openai.com")
         assertEquals("https://api.openai.com", viewModel.baseUrl.value)

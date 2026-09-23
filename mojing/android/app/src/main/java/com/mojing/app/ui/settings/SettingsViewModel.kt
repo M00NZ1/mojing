@@ -227,7 +227,7 @@ class SettingsViewModel @Inject constructor(
     }
     fun updateMemoryCompactThreshold(value: String) {
         _memoryCompactThreshold.value = value
-        value.toIntOrNull()?.let { secureStorage.memoryCompactThreshold = it }
+        value.toIntOrNull()?.takeIf { it in 10..2000 }?.let { secureStorage.memoryCompactThreshold = it }
     }
 
     fun updateUniversalContextMemoryEnabled(value: Boolean) {

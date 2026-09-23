@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import com.mojing.app.data.local.entity.SessionEntity
 import com.mojing.app.data.local.entity.SessionWithListMeta
@@ -69,5 +70,14 @@ interface SessionDao {
     suspend fun updateThinkMax(id: Long, enabled: Boolean, updatedAt: Long = System.currentTimeMillis())
 
     @Query("DELETE FROM sessions WHERE id = :id")
-    suspend fun delete(id: Long)
+    suspend fun deleteRaw(id: Long)
+
+    @Query("DELETE FROM app_config WHERE `key` LIKE 'memory_compaction_checkpoint_v1:' || :id || ':%'")
+    suspend fun deleteMemoryCompactionCheckpoints(id: Long)
+
+    @Transaction
+    suspend fun delete(id: Long) {
+        deleteMemoryCompactionCheckpoints(id)
+        deleteRaw(id)
+    }
 }

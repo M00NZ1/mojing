@@ -7,6 +7,8 @@ import com.mojing.app.domain.engine.LlmRetry
 import com.mojing.app.domain.engine.MemoryCompactor
 import com.mojing.app.domain.engine.MemoryCompactionStore
 import com.mojing.app.domain.engine.MemoryCompactionSnapshot
+import com.mojing.app.domain.engine.MemoryCompactionCheckpoint
+import com.mojing.app.domain.engine.sourceFingerprint
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -14,6 +16,7 @@ import io.mockk.slot
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -21,6 +24,48 @@ class MemoryCompactorTest {
     private val llmRetry = mockk<LlmRetry>()
     private val store = mockk<MemoryCompactionStore>(relaxed = true)
     private val compactor = MemoryCompactor(llmRetry, store)
+
+    @Test fun longMessageResumesAfterOneChunkPerChatRound() = runTest {
+        val source = MessageEntity(id = 1, sessionId = 2, speakerType = "user", content = "长篇剧情".repeat(4000))
+        val base = MemoryCompactionSnapshot(2, "main", emptyList(), 0, listOf(source), 1)
+        var checkpoint: MemoryCompactionCheckpoint? = null
+        val requests = mutableListOf<List<ChatMessage>>()
+        val progress = mutableListOf<Int>()
+        coEvery { store.read(2, "main", 1) } coAnswers { base.copy(checkpoint = checkpoint) }
+        coEvery { store.saveCheckpoint(any(), any()) } coAnswers { checkpoint = secondArg() }
+        coEvery { llmRetry.chatCompletionWithRetry(any(), any(), any(), capture(requests), any(), any(), any()) } returns
+            """{"summary":"延续剧情","key_facts":["约定仍有效"]}"""
+        coEvery { store.commit(any(), any()) } returns true
+
+        var finished = false
+        repeat(12) {
+            if (!finished) finished = compactor.compactIfNeeded(2, "main", "k", "url", "m", 1, progress::add, 1)
+        }
+        assertTrue(finished)
+        assertTrue(requests.size > 2)
+        assertEquals((1..requests.size).toList(), progress)
+        assertTrue(requests.last().last().content.contains("长篇剧情"))
+        coVerify(exactly = requests.size - 1) { store.saveCheckpoint(any(), any()) }
+        coVerify(exactly = 1) { store.commit(any(), any()) }
+    }
+
+    @Test fun changedSourceRejectsSavedChunkCursor() = runTest {
+        val oldSource = MessageEntity(id = 1, sessionId = 2, content = "旧剧情".repeat(2500))
+        val oldSnapshot = MemoryCompactionSnapshot(2, "main", emptyList(), 0, listOf(oldSource), 1)
+        val changedSource = oldSource.copy(content = "新剧情".repeat(2500))
+        val stale = MemoryCompactionCheckpoint(sourceFingerprint = oldSnapshot.sourceFingerprint(),
+            nextChunkIndex = 1, carriedSummary = "旧段摘要")
+        val current = oldSnapshot.copy(sources = listOf(changedSource), checkpoint = stale)
+        val progress = mutableListOf<Int>()
+        coEvery { store.read(2, "main", 1) } returns current
+        coEvery { store.saveCheckpoint(any(), any()) } returns Unit
+        coEvery { llmRetry.chatCompletionWithRetry(any(), any(), any(), any(), any(), any(), any()) } returns
+            """{"summary":"新段摘要"}"""
+
+        assertFalse(compactor.compactIfNeeded(2, "main", "k", "url", "m", 1, progress::add, 1))
+        assertEquals(listOf(1), progress)
+        coVerify(exactly = 0) { store.commit(any(), any()) }
+    }
 
     @Test
     fun continuesFromInheritedCursorBeyondTheModelContextWindow() = runTest {
@@ -65,6 +110,7 @@ class MemoryCompactorTest {
             baseUrl = "https://api.test.com",
             model = "m",
             threshold = 600,
+            maxChunksPerRun = 1000,
         )
 
         assertEquals(21L, saved.captured.startMessageId)

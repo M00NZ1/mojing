@@ -28,8 +28,10 @@ class MemoryCompactor @Inject constructor(
         model: String,
         threshold: Int = 20,
         onProgress: (Int) -> Unit = {},
+        maxChunksPerRun: Int = 4,
     ): Boolean {
         require(threshold in 1..2000)
+        require(maxChunksPerRun in 1..1000)
         val snapshot = try { store.read(sessionId, branchId, threshold) }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { return false }
@@ -47,10 +49,29 @@ class MemoryCompactor @Inject constructor(
         val endMsg = recentMessages.lastOrNull() ?: return false
 
         return try {
-            var carried = MemoryCompactionInput.previous(recentSegments.sortedBy { it.endMessageId }.map { it.summary })
+            val sourceFingerprint = withContext(Dispatchers.Default) { snapshot.sourceFingerprint() }
+            val checkpoint = snapshot.checkpoint?.takeIf {
+                it.version == 1 && it.nextChunkIndex > 0 && it.carriedSummary.isNotBlank() &&
+                    it.sourceFingerprint == sourceFingerprint &&
+                    MemoryCompactionInput.weight(it.carriedSummary) <= MemoryCompactionInput.MEMORY_BUDGET
+            }
+            val chunkSequence = MemoryCompactionInput.chunks(recentMessages)
+            val (chunks, resumed) = withContext(Dispatchers.Default) {
+                val candidate = chunkSequence.iterator()
+                var skipped = 0
+                while (skipped < (checkpoint?.nextChunkIndex ?: 0) && candidate.hasNext()) {
+                    candidate.next()
+                    skipped++
+                }
+                if (checkpoint != null && skipped == checkpoint.nextChunkIndex && candidate.hasNext())
+                    candidate to true
+                else chunkSequence.iterator() to false
+            }
+            var carried = if (resumed) checkpoint!!.carriedSummary
+                else MemoryCompactionInput.previous(recentSegments.sortedBy { it.endMessageId }.map { it.summary })
             var finalSegment: SessionMemorySegmentEntity? = null
-            val chunks = MemoryCompactionInput.chunks(recentMessages).iterator()
-            var index = 0
+            var index = if (resumed) checkpoint!!.nextChunkIndex else 0
+            var processed = 0
             while (true) {
                 currentCoroutineContext().ensureActive()
                 val conversationText = withContext(Dispatchers.Default) {
@@ -84,6 +105,16 @@ class MemoryCompactor @Inject constructor(
                     startMessageId = startMsg.id, endMessageId = endMsg.id,
                     summary = summary, keyFactsJson = Gson().toJson(facts), emotionalTone = tone,
                 )
+                processed++
+                val hasMore = withContext(Dispatchers.Default) { chunks.hasNext() }
+                if (hasMore) {
+                    store.saveCheckpoint(snapshot, MemoryCompactionCheckpoint(
+                        sourceFingerprint = sourceFingerprint,
+                        nextChunkIndex = index,
+                        carriedSummary = carried,
+                    ))
+                    if (processed >= maxChunksPerRun) return false
+                }
             }
             currentCoroutineContext().ensureActive()
             store.commit(snapshot, finalSegment ?: return false)
