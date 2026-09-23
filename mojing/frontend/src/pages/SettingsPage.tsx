@@ -509,13 +509,6 @@ export default function SettingsPage() {
       )}
       {tab === 'api' && lc && (
         <div className={`page-card settings-api-page${modelPlatformEditing ? ' is-platform-editing' : ''}`}>
-          <div className="card-header">
-            <div><p className="eyebrow">本机线路</p><h2>模型服务</h2></div>
-          </div>
-          <p className="settings-api-intro">
-            开始对话只需先配置文字服务。图片、语音和思考模型都是可选能力，可以稍后再设置。
-          </p>
-
           <div className={`settings-api-layout${modelPlatformEditing ? ' is-platform-editing' : ''}`}>
             <ModelPlatformsPanel onDirtyChange={setModelPlatformDirty} onEditingChange={setModelPlatformEditing} />
 

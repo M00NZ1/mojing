@@ -150,7 +150,15 @@ try {
   assert.equal(catalog.platforms[0].id, firstId);
   assert.deepEqual(catalog.platforms[1].models, ['manual-a', 'manual-b', 'chat', 'reason', 'image-model']);
   await page.reload();
+  await page.getByRole('group', { name: '选择配置平台' }).getByRole('button', { name: 'OpenAI', exact: true }).click();
   await page.locator('.model-platform-row').filter({ hasText: 'OpenAI' }).waitFor();
+  assert.equal(await page.locator('.model-platform-row').count(), 1, 'only the selected platform details are displayed');
+  await page.getByRole('group', { name: '选择配置平台' }).getByRole('button', { name: 'DeepSeek 默认', exact: true }).click();
+  await page.locator('.model-platform-row').filter({ hasText: 'DeepSeek' }).waitFor();
+  assert.equal(catalog.active_id, firstId, 'browsing platforms must not change the default connection');
+  await page.getByRole('group', { name: '选择配置平台' }).getByRole('button', { name: 'OpenAI', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('.model-platform-tabs button[aria-pressed="true"]')?.getAttribute('title') === 'OpenAI');
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   if (output) { await mkdir(output, { recursive: true }); await page.screenshot({ path: path.join(output, 'platforms-desktop.png') }); }
   await page.setViewportSize({ width: 390, height: 844 });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));

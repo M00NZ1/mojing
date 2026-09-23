@@ -18,6 +18,7 @@ export function ModelPlatformsPanel({ onDirtyChange, onEditingChange }: { onDirt
   const catalog = useQuery({ queryKey: catalogKey, queryFn: api.getModelPlatforms });
   const providers = useQuery({ queryKey: ['providers'], queryFn: api.listProviderCatalog });
   const [draft, setDraft] = useState<ModelPlatform | null>(null);
+  const [selectedPlatformId, setSelectedPlatformId] = useState('');
   const [original, setOriginal] = useState('');
   const [modelText, setModelText] = useState('');
   const [error, setError] = useState('');
@@ -38,7 +39,7 @@ export function ModelPlatformsPanel({ onDirtyChange, onEditingChange }: { onDirt
   }
   const save = useMutation({
     mutationFn: (value: ModelPlatform) => api.saveModelPlatform(value),
-    onSuccess: (saved) => { updateSaved(saved); setDraft(null); setError(''); },
+    onSuccess: (saved, value) => { updateSaved(saved); setSelectedPlatformId(value.id); setDraft(null); setError(''); },
     onError: (e) => setError(errorText(e)),
   });
   const activate = useMutation({
@@ -94,6 +95,9 @@ export function ModelPlatformsPanel({ onDirtyChange, onEditingChange }: { onDirt
     finally { if (fetchRef.current === controller) { fetchRef.current = null; setFetching(false); } }
   }
   const models = parseModelNames(modelText);
+  const selectedPlatform = catalog.data?.platforms.find((platform) => platform.id === selectedPlatformId)
+    ?? catalog.data?.platforms.find((platform) => platform.id === catalog.data.active_id)
+    ?? catalog.data?.platforms[0];
   return <section className="model-platforms">
     {!draft && <>
     <div className="model-platform-heading"><div><h3>文字对话平台</h3><p>每个平台独立保存 Key 与模型。默认平台用于未单独配置的对话和创作。</p></div>
@@ -101,12 +105,27 @@ export function ModelPlatformsPanel({ onDirtyChange, onEditingChange }: { onDirt
     {catalog.isPending && <p role="status">正在读取已保存的平台…</p>}
     {catalog.isError && <p role="alert">{errorText(catalog.error)} <button type="button" className="btn btn-sm" onClick={() => { void catalog.refetch(); }}>重试</button></p>}
     {catalog.data?.platforms.length === 0 && <div className="model-platform-empty">添加第一个平台，填写 Key 后获取模型，或手动输入模型名称。</div>}
-    <div className="model-platform-list">{catalog.data?.platforms.map((platform) => <article className="model-platform-row" key={platform.id}>
-      <div><strong>{platform.name}</strong> {platform.id === catalog.data.active_id && <span className="pill pill-green">默认</span>}
-        <p>{platform.selected_model || '尚未选择模型'} · {platform.models.length} 个模型</p><small>{platform.base_url}</small></div>
-      <div className="model-platform-actions"><button className="btn btn-sm" type="button" disabled={save.isPending || activate.isPending} onClick={() => { void edit(platform); }}>编辑</button>
-        {platform.id !== catalog.data.active_id && <button className="btn btn-ghost btn-sm" type="button" disabled={save.isPending || activate.isPending} onClick={() => activate.mutate(platform.id)}>设为默认</button>}</div>
-    </article>)}</div>
+    {!!catalog.data?.platforms.length && <div className="model-platform-browser">
+      <div className="model-platform-tabs" role="group" aria-label="选择配置平台">
+        {catalog.data.platforms.map((platform) => <button type="button" key={platform.id}
+          aria-pressed={platform.id === selectedPlatform?.id} title={platform.name}
+          onClick={() => { setSelectedPlatformId(platform.id); setError(''); }}>
+          <span>{platform.name}</span>{platform.id === catalog.data.active_id && <small>默认</small>}
+        </button>)}
+      </div>
+      {selectedPlatform && <article className="model-platform-row" aria-label="当前平台详情">
+        <div className="model-platform-detail-heading"><div><h4>{selectedPlatform.name}</h4><p>{selectedPlatform.id === catalog.data.active_id ? '当前默认平台' : '独立连接配置'}</p></div>
+          <div className="model-platform-actions"><button className="btn btn-sm" type="button" disabled={save.isPending || activate.isPending} onClick={() => { void edit(selectedPlatform); }}>编辑</button>
+            {selectedPlatform.id !== catalog.data.active_id && <button className="btn btn-ghost btn-sm" type="button" disabled={save.isPending || activate.isPending} onClick={() => activate.mutate(selectedPlatform.id)}>{activate.isPending ? '正在切换…' : '设为默认'}</button>}</div>
+        </div>
+        <dl className="model-platform-details">
+          <div><dt>默认模型</dt><dd>{selectedPlatform.selected_model || '尚未选择模型'}</dd></div>
+          <div><dt>可用模型</dt><dd>{selectedPlatform.models.length} 个</dd></div>
+          <div className="model-platform-wide"><dt>API 地址</dt><dd>{selectedPlatform.base_url}</dd></div>
+          <div><dt>API Key</dt><dd>{selectedPlatform.api_key ? '已配置' : '未配置'}</dd></div>
+        </dl>
+      </article>}
+    </div>}
     </>}
     {!draft && error && <p className="model-platform-error" role="alert">{error}</p>}
     {draft && <div className="model-platform-editor" ref={editorRef}>
