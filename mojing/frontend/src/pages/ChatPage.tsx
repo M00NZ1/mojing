@@ -26,7 +26,7 @@ import { friendlyFetchError } from '../utils/userFacingError';
 import { hasUnsavedEditMessage } from '../utils/editMessageDraft';
 import { extractChoicesFromMessage, mergeRoundChoices, stripChoicesFromMessageContent } from '../utils/chatChoiceParsing';
 import { getRegenerationBranchPoint } from '../utils/chatBranching';
-import { clearChatDraft, loadChatDraft, saveChatDraft, loadChatQuote, saveChatQuote, clearPendingChatSend, loadPendingChatSend, savePendingChatSend, type ChatQuoteDraft, type PendingChatSend } from '../utils/chatDraftStorage';
+import { clearChatDraft, loadChatDraft, saveChatDraft, loadChatQuote, saveChatQuote, chatSendFilesMatch, clearPendingChatSend, loadPendingChatSend, savePendingChatSend, type ChatQuoteDraft, type PendingChatSend } from '../utils/chatDraftStorage';
 import { loadSpeakerTurnMode, saveSpeakerTurnMode, type SpeakerTurnMode } from '../utils/speakerTurnMode';
 import { canCreateEntryFromMessage, isPersistedMessageId } from '../utils/messageAvailability';
 import { removeSelectedFiles } from '../utils/fileSelection';
@@ -1057,17 +1057,50 @@ export default function ChatPage() {
       }
       generationRequestStarted = true;
       if (filesToSend.length > 0) {
-        const savedMessage = await api.createUserMessageWithFiles(sessionId, {
-          content: outboundUserMessage ?? '',
-          files: filesToSend,
-          branch_id: branchId,
-        }, abortController.signal);
+        const existingSend = loadPendingChatSend(sessionId)
+          ?? (pendingSend?.sessionId === sessionId ? pendingSend : null);
+        if (existingSend && (existingSend.branchId !== branchId || existingSend.content !== (outboundUserMessage ?? '')
+          || !chatSendFilesMatch(filesToSend, existingSend.files ?? []))) {
+          throw new Error('上次附件发送尚未确认，请核对记录或重新选择原附件后重试。');
+        }
+        const send = existingSend ?? {
+          clientMessageId: crypto.randomUUID(), sessionId, branchId,
+          content: outboundUserMessage ?? '', input: userMessage ?? '', quote: quoteMessage,
+          files: filesToSend.map((file) => ({ name: file.name, size: file.size, type: file.type })),
+        };
+        activeClientMessageId = send.clientMessageId;
+        if (!existingSend && !savePendingChatSend(send)) {
+          showToast('浏览器无法保存发送恢复信息，刷新前请核对对话记录。', 'warn');
+        }
+        setPendingSend(send);
+        let savedMessage: Message;
+        try {
+          savedMessage = await api.createUserMessageWithFiles(sessionId, {
+            content: outboundUserMessage ?? '', files: filesToSend,
+            branch_id: branchId, client_message_id: send.clientMessageId,
+          }, abortController.signal);
+        } catch (sendError) {
+          if ((sendError as { status?: number }).status === 409) throw sendError;
+          try {
+            savedMessage = await api.getUserMessageByClientId(sessionId, send.clientMessageId);
+            if (savedMessage.content !== (outboundUserMessage ?? '') || savedMessage.branch_id !== branchId
+              || (savedMessage.attachments ?? []).length !== filesToSend.length
+              || savedMessage.attachments?.some((attachment, index) => attachment.file_name !== filesToSend[index].name)) throw sendError;
+          } catch {
+            throw sendError;
+          }
+        }
+        if (streamIntoCurrentList && sessionIdRef.current === sessionId && selectedBranchRef.current === branchId) {
+          confirmUserMessage(savedMessage);
+        }
         submittedMessageId = savedMessage.id;
         markOutboundPersisted();
+        if (abortController.signal.aborted) throw new DOMException('已停止生成', 'AbortError');
       } else if (outboundUserMessage) {
         const existingSend = loadPendingChatSend(sessionId)
           ?? (pendingSend?.sessionId === sessionId ? pendingSend : null);
-        if (existingSend && (existingSend.branchId !== branchId || existingSend.content !== outboundUserMessage)) {
+        if (existingSend && (existingSend.branchId !== branchId || existingSend.content !== outboundUserMessage
+          || (existingSend.files?.length ?? 0) > 0)) {
           throw new Error('上次消息的发送结果尚未确认，请先核对或重试该条消息。');
         }
         const send = existingSend ?? {
@@ -1321,7 +1354,7 @@ export default function ChatPage() {
     const outbound = input.trim()
       ? (quotingMessage ? buildQuotePrefix(quotingMessage) + input.trim() : input.trim())
       : '';
-    if (unresolvedSend && (files.length > 0 || unresolvedSend.branchId !== selectedBranchId
+    if (unresolvedSend && (!chatSendFilesMatch(files, unresolvedSend.files ?? []) || unresolvedSend.branchId !== selectedBranchId
       || unresolvedSend.content !== outbound)) {
       showToast('上次发送结果未确认，请先检查或重试该条消息。', 'warn');
       return;
@@ -1353,7 +1386,9 @@ export default function ChatPage() {
     setPendingSendChecking(true);
     try {
       const saved = await api.getUserMessageByClientId(sessionId, send.clientMessageId);
-      if (saved.content !== send.content || saved.branch_id !== send.branchId) {
+      if (saved.content !== send.content || saved.branch_id !== send.branchId
+        || (saved.attachments ?? []).length !== (send.files?.length ?? 0)
+        || saved.attachments?.some((attachment, index) => attachment.file_name !== send.files?.[index]?.name)) {
         throw new Error('已保存的消息与待确认内容不一致，请检查对话记录。');
       }
       clearPendingChatSend(sessionId, send.clientMessageId);
@@ -1361,6 +1396,9 @@ export default function ChatPage() {
       if (inputDraftMirrorRef.current === send.input && quotingMessage?.id === (send.quote?.id ?? undefined)) {
         updateInput('');
         setQuotingMessage(null);
+      }
+      if (send.files?.length && chatSendFilesMatch(files, send.files)) {
+        setFiles((current) => removeSelectedFiles(current, files));
       }
       if (selectedBranchRef.current === send.branchId) void reloadMessages();
       setRetryReplyBranchId(send.branchId);
@@ -1375,6 +1413,10 @@ export default function ChatPage() {
   async function retryPendingSend() {
     const send = pendingSend;
     if (!send || send.sessionId !== sessionId) return;
+    if (!chatSendFilesMatch(files, send.files ?? [])) {
+      showToast('请重新选择与上次相同的附件，再重试本次发送；也可先检查对话记录。', 'warn');
+      return;
+    }
     if (send.branchId !== selectedBranchRef.current) {
       const result = await activateBranch(send.branchId);
       if (!result.ok) return;
@@ -1383,7 +1425,7 @@ export default function ChatPage() {
     setRetryReplyBranchId(null);
     sendMutation.mutate({
       sessionId, branchId: send.branchId, userMessage: send.input,
-      filesToSend: [], quoteMessage: send.quote,
+      filesToSend: [...files], quoteMessage: send.quote,
     });
   }
 
@@ -1988,7 +2030,9 @@ export default function ChatPage() {
           errorMessage={sendMutation.error?.message}
           retryReplyAvailable={retryReplyBranchId === selectedBranchId}
           onRetryReply={retryLastReply}
-          pendingSendPreview={pendingSend?.sessionId === sessionId && !isGenerating ? pendingSend.input.trim().slice(0, 100) : undefined}
+          pendingSendPreview={pendingSend?.sessionId === sessionId && !isGenerating
+            ? (pendingSend.input.trim() || pendingSend.files?.map((file) => file.name).join('、') || '').slice(0, 100) : undefined}
+          pendingSendHasFiles={Boolean(pendingSend?.files?.length)}
           pendingSendChecking={pendingSendChecking}
           onCheckPendingSend={() => { void checkPendingSend(); }}
           onRetryPendingSend={() => { void retryPendingSend(); }}

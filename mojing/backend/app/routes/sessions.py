@@ -161,6 +161,35 @@ def _write_chat_upload(file: UploadFile, upload_dir: Path, max_bytes: int, limit
     return target
 
 
+def _uploaded_files_match_message(message: MessageModel, files: list[UploadFile]) -> bool:
+    attachments = list(message.attachments)
+    if len(attachments) != len(files):
+        return False
+    storage_root = STORAGE_DIR.resolve()
+    for attachment, upload in zip(attachments, files):
+        mime = upload.content_type or "application/octet-stream"
+        if attachment.file_name != (upload.filename or Path(attachment.storage_path).name) or attachment.mime_type != mime:
+            return False
+        stored = (STORAGE_DIR / attachment.storage_path).resolve()
+        if not stored.is_relative_to(storage_root) or not stored.is_file():
+            return False
+        try:
+            upload.file.seek(0)
+            with stored.open("rb") as original:
+                while True:
+                    original_chunk = original.read(CHAT_UPLOAD_CHUNK_BYTES)
+                    uploaded_chunk = upload.file.read(CHAT_UPLOAD_CHUNK_BYTES)
+                    if original_chunk != uploaded_chunk:
+                        return False
+                    if not original_chunk:
+                        break
+        except OSError:
+            return False
+        finally:
+            upload.file.seek(0)
+    return True
+
+
 @router.get("", summary="获取会话列表", response_model=list[SessionRead])
 def list_sessions(q: str = "", db: Session = Depends(get_db)):
     return list_sessions_with_counts(db, q)
@@ -869,7 +898,21 @@ def add_user_message_with_files(
     content: str = Form(""),
     branch_id: str = Form("main"),
     files: list[UploadFile] = File(default_factory=list),
-    db: Session = Depends(get_db)):
+    db: Session = Depends(get_db),
+    client_message_id: UUID | None = Form(None)):
+    branch_id = branch_id.strip() or "main"
+    send_id = str(client_message_id) if client_message_id else None
+    if send_id:
+        begin_storyline_write(db)
+        existing = db.scalar(select(MessageModel).where(MessageModel.client_message_id == send_id))
+        if existing is not None:
+            if (existing.session_id != session_id or existing.branch_id != branch_id
+                    or existing.speaker_type != "user" or existing.content != content
+                    or not _uploaded_files_match_message(existing, files)):
+                db.rollback()
+                raise HTTPException(status_code=409, detail="发送编号已用于另一条消息或附件，请核对后重新发送。")
+            db.commit()
+            return serialize_message(existing)
     session = db.get(ChatSessionModel, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="会话不存在")
@@ -907,8 +950,9 @@ def add_user_message_with_files(
             speaker_type="user",
             content=content,
             attachments=attachments,
-            branch_id=branch_id or "main",
-            parent_message_id=get_visible_tail_message_id(db, session_id, branch_id or "main"))
+            branch_id=branch_id,
+            parent_message_id=get_visible_tail_message_id(db, session_id, branch_id),
+            client_message_id=send_id)
         return serialize_message(message)
     except Exception:
         db.rollback()

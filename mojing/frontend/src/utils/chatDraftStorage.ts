@@ -58,7 +58,14 @@ export type PendingChatSend = {
   content: string;
   input: string;
   quote: ChatQuoteDraft | null;
+  files?: { name: string; size: number; type: string }[];
 };
+
+export function chatSendFilesMatch(files: File[], pendingFiles: NonNullable<PendingChatSend['files']>): boolean {
+  return files.length === pendingFiles.length && files.every((file, index) =>
+    file.name === pendingFiles[index].name && file.size === pendingFiles[index].size
+    && file.type === pendingFiles[index].type);
+}
 
 const pendingSendKey = (sessionId: number) => `mojing:pending-chat-send:v1:${sessionId}`;
 
@@ -70,8 +77,12 @@ export function loadPendingChatSend(sessionId: number): PendingChatSend | null {
     if (!value || value.sessionId !== sessionId
       || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value.clientMessageId)
       || typeof value.branchId !== 'string' || !value.branchId
-      || typeof value.content !== 'string' || !value.content.trim()
+      || typeof value.content !== 'string'
       || typeof value.input !== 'string'
+      || (value.files !== undefined && (!Array.isArray(value.files) || value.files.some((file) =>
+        !file || typeof file.name !== 'string' || !Number.isSafeInteger(file.size) || file.size < 0
+        || typeof file.type !== 'string')))
+      || (!value.content.trim() && !value.files?.length)
       || (value.quote !== null && (typeof value.quote !== 'object' || value.quote.session_id !== sessionId))) return null;
     return value;
   } catch { return null; }

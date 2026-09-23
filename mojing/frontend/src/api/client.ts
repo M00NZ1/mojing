@@ -1268,10 +1268,11 @@ export const api = {
   },
   worldJobResult(jobId: number, signal?: AbortSignal) { return request<WorldGenerationResult>(`/jobs/${jobId}/world-result`, { signal }); },
   saveWorldJobResult(jobId: number) { return request<WorldGenerationResult>(`/jobs/${jobId}/save-world`, { method: 'POST' }); },
-  async createUserMessageWithFiles(sessionId: number, payload: { content: string; files: File[]; branch_id?: string }, signal?: AbortSignal) {
+  async createUserMessageWithFiles(sessionId: number, payload: { content: string; files: File[]; branch_id?: string; client_message_id?: string }, signal?: AbortSignal) {
     const formData = new FormData();
     formData.append('content', payload.content);
     formData.append('branch_id', payload.branch_id || 'main');
+    if (payload.client_message_id) formData.append('client_message_id', payload.client_message_id);
     for (const file of payload.files) {
       formData.append('files', file);
     }
@@ -1282,7 +1283,7 @@ export const api = {
     });
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
-      throw new Error(data.detail ?? '上传消息失败');
+      throw Object.assign(new Error(data.detail ?? '上传消息失败'), { status: response.status });
     }
     return response.json() as Promise<Message>;
   },

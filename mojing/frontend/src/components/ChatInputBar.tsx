@@ -21,6 +21,7 @@ interface ChatInputBarProps {
   retryReplyAvailable?: boolean;
   onRetryReply?: () => void;
   pendingSendPreview?: string;
+  pendingSendHasFiles?: boolean;
   pendingSendChecking?: boolean;
   onCheckPendingSend?: () => void;
   onRetryPendingSend?: () => void;
@@ -47,7 +48,7 @@ interface ChatInputBarProps {
 export default function ChatInputBar({
   input, setInput, files, setFiles, fileUrls, submittingFiles = [],
   isGenerating, isPending, isError, errorMessage,
-  retryReplyAvailable, onRetryReply, pendingSendPreview, pendingSendChecking = false,
+  retryReplyAvailable, onRetryReply, pendingSendPreview, pendingSendHasFiles = false, pendingSendChecking = false,
   onCheckPendingSend, onRetryPendingSend, onForgetPendingSend, onRefreshReplies, refreshingReplies = false,
   onSend, onStop, onQuickAction, quickActionPendingLabel, canCreateEntryFromMessage,
   settingConflictHint,
@@ -411,6 +412,7 @@ export default function ChatInputBar({
             <strong>上次发送尚未确认</strong>
             <span className="chat-inputbar-pending-preview">{pendingSendPreview}</span>
             <span>消息可能已保存。重试本次发送会沿用原编号，不会重复写入。</span>
+            {pendingSendHasFiles && <span>若刷新后附件已消失，请重新选择原文件再重试。</span>}
             <div className="chat-inputbar-pending-actions">
               <button type="button" className="btn btn-primary btn-sm" onClick={onRetryPendingSend} disabled={isGenerating || isPending || pendingSendChecking}>重试本次发送</button>
               <button type="button" className="btn btn-ghost btn-sm" onClick={onCheckPendingSend} disabled={isGenerating || isPending || pendingSendChecking}>{pendingSendChecking ? '正在核对…' : '检查对话记录'}</button>

@@ -1,4 +1,5 @@
 from io import BytesIO
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException, UploadFile
@@ -80,5 +81,38 @@ def test_chat_upload_rejects_oversize_batch_without_message_or_files(tmp_path, m
             assert db.scalar(select(func.count()).select_from(MessageModel)) == 0
             upload_dir = storage / "uploads" / f"session_{session.id:04d}"
             assert list(upload_dir.iterdir()) == []
+    finally:
+        engine.dispose()
+
+
+def test_retried_attachment_send_reuses_original_file_and_rejects_changed_bytes(tmp_path, monkeypatch):
+    engine, Session = _database(tmp_path)
+    storage = tmp_path / "storage"
+    monkeypatch.setattr(session_routes, "STORAGE_DIR", storage)
+    send_id = uuid4()
+    try:
+        with Session() as db:
+            session = ChatSessionModel(title="upload")
+            db.add(session)
+            db.commit()
+
+            first = session_routes.add_user_message_with_files(
+                session.id, "正文", "main", [_upload("scene.png", b"first image")], db, send_id,
+            )
+            repeated = session_routes.add_user_message_with_files(
+                session.id, "正文", "main", [_upload("scene.png", b"first image")], db, send_id,
+            )
+            assert repeated.id == first.id
+            assert db.scalar(select(func.count()).select_from(MessageModel)) == 1
+            upload_dir = storage / "uploads" / f"session_{session.id:04d}"
+            assert len(list(upload_dir.iterdir())) == 1
+
+            with pytest.raises(HTTPException) as conflict:
+                session_routes.add_user_message_with_files(
+                    session.id, "正文", "main", [_upload("scene.png", b"other image")], db, send_id,
+                )
+            assert conflict.value.status_code == 409
+            assert len(list(upload_dir.iterdir())) == 1
+            assert db.scalar(select(func.count()).select_from(MessageModel)) == 1
     finally:
         engine.dispose()

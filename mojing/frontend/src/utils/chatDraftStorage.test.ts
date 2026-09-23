@@ -29,3 +29,11 @@ clearPendingChatSend(7, '32f371d5-5144-4e8d-9f98-8d64d5f15fd2');
 if (loadPendingChatSend(7) === null) throw new Error('Different send cleared pending recovery');
 clearPendingChatSend(7, send.clientMessageId);
 if (loadPendingChatSend(7) !== null) throw new Error('Confirmed send still appears pending');
+
+const attachmentSend: PendingChatSend = {
+  ...send, clientMessageId: 'bf8baaaf-51f4-441b-9753-e8459ead188e', content: '', input: '',
+  files: [{ name: 'scene.png', size: 32, type: 'image/png' }],
+};
+if (!savePendingChatSend(attachmentSend) || loadPendingChatSend(7)?.files?.[0].name !== 'scene.png') {
+  throw new Error('Pending attachment send did not survive reload');
+}
