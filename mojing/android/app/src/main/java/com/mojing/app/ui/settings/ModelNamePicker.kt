@@ -3,6 +3,7 @@ package com.mojing.app.ui.settings
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
@@ -25,9 +26,10 @@ internal fun ModelNamePicker(names: List<String>, selected: String, onSelect: (S
             ModelPickerHeader("默认模型", search, { search = it }, onDismiss)
             if (matches.isEmpty()) Text("没有匹配的模型，试试其他关键词。", Modifier.padding(12.dp))
             key(search) {
-                LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false)) {
+                val listState = rememberLazyListState(initialFirstVisibleItemIndex = if (search.isBlank()) matches.indexOf(selected).coerceAtLeast(0) else 0)
+                LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false), state = listState) {
                     items(matches, key = { it }) { name ->
-                        com.mojing.app.ui.common.ModelOptionRow(name, name == selected, { onSelect(name) })
+                        com.mojing.app.ui.common.ModelOptionRow(name, name == selected, { onSelect(name) }, query = search)
                     }
                 }
             }

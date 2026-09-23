@@ -15,14 +15,15 @@ class ModelNamePickerTest {
         var selected = ""
         compose.setContent {
             MaterialTheme {
-                ModelNamePicker(List(5000) { "model-$it" }, "model-0", { selected = it }, {})
+                ModelNamePicker(List(5000) { "model-$it" }, "model-4999", { selected = it }, {})
             }
         }
         assertTrue(compose.onAllNodes(hasText("model-", substring = true)).fetchSemanticsNodes().size < 40)
+        compose.onNodeWithText("model-4999").assertIsDisplayed().assertIsSelected()
         compose.onNodeWithContentDescription("搜索模型").performClick()
-        compose.onNodeWithTag("model-picker-search").performTextInput("MODEL-4999")
-        compose.onNodeWithText("model-4999").performClick()
-        compose.runOnIdle { assertEquals("model-4999", selected) }
+        compose.onNodeWithTag("model-picker-search").performTextInput("MODEL-100")
+        compose.onNodeWithText("model-100").performClick()
+        compose.runOnIdle { assertEquals("model-100", selected) }
     }
 
     @Test fun emptySearchAndCancelLeaveSelectionAlone() {

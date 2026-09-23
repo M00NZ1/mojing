@@ -3,6 +3,7 @@ package com.mojing.app.ui.chat
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
@@ -74,8 +75,10 @@ fun ChatModelPicker(
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             key(platform?.id, query) {
+                val initialIndex = if (query.isBlank() && selectedModel?.first == platform?.id) (selectedModel?.second?.let(names::indexOf) ?: -1).coerceAtLeast(0) else 0
+                val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
                 LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth().testTag("chat-model-list"),
-                    contentPadding = PaddingValues(vertical = 4.dp)) {
+                    state = listState, contentPadding = PaddingValues(vertical = 4.dp)) {
                     if (names.isEmpty()) item {
                         Text(if (query.isNotBlank()) "没有匹配的模型，试试其他关键词。"
                             else "请在模型设置中添加平台和模型。", Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium)
@@ -85,7 +88,7 @@ fun ChatModelPicker(
                         val isSelected = selectedModel == (activePlatform.id to name)
                         com.mojing.app.ui.common.ModelOptionRow(name, isSelected,
                             onClick = { onSelect(activePlatform.id, name) }, enabled = !isSaving && activePlatform.apiKey.isNotBlank(),
-                            modifier = Modifier.testTag("chat-model:${activePlatform.id}:$name"))
+                            modifier = Modifier.testTag("chat-model:${activePlatform.id}:$name"), query = query)
                     }
                 }
             }
