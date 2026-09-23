@@ -26,12 +26,30 @@ internal fun MemoryCompactionSnapshot.sourceFingerprint(): String {
     part(branchId)
     part(revision.toString())
     part(limit.toString())
+    nextCoveredSegment?.let { segment ->
+        part("historical-gap-v1")
+        part(afterMessageId.toString())
+        part(segment.id.toString())
+        part(segment.startMessageId.toString())
+        part(segment.endMessageId.toString())
+        part(segment.summary)
+        part(segment.keyFactsJson)
+    }
     previous.forEach { segment ->
         part(segment.id.toString())
         part(segment.startMessageId.toString())
         part(segment.endMessageId.toString())
         part(segment.summary)
         part(segment.keyFactsJson)
+    }
+    if (nextCoveredSegment != null) {
+        contextSegments?.forEach { segment ->
+            part(segment.id.toString())
+            part(segment.startMessageId.toString())
+            part(segment.endMessageId.toString())
+            part(segment.summary)
+            part(segment.keyFactsJson)
+        }
     }
     sources.forEach { message ->
         part(message.id.toString())

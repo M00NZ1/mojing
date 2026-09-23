@@ -225,4 +225,21 @@ class MemoryCompactorTest {
         }
         coVerify(exactly = 0) { store.commit(any(), any()) }
     }
+
+    @Test fun manuallyCompactsShortHistoricalGapBeforeTheNextCoveredSegment() = runTest {
+        val next = SessionMemorySegmentEntity(id = 8, sessionId = 2, branchId = "main",
+            startMessageId = 20, endMessageId = 40, summary = "后续剧情")
+        val source = MessageEntity(id = 12, sessionId = 2, content = "漏掉的旧剧情")
+        val snapshot = MemoryCompactionSnapshot(2, "main", listOf(next), 0, listOf(source), 1,
+            checkpoint = null, cursorAfterMessageId = 0, nextCoveredSegment = next, contextSegments = emptyList())
+        coEvery { store.read(2, "main", 20, true) } returns snapshot
+        coEvery { llmRetry.chatCompletionWithRetry(any(), any(), any(), any(), any(), any(), any()) } returns
+            """{"summary":"找回旧剧情"}"""
+        coEvery { store.commit(snapshot, any()) } returns true
+
+        assertEquals(MemoryCompactor.PendingBatch(1, 1), compactor.pendingBatch(2, "main", 20))
+        assertTrue(compactor.compactIfNeeded(2, "main", "k", "url", "m", threshold = 20,
+            scanHistoricalGaps = true))
+        coVerify(exactly = 1) { store.commit(snapshot, match { it.startMessageId == 12L && it.endMessageId == 12L }) }
+    }
 }

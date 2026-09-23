@@ -82,6 +82,30 @@ interface SessionMemorySegmentDao {
         else getRecentVisible(sessionId, branchId, limit)
     }
 
+    @Query("SELECT * FROM session_memory_segments WHERE sessionId = :sessionId AND branchId = 'main' " +
+        "AND endMessageId > :afterMessageId ORDER BY startMessageId ASC, endMessageId DESC, id ASC LIMIT :limit")
+    suspend fun getMainCoverageAfter(sessionId: Long, afterMessageId: Long, limit: Int): List<SessionMemorySegmentEntity>
+
+    @Query("$VISIBLE_MEMORY_SEGMENTS_QUERY AND memory.endMessageId > :afterMessageId " +
+        "ORDER BY memory.startMessageId ASC, memory.endMessageId DESC, memory.id ASC LIMIT :limit")
+    suspend fun getVisibleCoverageAfter(sessionId: Long, branchId: String, afterMessageId: Long, limit: Int): List<SessionMemorySegmentEntity>
+
+    suspend fun getCoverageAfter(sessionId: Long, branchId: String, afterMessageId: Long, limit: Int): List<SessionMemorySegmentEntity> =
+        if (branchId == "main") getMainCoverageAfter(sessionId, afterMessageId, limit)
+        else getVisibleCoverageAfter(sessionId, branchId, afterMessageId, limit)
+
+    @Query("SELECT * FROM session_memory_segments WHERE sessionId = :sessionId AND branchId = 'main' " +
+        "AND endMessageId <= :throughMessageId ORDER BY endMessageId DESC, id DESC LIMIT :limit")
+    suspend fun getRecentMainBefore(sessionId: Long, throughMessageId: Long, limit: Int): List<SessionMemorySegmentEntity>
+
+    @Query("$VISIBLE_MEMORY_SEGMENTS_QUERY AND memory.endMessageId <= :throughMessageId " +
+        "ORDER BY memory.endMessageId DESC, memory.id DESC LIMIT :limit")
+    suspend fun getRecentVisibleBefore(sessionId: Long, branchId: String, throughMessageId: Long, limit: Int): List<SessionMemorySegmentEntity>
+
+    suspend fun getRecentBefore(sessionId: Long, branchId: String, throughMessageId: Long, limit: Int): List<SessionMemorySegmentEntity> =
+        if (branchId == "main") getRecentMainBefore(sessionId, throughMessageId, limit)
+        else getRecentVisibleBefore(sessionId, branchId, throughMessageId, limit)
+
     @Query("SELECT * FROM session_memory_segments WHERE sessionId = :sessionId AND branchId = :branchId ORDER BY segmentIndex ASC")
     suspend fun getBySessionAndBranch(sessionId: Long, branchId: String): List<SessionMemorySegmentEntity>
 

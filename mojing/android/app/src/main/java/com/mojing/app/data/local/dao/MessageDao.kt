@@ -492,6 +492,14 @@ interface MessageDao {
         limit: Int,
     ): List<MessageEntity>
 
+    @Query("SELECT id FROM ($MAIN_CONTEXT_MESSAGES_QUERY) WHERE id > :afterMessageId " +
+        "AND speakerType IN ('user', 'character', 'narrator') ORDER BY id ASC LIMIT 1")
+    suspend fun getFirstMainStoryContextIdAfter(sessionId: Long, afterMessageId: Long): Long?
+
+    @Query("$MAIN_CONTEXT_MESSAGES_QUERY AND message.id > :afterMessageId AND message.id < :beforeMessageId " +
+        "AND message.speakerType IN ('user', 'character', 'narrator') ORDER BY message.id ASC LIMIT :limit")
+    suspend fun getMainStoryContextBetween(sessionId: Long, afterMessageId: Long, beforeMessageId: Long, limit: Int): List<MessageEntity>
+
     @Query(
         "SELECT * FROM messages WHERE sessionId = :sessionId AND branchId = 'main' " +
             "AND speakerType = 'character' AND characterId IS NOT NULL ORDER BY id DESC LIMIT 1",
@@ -620,6 +628,22 @@ interface MessageDao {
         afterMessageId: Long,
         limit: Int,
     ): List<MessageEntity>
+
+    @Query("SELECT id FROM ($VISIBLE_CONTEXT_MESSAGES_QUERY) WHERE id > :afterMessageId " +
+        "AND speakerType IN ('user', 'character', 'narrator') ORDER BY id ASC LIMIT 1")
+    suspend fun getFirstVisibleStoryContextIdAfter(sessionId: Long, branchId: String, afterMessageId: Long): Long?
+
+    @Query("$VISIBLE_CONTEXT_MESSAGES_QUERY AND message.id > :afterMessageId AND message.id < :beforeMessageId " +
+        "AND message.speakerType IN ('user', 'character', 'narrator') ORDER BY message.id ASC LIMIT :limit")
+    suspend fun getVisibleStoryContextBetween(sessionId: Long, branchId: String, afterMessageId: Long, beforeMessageId: Long, limit: Int): List<MessageEntity>
+
+    suspend fun getFirstStoryContextIdAfter(sessionId: Long, branchId: String, afterMessageId: Long): Long? =
+        if (branchId == "main") getFirstMainStoryContextIdAfter(sessionId, afterMessageId)
+        else getFirstVisibleStoryContextIdAfter(sessionId, branchId, afterMessageId)
+
+    suspend fun getStoryContextBetween(sessionId: Long, branchId: String, afterMessageId: Long, beforeMessageId: Long, limit: Int): List<MessageEntity> =
+        if (branchId == "main") getMainStoryContextBetween(sessionId, afterMessageId, beforeMessageId, limit)
+        else getVisibleStoryContextBetween(sessionId, branchId, afterMessageId, beforeMessageId, limit)
 
     /** 自动摘要专用 keyset 读取；先投影当前故事线有效版本，再应用游标和上限。 */
     suspend fun getNextStoryContextBatch(

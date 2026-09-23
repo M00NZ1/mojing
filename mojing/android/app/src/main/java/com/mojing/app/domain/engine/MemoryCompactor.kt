@@ -16,9 +16,11 @@ class MemoryCompactor @Inject constructor(
     private val llmRetry: LlmRetry,
     private val store: MemoryCompactionStore,
 ) {
+    data class PendingBatch(val available: Int, val required: Int)
+
     /** 只读取下一批可用原文的数量，供手动整理在不足阈值时直接反馈。 */
-    suspend fun pendingMessageCount(sessionId: Long, branchId: String, threshold: Int): Int =
-        store.read(sessionId, branchId, threshold).sources.size
+    suspend fun pendingBatch(sessionId: Long, branchId: String, threshold: Int): PendingBatch =
+        store.read(sessionId, branchId, threshold, scanHistoricalGaps = true).let { PendingBatch(it.sources.size, it.limit) }
 
     /**
      * 从当前故事线最早的未覆盖位置读取一个有界批次。
@@ -33,19 +35,20 @@ class MemoryCompactor @Inject constructor(
         threshold: Int = 20,
         onProgress: (Int) -> Unit = {},
         maxChunksPerRun: Int = 4,
+        scanHistoricalGaps: Boolean = false,
     ): Boolean {
         require(threshold in 1..2000)
         require(maxChunksPerRun in 1..1000)
-        val snapshot = try { store.read(sessionId, branchId, threshold) }
+        val snapshot = try { store.read(sessionId, branchId, threshold, scanHistoricalGaps) }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { return false }
-        val recentSegments = snapshot.previous
+        val recentSegments = snapshot.contextSegments ?: snapshot.previous
         val lastCoveredMessageId = snapshot.afterMessageId
         val candidates = snapshot.sources
         val recentMessages = MemoryCompactionPlanner.nextBatch(
             messages = candidates,
             lastCoveredMessageId = lastCoveredMessageId,
-            threshold = threshold,
+            threshold = snapshot.limit,
         )
         if (recentMessages.isEmpty()) return false
 

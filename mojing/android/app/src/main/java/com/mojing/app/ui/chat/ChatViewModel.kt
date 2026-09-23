@@ -3719,9 +3719,9 @@ class ChatViewModel @Inject constructor(
             val owner = coroutineContext[Job]
             try {
                 val threshold = secureStorage.memoryCompactThreshold.coerceIn(10, 2000)
-                val pending = memoryCompactor.pendingMessageCount(sessionId, branchId, threshold)
-                if (pending < threshold) {
-                    onDone("还需 ${threshold - pending} 条对话才会生成下一段摘要")
+                val pending = memoryCompactor.pendingBatch(sessionId, branchId, threshold)
+                if (pending.available < pending.required) {
+                    onDone("还需 ${pending.required - pending.available} 条对话才会生成下一段摘要")
                     return@launch
                 }
                 val world = sessionWorldDao.getBySession(sessionId)
@@ -3747,6 +3747,7 @@ class ChatViewModel @Inject constructor(
                     baseUrl = baseUrl,
                     model = model,
                     threshold = threshold,
+                    scanHistoricalGaps = true,
                     onProgress = { chunk ->
                         _state.update { if (it.currentBranchId == branchId) it.copy(manualCompactionChunk = chunk) else it }
                     },
