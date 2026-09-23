@@ -8,6 +8,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.Surface
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import com.mojing.app.ui.theme.MoJingTheme
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -34,10 +47,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mojing.app.ui.theme.AppThemes
 import com.mojing.app.ui.chat.ChatReadingStyle
 
-/**
- * 外观设置独立页：对齐系统「设置」常见模式——**分组卡片**、**主标题 + 辅助说明**、**当前值可见**，
- * 单屏控件数量可控（Material / AOSP：相关项同组、避免单页过长）。
- */
+/** Theme and reading preferences with previews from the actual app palettes. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AppearanceTab(
@@ -58,6 +68,19 @@ fun AppearanceTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("主题配色", style = MaterialTheme.typography.titleMedium)
+            LazyRow(state = rememberLazyListState(initialFirstVisibleItemIndex = AppThemes.ORDER.indexOf(themeMode).coerceAtLeast(0)),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(AppThemes.ORDER, key = { it }) { id ->
+                    ThemePreviewOption(id, themeMode == id) {
+                        viewModel.setThemeMode(id)
+                        onThemeChanged(id)
+                    }
+                }
+            }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -79,43 +102,6 @@ fun AppearanceTab(
                 ))
             }
         }
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        ) {
-            Column(Modifier.padding(vertical = 4.dp)) {
-                ListItem(
-                    headlineContent = { Text("主题配色") },
-                    supportingContent = {
-                        Text(AppThemes.label(themeMode), style = MaterialTheme.typography.bodySmall)
-                    },
-                    leadingContent = {
-                        Icon(Icons.Default.Palette, contentDescription = null)
-                    },
-                    colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                )
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                FlowRow(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    AppThemes.ORDER.forEach { id ->
-                        FilterChip(
-                            selected = themeMode == id,
-                            onClick = {
-                                viewModel.setThemeMode(id)
-                                onThemeChanged(id)
-                            },
-                            label = { Text(AppThemes.label(id)) },
-                        )
-                    }
-                }
-            }
-        }
-
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -194,6 +180,34 @@ fun AppearanceTab(
                             label = { Text(label) },
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThemePreviewOption(id: String, active: Boolean, onSelect: () -> Unit) {
+    MoJingTheme(themeMode = id) {
+        Surface(onClick = onSelect, modifier = Modifier.width(152.dp).semantics { selected = active },
+            shape = MaterialTheme.shapes.medium,
+            border = BorderStroke(if (active) 2.dp else 1.dp,
+                if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+            color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.fillMaxWidth().heightIn(min = 100.dp).clearAndSetSemantics {},
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.small) {
+                        Text("故事继续", Modifier.padding(horizontal = 10.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
+                    }
+                    Surface(modifier = Modifier.align(Alignment.End), color = MaterialTheme.colorScheme.secondaryContainer,
+                        shape = MaterialTheme.shapes.small) {
+                        Text("下一幕", Modifier.padding(horizontal = 10.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(AppThemes.label(id), Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+                    if (active) Icon(Icons.Default.Check, "已选择", Modifier.size(18.dp))
                 }
             }
         }
