@@ -3,6 +3,7 @@ package com.mojing.app.ui.encyclopedia
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -313,6 +314,7 @@ fun EncyclopediaScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surfaceContainerLowest)
                 .padding(padding),
         ) {
             if (createError != null) {
@@ -383,13 +385,13 @@ fun EncyclopediaScreen(
                 }
                 if (listLayout == "grid") {
                     LazyVerticalGrid(
-                        columns = GridCells.Fixed(2),
+                        columns = GridCells.Adaptive(minSize = 156.dp),
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 88.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                     lazyGridItems(encyclopedias, key = { it.id }) { enc ->
                         SwipeRevealListRow(
@@ -423,7 +425,7 @@ fun EncyclopediaScreen(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth(),
-                        contentPadding = PaddingValues(vertical = 0.dp),
+                        contentPadding = PaddingValues(bottom = 88.dp),
                     ) {
                     itemsIndexed(encyclopedias, key = { _, e -> e.id }) { index, enc ->
                         Column(Modifier.fillMaxWidth()) {
@@ -612,14 +614,15 @@ private fun EncyclopediaGridCard(enc: EncyclopediaEntity) {
     Card(
         modifier = Modifier
             .fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(2f / 3f),
+                    .aspectRatio(4f / 5f),
             ) {
                 if (enc.coverImagePath.isNotBlank()) {
                     AsyncImage(
@@ -649,26 +652,12 @@ private fun EncyclopediaGridCard(enc: EncyclopediaEntity) {
                         }
                     }
                 }
-                Row(
-                    modifier = Modifier.align(Alignment.BottomStart).padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (enc.genreTags.isNotBlank()) {
-                        Text(
-                            enc.genreTags,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
             }
-            Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
                     enc.name.ifBlank { "未命名百科库" },
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 val gridPreview = enc.description.ifBlank { enc.worldPrompt }.trim()
@@ -680,8 +669,11 @@ private fun EncyclopediaGridCard(enc: EncyclopediaEntity) {
                         overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                } else if (enc.genreTags.isNotBlank()) {
-                    Text(enc.genreTags, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
+                if (enc.genreTags.isNotBlank()) {
+                    Text(enc.genreTags, style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }

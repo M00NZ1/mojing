@@ -2,6 +2,7 @@ package com.mojing.app.ui.world
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -52,7 +53,7 @@ fun WorldSettingsScreen(
             if (imeOpen) TextButton(onClick = viewModel::save, enabled = canSave) { Text(if (state.saving) "保存中…" else "保存") }
         })
     }, bottomBar = {
-        if (!imeOpen && !state.loading && state.error == null) Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
+        if (!imeOpen && !state.loading && state.error == null) Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp, shadowElevation = 2.dp) {
             Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
                 com.mojing.app.ui.common.MoJingButton(onClick = viewModel::save, enabled = canSave,
                     modifier = Modifier.fillMaxWidth()) {
@@ -64,7 +65,7 @@ fun WorldSettingsScreen(
         when {
             state.loading -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = androidx.compose.ui.Alignment.Center) { CircularProgressIndicator() }
             state.error != null -> Column(Modifier.fillMaxSize().padding(padding).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { Text(state.error!!, color = MaterialTheme.colorScheme.error); OutlinedButton(onClick = viewModel::retry) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text("重试") } }
-            else -> Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
+            else -> Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(padding).consumeWindowInsets(padding).imePadding()) {
                 state.saveError?.let { message ->
                     Surface(color = MaterialTheme.colorScheme.errorContainer) {
                         Text(message, Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
@@ -89,15 +90,15 @@ fun WorldSettingsScreen(
                         }
                     }
                 }
-                Text("基本资料", style = MaterialTheme.typography.titleMedium)
+                Text("基本资料", style = MaterialTheme.typography.titleLarge)
                 OutlinedTextField(state.name, viewModel::updateName, Modifier.fillMaxWidth(), enabled = editable, label = { Text("世界名称") }, singleLine = true, isError = state.name.isBlank())
                 OutlinedTextField(state.description, viewModel::updateDescription, Modifier.fillMaxWidth(), enabled = editable, label = { Text("简介") }, minLines = 2, maxLines = 4)
                 OutlinedTextField(state.gameplayMode, viewModel::updateGameplayMode, Modifier.fillMaxWidth(), enabled = editable, label = { Text("玩法模式") }, singleLine = true)
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Text("世界与叙事", style = MaterialTheme.typography.titleMedium)
+                HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                Text("世界与叙事", style = MaterialTheme.typography.titleLarge)
                 MoJingLongTextField(state.worldPrompt, viewModel::updateWorldPrompt, "世界提示词", "描述世界背景、运行规则与叙事风格", Modifier.fillMaxWidth(), enabled = editable)
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Text("角色与剧情边界", style = MaterialTheme.typography.titleMedium)
+                HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                Text("角色与剧情边界", style = MaterialTheme.typography.titleLarge)
                 MoJingLongTextField(state.antiCheatPrompt, viewModel::updateAntiCheatPrompt, "防越界规则", "描述角色能力、信息范围与剧情约束", Modifier.fillMaxWidth(), enabled = editable)
                 }
             }
