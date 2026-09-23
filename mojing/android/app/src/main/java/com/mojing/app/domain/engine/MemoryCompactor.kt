@@ -16,6 +16,10 @@ class MemoryCompactor @Inject constructor(
     private val llmRetry: LlmRetry,
     private val store: MemoryCompactionStore,
 ) {
+    /** 只读取下一批可用原文的数量，供手动整理在不足阈值时直接反馈。 */
+    suspend fun pendingMessageCount(sessionId: Long, branchId: String, threshold: Int): Int =
+        store.read(sessionId, branchId, threshold).sources.size
+
     /**
      * 从当前故事线最早的未覆盖位置读取一个有界批次。
      * 模型近期上下文窗口不是摘要数据源，否则长会话会永久跳过窗口之前的原文。

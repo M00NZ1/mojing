@@ -42,6 +42,8 @@ fun ChatDrawer(
     contextMemoryText: String = "",
     contextMemoryStatus: ContextMemoryStatus = ContextMemoryStatus.IDLE,
     memoryOperationRunning: Boolean = false,
+    manualCompactionRunning: Boolean = false,
+    manualCompactionChunk: Int? = null,
     memorySegments: List<SessionMemorySegmentEntity> = emptyList(),
     memoryCorrections: List<SessionMemoryCorrectionEntity> = emptyList(),
     memoryCorrectionPromptTrace: MemoryCorrectionPromptTrace? = null,
@@ -76,6 +78,8 @@ fun ChatDrawer(
     onDeleteMemoryCorrection: (SessionMemoryCorrectionEntity) -> Unit,
     onRebuildContextMemory: () -> Unit,
     onClearContextMemory: () -> Unit,
+    onContinueStorySummary: () -> Unit,
+    onStopStorySummary: () -> Unit,
     allowSessionThinkMax: Boolean = false,
     sessionThinkMaxEnabled: Boolean = false,
     characterForcesThinkMax: Boolean = false,
@@ -143,6 +147,10 @@ fun ChatDrawer(
                 contextMemoryText,
                 memoryOperationRunning,
                 contextMemoryStatus,
+                manualCompactionRunning,
+                manualCompactionChunk,
+                onContinueStorySummary,
+                onStopStorySummary,
             )
             3 -> TimelineTab(
                 eventNodes,
@@ -639,6 +647,10 @@ fun MemoryTab(
     contextMemoryText: String = "",
     memoryOperationRunning: Boolean = false,
     contextMemoryStatus: ContextMemoryStatus = ContextMemoryStatus.IDLE,
+    manualCompactionRunning: Boolean = false,
+    manualCompactionChunk: Int? = null,
+    onContinueStorySummary: () -> Unit,
+    onStopStorySummary: () -> Unit,
 ) {
     var section by remember(currentBranchId) { mutableIntStateOf(0) }
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -678,7 +690,7 @@ fun MemoryTab(
                         }
                     }
 
-                    if (memoryOperationRunning) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                    if (memoryOperationRunning && !manualCompactionRunning) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
                     if (contextMemoryStatus.message.isNotEmpty() && !memoryOperationRunning) {
                         Text(
                             text = contextMemoryStatus.message,
@@ -790,11 +802,47 @@ fun MemoryTab(
             }
             if (section == 2) {
                 item {
-                    Spacer(Modifier.height(8.dp))
-                    Text("自动摘要", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp)) {
+                        Text("自动摘要", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "按当前故事线从原文整理。完成一批后才会保存摘要。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = onContinueStorySummary,
+                                enabled = !isGenerating && !memoryOperationRunning,
+                                modifier = Modifier.heightIn(min = 48.dp),
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("继续整理")
+                            }
+                            if (manualCompactionRunning) {
+                                TextButton(onClick = onStopStorySummary, modifier = Modifier.heightIn(min = 48.dp)) {
+                                    Text("停止")
+                                }
+                            }
+                        }
+                        if (manualCompactionRunning) {
+                            LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+                            Text(
+                                manualCompactionChunk?.let { "正在整理第 $it 段，停止后可继续" } ?: "正在检查待整理的对话…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 6.dp),
+                            )
+                        }
+                    }
                 }
                 if (segments.isEmpty()) {
-                    item { Text("对话积累后会自动整理摘要。暂未整理或整理失败时，原文仍完整保留，后续对话会再次尝试。", modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    item { Text("暂无摘要。对话积累后会自动整理，也可点“继续整理”。原文始终保留。", modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 } else {
                     items(segments, key = { "summary:${it.id}" }) { segment ->
                         Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {

@@ -623,6 +623,8 @@ fun ChatScreen(
                             contextMemoryStatus = state.contextMemoryStatus,
                             encyclopediaFoundation = state.encyclopediaFoundation,
                             memoryOperationRunning = state.memoryOperationRunning,
+                            manualCompactionRunning = state.manualCompactionRunning,
+                            manualCompactionChunk = state.manualCompactionChunk,
                             memoryCorrections = state.memoryCorrections,
                             memoryCorrectionPromptTrace = state.lastMemoryCorrectionPromptTrace,
                             currentBranchId = state.currentBranchId,
@@ -708,6 +710,15 @@ fun ChatScreen(
                                         scope.launch { snackbarHostState.showSnackbar(msg) }
                                     }
                                 }
+                            },
+                            onContinueStorySummary = {
+                                viewModel.continueCurrentStorySummary { msg ->
+                                    scope.launch { snackbarHostState.showSnackbar(msg) }
+                                }
+                            },
+                            onStopStorySummary = {
+                                viewModel.stopCurrentStorySummary()
+                                scope.launch { snackbarHostState.showSnackbar("已停止整理，稍后可继续") }
                             },
                             onClearContextMemory = {
                                 if (state.isGenerating) {

@@ -102,6 +102,8 @@ object ChatContract {
         val contextMemoryText: String = "",
         val contextMemoryStatus: ContextMemoryStatus = ContextMemoryStatus.IDLE,
         val memoryOperationRunning: Boolean = false,
+        val manualCompactionRunning: Boolean = false,
+        val manualCompactionChunk: Int? = null,
         val memorySegments: List<SessionMemorySegmentEntity> = emptyList(),
         val memoryCorrections: List<SessionMemoryCorrectionEntity> = emptyList(),
         val lastMemoryCorrectionPromptTrace: MemoryCorrectionPromptTrace? = null,

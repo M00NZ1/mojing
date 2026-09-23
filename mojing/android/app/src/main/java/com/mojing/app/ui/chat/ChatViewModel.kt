@@ -187,6 +187,7 @@ class ChatViewModel @Inject constructor(
     private val bookmarkRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     private val eventRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     private val correctionRefreshRevision = java.util.concurrent.atomic.AtomicLong()
+    private var manualCompactionJob: Job? = null
     val state: StateFlow<ChatContract.State> = _state.asStateFlow()
     private var roundPlatform: com.mojing.app.data.ModelPlatform? = null
     private val _modelSelectionLabel = MutableStateFlow(currentModelLabel())
@@ -334,6 +335,10 @@ class ChatViewModel @Inject constructor(
         block: suspend (GenerationContext) -> Unit,
     ): Boolean {
         if (activeGeneration != null || branchTransitionJob?.isActive == true) return false
+        if (_state.value.memoryOperationRunning) {
+            _state.update { it.copy(error = "记忆整理中，请稍候再生成回复") }
+            return false
+        }
         if (_state.value.modelSelectionSaving) {
             _state.update { it.copy(error = "模型选择正在保存，请稍候再发送") }
             return false
@@ -433,6 +438,8 @@ class ChatViewModel @Inject constructor(
         block: suspend () -> Unit,
     ): Boolean {
         if (activeGeneration != null || branchTransitionJob?.isActive == true) return false
+        // 故事线或原文可能改变，取消本轮整理后由提交时的来源校验保护正式摘要。
+        manualCompactionJob?.cancel()
         historyLoadJob?.cancel()
         historyLoadJob = null
         _state.update { it.copy(isLoadingHistory = false) }
@@ -1853,6 +1860,10 @@ class ChatViewModel @Inject constructor(
     fun sendMessage() {
         val current = _state.value
         if (!current.isReady || current.sessionNotFound) return
+        if (current.memoryOperationRunning) {
+            _state.update { it.copy(error = "记忆整理中，请稍候再发送") }
+            return
+        }
         val inputTextSnapshot = current.inputText
         val text = inputTextSnapshot.trim()
         val pendingImageLocalPaths = current.pendingLocalImagePaths
@@ -3627,6 +3638,71 @@ class ChatViewModel @Inject constructor(
         catch (_: Exception) {
             if (reportFailure) _state.update { if (it.currentBranchId == branchId && eventRefreshRevision.get() == revision) it.copy(error = "修改已保存，事件列表刷新失败，可重新进入当前故事线") else it }
         }
+    }
+
+    fun continueCurrentStorySummary(onDone: (String) -> Unit = {}) {
+        if (_state.value.memoryOperationRunning || _state.value.isGenerating ||
+            activeGeneration != null || branchTransitionJob?.isActive == true) return
+        val branchId = currentBranchId()
+        _state.update { it.copy(memoryOperationRunning = true, manualCompactionRunning = true, manualCompactionChunk = null) }
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            val owner = coroutineContext[Job]
+            try {
+                val threshold = secureStorage.memoryCompactThreshold.coerceIn(10, 2000)
+                val pending = memoryCompactor.pendingMessageCount(sessionId, branchId, threshold)
+                if (pending < threshold) {
+                    onDone("还需 ${threshold - pending} 条对话才会生成下一段摘要")
+                    return@launch
+                }
+                val world = sessionWorldDao.getBySession(sessionId)
+                val sessionThink = sessionDao.getById(sessionId)?.thinkMaxEnabled == true
+                val character = _state.value.participants.firstOrNull()?.characterId?.let { characterDao.getById(it) }
+                if (character == null) {
+                    onDone("当前会话没有可用角色，无法整理摘要")
+                    return@launch
+                }
+                val connection = chatConnection(world, character)
+                connection.error?.let { onDone(it); return@launch }
+                val model = resolveChatLlmModel(character, sessionThink, connection)
+                val baseUrl = ApiRootLines.splitToOrderedDistinct(connection.baseUrl, llmApiService::normalizeOpenAiCompatibleBase)
+                    .firstOrNull() ?: llmApiService.normalizeOpenAiCompatibleBase(connection.baseUrl.trim())
+                if (connection.apiKey.isBlank() || baseUrl.isBlank() || model.isNullOrBlank()) {
+                    onDone("当前线路未配置可用对话模型，无法整理摘要")
+                    return@launch
+                }
+                val compacted = memoryCompactor.compactIfNeeded(
+                    sessionId = sessionId,
+                    branchId = branchId,
+                    apiKey = connection.apiKey,
+                    baseUrl = baseUrl,
+                    model = model,
+                    threshold = threshold,
+                    onProgress = { chunk ->
+                        _state.update { if (it.currentBranchId == branchId) it.copy(manualCompactionChunk = chunk) else it }
+                    },
+                )
+                if (compacted) {
+                    val segments = memorySegmentDao.getRecentForBranch(sessionId, branchId)
+                    _state.update { if (it.currentBranchId == branchId) it.copy(memorySegments = segments) else it }
+                    onDone("当前故事线摘要已更新")
+                } else {
+                    onDone("本轮整理尚未完成，可再次继续；原文不受影响")
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { onDone("摘要整理失败，可重试；原文不受影响") }
+            finally {
+                if (manualCompactionJob === owner) {
+                    manualCompactionJob = null
+                    _state.update { it.copy(memoryOperationRunning = false, manualCompactionRunning = false, manualCompactionChunk = null) }
+                }
+            }
+        }
+        manualCompactionJob = job
+        job.start()
+    }
+
+    fun stopCurrentStorySummary() {
+        manualCompactionJob?.cancel()
     }
 
     fun rebuildCurrentContextMemory(onDone: (String) -> Unit = {}) {
