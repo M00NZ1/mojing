@@ -205,6 +205,11 @@ export type SessionEventNode = {
   created_at: string;
 };
 
+export type SessionEventPage = {
+  items: SessionEventNode[];
+  next_cursor: number | null;
+};
+
 export type Message = {
   include_in_context?: boolean;
   id: number;

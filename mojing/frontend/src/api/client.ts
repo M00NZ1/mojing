@@ -37,7 +37,7 @@ import type {
   PromptTemplate,
   PromptTemplateRevision,
   SessionCharacterState,
-  SessionEventNode,
+  SessionEventPage,
   SessionBranch,
   SessionItem,
   SessionWorld,
@@ -66,6 +66,7 @@ import type {
 
 import { friendlyFetchError } from '../utils/userFacingError';
 const API_BASE = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_BASE) || 'http://127.0.0.1:8000/api';
+export const EVENT_PAGE_SIZE = 40;
 const VITE_STORAGE = typeof import.meta !== 'undefined' ? (import.meta as any).env?.VITE_STORAGE_BASE : undefined;
 const STORAGE_PREFIX = VITE_STORAGE !== undefined ? VITE_STORAGE : 'http://127.0.0.1:8000';
 
@@ -701,9 +702,10 @@ export const api = {
       body: JSON.stringify({ talkativeness }),
     });
   },
-  listSessionEventTree(sessionId: number, branchId = 'main') {
-    const search = new URLSearchParams({ branch_id: branchId });
-    return request<SessionEventNode[]>(`/sessions/${sessionId}/event-tree?${search.toString()}`);
+  listSessionEventTree(sessionId: number, branchId = 'main', beforeId?: number) {
+    const search = new URLSearchParams({ branch_id: branchId, limit: String(EVENT_PAGE_SIZE) });
+    if (beforeId !== undefined) search.set('before_id', String(beforeId));
+    return request<SessionEventPage>(`/sessions/${sessionId}/event-tree?${search.toString()}`);
   },
   listCharacters() {
     return request<Character[]>('/characters');

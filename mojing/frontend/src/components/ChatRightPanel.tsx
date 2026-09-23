@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import type { MemoryCorrection, MemorySegment, Participant, SessionCharacterState, SessionEventNode, WorldTemplate } from '../types';
+import type { MemoryCorrection, MemorySegment, Participant, SessionCharacterState, SessionEventPage, WorldTemplate } from '../types';
 import type { SpeakerTurnMode } from '../utils/speakerTurnMode';
 import { findStoryLineDisplayLabel, storyLineDisplayLabel } from '../utils/storyLinePresentation';
 import InlineQueryError, { type RefreshableQuery } from './InlineQueryError';
@@ -19,7 +19,7 @@ interface ChatRightPanelProps {
   maxAutoSpeakers: number;
   onMaxAutoSpeakersChange: (n: number) => void;
   onUpdateTalkativeness: (characterId: number, value: number) => void;
-  eventNodesQuery: RefreshableQuery<SessionEventNode[]>;
+  eventNodesQuery: EventNodesQuery;
   participantsQuery: RefreshableQuery<Participant[]>;
   worldTemplateId: string;
   onWorldTemplateIdChange: (id: string) => void;
@@ -75,6 +75,13 @@ type PromptTraceMemoryCorrection = {
   reason: string;
 };
 
+type EventNodesQuery = RefreshableQuery<{ pages: SessionEventPage[] }> & {
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
+  isFetchNextPageError: boolean;
+  fetchNextPage: () => Promise<unknown>;
+};
+
 function getPromptTraceCorrections(trace: Record<string, unknown>): PromptTraceMemoryCorrection[] {
   const corrections = trace.memory_corrections;
   return Array.isArray(corrections) ? corrections as PromptTraceMemoryCorrection[] : [];
@@ -109,6 +116,7 @@ export default function ChatRightPanel({
 }: ChatRightPanelProps) {
   const worldInputsDisabled = worldSaving || !worldReady;
   const worldItems = buildWorldSelectorItems(worldTemplatesQuery.data ?? [], encyclopediasQuery.data ?? [], worldTemplateId, encyclopediaId);
+  const visibleEvents = eventNodesQuery.data?.pages.flatMap((page) => page.items) ?? [];
   const [correctionDraft, setCorrectionDraft] = useState<CorrectionDraft | null>(null);
   const [correctionError, setCorrectionError] = useState<string | null>(null);
   const [savingCorrection, setSavingCorrection] = useState(false);
@@ -419,7 +427,11 @@ export default function ChatRightPanel({
       {tab === 'memory' && (
         <div style={{padding: '4px 0', fontSize: '0.8rem'}} onClick={(e) => e.stopPropagation()}>
           <div className="mini-card" style={{marginBottom: 8}}>
-            <div style={{fontWeight: 700, marginBottom: 4}}>记忆面板</div>
+            <div className="button-row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+              <strong>记忆面板</strong>
+              <button type="button" className="ghost-button" disabled={memorySegmentsQuery.isFetching}
+                onClick={() => { void memorySegmentsQuery.refetch(); }}>刷新摘要</button>
+            </div>
             <div className="hint">自动摘要用于辅助回顾；已锁定的纠正不会被自动摘要或重建改写。</div>
           </div>
           {correctionForm}
@@ -571,21 +583,24 @@ export default function ChatRightPanel({
 
       {tab === 'events' && (
         <div style={{ padding: '4px 0', fontSize: '0.82rem' }} onClick={(e) => e.stopPropagation()}>
+          <div className="button-row" style={{ alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <span className="hint">最近事件 · 已载入 {visibleEvents.length} 条</span>
+            <button type="button" className="ghost-button" disabled={eventNodesQuery.isFetching}
+              onClick={() => { void eventNodesQuery.refetch(); }}>刷新</button>
+          </div>
           {eventNodesQuery.isError && (
             <InlineQueryError
-              message="会话事件加载失败"
+              message={eventNodesQuery.isFetchNextPageError ? '较早事件加载失败' : '会话事件加载失败'}
               error={eventNodesQuery.error}
               retrying={eventNodesQuery.isFetching}
-              onRetry={() => { void eventNodesQuery.refetch(); }}
+              onRetry={() => { void (eventNodesQuery.isFetchNextPageError ? eventNodesQuery.fetchNextPage() : eventNodesQuery.refetch()); }}
             />
           )}
-          {eventNodesQuery.isLoading && <div>加载事件…</div>}
-          {!eventNodesQuery.isLoading && !eventNodesQuery.isError && (eventNodesQuery.data?.length ?? 0) === 0 && (
+          {eventNodesQuery.isLoading && visibleEvents.length === 0 && <div>加载事件…</div>}
+          {!eventNodesQuery.isLoading && !eventNodesQuery.isError && visibleEvents.length === 0 && (
             <div style={{ color: 'var(--text-2)', padding: 8 }}>暂无会话事件节点</div>
           )}
-          {[...(eventNodesQuery.data ?? [])]
-            .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-            .map((ev) => (
+          {visibleEvents.map((ev) => (
               <div key={ev.id} className="mini-card" style={{ marginBottom: 6, padding: '6px 8px' }}>
                 <div style={{ fontWeight: 600 }}>{ev.title || ev.event_type}</div>
                 <div style={{ fontSize: '0.72rem', color: 'var(--text-2)' }}>
@@ -595,8 +610,19 @@ export default function ChatRightPanel({
                 {ev.description ? (
                   <div style={{ marginTop: 4, color: 'var(--text-2)' }}>{ev.description.slice(0, 160)}</div>
                 ) : null}
+                {ev.message_id !== null && ev.message_id > 0 && (
+                  <button type="button" className="link-button" onClick={() => onLocateMemorySource(ev.message_id!)}>
+                    定位来源 #{ev.message_id}
+                  </button>
+                )}
               </div>
             ))}
+          {eventNodesQuery.hasNextPage && (
+            <button type="button" className="ghost-button" disabled={eventNodesQuery.isFetchingNextPage}
+              onClick={() => { void eventNodesQuery.fetchNextPage(); }}>
+              {eventNodesQuery.isFetchingNextPage ? '加载中…' : '加载更早事件'}
+            </button>
+          )}
         </div>
       )}
 

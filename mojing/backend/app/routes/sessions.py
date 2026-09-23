@@ -1359,20 +1359,31 @@ def delete_memory_correction(session_id: int, correction_id: int, db: Session = 
 
 
 @router.get("/{session_id}/event-tree")
-def get_event_tree(session_id: int, branch_id: str = "main", db: Session = Depends(get_db)):
-    """获取会话的事件节点列表（因果树）。"""
+def get_event_tree(
+    session_id: int,
+    branch_id: str = "main",
+    before_id: int | None = Query(default=None, gt=0),
+    limit: int = Query(default=40, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """按事件 ID 倒序读取当前故事线，避免长会话全量返回。"""
     from ..models import SessionEventNodeModel
+    filters = [
+        SessionEventNodeModel.session_id == session_id,
+        SessionEventNodeModel.branch_id == branch_id,
+    ]
+    if before_id is not None:
+        filters.append(SessionEventNodeModel.id < before_id)
     nodes = list(
         db.scalars(
             select(SessionEventNodeModel)
-            .where(
-                SessionEventNodeModel.session_id == session_id,
-                SessionEventNodeModel.branch_id == branch_id,
-            )
-            .order_by(SessionEventNodeModel.created_at.asc(), SessionEventNodeModel.id.asc())
+            .where(*filters)
+            .order_by(SessionEventNodeModel.id.desc())
+            .limit(limit + 1)
         )
     )
-    return nodes
+    page = nodes[:limit]
+    return {"items": page, "next_cursor": page[-1].id if len(nodes) > limit else None}
 
 
 @router.post("/{session_id}/import-tavern-chat", summary="单向导入酒馆格式聊天记录（mes[] 或 JSONL）")

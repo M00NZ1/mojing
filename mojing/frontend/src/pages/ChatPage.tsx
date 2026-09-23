@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import { useBeforeUnload, useBlocker, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { api } from '../api/client';
@@ -398,6 +398,7 @@ export default function ChatPage() {
     queryKey: ['memory-segments', sessionId, selectedBranchId],
     queryFn: () => api.listMemorySegments(sessionId, selectedBranchId),
     enabled: Number.isFinite(sessionId) && showRightPanel && rightPanelTab === 'memory',
+    refetchInterval: (query) => query.state.status === 'error' ? false : 10_000,
   });
 
   const memoryCorrectionsQuery = useQuery({
@@ -428,10 +429,13 @@ export default function ChatPage() {
     enabled: Number.isFinite(sessionId),
   });
 
-  const eventNodesQuery = useQuery({
+  const eventNodesQuery = useInfiniteQuery({
     queryKey: ['session-event-tree', sessionId, selectedBranchId],
-    queryFn: () => api.listSessionEventTree(sessionId, selectedBranchId || 'main'),
+    queryFn: ({ pageParam }) => api.listSessionEventTree(sessionId, selectedBranchId || 'main', pageParam),
+    initialPageParam: undefined as number | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     enabled: Number.isFinite(sessionId) && showRightPanel && rightPanelTab === 'events',
+    refetchInterval: (query) => query.state.status !== 'error' && query.state.data?.pages.length === 1 ? 10_000 : false,
   });
 
   const {
