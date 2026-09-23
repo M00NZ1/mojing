@@ -30,7 +30,7 @@ class MessageActionPanelTest {
         var dismissCount = 0
         composeRule.setContent {
             MaterialTheme {
-                Column {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
                     MessageActionPanelContent(
                         message = message, isBookmarked = false, canContinueReply = true,
                         canRegenerate = true, isGenerating = generating.value,
@@ -47,10 +47,10 @@ class MessageActionPanelTest {
             composeRule.onNodeWithText(it).assertIsEnabled()
         }
         composeRule.onNodeWithText("复制").performClick()
-        composeRule.onNodeWithText("为下一条消息引用这段原文").performClick()
+        composeRule.onNodeWithText("引用回复").performClick()
         composeRule.runOnIdle { generating.value = false }
         composeRule.onNodeWithText("编辑").assertIsEnabled().performClick()
-        composeRule.onNodeWithText("重新生成").assertIsEnabled().performClick()
+        composeRule.onNodeWithText("重新生成").performScrollTo().assertIsEnabled().performClick()
         composeRule.runOnIdle {
             assertEquals(listOf(MessageAction.Copy(message), MessageAction.Quote(message), MessageAction.Edit(message), MessageAction.Regenerate(message)), actions)
             assertEquals(4, dismissCount)
@@ -86,7 +86,7 @@ class MessageActionPanelTest {
                     onDismiss = {}, onAction = { actions += it })
             }
         } }
-        composeRule.onNodeWithText("带上这条原文继续对话").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("引用回复").performScrollTo().assertIsDisplayed().performClick()
         composeRule.onNodeWithText("从这里展开另一条故事线").performScrollTo().assertIsDisplayed().performClick()
         composeRule.onNodeWithText("撤回").performScrollTo().assertIsDisplayed().performClick()
         composeRule.runOnIdle {

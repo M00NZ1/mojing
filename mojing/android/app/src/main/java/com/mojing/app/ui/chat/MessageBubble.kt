@@ -128,13 +128,11 @@ internal fun MessageActionPanelContent(
         MessageQuickAction("复制", Icons.Default.ContentCopy, Modifier.weight(1f)) {
             onDismiss(); onAction(MessageAction.Copy(message))
         }
+        MessageQuickAction("引用回复", Icons.AutoMirrored.Filled.Reply, Modifier.weight(1f)) {
+            onAction(MessageAction.Quote(message)); onDismiss()
+        }
         MessageQuickAction("编辑", Icons.Default.Edit, Modifier.weight(1f), enabled = !isGenerating) {
             onDismiss(); onAction(MessageAction.Edit(message))
-        }
-        if (canRegenerate) {
-            MessageQuickAction("重新生成", Icons.Default.Refresh, Modifier.weight(1f), enabled = !isGenerating) {
-                onDismiss(); onAction(MessageAction.Regenerate(message))
-            }
         }
     }
     if (onSelectText != null) {
@@ -144,13 +142,6 @@ internal fun MessageActionPanelContent(
             leadingIcon = { Icon(Icons.Default.TextFields, null) })
     }
     HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
-    MessageActionRow(
-        modifier = Modifier.fillMaxWidth(),
-        text = { Text("引用回复") },
-        supportingText = if (isGenerating) "为下一条消息引用这段原文" else "带上这条原文继续对话",
-        onClick = { onAction(MessageAction.Quote(message)); onDismiss() },
-        leadingIcon = { Icon(Icons.AutoMirrored.Filled.Reply, null) },
-    )
     if (imageAttachmentCount > 0) {
         MessageActionRow(
             modifier = Modifier.fillMaxWidth(),
@@ -186,6 +177,16 @@ internal fun MessageActionPanelContent(
         leadingIcon = { Icon(Icons.AutoMirrored.Filled.VolumeUp, null) },
     )
     HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+    if (canRegenerate) {
+        MessageActionRow(
+            modifier = Modifier.fillMaxWidth(),
+            text = { Text("重新生成") },
+            supportingText = "为这条回复生成另一个版本",
+            enabled = !isGenerating,
+            onClick = { onDismiss(); onAction(MessageAction.Regenerate(message)) },
+            leadingIcon = { Icon(Icons.Default.Refresh, null) },
+        )
+    }
     if (canContinueReply) {
         MessageActionRow(
             modifier = Modifier.fillMaxWidth(),
@@ -228,13 +229,11 @@ private fun MessageActionRow(
         modifier = modifier.padding(horizontal = 12.dp, vertical = 2.dp),
         shape = RoundedCornerShape(14.dp), color = Color.Transparent,
     ) {
-        Row(Modifier.heightIn(min = 60.dp).padding(horizontal = 12.dp, vertical = 10.dp)
+        Row(Modifier.heightIn(min = 52.dp).padding(horizontal = 12.dp, vertical = 10.dp)
             .alpha(if (enabled) 1f else 0.38f),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(10.dp)) {
-                Box(Modifier.size(38.dp), contentAlignment = Alignment.Center) { leadingIcon() }
-            }
+            Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { leadingIcon() }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 androidx.compose.material3.ProvideTextStyle(MaterialTheme.typography.bodyLarge) { text() }
                 supportingText?.let {
@@ -256,9 +255,9 @@ private fun MessageQuickAction(
     Surface(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.heightIn(min = 80.dp),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = modifier.heightIn(min = 64.dp),
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         Column(Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -310,16 +309,20 @@ fun MessageBubble(
                 attachment.mimeType.startsWith("image/", ignoreCase = true))
     }
     if (showMenu) {
-        ModalBottomSheet(onDismissRequest = dismissMenu, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        ModalBottomSheet(onDismissRequest = dismissMenu, dragHandle = null,
+            containerColor = MaterialTheme.colorScheme.surface,
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
             Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(bottom = 16.dp)) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 24.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text("消息操作", style = MaterialTheme.typography.titleLarge)
+                    Text("消息操作", style = MaterialTheme.typography.titleMedium)
                     IconButton(onClick = dismissMenu) { Icon(Icons.Default.Close, "关闭消息操作") }
                 }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 val preview = remember(message.content, message.speakerType) {
                     ChatMessageTextFormat.preview(message.content, message.speakerType, 240, "此消息包含非文本内容")
                 }
@@ -346,12 +349,6 @@ fun MessageBubble(
                             modifier = Modifier.semantics { contentDescription = "所选消息" })
                     }
                 }
-                if (isGenerating) {
-                    Text("生成中，可复制、收藏、朗读或保存图片", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
-                }
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                     MessageActionPanelContent(
                         message, isBookmarked, canContinueReply, canRegenerate, isGenerating,
                         imageAttachmentCount, isSavingImages, dismissMenu, onAction,
