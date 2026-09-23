@@ -470,6 +470,13 @@ fun EntryEditScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
                         )
+                    } else if (state.isLoadingVersions && state.versions.isEmpty()) {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                        Text("正在读取历史版本…", style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else if (state.versionError != null && state.versions.isEmpty()) {
+                        Text("历史版本暂不可用，当前正文仍可编辑。", style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else if (state.versions.isEmpty()) {
                         Text("暂无历史快照", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                     } else {

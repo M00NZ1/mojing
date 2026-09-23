@@ -219,7 +219,6 @@ class EntryEditViewModel @Inject constructor(
                 currentEntry = entry
                 val loaded = if (entry != null) {
                     EntryEditState(
-                        versions = entryVersionDao.getPage(entry.id, Long.MAX_VALUE, 11),
                         encyclopediaHint = hint,
                         hasPublicLlmKey = secureStorage.publicApiKey.isNotBlank(),
                     ).withPersistedEntry(entry).copy(isDirty = false)
@@ -232,7 +231,8 @@ class EntryEditViewModel @Inject constructor(
                     )
                 }
                 savedDraft = loaded.toDraftSnapshot()
-                _state.value = loaded.copy(versions = loaded.versions.take(10), hasOlderVersions = loaded.versions.size > 10)
+                _state.value = loaded
+                if (entry != null) loadVersionPage(older = false)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {

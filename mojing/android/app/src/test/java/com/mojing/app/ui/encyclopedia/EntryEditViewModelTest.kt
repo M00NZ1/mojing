@@ -321,6 +321,37 @@ class EntryEditViewModelTest {
     }
 
     @Test
+    fun openingEntryDoesNotWaitForHistoryAndHistoryFailureKeepsDraft() = runTest(dispatcher) {
+        val entry = EncyclopediaEntryEntity(id = 9L, encyclopediaId = 3L, title = "雾港", content = "已保存正文")
+        val entries = mockk<EncyclopediaEntryDao> { coEvery { getById(9L) } returns entry }
+        val release = CompletableDeferred<Unit>()
+        val versions = mockk<EntryVersionDao> {
+            coEvery { getPage(9L, any(), any()) } coAnswers {
+                release.await()
+                throw IllegalStateException("history unavailable")
+            }
+        }
+        val vm = createViewModel(encyclopediaDao(), entries, versions)
+        vm.load(3L, 9L)
+        assertTrue(vm.state.value.isLoaded)
+        assertTrue(vm.state.value.isPersisted)
+        assertTrue(vm.state.value.isLoadingVersions)
+        assertEquals("已保存正文", vm.state.value.content)
+        vm.updateContent("读取期间的修改")
+        release.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.loadError)
+        assertNotNull(vm.state.value.versionError)
+        assertEquals("读取期间的修改", vm.state.value.content)
+        assertTrue(vm.state.value.isDirty)
+        coEvery { versions.getPage(9L, any(), any()) } returns emptyList()
+        vm.loadVersionPage(older = false)
+        assertEquals(null, vm.state.value.versionError)
+        assertEquals("读取期间的修改", vm.state.value.content)
+        coVerify(exactly = 1) { entries.getById(9L) }
+    }
+
+    @Test
     fun versionRefreshFailureKeepsCommittedEntryAndRetriesOnlyRead() = runTest(dispatcher) {
         val saved = EncyclopediaEntryEntity(id = 12L, encyclopediaId = 3L, title = "潮汐钟")
         val versions = mockk<EntryVersionDao> {
