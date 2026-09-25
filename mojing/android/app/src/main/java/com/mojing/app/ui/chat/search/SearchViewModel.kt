@@ -13,10 +13,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** Only the snippet and identifying fields survive after a result page is read. */
 data class SearchHit(val message: MessageEntity, val snippet: String)
 enum class SearchPageDirection { NEWER, OLDER }
+enum class SearchContextDirection { BEFORE, AFTER }
 data class SearchState(
     val presentation: SearchPresentation = SearchPresentation(),
     val query: String = "", val completedQuery: String = "", val exactMatch: Boolean = false,
@@ -26,6 +29,9 @@ data class SearchState(
     val hasOlder: Boolean = false, val hasNewer: Boolean = false, val firstHitOffset: Int = 0,
     val failedPage: SearchPageDirection? = null, val selectedMessageId: Long? = null,
     val contextMessages: List<MessageEntity> = emptyList(), val history: List<String> = emptyList(),
+    val contextBeforeHasMore: Boolean = false, val contextAfterHasMore: Boolean = false,
+    val contextLoadingBefore: Boolean = false, val contextLoadingAfter: Boolean = false,
+    val contextFailedBefore: Boolean = false, val contextFailedAfter: Boolean = false,
 )
 
 @HiltViewModel
@@ -41,6 +47,10 @@ class SearchViewModel @Inject constructor(application: Application, private val 
     private var detailJob: Job? = null
     private var activeSessionId: Long? = null
     private var activeBranchId = "main"
+    private var contextBefore = emptyList<MessageEntity>()
+    private var contextAfter = emptyList<MessageEntity>()
+    private var contextTarget: MessageEntity? = null
+    private val contextMutex = Mutex()
     private val prefs get() = getApplication<Application>().getSharedPreferences(PREFS, 0)
 
     fun initialize(sessionId: Long, branchId: String = "main") {
@@ -191,7 +201,13 @@ class SearchViewModel @Inject constructor(application: Application, private val 
         detailJob?.cancel()
         val token = revision
         val detailToken = ++detailRevision
-        _state.update { it.copy(selectedMessageId = messageId, searching = true, error = null, contextMessages = emptyList()) }
+        contextBefore = emptyList()
+        contextAfter = emptyList()
+        contextTarget = null
+        _state.update { it.copy(selectedMessageId = messageId, searching = true, error = null, contextMessages = emptyList(),
+            contextBeforeHasMore = false, contextAfterHasMore = false,
+            contextLoadingBefore = false, contextLoadingAfter = false,
+            contextFailedBefore = false, contextFailedAfter = false) }
         detailJob = viewModelScope.launch {
             try {
                 val target = if (branchId == "main") messageDao.getMainMessageById(sessionId, messageId)
@@ -201,17 +217,106 @@ class SearchViewModel @Inject constructor(application: Application, private val 
                         _state.update { it.copy(searching = false, error = "该消息已删除或不在当前故事线") }
                     return@launch
                 }
-                val before = if (branchId == "main") messageDao.getMainMessagesBefore(sessionId, messageId, CONTEXT_SIDE)
-                    else messageDao.getVisibleMessagesBefore(sessionId, branchId, messageId, CONTEXT_SIDE)
-                val after = if (branchId == "main") messageDao.getMainMessagesAfter(sessionId, messageId, CONTEXT_SIDE)
-                    else messageDao.getVisibleMessagesAfter(sessionId, branchId, messageId, CONTEXT_SIDE)
-                val context = (before.asReversed() + target + after).distinctBy(MessageEntity::id)
-                val presentation = presentationLoader.load(sessionId, context)
-                if (token == revision && detailToken == detailRevision)
-                    _state.update { it.copy(searching = false, contextMessages = context, presentation = presentation) }
+                if (token != revision || detailToken != detailRevision) return@launch
+                contextTarget = target
+                val presentation = presentationLoader.load(sessionId, listOf(target))
+                if (token != revision || detailToken != detailRevision) return@launch
+                _state.update { it.copy(searching = false, contextMessages = listOf(target), presentation = presentation,
+                    contextLoadingBefore = true, contextLoadingAfter = true) }
+                kotlinx.coroutines.coroutineScope {
+                    launch { loadContextSide(sessionId, branchId, messageId, SearchContextDirection.BEFORE, CONTEXT_INITIAL_SIDE, token, detailToken) }
+                    launch { loadContextSide(sessionId, branchId, messageId, SearchContextDirection.AFTER, CONTEXT_INITIAL_SIDE, token, detailToken) }
+                }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { if (token == revision && detailToken == detailRevision)
                 _state.update { it.copy(searching = false, error = "无法打开消息，请重试") } }
+        }
+    }
+
+    fun loadMoreContext(sessionId: Long, branchId: String, direction: SearchContextDirection) {
+        val current = state.value
+        val messageId = current.selectedMessageId ?: return
+        if (current.searching || current.contextLoadingBefore || current.contextLoadingAfter) return
+        val canLoad = when (direction) {
+            SearchContextDirection.BEFORE -> current.contextBeforeHasMore || current.contextFailedBefore
+            SearchContextDirection.AFTER -> current.contextAfterHasMore || current.contextFailedAfter
+        }
+        if (!canLoad) return
+        val token = revision
+        val detailToken = detailRevision
+        _state.update { it.copy(error = null,
+            contextLoadingBefore = direction == SearchContextDirection.BEFORE,
+            contextLoadingAfter = direction == SearchContextDirection.AFTER,
+            contextFailedBefore = if (direction == SearchContextDirection.BEFORE) false else it.contextFailedBefore,
+            contextFailedAfter = if (direction == SearchContextDirection.AFTER) false else it.contextFailedAfter) }
+        val initialRetry = (direction == SearchContextDirection.BEFORE && contextBefore.isEmpty() && current.contextFailedBefore) ||
+            (direction == SearchContextDirection.AFTER && contextAfter.isEmpty() && current.contextFailedAfter)
+        detailJob = viewModelScope.launch {
+            loadContextSide(sessionId, branchId, messageId, direction,
+                if (initialRetry) CONTEXT_INITIAL_SIDE else CONTEXT_SIDE, token, detailToken)
+        }
+    }
+
+    fun retryContext(sessionId: Long, branchId: String) {
+        val direction = when {
+            state.value.contextFailedBefore -> SearchContextDirection.BEFORE
+            state.value.contextFailedAfter -> SearchContextDirection.AFTER
+            else -> return
+        }
+        loadMoreContext(sessionId, branchId, direction)
+    }
+
+    private suspend fun loadContextSide(
+        sessionId: Long, branchId: String, messageId: Long, direction: SearchContextDirection,
+        limit: Int, token: Long, detailToken: Long,
+    ) {
+        try {
+            val loaded = if (direction == SearchContextDirection.BEFORE) contextBefore.size else contextAfter.size
+            val requestLimit = if (loaded == 0) limit else (CONTEXT_SIDE - loaded).coerceAtLeast(1)
+            val cursor = when (direction) {
+                SearchContextDirection.BEFORE -> contextBefore.firstOrNull()?.id ?: messageId
+                SearchContextDirection.AFTER -> contextAfter.lastOrNull()?.id ?: messageId
+            }
+            val rows = when (direction) {
+                SearchContextDirection.BEFORE -> if (branchId == "main") messageDao.getMainMessagesBefore(sessionId, cursor, requestLimit)
+                    else messageDao.getVisibleMessagesBefore(sessionId, branchId, cursor, requestLimit)
+                SearchContextDirection.AFTER -> if (branchId == "main") messageDao.getMainMessagesAfter(sessionId, cursor, requestLimit)
+                    else messageDao.getVisibleMessagesAfter(sessionId, branchId, cursor, requestLimit)
+            }
+            contextMutex.withLock {
+                if (token != revision || detailToken != detailRevision) return@withLock
+                val nextBefore = if (direction == SearchContextDirection.BEFORE)
+                    (rows.asReversed() + contextBefore).distinctBy(MessageEntity::id).takeLast(CONTEXT_SIDE)
+                else contextBefore
+                val nextAfter = if (direction == SearchContextDirection.AFTER)
+                    (contextAfter + rows).distinctBy(MessageEntity::id).take(CONTEXT_SIDE)
+                else contextAfter
+                val target = contextTarget ?: return@withLock
+                val context = (nextBefore + target + nextAfter).distinctBy(MessageEntity::id)
+                val presentation = presentationLoader.load(sessionId, context)
+                if (token != revision || detailToken != detailRevision) return@withLock
+                if (direction == SearchContextDirection.BEFORE) contextBefore = nextBefore else contextAfter = nextAfter
+                _state.update {
+                    it.copy(contextMessages = context, presentation = presentation,
+                        contextBeforeHasMore = if (direction == SearchContextDirection.BEFORE) contextBefore.size < CONTEXT_SIDE && rows.size == requestLimit else it.contextBeforeHasMore,
+                        contextAfterHasMore = if (direction == SearchContextDirection.AFTER) contextAfter.size < CONTEXT_SIDE && rows.size == requestLimit else it.contextAfterHasMore,
+                        contextLoadingBefore = if (direction == SearchContextDirection.BEFORE) false else it.contextLoadingBefore,
+                        contextLoadingAfter = if (direction == SearchContextDirection.AFTER) false else it.contextLoadingAfter,
+                        contextFailedBefore = if (direction == SearchContextDirection.BEFORE) false else it.contextFailedBefore,
+                        contextFailedAfter = if (direction == SearchContextDirection.AFTER) false else it.contextFailedAfter,
+                        error = if (direction == SearchContextDirection.BEFORE && it.contextFailedBefore || direction == SearchContextDirection.AFTER && it.contextFailedAfter) null else it.error)
+                }
+            }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) {
+            if (token == revision && detailToken == detailRevision) _state.update {
+                it.copy(searching = false,
+                    contextLoadingBefore = if (direction == SearchContextDirection.BEFORE) false else it.contextLoadingBefore,
+                    contextLoadingAfter = if (direction == SearchContextDirection.AFTER) false else it.contextLoadingAfter,
+                    contextFailedBefore = if (direction == SearchContextDirection.BEFORE) true else it.contextFailedBefore,
+                    contextFailedAfter = if (direction == SearchContextDirection.AFTER) true else it.contextFailedAfter,
+                    error = if (direction == SearchContextDirection.BEFORE) "无法加载上文，请重试" else "无法加载下文，请重试")
+            }
         }
     }
 
@@ -220,7 +325,13 @@ class SearchViewModel @Inject constructor(application: Application, private val 
         detailJob?.cancel()
         // A pending next-page navigation must not reopen the reader after Back.
         searchJob?.cancel()
-        _state.update { it.copy(selectedMessageId = null, contextMessages = emptyList(), searching = false, error = null) }
+        _state.update { it.copy(selectedMessageId = null, contextMessages = emptyList(), searching = false, error = null,
+            contextBeforeHasMore = false, contextAfterHasMore = false,
+            contextLoadingBefore = false, contextLoadingAfter = false,
+            contextFailedBefore = false, contextFailedAfter = false) }
+        contextBefore = emptyList()
+        contextAfter = emptyList()
+        contextTarget = null
     }
 
     private fun cancelSearch() {
@@ -260,5 +371,6 @@ class SearchViewModel @Inject constructor(application: Application, private val 
         private const val MAX_CACHED_HITS = PAGE_SIZE * 3
         private const val HISTORY_LIMIT = 12
         private const val CONTEXT_SIDE = 8
+        private const val CONTEXT_INITIAL_SIDE = 2
     }
 }

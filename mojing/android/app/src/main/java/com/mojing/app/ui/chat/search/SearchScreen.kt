@@ -224,18 +224,31 @@ fun SearchScreen(
     Box(Modifier.fillMaxSize().imePadding()) {
         Column(Modifier.fillMaxSize().padding(bottom = 64.dp)) {
             SearchQueryToolbar(readerQuery, { readerQuery = it }, vm::closeHit, { submit() }, !state.searching)
-            if (state.searching && state.contextMessages.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if ((state.searching && state.contextMessages.isEmpty()) || state.contextLoadingBefore || state.contextLoadingAfter) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (!state.searching && state.contextMessages.isEmpty()) {
                 Text(state.error ?: "找不到这条消息", Modifier.padding(20.dp), color = if (state.error == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
                 if (state.error != null) Text("重试", Modifier.clickable { state.selectedMessageId?.let { vm.openHit(sessionId, branchId, it) } }.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.primary)
             }
             if (state.error != null && state.contextMessages.isNotEmpty()) {
-                TextButton(onClick = { vm.navigateHit(sessionId, branchId,
-                    if (state.failedPage == SearchPageDirection.NEWER) -1 else 1) }) { Text(state.error) }
+                if (state.contextFailedBefore || state.contextFailedAfter) {
+                    TextButton(enabled = !state.contextLoadingBefore && !state.contextLoadingAfter,
+                        onClick = { vm.retryContext(sessionId, branchId) }) { Text("${state.error} · 重试") }
+                } else {
+                    TextButton(onClick = { vm.navigateHit(sessionId, branchId,
+                        if (state.failedPage == SearchPageDirection.NEWER) -1 else 1) }) { Text(state.error) }
+                }
+            }
+            if (state.contextMessages.isNotEmpty() && (state.contextBeforeHasMore || state.contextFailedBefore || state.contextLoadingBefore)) {
+                TextButton(enabled = !state.contextLoadingBefore && !state.contextLoadingAfter,
+                    onClick = { vm.loadMoreContext(sessionId, branchId, SearchContextDirection.BEFORE) },
+                    modifier = Modifier.fillMaxWidth()) {
+                    Text(if (state.contextLoadingBefore) "正在加载上文…" else "加载更多上文")
+                }
             }
             val listState = rememberLazyListState()
             var positionedId by remember(state.selectedMessageId, state.completedQuery) { mutableStateOf<Long?>(null) }
-            LaunchedEffect(state.contextMessages, state.selectedMessageId) {
+            val targetPresent = state.selectedMessageId != null && state.contextMessages.any { it.id == state.selectedMessageId }
+            LaunchedEffect(state.selectedMessageId, targetPresent) {
                 val i = state.contextMessages.indexOfFirst { it.id == state.selectedMessageId }
                 if (i >= 0) { listState.scrollToItem(i); positionedId = state.selectedMessageId }
             }
@@ -268,6 +281,13 @@ fun SearchScreen(
                                     bookmarkedMessageIds = emptySet(), senderLabel = meta.senderLabel, showSenderHeader = meta.showSenderHeader, timeText = meta.timeText,
                                     onAction = {}, onSelectSwipeVersion = { _, _, onResult -> onResult(false) }, readOnly = true)
                             }
+                        }
+                    }
+                    if (state.contextMessages.isNotEmpty() && (state.contextAfterHasMore || state.contextFailedAfter || state.contextLoadingAfter)) item(key = "load_more_context_after") {
+                        TextButton(enabled = !state.contextLoadingBefore && !state.contextLoadingAfter,
+                            onClick = { vm.loadMoreContext(sessionId, branchId, SearchContextDirection.AFTER) },
+                            modifier = Modifier.fillMaxWidth()) {
+                            Text(if (state.contextLoadingAfter) "正在加载下文…" else "加载更多下文")
                         }
                     }
                 }

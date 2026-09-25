@@ -47,8 +47,28 @@ data class StoryContentsMessageProjection(
     val contentPreview: String,
 )
 
-private const val CURRENT_MESSAGES_QUERY = """
-    SELECT message.*
+/** 搜索列表所需字段；避免把结构化正文和搜索派生列读入每个结果。 */
+data class SearchMessageRow(
+    val id: Long,
+    val sessionId: Long,
+    val speakerType: String,
+    val characterId: Long?,
+    val branchId: String,
+    val content: String,
+    val createdAt: Long,
+) {
+    fun toMessageEntity(): MessageEntity = MessageEntity(
+        id = id,
+        sessionId = sessionId,
+        speakerType = speakerType,
+        characterId = characterId,
+        branchId = branchId,
+        content = content,
+        createdAt = createdAt,
+    )
+}
+
+private const val CURRENT_MESSAGES_FROM_QUERY = """
     FROM branch_visibility_segments AS segment
     CROSS JOIN messages AS message
     WHERE segment.sessionId = :sessionId
@@ -68,6 +88,17 @@ private const val CURRENT_MESSAGES_QUERY = """
             AND replacement.regeneratedFromMessageId = message.id
             AND replacement.branchId <> message.branchId
       )
+"""
+
+private const val CURRENT_MESSAGES_QUERY = """
+    SELECT message.*
+    $CURRENT_MESSAGES_FROM_QUERY
+"""
+
+private const val CURRENT_MESSAGES_SEARCH_QUERY = """
+    SELECT message.id, message.sessionId, message.speakerType, message.characterId,
+           message.branchId, message.content, message.createdAt
+    $CURRENT_MESSAGES_FROM_QUERY
 """
 
 private const val MAIN_SELECTED_MESSAGES_QUERY = """
@@ -511,7 +542,8 @@ interface MessageDao {
     suspend fun getLatestMainCharacterMessage(sessionId: Long): MessageEntity?
 
     @Query(
-        "SELECT * FROM messages AS message " +
+        "SELECT message.id, message.sessionId, message.speakerType, message.characterId, " +
+            "message.branchId, message.content, message.createdAt FROM messages AS message " +
             "WHERE message.sessionId = :sessionId AND message.branchId = 'main' " +
             "AND (message.id IN (" +
             "SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression" +
@@ -524,6 +556,18 @@ interface MessageDao {
             "(message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0)))) " +
             "AND message.id < :beforeMessageId ORDER BY message.id DESC LIMIT :limit",
     )
+    suspend fun searchMainMessagesIndexedRows(
+        sessionId: Long,
+        query: String,
+        normalizedQuery: String,
+        matchExpression: String,
+        exactMatch: Int,
+        indexedThroughMessageId: Long,
+        indexComplete: Int,
+        limit: Int,
+        beforeMessageId: Long = Long.MAX_VALUE,
+    ): List<SearchMessageRow>
+
     suspend fun searchMainMessagesIndexed(
         sessionId: Long,
         query: String,
@@ -534,7 +578,10 @@ interface MessageDao {
         indexComplete: Int,
         limit: Int,
         beforeMessageId: Long = Long.MAX_VALUE,
-    ): List<MessageEntity>
+    ): List<MessageEntity> = searchMainMessagesIndexedRows(
+        sessionId, query, normalizedQuery, matchExpression, exactMatch,
+        indexedThroughMessageId, indexComplete, limit, beforeMessageId,
+    ).map(SearchMessageRow::toMessageEntity)
 
     suspend fun searchMainMessages(
         sessionId: Long,
@@ -558,7 +605,8 @@ interface MessageDao {
     }
 
     @Query(
-        "SELECT * FROM messages AS message " +
+        "SELECT message.id, message.sessionId, message.speakerType, message.characterId, " +
+            "message.branchId, message.content, message.createdAt FROM messages AS message " +
             "WHERE message.sessionId = :sessionId AND message.branchId = 'main' " +
             "AND (message.id IN (SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression) " +
             "OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId)) " +
@@ -566,8 +614,13 @@ interface MessageDao {
             "OR (:exactMatch = 0 AND ((message.searchNormalized <> '' AND instr(message.searchNormalized, :normalizedQuery) > 0) OR (message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0)))) " +
             "AND message.id > :afterMessageId ORDER BY message.id ASC LIMIT :limit",
     )
+    suspend fun searchMainMessagesAfterIndexedRows(sessionId: Long, query: String, normalizedQuery: String, matchExpression: String, exactMatch: Int,
+        indexedThroughMessageId: Long, indexComplete: Int, limit: Int, afterMessageId: Long): List<SearchMessageRow>
+
     suspend fun searchMainMessagesAfterIndexed(sessionId: Long, query: String, normalizedQuery: String, matchExpression: String, exactMatch: Int,
-        indexedThroughMessageId: Long, indexComplete: Int, limit: Int, afterMessageId: Long): List<MessageEntity>
+        indexedThroughMessageId: Long, indexComplete: Int, limit: Int, afterMessageId: Long): List<MessageEntity> =
+        searchMainMessagesAfterIndexedRows(sessionId, query, normalizedQuery, matchExpression, exactMatch,
+            indexedThroughMessageId, indexComplete, limit, afterMessageId).map(SearchMessageRow::toMessageEntity)
 
     suspend fun searchMainMessagesAfter(sessionId: Long, query: String, exactMatch: Int, limit: Int, afterMessageId: Long): List<MessageEntity> {
         val state = currentSearchIndexState()
@@ -700,7 +753,7 @@ interface MessageDao {
 
     /** 搜索结果有硬上限；点击结果后再按 id 读取目标附近窗口。 */
     @Query(
-        "$CURRENT_MESSAGES_QUERY AND (message.id IN (" +
+        "$CURRENT_MESSAGES_SEARCH_QUERY AND (message.id IN (" +
             "SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression" +
             ") OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId)) " +
             "AND ((:exactMatch = 1 AND ((message.searchNormalized <> '' " +
@@ -711,6 +764,19 @@ interface MessageDao {
             "(message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0)))) " +
             "AND message.id < :beforeMessageId ORDER BY message.id DESC LIMIT :limit",
     )
+    suspend fun searchVisibleMessagesIndexedRows(
+        sessionId: Long,
+        branchId: String,
+        query: String,
+        normalizedQuery: String,
+        matchExpression: String,
+        exactMatch: Int,
+        indexedThroughMessageId: Long,
+        indexComplete: Int,
+        limit: Int,
+        beforeMessageId: Long = Long.MAX_VALUE,
+    ): List<SearchMessageRow>
+
     suspend fun searchVisibleMessagesIndexed(
         sessionId: Long,
         branchId: String,
@@ -722,7 +788,10 @@ interface MessageDao {
         indexComplete: Int,
         limit: Int,
         beforeMessageId: Long = Long.MAX_VALUE,
-    ): List<MessageEntity>
+    ): List<MessageEntity> = searchVisibleMessagesIndexedRows(
+        sessionId, branchId, query, normalizedQuery, matchExpression, exactMatch,
+        indexedThroughMessageId, indexComplete, limit, beforeMessageId,
+    ).map(SearchMessageRow::toMessageEntity)
 
     suspend fun searchVisibleMessages(
         sessionId: Long,
@@ -748,15 +817,20 @@ interface MessageDao {
     }
 
     @Query(
-        "$CURRENT_MESSAGES_QUERY AND (message.id IN (" +
+        "$CURRENT_MESSAGES_SEARCH_QUERY AND (message.id IN (" +
             "SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression" +
             ") OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId)) " +
             "AND ((:exactMatch = 1 AND ((message.searchNormalized <> '' AND message.searchNormalized = :normalizedQuery) OR (message.searchNormalized = '' AND message.content = :query))) " +
             "OR (:exactMatch = 0 AND ((message.searchNormalized <> '' AND instr(message.searchNormalized, :normalizedQuery) > 0) OR (message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0)))) " +
             "AND message.id > :afterMessageId ORDER BY message.id ASC LIMIT :limit",
     )
+    suspend fun searchVisibleMessagesAfterIndexedRows(sessionId: Long, branchId: String, query: String, normalizedQuery: String, matchExpression: String,
+        exactMatch: Int, indexedThroughMessageId: Long, indexComplete: Int, limit: Int, afterMessageId: Long): List<SearchMessageRow>
+
     suspend fun searchVisibleMessagesAfterIndexed(sessionId: Long, branchId: String, query: String, normalizedQuery: String, matchExpression: String,
-        exactMatch: Int, indexedThroughMessageId: Long, indexComplete: Int, limit: Int, afterMessageId: Long): List<MessageEntity>
+        exactMatch: Int, indexedThroughMessageId: Long, indexComplete: Int, limit: Int, afterMessageId: Long): List<MessageEntity> =
+        searchVisibleMessagesAfterIndexedRows(sessionId, branchId, query, normalizedQuery, matchExpression, exactMatch,
+            indexedThroughMessageId, indexComplete, limit, afterMessageId).map(SearchMessageRow::toMessageEntity)
 
     suspend fun searchVisibleMessagesAfter(sessionId: Long, branchId: String, query: String, exactMatch: Int, limit: Int,
         afterMessageId: Long): List<MessageEntity> {

@@ -230,6 +230,66 @@ class SearchViewModelTest {
         assertFalse(viewModel.state.value.searching)
     }
 
+    @Test fun readerStartsWithSmallContextAndLoadsRemainingWindowOnDemand() = runTest(dispatcher) {
+        coEvery { dao.getMainMessageById(1L, 10L) } returns message(10L, "target")
+        coEvery { dao.getMainMessagesBefore(1L, 10L, 2) } returns listOf(message(9L, "before 9"), message(8L, "before 8"))
+        coEvery { dao.getMainMessagesAfter(1L, 10L, 2) } returns listOf(message(11L, "after 11"), message(12L, "after 12"))
+        coEvery { dao.getMainMessagesBefore(1L, 8L, 6) } returns
+            (2L..7L).reversed().map { message(it, "before $it") }
+
+        viewModel.openHit(1L, "main", 10L); advanceUntilIdle()
+        assertEquals(listOf(8L, 9L, 10L, 11L, 12L), viewModel.state.value.contextMessages.map { it.id })
+        assertTrue(viewModel.state.value.contextBeforeHasMore)
+        assertTrue(viewModel.state.value.contextAfterHasMore)
+
+        viewModel.loadMoreContext(1L, "main", SearchContextDirection.BEFORE); advanceUntilIdle()
+        assertEquals((2L..12L).toList(), viewModel.state.value.contextMessages.map { it.id })
+        assertFalse(viewModel.state.value.contextBeforeHasMore)
+    }
+
+    @Test fun contextFailureKeepsTargetAndRetryAddsOriginalText() = runTest(dispatcher) {
+        coEvery { dao.getMainMessageById(1L, 10L) } returns message(10L, "target body")
+        coEvery { dao.getMainMessagesBefore(1L, 10L, 2) } throws IllegalStateException("offline")
+        coEvery { dao.getMainMessagesAfter(1L, 10L, 2) } returns emptyList()
+
+        viewModel.openHit(1L, "main", 10L); advanceUntilIdle()
+        assertEquals(listOf(10L), viewModel.state.value.contextMessages.map { it.id })
+        assertTrue(viewModel.state.value.contextFailedBefore)
+        assertEquals("无法加载上文，请重试", viewModel.state.value.error)
+
+        coEvery { dao.getMainMessagesBefore(1L, 10L, 2) } returns listOf(message(9L, "before 9"), message(8L, "before 8"))
+        viewModel.retryContext(1L, "main"); advanceUntilIdle()
+        assertEquals(listOf(8L, 9L, 10L), viewModel.state.value.contextMessages.map { it.id })
+        assertFalse(viewModel.state.value.contextFailedBefore)
+        assertNull(viewModel.state.value.error)
+    }
+
+    @Test fun interleavedContextPresentationKeepsBothSides() = runTest(dispatcher) {
+        val presentation = mockk<SearchPresentationLoader>()
+        val beforePresentationEntered = CompletableDeferred<Unit>()
+        val releaseBeforePresentation = CompletableDeferred<Unit>()
+        coEvery { presentation.load(any(), any()) } coAnswers {
+            val rows = secondArg<List<MessageEntity>>()
+            if (rows.size == 3 && rows.firstOrNull()?.id == 8L) {
+                beforePresentationEntered.complete(Unit)
+                releaseBeforePresentation.await()
+            }
+            SearchPresentation()
+        }
+        val vm = SearchViewModel(application, dao, presentation, SearchResultFormatter(dispatcher))
+        vm.initialize(1L, "main")
+        coEvery { dao.getMainMessageById(1L, 10L) } returns message(10L, "target")
+        coEvery { dao.getMainMessagesBefore(1L, 10L, 2) } returns listOf(message(9L, "before 9"), message(8L, "before 8"))
+        coEvery { dao.getMainMessagesAfter(1L, 10L, 2) } returns listOf(message(11L, "after 11"), message(12L, "after 12"))
+
+        vm.openHit(1L, "main", 10L)
+        runCurrent()
+        assertTrue(beforePresentationEntered.isCompleted)
+        releaseBeforePresentation.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf(8L, 9L, 10L, 11L, 12L), vm.state.value.contextMessages.map { it.id })
+    }
+
     @Test fun resultCacheDoesNotRetainFullMessageBody() = runTest(dispatcher) {
         val longText = "正文".repeat(500)
         coEvery { dao.searchMainMessages(1L, "正文", 0, any(), any()) } returns listOf(message(2L, longText))
