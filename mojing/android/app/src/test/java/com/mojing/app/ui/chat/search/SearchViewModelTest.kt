@@ -4,7 +4,9 @@ import android.app.Application
 import android.content.SharedPreferences
 import com.mojing.app.data.local.dao.MessageDao
 import com.mojing.app.data.local.entity.MessageEntity
+import com.mojing.app.data.local.search.MessageSearchIndexManager
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
@@ -31,6 +33,7 @@ class SearchViewModelTest {
     private val preferences = mockk<SharedPreferences>(relaxed = true)
     private val editor = mockk<SharedPreferences.Editor>(relaxed = true)
     private lateinit var dao: MessageDao
+    private lateinit var indexManager: MessageSearchIndexManager
     private lateinit var viewModel: SearchViewModel
 
     @Before fun setUp() {
@@ -40,13 +43,65 @@ class SearchViewModelTest {
         every { preferences.getLong(any(), any()) } returns 0L
         every { preferences.edit() } returns editor
         dao = mockk(relaxed = true)
+        indexManager = mockk(relaxed = true)
+        coEvery { indexManager.rebuildIfNeeded() } returns Unit
         val presentation = io.mockk.mockk<SearchPresentationLoader>()
         io.mockk.coEvery { presentation.load(any(), any()) } returns SearchPresentation()
-        viewModel = SearchViewModel(application, dao, presentation, SearchResultFormatter(dispatcher))
+        viewModel = SearchViewModel(application, dao, indexManager, presentation, SearchResultFormatter(dispatcher))
         viewModel.initialize(1L, "main")
     }
 
     @After fun tearDown() { Dispatchers.resetMain() }
+
+    @Test fun incompleteIndexDoesNotPublishPartialResultsOrCount() = runTest(dispatcher) {
+        val rebuildFinished = CompletableDeferred<Unit>()
+        coEvery { indexManager.rebuildIfNeeded() } coAnswers { rebuildFinished.await() }
+        coEvery { dao.searchMainMessages(any(), any(), any(), any(), any()) } returns listOf(message(7L, "ＡＢＣ"))
+        viewModel.setQuery("ABC")
+        viewModel.search(1L, "main")
+        runCurrent()
+
+        assertTrue(viewModel.state.value.indexing)
+        assertTrue(viewModel.state.value.searching)
+        assertTrue(viewModel.state.value.hits.isEmpty())
+        assertNull(viewModel.state.value.totalMatches)
+        coVerify(exactly = 0) { dao.searchMainMessages(any(), any(), any(), any(), any()) }
+
+        rebuildFinished.complete(Unit)
+        advanceUntilIdle()
+        assertFalse(viewModel.state.value.indexing)
+        assertEquals(7L, viewModel.state.value.hits.single().message.id)
+    }
+
+    @Test fun indexRebuildFailureKeepsResultUnknownAndOffersRetry() = runTest(dispatcher) {
+        coEvery { indexManager.rebuildIfNeeded() } throws IllegalStateException("storage")
+        viewModel.setQuery("ABC")
+        viewModel.search(1L, "main")
+        advanceUntilIdle()
+
+        assertEquals("搜索索引整理失败，请重试", viewModel.state.value.error)
+        assertNull(viewModel.state.value.totalMatches)
+        assertFalse(viewModel.state.value.indexing)
+        coVerify(exactly = 0) { dao.searchMainMessages(any(), any(), any(), any(), any()) }
+    }
+
+    @Test fun changingQueryCancelsIndexWaitWithoutPublishingOldResults() = runTest(dispatcher) {
+        val rebuildFinished = CompletableDeferred<Unit>()
+        coEvery { indexManager.rebuildIfNeeded() } coAnswers { rebuildFinished.await() }
+        viewModel.setQuery("旧词")
+        viewModel.search(1L, "main")
+        runCurrent()
+        assertTrue(viewModel.state.value.indexing)
+
+        viewModel.setQuery("新词")
+        rebuildFinished.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals("新词", viewModel.state.value.query)
+        assertFalse(viewModel.state.value.indexing)
+        assertNull(viewModel.state.value.totalMatches)
+        coVerify(exactly = 0) { dao.searchMainMessages(any(), any(), any(), any(), any()) }
+    }
 
     @Test fun firstPageCanBeReadWhileTotalCountIsPending() = runTest(dispatcher) {
         val gate = CompletableDeferred<Int>()
@@ -96,7 +151,7 @@ class SearchViewModelTest {
     @Test fun changingQueryWhileSnippetIsQueuedCannotPublishOldResults() = runTest(dispatcher) {
         val cpu = QueuedSearchDispatcher()
         val presentation = mockk<SearchPresentationLoader>()
-        val vm = SearchViewModel(application, dao, presentation, SearchResultFormatter(cpu))
+        val vm = SearchViewModel(application, dao, indexManager, presentation, SearchResultFormatter(cpu))
         vm.initialize(1L)
         coEvery { dao.searchMainMessages(any(), any(), any(), any(), any()) } returns listOf(message(8L, "old body"))
         coEvery { dao.countMainMessages(any(), any(), any()) } returns 1
@@ -276,7 +331,7 @@ class SearchViewModelTest {
             }
             SearchPresentation()
         }
-        val vm = SearchViewModel(application, dao, presentation, SearchResultFormatter(dispatcher))
+        val vm = SearchViewModel(application, dao, indexManager, presentation, SearchResultFormatter(dispatcher))
         vm.initialize(1L, "main")
         coEvery { dao.getMainMessageById(1L, 10L) } returns message(10L, "target")
         coEvery { dao.getMainMessagesBefore(1L, 10L, 2) } returns listOf(message(9L, "before 9"), message(8L, "before 8"))

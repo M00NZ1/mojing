@@ -1,10 +1,12 @@
 package com.mojing.app.data.local.search
 
 import com.mojing.app.data.local.dao.MessageDao
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -16,12 +18,14 @@ class MessageSearchIndexManager @Inject constructor(
 ) {
     private val rebuildMutex = Mutex()
 
-    suspend fun rebuildIfNeeded() = rebuildMutex.withLock {
-        while (true) {
-            currentCoroutineContext().ensureActive()
-            val result = messageDao.rebuildSearchIndexBatch()
-            if (result.isComplete) return@withLock
-            yield()
+    suspend fun rebuildIfNeeded() = withContext(Dispatchers.IO) {
+        rebuildMutex.withLock {
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val result = messageDao.rebuildSearchIndexBatch()
+                if (result.isComplete) return@withLock
+                yield()
+            }
         }
     }
 }
