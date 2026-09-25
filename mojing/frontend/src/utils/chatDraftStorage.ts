@@ -105,6 +105,43 @@ export function clearPendingChatSend(sessionId: number, clientMessageId: string)
   } catch { /* A failed cleanup must not hide the saved message. */ }
 }
 
+export type PendingChatReply = {
+  sessionId: number;
+  branchId: string;
+  userMessageId: number;
+};
+
+const pendingReplyKey = (sessionId: number) => `mojing:pending-chat-reply:v1:${sessionId}`;
+
+export function loadPendingChatReply(sessionId: number): PendingChatReply | null {
+  try {
+    const raw = getLocalStorage()?.getItem(pendingReplyKey(sessionId));
+    if (!raw) return null;
+    const value = JSON.parse(raw) as PendingChatReply;
+    if (value?.sessionId !== sessionId || typeof value.branchId !== 'string' || !value.branchId
+      || !Number.isSafeInteger(value.userMessageId) || value.userMessageId <= 0) return null;
+    return value;
+  } catch { return null; }
+}
+
+export function savePendingChatReply(reply: PendingChatReply): boolean {
+  try {
+    const storage = getLocalStorage();
+    if (!storage) return false;
+    storage.setItem(pendingReplyKey(reply.sessionId), JSON.stringify(reply));
+    return true;
+  } catch { return false; }
+}
+
+export function clearPendingChatReply(sessionId: number, userMessageId: number): void {
+  try {
+    const storage = getLocalStorage();
+    if (loadPendingChatReply(sessionId)?.userMessageId === userMessageId) {
+      storage?.removeItem(pendingReplyKey(sessionId));
+    }
+  } catch { /* A failed cleanup must not hide a completed reply. */ }
+}
+
 const quoteKey = (sessionId: number) => `mojing:chat-quote:v1:${sessionId}`;
 
 export function loadChatQuote(sessionId: number): ChatQuoteDraft | null {

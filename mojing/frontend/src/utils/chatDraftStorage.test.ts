@@ -1,5 +1,5 @@
 // @ts-expect-error Node's native TypeScript runner requires the explicit extension.
-import { clearPendingChatSend, loadPendingChatSend, savePendingChatSend, type PendingChatSend } from './chatDraftStorage.ts';
+import { clearPendingChatReply, clearPendingChatSend, loadPendingChatReply, loadPendingChatSend, savePendingChatReply, savePendingChatSend, type PendingChatSend } from './chatDraftStorage.ts';
 
 const values = new Map<string, string>();
 Object.defineProperty(globalThis, 'window', {
@@ -37,3 +37,13 @@ const attachmentSend: PendingChatSend = {
 if (!savePendingChatSend(attachmentSend) || loadPendingChatSend(7)?.files?.[0].name !== 'scene.png') {
   throw new Error('Pending attachment send did not survive reload');
 }
+
+const reply = { sessionId: 7, branchId: 'story-a', userMessageId: 42 };
+if (!savePendingChatReply(reply) || loadPendingChatReply(7)?.userMessageId !== 42) {
+  throw new Error('Pending reply did not survive reload');
+}
+if (loadPendingChatReply(8) !== null) throw new Error('Pending reply leaked to another session');
+clearPendingChatReply(7, 41);
+if (loadPendingChatReply(7)?.userMessageId !== 42) throw new Error('Different reply cleared recovery');
+clearPendingChatReply(7, 42);
+if (loadPendingChatReply(7) !== null) throw new Error('Confirmed reply still appears pending');

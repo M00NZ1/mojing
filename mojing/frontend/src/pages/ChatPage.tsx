@@ -26,7 +26,7 @@ import { friendlyFetchError } from '../utils/userFacingError';
 import { hasUnsavedEditMessage } from '../utils/editMessageDraft';
 import { extractChoicesFromMessage, mergeRoundChoices, stripChoicesFromMessageContent } from '../utils/chatChoiceParsing';
 import { getRegenerationBranchPoint } from '../utils/chatBranching';
-import { clearChatDraft, loadChatDraft, saveChatDraft, loadChatQuote, saveChatQuote, chatSendFilesMatch, clearPendingChatSend, loadPendingChatSend, savePendingChatSend, type ChatQuoteDraft, type PendingChatSend } from '../utils/chatDraftStorage';
+import { clearChatDraft, loadChatDraft, saveChatDraft, loadChatQuote, saveChatQuote, chatSendFilesMatch, clearPendingChatReply, clearPendingChatSend, loadPendingChatReply, loadPendingChatSend, savePendingChatReply, savePendingChatSend, type ChatQuoteDraft, type PendingChatSend } from '../utils/chatDraftStorage';
 import { loadSpeakerTurnMode, saveSpeakerTurnMode, type SpeakerTurnMode } from '../utils/speakerTurnMode';
 import { canCreateEntryFromMessage, isPersistedMessageId } from '../utils/messageAvailability';
 import { removeSelectedFiles } from '../utils/fileSelection';
@@ -293,9 +293,22 @@ export default function ChatPage() {
       draftInputBySessionRef.current[sessionId] = restoredDraft;
       setInput(restoredDraft);
       setPendingSend(loadPendingChatSend(sessionId));
+      const restoredReply = loadPendingChatReply(sessionId);
+      setReplyRecovery(restoredReply ? { ...restoredReply, mode: 'waiting' } : null);
+      if (restoredReply) {
+        void api.getUserMessageReplyStatus(sessionId, restoredReply.userMessageId, restoredReply.branchId).then((state) => {
+          if (sessionIdRef.current !== sessionId) return;
+          setReplyRecovery((current) => {
+            if (!current || current.userMessageId !== restoredReply.userMessageId
+              || current.branchId !== restoredReply.branchId) return current;
+            return { ...current, mode: replyRecoveryModeFromStatus(state.status) };
+          });
+        }).catch(() => { /* Keep the recovery prompt for a manual status refresh. */ });
+      }
     } else {
       setInput('');
       setPendingSend(null);
+      setReplyRecovery(null);
     }
     quoteRevisionRef.current += 1;
     setQuoteState(loadChatQuote(sessionId));
@@ -1014,13 +1027,20 @@ export default function ChatPage() {
     const submittedQuoteRevision = quoteRevisionRef.current;
     const submittedInputRevision = inputDraftRevisionRef.current;
     let outboundPersisted = false;
+    let replyReceiptStored = false;
     let generationRequestStarted = false;
     let activeClientMessageId: string | null = null;
     let submittedMessageId: number | undefined = existingUserMessageId;
+    const retainReplyRecovery = (messageId: number) => {
+      replyReceiptStored = savePendingChatReply({ sessionId, branchId, userMessageId: messageId });
+      if (!replyReceiptStored) {
+        showToast('浏览器无法保存回复恢复信息，刷新前请核对对话记录。', 'warn');
+      }
+    };
     const markOutboundPersisted = () => {
       if (outboundPersisted) return;
       outboundPersisted = true;
-      if (activeClientMessageId) {
+      if (activeClientMessageId && replyReceiptStored) {
         clearPendingChatSend(sessionId, activeClientMessageId);
         setPendingSend((current) => current?.clientMessageId === activeClientMessageId ? null : current);
       }
@@ -1103,6 +1123,7 @@ export default function ChatPage() {
           confirmUserMessage(savedMessage);
         }
         submittedMessageId = savedMessage.id;
+        retainReplyRecovery(savedMessage.id);
         markOutboundPersisted();
         if (abortController.signal.aborted) throw new DOMException('已停止生成', 'AbortError');
       } else if (outboundUserMessage) {
@@ -1138,10 +1159,12 @@ export default function ChatPage() {
           confirmUserMessage(savedMessage, optimisticId);
         }
         submittedMessageId = savedMessage.id;
+        retainReplyRecovery(savedMessage.id);
         markOutboundPersisted();
         if (abortController.signal.aborted) throw new DOMException('已停止生成', 'AbortError');
       }
 
+      if (existingUserMessageId) retainReplyRecovery(existingUserMessageId);
       await api.streamGenerate(
         sessionId,
         {
@@ -1201,11 +1224,16 @@ export default function ChatPage() {
         },
         abortController.signal,
       );
+      if (submittedMessageId) clearPendingChatReply(sessionId, submittedMessageId);
+      if (activeClientMessageId) {
+        clearPendingChatSend(sessionId, activeClientMessageId);
+        setPendingSend((current) => current?.clientMessageId === activeClientMessageId ? null : current);
+      }
     } catch (error) {
       // SSE errors/aborts must not be reported as a successful send. Re-read the
       // database so optimistic and partial placeholders cannot remain on screen.
       if (generationRequestStarted) void reloadMessages();
-      if (sessionIdRef.current === sessionId && (replySaved || outboundPersisted
+      if (sessionIdRef.current === sessionId && (replySaved || outboundPersisted || submittedMessageId
         || (generationRequestStarted && !outboundUserMessage && filesToSend.length === 0))) {
         if (sessionIdRef.current === sessionId && abortRef.current === abortController) {
           setReplyRecovery({
@@ -1417,8 +1445,12 @@ export default function ChatPage() {
         || saved.attachments?.some((attachment, index) => attachment.file_name !== send.files?.[index]?.name)) {
         throw new Error('已保存的消息与待确认内容不一致，请检查对话记录。');
       }
-      clearPendingChatSend(sessionId, send.clientMessageId);
-      setPendingSend((current) => current?.clientMessageId === send.clientMessageId ? null : current);
+      if (savePendingChatReply({ sessionId, branchId: send.branchId, userMessageId: saved.id })) {
+        clearPendingChatSend(sessionId, send.clientMessageId);
+        setPendingSend((current) => current?.clientMessageId === send.clientMessageId ? null : current);
+      } else {
+        showToast('浏览器无法保存回复恢复信息；原发送记录已保留，刷新后仍可重新核对。', 'warn');
+      }
       if (inputDraftMirrorRef.current === send.input && quotingMessage?.id === (send.quote?.id ?? undefined)) {
         updateInput('');
         setQuotingMessage(null);
@@ -2085,7 +2117,10 @@ export default function ChatPage() {
           replyRecoveryMode={replyRecovery?.sessionId === sessionId && replyRecovery.branchId === selectedBranchId
             ? replyRecovery.mode : undefined}
           onRetryReply={retryLastReply}
-          onDismissReplyRecovery={() => setReplyRecovery(null)}
+          onDismissReplyRecovery={() => {
+            if (replyRecovery?.userMessageId) clearPendingChatReply(sessionId, replyRecovery.userMessageId);
+            setReplyRecovery(null);
+          }}
           pendingSendPreview={pendingSend?.sessionId === sessionId && !isGenerating
             ? (pendingSend.input.trim() || pendingSend.files?.map((file) => file.name).join('、') || '').slice(0, 100) : undefined}
           pendingSendHasFiles={Boolean(pendingSend?.files?.length)}
