@@ -12,6 +12,15 @@ import com.mojing.app.data.local.entity.SessionMemoryCorrectionEntity
 
 data class SavedImageNotice(val messageId: Long, val branchId: String)
 
+/** A reply retained after generation stopped, pending an explicit user decision. */
+data class ReplyRecoveryNotice(
+    val token: String? = null,
+    val speakerLabel: String,
+    val text: String? = null,
+    val branchLabel: String? = null,
+    val issue: String? = null,
+)
+
 data class BranchAnchor(val branchId: String, val label: String)
 
 data class MemoryCorrectionPromptTrace(
@@ -70,6 +79,9 @@ object ChatContract {
         val messageAttachments: Map<Long, List<MessageAttachmentEntity>> = emptyMap(),
         val streamingText: String = "",
         val isGenerating: Boolean = false,
+        val replyRecovery: ReplyRecoveryNotice? = null,
+        val replyRecoveryBusy: Boolean = false,
+        val replyRecoveryError: String? = null,
         val lastRequestModel: String? = null,
         val lastRequestPlatform: String? = null,
         val modelSelectionSaving: Boolean = false,

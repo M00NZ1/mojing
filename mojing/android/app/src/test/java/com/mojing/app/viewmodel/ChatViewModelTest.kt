@@ -6,6 +6,8 @@ import androidx.lifecycle.SavedStateHandle
 import android.content.Context
 import com.mojing.app.data.ChatDraftSnapshot
 import com.mojing.app.data.ChatDraftStore
+import com.mojing.app.data.ReplyRecoveryLoadResult
+import com.mojing.app.data.ReplyRecoverySnapshot
 import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.local.dao.BookmarkDao
 import com.mojing.app.data.local.entity.MessageBookmarkEntity
@@ -90,6 +92,10 @@ class ChatViewModelTest {
     private fun emptyDraftStore(): ChatDraftStore = mockk<ChatDraftStore>(relaxed = true).also {
         every { it.load(any()) } returns ChatDraftSnapshot()
         every { it.saveBeforeSubmission(any(), any()) } returns true
+        every { it.loadReplyRecovery(any()) } returns ReplyRecoveryLoadResult.Missing
+        every { it.saveReplyRecovery(any()) } returns true
+        every { it.checkpointReplyRecovery(any()) } returns true
+        every { it.clearReplyRecovery(any(), any()) } returns true
     }
 
     private fun submissionTransaction(
@@ -190,6 +196,97 @@ class ChatViewModelTest {
     }
 
     private fun validLlmApiService(): LlmApiService = LlmApiService()
+
+    @Test
+    fun restoredReplyNeedsExplicitKeepAndIsInsertedOnlyOnce() = runTest(testDispatcher) {
+        val snapshot = ReplyRecoverySnapshot(
+            token = "123e4567-e89b-12d3-a456-426614174000", sessionId = 42L,
+            branchId = "main", speakerType = "narrator", rawText = "进程退出前的回复",
+            startedAt = 100L, updatedAt = 200L,
+        )
+        var pending = true
+        val store = emptyDraftStore()
+        every { store.loadReplyRecovery(42L) } answers {
+            if (pending) ReplyRecoveryLoadResult.Valid(snapshot) else ReplyRecoveryLoadResult.Missing
+        }
+        every { store.clearReplyRecovery(42L, snapshot.token) } answers { pending = false; true }
+        val messages = mockk<MessageDao>(relaxed = true)
+        var inserts = 0
+        coEvery { messages.findReplyRecoveryMessageId(42L, "main", snapshot.token) } answers {
+            if (inserts > 0) 1L else null
+        }
+        coEvery { messages.insertReplyRecoveryIfAbsent(any(), snapshot.token, null) } answers {
+            inserts++
+            1L
+        }
+        val vm = createViewModel(messageDao = messages, chatDraftStore = store)
+        advanceUntilIdle()
+
+        assertEquals("进程退出前的回复", vm.state.value.replyRecovery?.text)
+        assertEquals(0, inserts)
+        vm.keepRecoveredReply()
+        advanceUntilIdle()
+
+        assertEquals(1, inserts)
+        assertEquals(null, vm.state.value.replyRecovery)
+        vm.keepRecoveredReply()
+        advanceUntilIdle()
+        assertEquals(1, inserts)
+    }
+
+    @Test
+    fun changedBranchTailKeepsRecoveryAvailableToCopyOrDiscard() = runTest(testDispatcher) {
+        val snapshot = ReplyRecoverySnapshot(
+            token = "123e4567-e89b-12d3-a456-426614174001", sessionId = 42L,
+            branchId = "main", speakerType = "narrator", anchorMessageId = 7L,
+            rawText = "旧故事线回复", startedAt = 100L, updatedAt = 200L,
+        )
+        var pending = true
+        val store = emptyDraftStore()
+        every { store.loadReplyRecovery(42L) } answers {
+            if (pending) ReplyRecoveryLoadResult.Valid(snapshot) else ReplyRecoveryLoadResult.Missing
+        }
+        every { store.clearReplyRecovery(42L, snapshot.token) } answers { pending = false; true }
+        val messages = mockk<MessageDao>(relaxed = true)
+        coEvery { messages.findReplyRecoveryMessageId(42L, "main", snapshot.token) } returns null
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(
+            MessageEntity(id = 8L, sessionId = 42L, speakerType = "user", content = "新消息"),
+        )
+        val vm = createViewModel(messageDao = messages, chatDraftStore = store)
+        advanceUntilIdle()
+
+        assertTrue(vm.state.value.replyRecovery?.issue?.contains("末尾") == true)
+        vm.keepRecoveredReply()
+        advanceUntilIdle()
+        coVerify(exactly = 0) { messages.insertReplyRecoveryIfAbsent(any(), any(), any()) }
+        vm.discardRecoveredReply()
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.replyRecovery)
+    }
+
+    @Test
+    fun alreadyCommittedReplyClearsHandoffWithoutAnotherInsert() = runTest(testDispatcher) {
+        val snapshot = ReplyRecoverySnapshot(
+            token = "123e4567-e89b-12d3-a456-426614174002", sessionId = 42L,
+            branchId = "main", speakerType = "narrator", rawText = "已经写入的回复",
+            startedAt = 100L, updatedAt = 200L,
+        )
+        var pending = true
+        val store = emptyDraftStore()
+        every { store.loadReplyRecovery(42L) } answers {
+            if (pending) ReplyRecoveryLoadResult.Valid(snapshot) else ReplyRecoveryLoadResult.Missing
+        }
+        every { store.clearReplyRecovery(42L, snapshot.token) } answers { pending = false; true }
+        val messages = mockk<MessageDao>(relaxed = true)
+        coEvery { messages.findReplyRecoveryMessageId(42L, "main", snapshot.token) } returns 9L
+
+        val vm = createViewModel(messageDao = messages, chatDraftStore = store)
+        advanceUntilIdle()
+
+        assertEquals(null, vm.state.value.replyRecovery)
+        assertFalse(pending)
+        coVerify(exactly = 0) { messages.insertReplyRecoveryIfAbsent(any(), any(), any()) }
+    }
 
     @Test fun novelRenameWaitsForSaveAndIgnoresDuplicateSubmission() = runTest(testDispatcher) {
         val sessions = existingSessionDao(42L)

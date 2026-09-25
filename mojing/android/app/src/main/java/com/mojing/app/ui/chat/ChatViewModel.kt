@@ -8,6 +8,8 @@ import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.ChatDraftSnapshot
 import com.mojing.app.data.ChatDraftStore
+import com.mojing.app.data.ReplyRecoveryLoadResult
+import com.mojing.app.data.ReplyRecoverySnapshot
 import com.mojing.app.data.prefs.UiPreferencesRepository
 import com.mojing.app.data.local.dao.MessageRecallImpact
 import com.mojing.app.data.local.dao.MessageRecallBlockedException
@@ -15,6 +17,7 @@ import com.mojing.app.data.local.dao.AttachmentDao
 import com.mojing.app.data.local.dao.BookmarkDao
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.MessageDao
+import com.mojing.app.data.local.dao.ReplyRecoveryMetadata
 import com.mojing.app.data.local.dao.ParticipantDao
 import com.mojing.app.data.local.dao.SessionDao
 import com.mojing.app.data.local.dao.SessionEventNodeDao
@@ -112,6 +115,9 @@ private class GenerationContext(
     var interruptedReplyText: String = "",
     var interruptedReplySpeakerType: String? = null,
     var interruptedReplyCharacterId: Long? = null,
+    var replyRecovery: ReplyRecoverySnapshot? = null,
+    var lastRecoveryCheckpointAt: Long = 0L,
+    var lastRecoveryCheckpointLength: Int = 0,
 )
 
 data class TavernChatImportResult(
@@ -272,6 +278,8 @@ class ChatViewModel @Inject constructor(
     /** All AI generation entry points share one Job to prevent concurrent writes. */
     private var generationJob: Job? = null
     private var activeGeneration: GenerationContext? = null
+    private var pendingReplyRecovery: ReplyRecoverySnapshot? = null
+    private var unreadableReplyRecovery: String? = null
     private var branchTransitionJob: Job? = null
     private var initializationJob: Job? = null
     private var historyLoadJob: Job? = null
@@ -465,6 +473,10 @@ class ChatViewModel @Inject constructor(
         block: suspend () -> Unit,
     ): Boolean {
         if (activeGeneration != null || branchTransitionJob?.isActive == true) return false
+        if (_state.value.replyRecovery != null) {
+            _state.update { it.copy(error = "请先保留、复制或丢弃上次中断的回复") }
+            return false
+        }
         // 故事线或原文可能改变，取消本轮整理后由提交时的来源校验保护正式摘要。
         manualCompactionJob?.cancel()
         historyLoadJob?.cancel()
@@ -953,6 +965,7 @@ class ChatViewModel @Inject constructor(
             isReady = sourceMessageId <= 0L,
             initialLoadError = null,
         )
+        reconcileReplyRecovery()
         if (sourceMessageId > 0L) {
             val located = loadMessageWindow(initialBranchId, sourceMessageId)
             _state.update { it.copy(isReady = located,
@@ -1015,6 +1028,181 @@ class ChatViewModel @Inject constructor(
             })
         }
         return previews
+    }
+
+    private suspend fun checkpointReplyRecovery(
+        generation: GenerationContext,
+        text: String,
+        speakerType: String,
+        characterId: Long?,
+        force: Boolean = false,
+    ) {
+        if (text.isBlank()) return
+        val now = System.currentTimeMillis()
+        val previous = generation.replyRecovery
+        if (!force && previous != null && now - generation.lastRecoveryCheckpointAt < 1_500L &&
+            text.length - generation.lastRecoveryCheckpointLength < 256
+        ) return
+        val snapshot = if (previous == null) {
+            ReplyRecoverySnapshot(
+                token = UUID.randomUUID().toString(), sessionId = sessionId, branchId = generation.branchId,
+                speakerType = speakerType, characterId = characterId,
+                anchorMessageId = getMessageTailForBranch(generation.branchId, 1).lastOrNull()?.id,
+                swipeGroupId = generation.swipeGroupId,
+                swipeSourceMessageId = generation.swipeSourceMessageId,
+                rawText = text, startedAt = now, updatedAt = now,
+            )
+        } else previous.copy(rawText = text, updatedAt = now.coerceAtLeast(previous.startedAt))
+        val saved = if (previous == null) chatDraftStore.saveReplyRecovery(snapshot)
+            else chatDraftStore.checkpointReplyRecovery(snapshot)
+        if (saved) {
+            generation.replyRecovery = snapshot
+            generation.lastRecoveryCheckpointAt = now
+            generation.lastRecoveryCheckpointLength = text.length
+        } else {
+            _state.update { it.copy(error = "中断回复暂时无法保存恢复记录，请检查设备存储空间") }
+        }
+    }
+
+    private suspend fun clearCommittedReplyRecovery(generation: GenerationContext) {
+        val snapshot = generation.replyRecovery ?: return
+        if (chatDraftStore.clearReplyRecovery(sessionId, snapshot.token)) {
+            generation.replyRecovery = null
+        } else {
+            reconcileReplyRecovery()
+        }
+    }
+
+    private suspend fun replyRecoveryIssue(snapshot: ReplyRecoverySnapshot): String? {
+        if (snapshot.sessionId != sessionId) return "记录不属于当前对话"
+        val branches = sessionBranchDao.getBySession(sessionId)
+        if (snapshot.branchId != "main" && branches.none { it.branchId == snapshot.branchId }) return "原故事线已不存在"
+        if (getMessageTailForBranch(snapshot.branchId, 1).lastOrNull()?.id != snapshot.anchorMessageId) {
+            return "原故事线已有新消息或末尾已变化"
+        }
+        if (snapshot.speakerType == "character" && characterDao.getById(snapshot.characterId!!) == null) {
+            return "原角色已不存在"
+        }
+        if ((snapshot.swipeGroupId == null) != (snapshot.swipeSourceMessageId == null)) {
+            return "回复版本来源不完整"
+        }
+        snapshot.swipeSourceMessageId?.let { sourceId ->
+            if (sourceId != snapshot.anchorMessageId || getVisibleMessage(snapshot.branchId, sourceId) == null) {
+                return "原回复版本已变化"
+            }
+        }
+        return null
+    }
+
+    private fun showReplyRecovery(snapshot: ReplyRecoverySnapshot, issue: String?) {
+        pendingReplyRecovery = snapshot
+        unreadableReplyRecovery = null
+        val branchLabel = _state.value.branches.firstOrNull { it.branchId == snapshot.branchId }?.label
+            ?: if (snapshot.branchId == "main") "主线" else snapshot.branchId
+        _state.update { it.copy(
+            replyRecovery = ReplyRecoveryNotice(
+                token = snapshot.token,
+                speakerLabel = if (snapshot.speakerType == "narrator") "旁白" else
+                    it.characterNames[snapshot.characterId] ?: "角色",
+                text = snapshot.rawText, branchLabel = branchLabel, issue = issue,
+            ),
+            replyRecoveryError = null,
+        ) }
+    }
+
+    private suspend fun reconcileReplyRecovery() {
+        when (val record = chatDraftStore.loadReplyRecovery(sessionId)) {
+            is ReplyRecoveryLoadResult.Valid -> {
+                val snapshot = record.snapshot
+                if (snapshot.sessionId != sessionId) {
+                    showReplyRecovery(snapshot, "记录不属于当前对话")
+                    return
+                }
+                val committedId = messageDao.findReplyRecoveryMessageId(sessionId, snapshot.branchId, snapshot.token)
+                if (committedId != null) {
+                    val cleared = chatDraftStore.clearReplyRecovery(sessionId, snapshot.token)
+                    if (!cleared) showReplyRecovery(snapshot, "回复已保存，但恢复记录清理失败")
+                    else {
+                        pendingReplyRecovery = null
+                        _state.update { it.copy(replyRecovery = null, replyRecoveryError = null) }
+                    }
+                } else showReplyRecovery(snapshot, replyRecoveryIssue(snapshot))
+            }
+            is ReplyRecoveryLoadResult.Unreadable -> {
+                pendingReplyRecovery = null
+                unreadableReplyRecovery = record.raw
+                _state.update { it.copy(replyRecovery = ReplyRecoveryNotice(
+                    speakerLabel = "回复恢复记录", issue = "记录无法读取，可丢弃后继续对话",
+                ), replyRecoveryError = null) }
+            }
+            else -> {
+                pendingReplyRecovery = null
+                unreadableReplyRecovery = null
+                _state.update { it.copy(replyRecovery = null, replyRecoveryError = null) }
+            }
+        }
+    }
+
+    fun keepRecoveredReply() {
+        val snapshot = pendingReplyRecovery ?: return
+        if (_state.value.replyRecoveryBusy || activeGeneration != null) return
+        _state.update { it.copy(replyRecoveryBusy = true, replyRecoveryError = null) }
+        viewModelScope.launch {
+            try {
+                val existing = messageDao.findReplyRecoveryMessageId(sessionId, snapshot.branchId, snapshot.token)
+                if (existing == null) {
+                    val issue = replyRecoveryIssue(snapshot)
+                    if (issue != null) {
+                        showReplyRecovery(snapshot, issue)
+                        return@launch
+                    }
+                    var content = com.mojing.app.domain.engine.InterruptedReply.normalize(snapshot.rawText)
+                    val world = _state.value.world
+                    if (snapshot.speakerType == "narrator" && world?.gameplayMode == "小说创作") {
+                        content = StoryCanon.sanitizeMessageChoices(content, world.worldPrompt)
+                    }
+                    if (content.isBlank()) {
+                        showReplyRecovery(snapshot, "没有可写入的正文，请复制或丢弃记录")
+                        return@launch
+                    }
+                    messageDao.insertReplyRecoveryIfAbsent(
+                        MessageEntity(sessionId = sessionId, branchId = snapshot.branchId,
+                            speakerType = snapshot.speakerType, characterId = snapshot.characterId,
+                            content = content, structuredContentJson = structuredContentJsonFor(content),
+                            swipeGroupId = snapshot.swipeGroupId, includeInContext = true),
+                        snapshot.token, snapshot.swipeSourceMessageId,
+                    )
+                }
+                reconcileReplyRecovery()
+                if (currentBranchId() == snapshot.branchId) refreshMessagesUi(snapshot.branchId)
+            } catch (_: Exception) {
+                _state.update {
+                    if (it.replyRecovery == null) it.copy(error = "回复已保存，但列表刷新失败，请重新进入对话")
+                    else it.copy(replyRecoveryError = "保留回复失败，请重试或复制正文")
+                }
+            } finally {
+                _state.update { it.copy(replyRecoveryBusy = false) }
+            }
+        }
+    }
+
+    fun discardRecoveredReply() {
+        val snapshot = pendingReplyRecovery
+        val unreadable = unreadableReplyRecovery
+        if (_state.value.replyRecoveryBusy || activeGeneration != null || (snapshot == null && unreadable == null)) return
+        _state.update { it.copy(replyRecoveryBusy = true, replyRecoveryError = null) }
+        viewModelScope.launch {
+            try {
+                val cleared = if (snapshot != null) chatDraftStore.clearReplyRecovery(sessionId, snapshot.token)
+                    else chatDraftStore.discardUnreadableReplyRecovery(sessionId, requireNotNull(unreadable))
+                if (cleared) reconcileReplyRecovery()
+                else _state.update { it.copy(replyRecoveryError = "丢弃记录失败，请重试") }
+            } catch (_: Exception) {
+                _state.update { it.copy(replyRecoveryError = "丢弃记录失败，请重试") }
+            } finally {
+                _state.update { it.copy(replyRecoveryBusy = false) }
+            }
+        }
     }
 
     private suspend fun bookmarkedIdsForWindow(messages: List<MessageEntity>): Set<Long> {
@@ -2268,7 +2456,8 @@ class ChatViewModel @Inject constructor(
                     val now = System.currentTimeMillis()
                     receivedText = s.partialText
                     generation.interruptedReplyText = s.partialText
-                                    val len = s.partialText.length
+                    checkpointReplyRecovery(generation, receivedText, "character", character.id)
+                    val len = s.partialText.length
                     val shouldUpdate = (now - lastUiUpdateAt) >= 60L || (len - lastUiLen) >= 80
                     if (shouldUpdate) {
                         lastUiUpdateAt = now
@@ -2296,13 +2485,17 @@ class ChatViewModel @Inject constructor(
                             return@collect
                         }
                         generation.interruptedReplyText = s.fullText
+                        checkpointReplyRecovery(generation, s.fullText, "character", character.id, force = true)
+                        val recoveryToken = generation.replyRecovery?.token
                         val reply = MessageEntity(
                             sessionId = sessionId,
                             speakerType = "character",
                             characterId = character.id,
                             content = displayContent,
-                            structuredContentJson = ReplyGenerationMetadata.record(structuredContentJsonFor(displayContent),
-                                (System.nanoTime() - replyStartedAt) / 1_000_000, s.usage),
+                            structuredContentJson = ReplyGenerationMetadata.record(
+                                structuredContentJsonFor(displayContent),
+                                (System.nanoTime() - replyStartedAt) / 1_000_000, s.usage,
+                            ).let { metadata -> recoveryToken?.let { ReplyRecoveryMetadata.withToken(metadata, it) } ?: metadata },
                             branchId = branchId,
                             swipeGroupId = gid,
                             includeInContext = true,
@@ -2320,6 +2513,7 @@ class ChatViewModel @Inject constructor(
                                 )
                             }
                             generation.interruptedReplyText = ""
+                            clearCommittedReplyRecovery(generation)
                             id
                         }
                         sawDone = true
@@ -2434,23 +2628,31 @@ class ChatViewModel @Inject constructor(
         if (content.isBlank()) return false
         if (allowCancelledOwner) check(activeGeneration === generation) { "stale generation" }
         else generation.ensureCurrent()
+        checkpointReplyRecovery(generation, text, resolvedSpeakerType, characterId, force = true)
+        val recoveryToken = generation.replyRecovery?.token
         val reply = MessageEntity(
             sessionId = sessionId,
             branchId = generation.branchId,
             speakerType = resolvedSpeakerType,
             characterId = characterId,
             content = content,
-            structuredContentJson = structuredContentJsonFor(content),
+            structuredContentJson = structuredContentJsonFor(content).let { metadata ->
+                recoveryToken?.let { ReplyRecoveryMetadata.withToken(metadata, it) } ?: metadata
+            },
             swipeGroupId = generation.swipeGroupId,
             includeInContext = true,
         )
-        if (generation.swipeGroupId == null) {
-            messageDao.insert(reply)
-        } else {
-            messageDao.insertAndSelectSwipeVariant(
-                entity = reply, branchId = generation.branchId,
-                targetMessageId = requireNotNull(generation.swipeSourceMessageId),
-            )
+        withContext(NonCancellable) {
+            if (generation.swipeGroupId == null) {
+                messageDao.insert(reply)
+            } else {
+                messageDao.insertAndSelectSwipeVariant(
+                    entity = reply, branchId = generation.branchId,
+                    targetMessageId = requireNotNull(generation.swipeSourceMessageId),
+                )
+            }
+            generation.interruptedReplyText = ""
+            clearCommittedReplyRecovery(generation)
         }
         generation.swipeGroupId = null
         generation.swipeSourceMessageId = null
@@ -2654,6 +2856,7 @@ class ChatViewModel @Inject constructor(
                                     receivedText = s.partialText
                                     generation.interruptedReplyText = s.partialText
                                     if (chapterNumber != null && now - lastChapterSave >= 1500L) saveChapterDraft()
+                                    if (chapterNumber == null) checkpointReplyRecovery(generation, receivedText, "narrator", null)
                                     val len = s.partialText.length
                                     val shouldUpdate = (now - lastUiUpdateAt) >= 60L || (len - lastUiLen) >= 80
                                     if (shouldUpdate) {
@@ -2680,6 +2883,8 @@ class ChatViewModel @Inject constructor(
                                     }
                                     val chapter = chapterNumber?.let { NovelChapter.generated(it, chapterTitle, baseNarrContent) }
                                     val narrContent = chapter?.second ?: baseNarrContent
+                                    if (chapterNumber == null) checkpointReplyRecovery(generation, s.fullText, "narrator", null, force = true)
+                                    val recoveryToken = if (chapterNumber == null) generation.replyRecovery?.token else null
                                     val replyMetadata = if (chapter != null) NovelChapter.metadata(structuredContentJsonFor(narrContent), chapterNumber!!, chapter.first)
                                         else structuredContentJsonFor(narrContent)
                                     UsbSessionLog.i(
@@ -2691,7 +2896,9 @@ class ChatViewModel @Inject constructor(
                                             speakerType = "narrator",
                                             content = narrContent,
                                             structuredContentJson = ReplyGenerationMetadata.record(replyMetadata,
-                                                (System.nanoTime() - replyStartedAt) / 1_000_000, s.usage),
+                                                (System.nanoTime() - replyStartedAt) / 1_000_000, s.usage).let { metadata ->
+                                                    recoveryToken?.let { ReplyRecoveryMetadata.withToken(metadata, it) } ?: metadata
+                                                },
                                             branchId = generation.branchId,
                                         )
                                     generation.interruptedReplyText = s.fullText
@@ -2701,6 +2908,7 @@ class ChatViewModel @Inject constructor(
                                         else messageDao.updateNovelDraft(draftId, sessionId, generation.branchId, completedReply.content, completedReply.structuredContentJson)
                                         narratorReplyCommitted = true
                                         generation.interruptedReplyText = ""
+                                        if (chapterNumber == null) clearCommittedReplyRecovery(generation)
                                     }
                                     _state.value = _state.value.copy(streamingText = "")
                                     refreshMessagesUi(generation.branchId)

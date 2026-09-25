@@ -984,6 +984,16 @@ fun ChatScreen(
                                 onCancel = { viewModel.setQuotingMessage(null) },
                             )
                         }
+                        state.replyRecovery?.let { recovery ->
+                            ReplyRecoveryCard(
+                                notice = recovery,
+                                busy = state.replyRecoveryBusy,
+                                error = state.replyRecoveryError,
+                                clipboardManager = clipboardManager,
+                                onKeep = viewModel::keepRecoveredReply,
+                                onDiscard = viewModel::discardRecoveredReply,
+                            )
+                        }
                         InputBar(
                             modelSelector = {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1584,6 +1594,124 @@ fun ChatScreen(
     )
 
 
+}
+
+@Composable
+private fun ReplyRecoveryCard(
+    notice: ReplyRecoveryNotice,
+    busy: Boolean,
+    error: String?,
+    clipboardManager: androidx.compose.ui.platform.ClipboardManager,
+    onKeep: () -> Unit,
+    onDiscard: () -> Unit,
+) {
+    var expanded by remember(notice.token, notice.issue, notice.text) { mutableStateOf(false) }
+    val text = notice.text?.trim().orEmpty()
+    val canCopy = text.isNotEmpty()
+    val canKeep = notice.issue.isNullOrBlank() && notice.token != null && canCopy && !busy
+    val hasMoreText = text.length > 260 || text.take(260).lineSequence().count() > 4
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        shape = MaterialTheme.shapes.medium,
+        tonalElevation = 1.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "上次生成中断",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = notice.speakerLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            notice.branchLabel?.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    text = "故事线：$it",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
+                )
+            }
+            if (text.isNotEmpty()) {
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = if (expanded) {
+                        Modifier
+                            .heightIn(max = 260.dp)
+                            .verticalScroll(rememberScrollState())
+                    } else {
+                        Modifier
+                    },
+                    maxLines = if (expanded) 64 else 4,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (hasMoreText) {
+                    TextButton(
+                        onClick = { expanded = !expanded },
+                        enabled = !busy,
+                        contentPadding = PaddingValues(0.dp),
+                    ) {
+                        Text(if (expanded) "收起" else "展开阅读")
+                    }
+                }
+            } else {
+                Text(
+                    text = notice.issue ?: "没有可显示的中断内容",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.86f),
+                )
+            }
+            notice.issue?.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    text = "暂时无法直接保留：$it",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            error?.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (canCopy) {
+                    TextButton(
+                        onClick = { clipboardManager.setText(AnnotatedString(text)) },
+                    ) { Text("复制") }
+                }
+                TextButton(onClick = onDiscard, enabled = !busy) {
+                    Text(if (notice.issue.isNullOrBlank()) "丢弃" else "丢弃记录")
+                }
+                if (notice.issue.isNullOrBlank()) {
+                    TextButton(onClick = onKeep, enabled = canKeep) { Text("保留为消息") }
+                }
+            }
+        }
+    }
 }
 
 /** 历史占位、仅标签无正文等：不在列表中占位，避免「仅含自动配图」单独一条气泡。 */

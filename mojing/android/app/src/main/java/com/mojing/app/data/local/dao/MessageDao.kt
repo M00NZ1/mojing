@@ -68,6 +68,15 @@ data class SearchMessageRow(
     )
 }
 
+/** Token lookup projection: recovery checks never load the message body or search columns. */
+data class ReplyRecoveryTokenCandidate(
+    val id: Long,
+    val sessionId: Long,
+    val branchId: String,
+    val swipeGroupId: String?,
+    val structuredContentJson: String,
+)
+
 private const val CURRENT_MESSAGES_FROM_QUERY = """
     FROM branch_visibility_segments AS segment
     CROSS JOIN messages AS message
@@ -859,6 +868,65 @@ interface MessageDao {
     @Transaction
     suspend fun insert(entity: MessageEntity): Long =
         insertRaw(MessageSearchTokenizer.index(entity))
+
+    @Query(
+        "SELECT id, sessionId, branchId, swipeGroupId, structuredContentJson FROM messages " +
+            "WHERE sessionId = :sessionId AND branchId = :branchId " +
+            "AND instr(structuredContentJson, :token) > 0 " +
+            "ORDER BY id ASC",
+    )
+    suspend fun findReplyRecoveryTokenCandidates(
+        sessionId: Long,
+        branchId: String,
+        token: String,
+    ): List<ReplyRecoveryTokenCandidate>
+
+    suspend fun findReplyRecoveryMessageId(
+        sessionId: Long,
+        branchId: String,
+        token: String,
+    ): Long? {
+        require(branchId.isNotBlank()) { "恢复分支不能为空" }
+        require(token.isNotBlank()) { "恢复 token 不能为空" }
+        // Token identity is session/branch scoped and must survive deleted/reordered history.
+        return findReplyRecoveryTokenCandidates(sessionId, branchId, token)
+            .firstOrNull { ReplyRecoveryMetadata.token(it.structuredContentJson) == token }
+            ?.id
+    }
+
+    /** Persist one interrupted reply exactly once, including swipe selection when applicable. */
+    @Transaction
+    suspend fun insertReplyRecoveryIfAbsent(
+        entity: MessageEntity,
+        token: String,
+        swipeSourceMessageId: Long? = null,
+    ): Long {
+        require(token.isNotBlank()) { "恢复 token 不能为空" }
+        val existingId = findReplyRecoveryMessageId(entity.sessionId, entity.branchId, token)
+        if (existingId != null) return existingId
+
+        require(entity.id == 0L) { "恢复消息必须是新消息" }
+        require(entity.sessionId > 0L) { "恢复消息缺少会话绑定" }
+        require(entity.branchId.isNotBlank()) { "恢复消息缺少分支绑定" }
+        require(swipeSourceMessageId != null || entity.swipeGroupId.isNullOrBlank()) {
+            "带回复版本组的恢复消息必须绑定来源"
+        }
+        val recoveryEntity = entity.copy(
+            structuredContentJson = ReplyRecoveryMetadata.withToken(entity.structuredContentJson, token),
+        )
+        check(ReplyRecoveryMetadata.token(recoveryEntity.structuredContentJson) == token) {
+            "恢复消息 token 写入失败"
+        }
+        return if (swipeSourceMessageId == null) {
+            insert(recoveryEntity)
+        } else {
+            insertAndSelectSwipeVariant(
+                entity = recoveryEntity,
+                branchId = entity.branchId,
+                targetMessageId = swipeSourceMessageId,
+            )
+        }
+    }
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAllRaw(entities: List<MessageEntity>): List<Long>
