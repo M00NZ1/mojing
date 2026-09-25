@@ -104,9 +104,14 @@ private data class CharacterUiMaps(
 private class GenerationContext(
     val branchId: String,
     val expectedTailMessageId: Long? = null,
+    val draftSubmissionId: String? = null,
     var swipeGroupId: String? = null,
     var swipeSourceMessageId: Long? = null,
     var contextMessagesOverride: List<MessageEntity>? = null,
+    var started: Boolean = false,
+    var interruptedReplyText: String = "",
+    var interruptedReplySpeakerType: String? = null,
+    var interruptedReplyCharacterId: Long? = null,
 )
 
 data class TavernChatImportResult(
@@ -359,13 +364,29 @@ class ChatViewModel @Inject constructor(
         val generation = GenerationContext(
             branchId = currentBranchId(),
             expectedTailMessageId = expectedTailMessageId,
+            draftSubmissionId = draftSubmissionId,
         )
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             val owner = coroutineContext[Job]
+            generation.started = true
             try {
                 block(generation)
             } catch (_: CancellationException) {
-                // stopGeneration owns the immediate UI reset; stale jobs must stay silent.
+                withContext(NonCancellable) {
+                    if (generationJob === owner && activeGeneration === generation) {
+                        runCatching {
+                            retainInterruptedReply(
+                                generation = generation,
+                                text = generation.interruptedReplyText,
+                                speakerType = generation.interruptedReplySpeakerType,
+                                characterId = generation.interruptedReplyCharacterId,
+                                allowCancelledOwner = true,
+                            )
+                        }.onFailure {
+                            _state.update { it.copy(error = "中断回复写入或刷新失败，请重新进入对话核对") }
+                        }
+                    }
+                }
             } catch (e: Exception) {
                 if (generationJob === owner && activeGeneration === generation) {
                     _state.value = _state.value.copy(
@@ -2224,6 +2245,8 @@ class ChatViewModel @Inject constructor(
         var sawDone = false
         var streamErrorMessage: String? = null
         var receivedText = ""
+        generation.interruptedReplySpeakerType = "character"
+        generation.interruptedReplyCharacterId = character.id
         run {
         for ((idx, streamBase) in streamBases.withIndex()) {
             streamErrorMessage = null
@@ -2244,6 +2267,7 @@ class ChatViewModel @Inject constructor(
                     generation.ensureCurrent()
                     val now = System.currentTimeMillis()
                     receivedText = s.partialText
+                    generation.interruptedReplyText = s.partialText
                                     val len = s.partialText.length
                     val shouldUpdate = (now - lastUiUpdateAt) >= 60L || (len - lastUiLen) >= 80
                     if (shouldUpdate) {
@@ -2271,6 +2295,7 @@ class ChatViewModel @Inject constructor(
                             streamErrorMessage = "模型返回了空内容"
                             return@collect
                         }
+                        generation.interruptedReplyText = s.fullText
                         val reply = MessageEntity(
                             sessionId = sessionId,
                             speakerType = "character",
@@ -2282,16 +2307,20 @@ class ChatViewModel @Inject constructor(
                             swipeGroupId = gid,
                             includeInContext = true,
                         )
-                        val replyMessageId = if (gid == null) {
-                            messageDao.insert(reply)
-                        } else {
-                            messageDao.insertAndSelectSwipeVariant(
-                                entity = reply,
-                                branchId = branchId,
-                                targetMessageId = requireNotNull(generation.swipeSourceMessageId) {
-                                    "缺少重生成来源消息"
-                                },
-                            )
+                        val replyMessageId = withContext(NonCancellable) {
+                            val id = if (gid == null) {
+                                messageDao.insert(reply)
+                            } else {
+                                messageDao.insertAndSelectSwipeVariant(
+                                    entity = reply,
+                                    branchId = branchId,
+                                    targetMessageId = requireNotNull(generation.swipeSourceMessageId) {
+                                        "缺少重生成来源消息"
+                                    },
+                                )
+                            }
+                            generation.interruptedReplyText = ""
+                            id
                         }
                         sawDone = true
                         generation.swipeGroupId = null
@@ -2392,20 +2421,23 @@ class ChatViewModel @Inject constructor(
     private suspend fun retainInterruptedReply(
         generation: GenerationContext,
         text: String,
-        speakerType: String,
+        speakerType: String?,
         characterId: Long?,
+        allowCancelledOwner: Boolean = false,
     ): Boolean {
+        val resolvedSpeakerType = speakerType ?: return false
         var content = com.mojing.app.domain.engine.InterruptedReply.normalize(text)
         val world = _state.value.world
-        if (speakerType == "narrator" && world?.gameplayMode == "小说创作") {
+        if (resolvedSpeakerType == "narrator" && world?.gameplayMode == "小说创作") {
             content = StoryCanon.sanitizeMessageChoices(content, world.worldPrompt)
         }
         if (content.isBlank()) return false
-        generation.ensureCurrent()
+        if (allowCancelledOwner) check(activeGeneration === generation) { "stale generation" }
+        else generation.ensureCurrent()
         val reply = MessageEntity(
             sessionId = sessionId,
             branchId = generation.branchId,
-            speakerType = speakerType,
+            speakerType = resolvedSpeakerType,
             characterId = characterId,
             content = content,
             structuredContentJson = structuredContentJsonFor(content),
@@ -2579,6 +2611,8 @@ class ChatViewModel @Inject constructor(
             val replyStartedAt = System.nanoTime()
             var narratorReplyCommitted = false
             var receivedText = ""
+            generation.interruptedReplySpeakerType = if (chapterNumber == null) "narrator" else null
+            generation.interruptedReplyCharacterId = null
             var chapterDraftId = resumeChapter?.id
             var lastChapterSave = 0L
             suspend fun saveChapterDraft() {
@@ -2618,6 +2652,7 @@ class ChatViewModel @Inject constructor(
                                     generation.ensureCurrent()
                                     val now = System.currentTimeMillis()
                                     receivedText = s.partialText
+                                    generation.interruptedReplyText = s.partialText
                                     if (chapterNumber != null && now - lastChapterSave >= 1500L) saveChapterDraft()
                                     val len = s.partialText.length
                                     val shouldUpdate = (now - lastUiUpdateAt) >= 60L || (len - lastUiLen) >= 80
@@ -2659,10 +2694,14 @@ class ChatViewModel @Inject constructor(
                                                 (System.nanoTime() - replyStartedAt) / 1_000_000, s.usage),
                                             branchId = generation.branchId,
                                         )
+                                    generation.interruptedReplyText = s.fullText
                                     val draftId = chapterDraftId
-                                    if (draftId == null) messageDao.insert(completedReply)
-                                    else messageDao.updateNovelDraft(draftId, sessionId, generation.branchId, completedReply.content, completedReply.structuredContentJson)
-                                    narratorReplyCommitted = true
+                                    withContext(NonCancellable) {
+                                        if (draftId == null) messageDao.insert(completedReply)
+                                        else messageDao.updateNovelDraft(draftId, sessionId, generation.branchId, completedReply.content, completedReply.structuredContentJson)
+                                        narratorReplyCommitted = true
+                                        generation.interruptedReplyText = ""
+                                    }
                                     _state.value = _state.value.copy(streamingText = "")
                                     refreshMessagesUi(generation.branchId)
                                     if (currentBranchId() != generation.branchId) {
@@ -2747,8 +2786,8 @@ class ChatViewModel @Inject constructor(
                 if (chapterNumber != null && !narratorReplyCommitted) withContext(kotlinx.coroutines.NonCancellable) {
                     try {
                         saveChapterDraft()
-                        if (!_state.value.isGenerating && currentBranchId() == generation.branchId) refreshMessagesUi(generation.branchId)
-                    } catch (_: Exception) { _state.update { it.copy(error = "章节草稿保存失败，请复制已显示正文") } }
+                        if (currentBranchId() == generation.branchId) refreshMessagesUi(generation.branchId)
+                    } catch (_: Exception) { _state.update { it.copy(error = "章节草稿写入或刷新失败，请重新进入对话核对") } }
                 }
             }
             if (exitNarratorJob) return@narratorScope
@@ -3099,11 +3138,16 @@ class ChatViewModel @Inject constructor(
     suspend fun getAllCharacters(): List<CharacterEntity> = characterDao.getAll()
 
     fun stopGeneration() {
-        val job = generationJob
-        generationJob = null
-        activeGeneration = null
-        job?.cancel()
-        resetGenerationUi()
+        val job = generationJob ?: return
+        if (activeGeneration?.started != true) {
+            activeGeneration?.draftSubmissionId?.let(::finishDraftSubmission)
+            generationJob = null
+            activeGeneration = null
+            job.cancel()
+            resetGenerationUi()
+        } else {
+            job.cancel()
+        }
     }
 
     private fun normalizedCorrectionContent(content: String): String? = content.trim().takeIf { it.isNotEmpty() && it.length <= 2000 }

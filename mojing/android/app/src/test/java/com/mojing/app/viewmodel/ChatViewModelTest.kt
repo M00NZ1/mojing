@@ -34,6 +34,7 @@ import com.mojing.app.data.prefs.UiPreferencesRepository
 import com.mojing.app.domain.engine.ChatEngine
 import com.mojing.app.domain.engine.NarratorEngine
 import com.mojing.app.domain.engine.StreamState
+import com.mojing.app.domain.story.NovelChapter
 import com.mojing.app.domain.usecase.MessageSubmissionTransaction
 import com.mojing.app.data.remote.LlmApiService
 import com.mojing.app.ui.chat.ChatViewModel
@@ -1273,6 +1274,7 @@ class ChatViewModelTest {
         advanceUntilIdle()
         vm.updateInput("下一条")
         vm.sendMessage()
+        assertTrue(vm.state.value.isGenerating)
         assertEquals(b, route.invoke(vm))
         vm.stopGeneration()
         advanceUntilIdle()
@@ -2046,6 +2048,96 @@ class ChatViewModelTest {
             if (interrupted) assertTrue(vm.state.value.error.orEmpty().contains("已保留"))
             else assertEquals(null, vm.state.value.error)
         }
+    }
+
+    @Test
+    fun stoppingAfterPartialBodyRetainsLatestReceivedTextForBothSpeakers() = runTest(testDispatcher) {
+        for (narrator in listOf(false, true)) {
+            val messages = mockk<MessageDao>(relaxed = true)
+            val stored = mutableListOf<MessageEntity>()
+            coEvery { messages.insert(any()) } answers {
+                val message = firstArg<MessageEntity>().copy(id = stored.size.toLong() + 1)
+                stored.add(message)
+                message.id
+            }
+            coEvery { messages.getMainMessagesTail(42L, any()) } answers { stored.reversed() }
+            val world = mockk<SessionWorldDao>(relaxed = true)
+            coEvery { world.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L)
+            val characters = mockk<CharacterDao>(relaxed = true)
+            coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "角色")
+            val participants = mockk<ParticipantDao>(relaxed = true)
+            coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 3L))
+            val storage = validSecureStorage()
+            every { storage.speakerTurnMode } returns "manual"
+            val engine = mockk<ChatEngine>(relaxed = true)
+            val stream = kotlinx.coroutines.flow.flow<StreamState> {
+                emit(StreamState.Generating("最新正文尾字"))
+                kotlinx.coroutines.awaitCancellation()
+            }
+            every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns stream
+            every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns stream
+            val vm = createViewModel(messageDao = messages, sessionWorldDao = world, characterDao = characters,
+                participantDao = participants, secureStorage = storage, chatEngine = engine, llmApiService = validLlmApiService())
+            advanceUntilIdle()
+
+            if (narrator) assertTrue(vm.requestNarrator()) else {
+                vm.setManualReplyCharacterId(3L)
+                vm.updateInput("继续")
+                vm.sendMessage()
+            }
+            runCurrent()
+            assertTrue(vm.state.value.isGenerating)
+
+            vm.stopGeneration()
+            advanceUntilIdle()
+
+            val reply = stored.last { it.speakerType == if (narrator) "narrator" else "character" }
+            assertEquals("最新正文尾字", reply.content)
+            assertEquals("main", reply.branchId)
+            assertFalse(vm.state.value.isGenerating)
+        }
+    }
+
+    @Test
+    fun stoppingNovelChapterSavesAndRefreshesLatestDraft() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val stored = mutableListOf<MessageEntity>()
+        coEvery { messages.insert(any()) } answers {
+            val message = firstArg<MessageEntity>().copy(id = stored.size.toLong() + 1)
+            stored.add(message)
+            message.id
+        }
+        coEvery { messages.getMainMessagesTail(42L, any()) } answers { stored.reversed() }
+        val world = mockk<SessionWorldDao>(relaxed = true)
+        coEvery { world.getBySession(42L) } returns SessionWorldEntity(
+            sessionId = 42L,
+            gameplayMode = "小说创作",
+        )
+        val engine = mockk<ChatEngine>(relaxed = true)
+        every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            kotlinx.coroutines.flow.flow {
+                emit(StreamState.Generating("章节最新正文"))
+                kotlinx.coroutines.awaitCancellation()
+            }
+        val vm = createViewModel(
+            messageDao = messages,
+            sessionWorldDao = world,
+            secureStorage = validSecureStorage(),
+            chatEngine = engine,
+            llmApiService = validLlmApiService(),
+        )
+        advanceUntilIdle()
+
+        assertTrue(vm.requestNarrator(nextChapter = true, chapterTitle = "第一章"))
+        runCurrent()
+        vm.stopGeneration()
+        advanceUntilIdle()
+
+        val draft = stored.single { it.speakerType == "narrator" }
+        assertEquals("章节最新正文", draft.content)
+        assertTrue(NovelChapter.incomplete(draft.structuredContentJson))
+        assertEquals("章节最新正文", vm.state.value.messages.single { it.speakerType == "narrator" }.content)
+        coVerify(exactly = 1) { messages.insert(match { it.speakerType == "narrator" && it.content == "章节最新正文" }) }
     }
 
     @Test
@@ -3322,7 +3414,7 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun cancelledGenerationCannotOverwriteImmediateRetryState() = runTest(testDispatcher) {
+    fun cancelledGenerationBlocksRetryUntilCleanupCompletes() = runTest(testDispatcher) {
         val oldCleanupRelease = CompletableDeferred<Unit>()
         val secondStarted = CompletableDeferred<Unit>()
         val messageDao = mockk<MessageDao>(relaxed = true)
@@ -3353,12 +3445,17 @@ class ChatViewModelTest {
         vm.updateInput("第二条")
         vm.sendMessage()
         runCurrent()
-        assertTrue(secondStarted.isCompleted)
+        assertFalse(secondStarted.isCompleted)
         assertTrue(vm.state.value.isGenerating)
 
         oldCleanupRelease.complete(Unit)
         runCurrent()
-        assertTrue("旧任务清理不能结束新的生成", vm.state.value.isGenerating)
+        assertFalse(vm.state.value.isGenerating)
+
+        vm.sendMessage()
+        runCurrent()
+        assertTrue(secondStarted.isCompleted)
+        assertTrue(vm.state.value.isGenerating)
 
         vm.stopGeneration()
         advanceUntilIdle()
