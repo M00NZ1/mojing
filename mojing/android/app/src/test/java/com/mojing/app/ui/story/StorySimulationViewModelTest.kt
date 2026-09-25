@@ -4,6 +4,7 @@ import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.StoryOpeningDraftStore
 import com.mojing.app.data.StoryOpeningInputDraftStore
 import com.mojing.app.data.StoryOpeningInputDraft
+import com.mojing.app.data.StoryOpeningGenerationState
 import com.mojing.app.data.UnreadableStoryInputDraft
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
@@ -708,6 +709,42 @@ class StorySimulationViewModelTest {
         assertTrue(vm.discardUnreadableDraft())
         coVerify(exactly = 1) { drafts.discardUnreadable(raw) }
         assertNull(vm.state.value.recoveryError)
+    }
+
+    @Test
+    fun interruptedGenerationRestoresBoundInputAndPreviewWithoutPretendingCompletion() = runTest(dispatcher) {
+        val generation = StoryOpeningGenerationState(
+            requestId = "request-1",
+            input = StoryOpeningInputDraft("雾港灯塔", "先调查失踪者", "克制", 2, null, 7L, setOf(9L)),
+            preview = "已经收到的开篇片段",
+            model = "原模型",
+            stage = "生成正文",
+            receivedChars = 9,
+            elapsedMs = 1_200,
+        )
+        val drafts = mockk<StoryOpeningInputDraftStore>(relaxed = true) {
+            coEvery { load() } throws UnreadableStoryInputDraft("旧输入已损坏")
+            every { loadGeneration() } returns generation
+        }
+        val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), inputDraftStore = drafts)
+        runCurrent()
+
+        assertTrue(vm.state.value.hasInterruptedGeneration)
+        assertEquals("上次生成中断", vm.state.value.generationStage)
+        assertEquals("雾港灯塔", vm.state.value.premise)
+        assertEquals("已经收到的开篇片段", vm.pendingStoryText())
+        assertFalse(vm.state.value.hasPendingStory)
+        assertNull(vm.state.value.savedSessionId)
+
+        vm.retryInterruptedGeneration {}
+        runCurrent()
+        assertTrue(vm.state.value.hasInterruptedGeneration)
+        assertEquals("已经收到的开篇片段", vm.pendingStoryText())
+
+        vm.discardInterruptedGeneration()
+        runCurrent()
+        assertFalse(vm.state.value.hasInterruptedGeneration)
+        coVerify { drafts.clearGeneration() }
     }
 
     @Test

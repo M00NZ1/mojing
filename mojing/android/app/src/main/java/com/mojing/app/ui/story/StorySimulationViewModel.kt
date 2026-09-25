@@ -6,6 +6,7 @@ import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.StoryOpeningDraftStore
 import com.mojing.app.data.StoryOpeningInputDraft
 import com.mojing.app.data.StoryOpeningInputDraftStore
+import com.mojing.app.data.StoryOpeningGenerationState
 import com.mojing.app.data.UnreadableStoryDraft
 import com.mojing.app.data.UnreadableStoryInputDraft
 import com.mojing.app.data.local.dao.CharacterDao
@@ -39,7 +40,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicReference
+import java.util.UUID
 
 data class StoryOptionLoadState<T>(
     val items: List<T> = emptyList(),
@@ -79,6 +83,7 @@ data class StorySimulationState(
     val firstContentDelayMs: Long? = null,
     val receivedChars: Int = 0,
     val preview: String = "",
+    val hasInterruptedGeneration: Boolean = false,
     val requestToken: Long = 0L,
     val inputRevision: Long = 0L,
 )
@@ -126,6 +131,12 @@ class StorySimulationViewModel @Inject constructor(
     private var restoreJob: Job? = null
     private var generationToken = 0L
     private var generationStartedAtNanos = 0L
+    private var activeGenerationId: String? = null
+    private var activeGenerationInput: StoryOpeningInputDraft? = null
+    private var lastPersistedPreviewLength = 0
+    private var lastPersistedPreviewElapsedMs = 0L
+    private val generationPersistMutex = Mutex()
+    private val latestGenerationProgress = AtomicReference<StoryWritingProgress?>(null)
 
     init {
         retryRecovery()
@@ -144,9 +155,17 @@ class StorySimulationViewModel @Inject constructor(
                 unreadableInputDraft = null
                 when (record) {
                     null -> {
-                        val input = inputDraftStore.load()
+                        val generation = inputDraftStore.loadGeneration()?.takeIf { it.requestId.isNotBlank() }
+                        val input = if (generation == null) inputDraftStore.load() else null
                         _state.update { current ->
-                            if (input == null) current.copy(isRestoring = false, canCopyRecoveryData = false)
+                            if (generation != null) current.copy(isRestoring = false, canCopyRecoveryData = false,
+                                recoveredInputDraft = true, hasInputDraft = true, hasInterruptedGeneration = true,
+                                premise = generation.input.premise, direction = generation.input.direction, tone = generation.input.tone,
+                                chapterCount = generation.input.chapterCount, selectedTemplateId = generation.input.templateId,
+                                selectedEncyclopediaId = generation.input.encyclopediaId, selectedCharacterIds = generation.input.characterIds,
+                                generationModel = generation.model, generationStage = "上次生成中断", receivedChars = generation.receivedChars,
+                                generationElapsedMs = generation.elapsedMs, preview = generation.preview)
+                            else if (input == null) current.copy(isRestoring = false, canCopyRecoveryData = false)
                             else current.copy(isRestoring = false, canCopyRecoveryData = false, recoveredInputDraft = true,
                                 hasInputDraft = true, premise = input.premise, direction = input.direction, tone = input.tone,
                                 chapterCount = input.chapterCount, selectedTemplateId = input.templateId,
@@ -360,14 +379,30 @@ class StorySimulationViewModel @Inject constructor(
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
                 val token = ++generationToken
+                val generationId = UUID.randomUUID().toString()
+                activeGenerationId = generationId
+                activeGenerationInput = snapshot.inputDraft()
+                latestGenerationProgress.set(null)
+                lastPersistedPreviewLength = 0
+                lastPersistedPreviewElapsedMs = 0L
                 generationStartedAtNanos = System.nanoTime()
-                _state.update { it.copy(isGenerating = true, isSaving = false, error = null, generationStage = "等待模型响应", generationModel = model, generationElapsedMs = 0L, firstContentDelayMs = null, receivedChars = 0, preview = "", requestToken = token) }
+                _state.update { it.copy(isGenerating = true, isSaving = false, error = null, generationStage = "等待模型响应", generationModel = model, generationElapsedMs = 0L, firstContentDelayMs = null, receivedChars = 0, requestToken = token) }
                 try { inputDraftStore.commit(snapshot.inputDraft()) }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) {
                     _state.update { it.copy(error = "创作设定暂存失败，请重试后再生成。", generationStage = "暂存失败") }
                     return@launch
                 }
+                try {
+                    inputDraftStore.beginGeneration(StoryOpeningGenerationState(
+                        requestId = generationId, input = snapshot.inputDraft(), preview = "", model = model,
+                        stage = "等待模型响应", receivedChars = 0, elapsedMs = 0L,
+                    ))
+                } catch (_: Exception) {
+                    _state.update { it.copy(error = "生成状态暂存失败，请重试后再生成。", generationStage = "暂存失败", isGenerating = false) }
+                    return@launch
+                }
+                _state.update { it.copy(hasInterruptedGeneration = false, preview = "") }
                 launch(kotlinx.coroutines.Dispatchers.Default) {
                     while (isActive && _state.value.requestToken == token && _state.value.isGenerating) {
                         _state.update { current -> if (current.requestToken == token && current.isGenerating) current.copy(generationElapsedMs = maxOf(current.generationElapsedMs, elapsedMs())) else current }
@@ -421,7 +456,10 @@ class StorySimulationViewModel @Inject constructor(
                     }
                     null
                 }
-                if (result == null) return@launch
+                if (result == null) {
+                    flushGenerationPreview()
+                    return@launch
+                }
                 ensureActive()
                 if (_state.value.inputRevision != snapshot.inputRevision) {
                         _state.update { it.copy(isGenerating = false, generationStage = "已丢弃（输入已变化）", error = "输入或绑定已变化，请重新生成") }
@@ -432,11 +470,13 @@ class StorySimulationViewModel @Inject constructor(
                     tone = requestContext.tone, template = requestContext.template, encyclopediaId = requestContext.encyclopedia?.id,
                     characterIds = requestContext.characters.map { it.id }, worldPrompt = StoryCanon.persistentWorldPrompt(requestContext.premise, worldContext),
                     result = result, model = model)
-                _state.update { it.copy(isGenerating = false, hasPendingStory = true, storyTitle = result.title, draftPersisted = false) }
+                _state.update { it.copy(isGenerating = false, hasPendingStory = true, hasInterruptedGeneration = false, storyTitle = result.title, draftPersisted = false) }
                 savePendingStory(onCreated)
             } catch (_: CancellationException) {
+                flushGenerationPreview()
                 _state.update { it.copy(isGenerating = false, generationStage = if (it.savedSessionId != null) "已保存" else "已停止") }
             } catch (_: Exception) {
+                flushGenerationPreview()
                 _state.update { it.copy(error = "创作未能完成，请重试", generationStage = "失败") }
             } finally {
                 releaseCreationJob()
@@ -464,6 +504,7 @@ class StorySimulationViewModel @Inject constructor(
                     draftStore.persist(pending)
                     _state.update { it.copy(draftPersisted = true) }
                 }
+                inputDraftStore.clearGeneration()
                 val now = System.currentTimeMillis()
                 val setup = buildString {
                     append("【故事背景】\n${pending.premise.trim()}")
@@ -516,7 +557,27 @@ class StorySimulationViewModel @Inject constructor(
             append("\n后续走向\n")
             append(result.nextChoices.joinToString("\n"))
         }
-    }.orEmpty()
+    }.orEmpty().ifBlank { _state.value.preview }
+
+    fun retryInterruptedGeneration(onCreated: (Long) -> Unit) {
+        if (!_state.value.hasInterruptedGeneration || _state.value.isSaving || _state.value.isGenerating) return
+        createStory(onCreated)
+    }
+
+    fun discardInterruptedGeneration() {
+        if (!_state.value.hasInterruptedGeneration || _state.value.isSaving || _state.value.isGenerating) return
+        viewModelScope.launch {
+            _state.update { it.copy(isSaving = true) }
+            try {
+                inputDraftStore.clearGeneration()
+                activeGenerationId = null
+                _state.update { it.copy(hasInterruptedGeneration = false, generationStage = null, generationModel = null,
+                    generationElapsedMs = 0L, receivedChars = 0, preview = "", recoveredInputDraft = false) }
+            } catch (_: Exception) {
+                _state.update { it.copy(error = "中断记录未能清除，请重试。") }
+            } finally { _state.update { it.copy(isSaving = false) } }
+        }
+    }
 
     suspend fun discardPendingStory(): Boolean {
         if (_state.value.isSaving || _state.value.isGenerating || pendingStory == null) return false
@@ -526,6 +587,7 @@ class StorySimulationViewModel @Inject constructor(
             inputDraftStore.commit(_state.value.inputDraft())
             if (_state.value.draftPersisted) draftStore.discard(pending.id)
             pendingStory = null
+            inputDraftStore.clearGeneration()
             _state.update { it.copy(hasPendingStory = false, error = null, preview = "", generationStage = null,
                 generationModel = null, storyTitle = "", draftPersisted = false, recoveredStory = false) }
             true
@@ -577,6 +639,7 @@ class StorySimulationViewModel @Inject constructor(
             try {
                 inputDraftStore.clear()
                 draftStore.clearSavedReceipt(id)
+                inputDraftStore.clearGeneration()
                 savedDraftId = null
                 _state.update { StorySimulationState(isRestoring = false, templates = it.templates, encyclopedias = it.encyclopedias,
                     characters = it.characters, worldMappings = it.worldMappings) }
@@ -620,11 +683,59 @@ class StorySimulationViewModel @Inject constructor(
                 preview = progress.preview.takeLast(MAX_PREVIEW_CHARS),
             )
         }
+        latestGenerationProgress.set(progress)
+        val generationId = activeGenerationId ?: return
+        val preview = progress.preview.takeLast(MAX_PREVIEW_CHARS)
+        if (preview.isBlank() || (preview.length - lastPersistedPreviewLength < PREVIEW_PERSIST_CHARS &&
+                progress.elapsedMs - lastPersistedPreviewElapsedMs < PREVIEW_PERSIST_INTERVAL_MS)) return
+        persistGenerationPreview(generationId, preview, progress)
+    }
+
+    private fun persistGenerationPreview(generationId: String, preview: String, progress: StoryWritingProgress) {
+        val input = activeGenerationInput ?: return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                generationPersistMutex.withLock {
+                    inputDraftStore.persistGenerationPreview(StoryOpeningGenerationState(
+                        requestId = generationId, input = input, preview = preview,
+                        model = progress.model, stage = progress.stage, receivedChars = progress.receivedChars,
+                        elapsedMs = progress.elapsedMs,
+                    ))
+                    lastPersistedPreviewLength = preview.length
+                    lastPersistedPreviewElapsedMs = progress.elapsedMs
+                }
+            } catch (_: Exception) {
+                _state.update { it.copy(error = "生成预览暂存失败，正文仍会继续生成。") }
+            }
+        }
+    }
+
+    private suspend fun flushGenerationPreview() = withContext(NonCancellable) {
+        val generationId = activeGenerationId ?: return@withContext
+        val input = activeGenerationInput ?: return@withContext
+        val progress = latestGenerationProgress.get() ?: return@withContext
+        val preview = progress.preview.takeLast(MAX_PREVIEW_CHARS)
+        if (preview.isBlank()) return@withContext
+        try {
+            generationPersistMutex.withLock {
+                inputDraftStore.persistGenerationPreview(StoryOpeningGenerationState(
+                    requestId = generationId, input = input, preview = preview,
+                    model = progress.model, stage = progress.stage, receivedChars = progress.receivedChars,
+                    elapsedMs = progress.elapsedMs,
+                ))
+            }
+        } catch (_: Exception) {
+            _state.update { it.copy(error = "生成预览暂存失败，正文仍会继续生成。") }
+        }
     }
 
     private fun elapsedMs() = (System.nanoTime() - generationStartedAtNanos) / 1_000_000L
     private fun safeModelMetadata(value: String): String = java.security.MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray()).take(6).joinToString("") { "%02x".format(it) }
 
-    private companion object { const val MAX_PREVIEW_CHARS = 12_000 }
+    private companion object {
+        const val MAX_PREVIEW_CHARS = 12_000
+        const val PREVIEW_PERSIST_CHARS = 256
+        const val PREVIEW_PERSIST_INTERVAL_MS = 1_000L
+    }
 }

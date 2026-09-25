@@ -229,7 +229,9 @@ fun StorySimulationScreen(
                 onDiscard = { pendingNavigation = {}; showStopAndLeaveDialog = true },
                 onNewStory = viewModel::startNewStory, onRetryRecovery = viewModel::retryRecovery,
                 onCopyRecovery = { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(viewModel.recoveryDataText())) },
-                onDiscardUnreadable = { showDiscardUnreadableDialog = true })
+                onDiscardUnreadable = { showDiscardUnreadableDialog = true },
+                onRetryInterrupted = { viewModel.retryInterruptedGeneration(onOpenSession) },
+                onDiscardInterrupted = viewModel::discardInterruptedGeneration)
             if (!state.hasPendingStory && state.savedSessionId == null && !state.isRestoring && state.recoveryError == null) {
             Text("写下大致故事背景和开篇走向，AI 会结合已选人物直接生成小说正文。完成后自动进入创作会话，可继续输入后续走向或连续续写。", color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (state.hasInputDraft) {
