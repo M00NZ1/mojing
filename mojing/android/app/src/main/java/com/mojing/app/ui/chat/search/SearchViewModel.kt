@@ -3,6 +3,7 @@ package com.mojing.app.ui.chat.search
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.mojing.app.data.local.branch.BranchVisibilityIndexManager
 import com.mojing.app.data.local.dao.MessageDao
 import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.local.search.MessageSearchIndexManager
@@ -26,6 +27,7 @@ data class SearchState(
     val query: String = "", val completedQuery: String = "", val exactMatch: Boolean = false,
     val searching: Boolean = false, val error: String? = null,
     val indexing: Boolean = false,
+    val visibilityIndexing: Boolean = false,
     val hits: List<SearchHit> = emptyList(), val totalMatches: Int? = null,
     val counting: Boolean = false, val countError: String? = null,
     val hasOlder: Boolean = false, val hasNewer: Boolean = false, val firstHitOffset: Int = 0,
@@ -38,7 +40,9 @@ data class SearchState(
 
 @HiltViewModel
 class SearchViewModel @Inject constructor(application: Application, private val messageDao: MessageDao,
-    private val searchIndexManager: MessageSearchIndexManager, private val presentationLoader: SearchPresentationLoader,
+    private val searchIndexManager: MessageSearchIndexManager,
+    private val branchVisibilityIndexManager: BranchVisibilityIndexManager,
+    private val presentationLoader: SearchPresentationLoader,
     private val resultFormatter: SearchResultFormatter,
 ) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(SearchState())
@@ -86,12 +90,18 @@ class SearchViewModel @Inject constructor(application: Application, private val 
         val token = revision
         val exact = state.value.exactMatch
         saveHistory(sessionId, listOf(q) + history(sessionId).filterNot { it == q })
-        _state.update { it.copy(searching = true, indexing = true, error = null, hits = emptyList(), totalMatches = null,
+        _state.update { it.copy(searching = true, indexing = true, visibilityIndexing = branchId != "main",
+            error = null, hits = emptyList(), totalMatches = null,
             counting = false, countError = null,
             completedQuery = q, hasOlder = false, hasNewer = false, firstHitOffset = 0,
             failedPage = null, selectedMessageId = null, contextMessages = emptyList()) }
         searchJob = viewModelScope.launch {
             try {
+                if (branchId != "main") {
+                    branchVisibilityIndexManager.ensureReady()
+                    if (token != revision) return@launch
+                    _state.update { it.copy(visibilityIndexing = false) }
+                }
                 // Complete this session's resumable index before publishing Unicode results or a count.
                 searchIndexManager.ensureSessionReady(sessionId)
                 if (token != revision) return@launch
@@ -105,8 +115,12 @@ class SearchViewModel @Inject constructor(application: Application, private val 
                 if (page.size == PAGE_SIZE) countMatches(sessionId, branchId)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { if (token == revision) _state.update {
-                it.copy(searching = false, indexing = false,
-                    error = if (it.indexing) "搜索索引整理失败，请重试" else "搜索未完成，请重试")
+                it.copy(searching = false, indexing = false, visibilityIndexing = false,
+                    error = when {
+                        it.visibilityIndexing -> "故事线索引整理失败，请重试"
+                        it.indexing -> "搜索索引整理失败，请重试"
+                        else -> "搜索未完成，请重试"
+                    })
             } }
         }
     }

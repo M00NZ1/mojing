@@ -2,6 +2,7 @@ package com.mojing.app.ui.chat.search
 
 import android.app.Application
 import android.content.SharedPreferences
+import com.mojing.app.data.local.branch.BranchVisibilityIndexManager
 import com.mojing.app.data.local.dao.MessageDao
 import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.local.search.MessageSearchIndexManager
@@ -34,6 +35,7 @@ class SearchViewModelTest {
     private val editor = mockk<SharedPreferences.Editor>(relaxed = true)
     private lateinit var dao: MessageDao
     private lateinit var indexManager: MessageSearchIndexManager
+    private lateinit var visibilityManager: BranchVisibilityIndexManager
     private lateinit var viewModel: SearchViewModel
 
     @Before fun setUp() {
@@ -45,9 +47,12 @@ class SearchViewModelTest {
         dao = mockk(relaxed = true)
         indexManager = mockk(relaxed = true)
         coEvery { indexManager.ensureSessionReady(any()) } returns Unit
+        visibilityManager = mockk(relaxed = true)
+        coEvery { visibilityManager.ensureReady() } returns Unit
         val presentation = io.mockk.mockk<SearchPresentationLoader>()
         io.mockk.coEvery { presentation.load(any(), any()) } returns SearchPresentation()
-        viewModel = SearchViewModel(application, dao, indexManager, presentation, SearchResultFormatter(dispatcher))
+        viewModel = SearchViewModel(application, dao, indexManager, visibilityManager,
+            presentation, SearchResultFormatter(dispatcher))
         viewModel.initialize(1L, "main")
     }
 
@@ -103,6 +108,75 @@ class SearchViewModelTest {
         coVerify(exactly = 0) { dao.searchMainMessages(any(), any(), any(), any(), any()) }
     }
 
+    @Test fun branchSearchWaitsForVisibilityRepairBeforePublishingResults() = runTest(dispatcher) {
+        val repairFinished = CompletableDeferred<Unit>()
+        coEvery { visibilityManager.ensureReady() } coAnswers { repairFinished.await() }
+        coEvery { dao.searchVisibleMessages(any(), any(), any(), any(), any(), any()) } returns
+            listOf(message(7L, "线索"))
+        viewModel.initialize(1L, "side")
+        viewModel.setQuery("线索")
+        viewModel.search(1L, "side")
+        runCurrent()
+
+        assertTrue(viewModel.state.value.visibilityIndexing)
+        assertTrue(viewModel.state.value.hits.isEmpty())
+        assertNull(viewModel.state.value.totalMatches)
+        coVerify(exactly = 0) { indexManager.ensureSessionReady(any()) }
+        coVerify(exactly = 0) { dao.searchVisibleMessages(any(), any(), any(), any(), any(), any()) }
+
+        repairFinished.complete(Unit)
+        advanceUntilIdle()
+        assertFalse(viewModel.state.value.visibilityIndexing)
+        assertEquals(7L, viewModel.state.value.hits.single().message.id)
+    }
+
+    @Test fun failedBranchRepairOffersRetryWithoutPublishingPartialResults() = runTest(dispatcher) {
+        coEvery { visibilityManager.ensureReady() } throws IllegalStateException("storage")
+        viewModel.initialize(1L, "side")
+        viewModel.setQuery("线索")
+        viewModel.search(1L, "side")
+        advanceUntilIdle()
+
+        assertEquals("故事线索引整理失败，请重试", viewModel.state.value.error)
+        assertFalse(viewModel.state.value.visibilityIndexing)
+        assertNull(viewModel.state.value.totalMatches)
+        coVerify(exactly = 0) { dao.searchVisibleMessages(any(), any(), any(), any(), any(), any()) }
+
+        coEvery { visibilityManager.ensureReady() } returns Unit
+        coEvery { dao.searchVisibleMessages(any(), any(), any(), any(), any(), any()) } returns emptyList()
+        viewModel.search(1L, "side")
+        advanceUntilIdle()
+        assertNull(viewModel.state.value.error)
+        assertEquals(0, viewModel.state.value.totalMatches)
+    }
+
+    @Test fun changingQueryCancelsBranchRepairWaitWithoutPublishingOldResults() = runTest(dispatcher) {
+        val repairFinished = CompletableDeferred<Unit>()
+        coEvery { visibilityManager.ensureReady() } coAnswers { repairFinished.await() }
+        viewModel.initialize(1L, "side")
+        viewModel.setQuery("旧词")
+        viewModel.search(1L, "side")
+        runCurrent()
+        assertTrue(viewModel.state.value.visibilityIndexing)
+
+        viewModel.setQuery("新词")
+        repairFinished.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals("新词", viewModel.state.value.query)
+        assertFalse(viewModel.state.value.visibilityIndexing)
+        assertNull(viewModel.state.value.totalMatches)
+        coVerify(exactly = 0) { dao.searchVisibleMessages(any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test fun mainSearchDoesNotWaitForBranchVisibilityRepair() = runTest(dispatcher) {
+        viewModel.setQuery("线索")
+        viewModel.search(1L, "main")
+        advanceUntilIdle()
+        coVerify(exactly = 0) { visibilityManager.ensureReady() }
+        assertFalse(viewModel.state.value.visibilityIndexing)
+    }
+
     @Test fun firstPageCanBeReadWhileTotalCountIsPending() = runTest(dispatcher) {
         val gate = CompletableDeferred<Int>()
         val page = (1L..40L).reversed().map { message(it, "hit") }
@@ -151,7 +225,8 @@ class SearchViewModelTest {
     @Test fun changingQueryWhileSnippetIsQueuedCannotPublishOldResults() = runTest(dispatcher) {
         val cpu = QueuedSearchDispatcher()
         val presentation = mockk<SearchPresentationLoader>()
-        val vm = SearchViewModel(application, dao, indexManager, presentation, SearchResultFormatter(cpu))
+        val vm = SearchViewModel(application, dao, indexManager, visibilityManager,
+            presentation, SearchResultFormatter(cpu))
         vm.initialize(1L)
         coEvery { dao.searchMainMessages(any(), any(), any(), any(), any()) } returns listOf(message(8L, "old body"))
         coEvery { dao.countMainMessages(any(), any(), any()) } returns 1
@@ -331,7 +406,8 @@ class SearchViewModelTest {
             }
             SearchPresentation()
         }
-        val vm = SearchViewModel(application, dao, indexManager, presentation, SearchResultFormatter(dispatcher))
+        val vm = SearchViewModel(application, dao, indexManager, visibilityManager,
+            presentation, SearchResultFormatter(dispatcher))
         vm.initialize(1L, "main")
         coEvery { dao.getMainMessageById(1L, 10L) } returns message(10L, "target")
         coEvery { dao.getMainMessagesBefore(1L, 10L, 2) } returns listOf(message(9L, "before 9"), message(8L, "before 8"))

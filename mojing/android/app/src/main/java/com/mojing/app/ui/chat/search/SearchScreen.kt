@@ -102,7 +102,7 @@ fun SearchScreen(
             Text(if (state.query.isBlank()) "搜索历史" else "当前故事线", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (state.indexing) {
-            SearchIndexingState()
+            SearchIndexingState(state.visibilityIndexing)
         } else if (state.query.isBlank() && state.history.isEmpty()) {
             SearchEmptyState("查找对话中的内容", "输入角色名、剧情关键词或一段原文，搜索当前故事线。")
         } else if (state.query.isBlank()) {
@@ -171,16 +171,20 @@ fun SearchScreen(
     }
 }
 
-@Composable private fun SearchIndexingState() {
+@Composable private fun SearchIndexingState(visibilityIndexing: Boolean) {
     Column(
         Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         LinearProgressIndicator(Modifier.fillMaxWidth())
-        Text("正在整理旧消息的搜索索引", style = MaterialTheme.typography.titleMedium)
         Text(
-            "索引完成后会显示完整结果和匹配数量。你也可以返回，或修改关键词后重新搜索。",
+            if (visibilityIndexing) "正在整理故事线索引" else "正在整理旧消息的搜索索引",
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            if (visibilityIndexing) "整理完成后会显示这条故事线的完整结果。你也可以返回，或修改关键词后重新搜索。"
+            else "索引完成后会显示完整结果和匹配数量。你也可以返回，或修改关键词后重新搜索。",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,

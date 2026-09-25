@@ -31,7 +31,7 @@ class MoJingApp : Application() {
                 .onFailure { UsbSessionLog.w("BuiltinCatalog", "示例升级未完成，原数据已保留：${it::class.simpleName}") }
         }
         CoroutineScope(Dispatchers.IO).launch {
-            runCatching { branchVisibilityIndexManager.repairIfNeeded() }
+            runCatching { branchVisibilityIndexManager.ensureReady() }
                 .onFailure { error ->
                     UsbSessionLog.w("BranchVisibility", "分支查询区段修复失败：${error::class.simpleName}")
                 }
