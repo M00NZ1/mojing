@@ -92,9 +92,8 @@ class SearchViewModel @Inject constructor(application: Application, private val 
             failedPage = null, selectedMessageId = null, contextMessages = emptyList()) }
         searchJob = viewModelScope.launch {
             try {
-                // A partial FTS rebuild cannot provide complete Unicode results or an exact count.
-                // Join the app's resumable rebuild owner before publishing either result.
-                searchIndexManager.rebuildIfNeeded()
+                // Complete this session's resumable index before publishing Unicode results or a count.
+                searchIndexManager.ensureSessionReady(sessionId)
                 if (token != revision) return@launch
                 _state.update { it.copy(indexing = false) }
                 val page = loadPage(sessionId, branchId, q, exact, Long.MAX_VALUE)

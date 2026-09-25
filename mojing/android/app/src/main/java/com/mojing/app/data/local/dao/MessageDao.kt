@@ -10,12 +10,18 @@ import com.mojing.app.data.local.entity.BranchContextExclusionEntity
 import com.mojing.app.data.local.entity.contextSelectionKey
 import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.local.entity.MessageSearchIndexStateEntity
+import com.mojing.app.data.local.entity.ConfigEntity
 import com.mojing.app.data.local.entity.SessionBranchEntity
 import com.mojing.app.data.local.entity.SessionContextMemoryEntity
 import com.mojing.app.data.local.entity.SessionEventNodeEntity
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import com.google.gson.Gson
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import com.mojing.app.data.local.search.MessageSearchTokenizer
+
+private const val SESSION_SEARCH_INDEX_STATE_KEY_PREFIX = "message_search_session_state_v2:"
 
 /** Preview inputs omit search indexes and structured metadata; keep full body for tag parsing. */
 data class MessagePreviewSource(
@@ -599,7 +605,7 @@ interface MessageDao {
         limit: Int,
         beforeMessageId: Long = Long.MAX_VALUE,
     ): List<MessageEntity> {
-        val state = currentSearchIndexState()
+        val state = currentSearchIndexState(sessionId)
         return searchMainMessagesIndexed(
             sessionId = sessionId,
             query = query,
@@ -632,7 +638,7 @@ interface MessageDao {
             indexedThroughMessageId, indexComplete, limit, afterMessageId).map(SearchMessageRow::toMessageEntity)
 
     suspend fun searchMainMessagesAfter(sessionId: Long, query: String, exactMatch: Int, limit: Int, afterMessageId: Long): List<MessageEntity> {
-        val state = currentSearchIndexState()
+        val state = currentSearchIndexState(sessionId)
         return searchMainMessagesAfterIndexed(sessionId, query, MessageSearchTokenizer.normalize(query),
             MessageSearchTokenizer.matchExpression(sessionId, query), exactMatch, state.indexedThroughMessageId,
             if (state.isComplete) 1 else 0, limit, afterMessageId)
@@ -649,7 +655,7 @@ interface MessageDao {
     suspend fun countMainMessagesIndexed(sessionId: Long, query: String, normalizedQuery: String, matchExpression: String, exactMatch: Int, indexedThroughMessageId: Long, indexComplete: Int): Int
 
     suspend fun countMainMessages(sessionId: Long, query: String, exactMatch: Int): Int {
-        val state = currentSearchIndexState()
+        val state = currentSearchIndexState(sessionId)
         return countMainMessagesIndexed(sessionId, query, MessageSearchTokenizer.normalize(query), MessageSearchTokenizer.matchExpression(sessionId, query), exactMatch, state.indexedThroughMessageId, if (state.isComplete) 1 else 0)
     }
 
@@ -810,7 +816,7 @@ interface MessageDao {
         limit: Int,
         beforeMessageId: Long = Long.MAX_VALUE,
     ): List<MessageEntity> {
-        val state = currentSearchIndexState()
+        val state = currentSearchIndexState(sessionId)
         return searchVisibleMessagesIndexed(
             sessionId = sessionId,
             branchId = branchId,
@@ -843,7 +849,7 @@ interface MessageDao {
 
     suspend fun searchVisibleMessagesAfter(sessionId: Long, branchId: String, query: String, exactMatch: Int, limit: Int,
         afterMessageId: Long): List<MessageEntity> {
-        val state = currentSearchIndexState()
+        val state = currentSearchIndexState(sessionId)
         return searchVisibleMessagesAfterIndexed(sessionId, branchId, query, MessageSearchTokenizer.normalize(query),
             MessageSearchTokenizer.matchExpression(sessionId, query), exactMatch, state.indexedThroughMessageId,
             if (state.isComplete) 1 else 0, limit, afterMessageId)
@@ -858,7 +864,7 @@ interface MessageDao {
     suspend fun countVisibleMessagesIndexed(sessionId: Long, branchId: String, query: String, normalizedQuery: String, matchExpression: String, exactMatch: Int, indexedThroughMessageId: Long, indexComplete: Int): Int
 
     suspend fun countVisibleMessages(sessionId: Long, branchId: String, query: String, exactMatch: Int): Int {
-        val state = currentSearchIndexState()
+        val state = currentSearchIndexState(sessionId)
         return countVisibleMessagesIndexed(sessionId, branchId, query, MessageSearchTokenizer.normalize(query), MessageSearchTokenizer.matchExpression(sessionId, query), exactMatch, state.indexedThroughMessageId, if (state.isComplete) 1 else 0)
     }
 
@@ -1314,6 +1320,13 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE id > :afterMessageId ORDER BY id ASC LIMIT :limit")
     suspend fun getMessagesForSearchRebuild(afterMessageId: Long, limit: Int): List<MessageEntity>
 
+    @Query("SELECT * FROM messages WHERE sessionId = :sessionId AND id > :afterMessageId ORDER BY id ASC LIMIT :limit")
+    suspend fun getMessagesForSessionSearchRebuild(
+        sessionId: Long,
+        afterMessageId: Long,
+        limit: Int,
+    ): List<MessageEntity>
+
     @Query(
         "UPDATE messages SET searchNormalized = :searchNormalized, searchTerms = :searchTerms " +
             "WHERE id = :messageId",
@@ -1326,6 +1339,15 @@ interface MessageDao {
 
     @Query("SELECT EXISTS(SELECT 1 FROM messages WHERE id > :messageId LIMIT 1)")
     suspend fun hasMessagesAfter(messageId: Long): Boolean
+
+    @Query("SELECT EXISTS(SELECT 1 FROM messages WHERE sessionId = :sessionId AND id > :messageId LIMIT 1)")
+    suspend fun hasSessionMessagesAfter(sessionId: Long, messageId: Long): Boolean
+
+    @Query("SELECT valueJson FROM app_config WHERE `key` = :key LIMIT 1")
+    suspend fun getSearchSessionStateJson(key: String): String?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertSearchSessionState(entity: ConfigEntity)
 
     @Transaction
     suspend fun rebuildSearchIndexBatch(
@@ -1374,14 +1396,137 @@ interface MessageDao {
         )
     }
 
-    private suspend fun currentSearchIndexState(): MessageSearchIndexStateEntity {
-        val state = getSearchIndexState()
-        return if (state?.indexVersion == MessageSearchTokenizer.INDEX_VERSION) {
-            state
+    /** Rebuild only one session so opening search does not wait for unrelated histories. */
+    @Transaction
+    suspend fun rebuildSessionSearchIndexBatch(
+        sessionId: Long,
+        batchSize: Int = MessageSearchTokenizer.REBUILD_BATCH_SIZE,
+        now: Long = System.currentTimeMillis(),
+    ): MessageSearchRebuildBatchResult {
+        require(sessionId > 0L)
+        require(batchSize in 1..1000)
+
+        val global = getSearchIndexState()
+        if (global?.indexVersion == MessageSearchTokenizer.INDEX_VERSION && global.isComplete) {
+            return MessageSearchRebuildBatchResult(
+                indexedThroughMessageId = global.indexedThroughMessageId,
+                indexedCount = 0,
+                isComplete = true,
+            )
+        }
+
+        val key = sessionSearchIndexStateKey(sessionId)
+        val storedState = readSessionSearchIndexState(getSearchSessionStateJson(key), sessionId)
+        val sessionState = storedState.takeIf { it.indexVersion == MessageSearchTokenizer.INDEX_VERSION }
+            ?: SessionSearchIndexState(sessionId = sessionId)
+        val state = sessionState.copy(
+            indexedThroughMessageId = maxOf(
+                sessionState.indexedThroughMessageId,
+                global?.takeIf { it.indexVersion == MessageSearchTokenizer.INDEX_VERSION }
+                    ?.indexedThroughMessageId ?: 0L,
+            ),
+        )
+        if (state.isComplete && state.indexVersion == MessageSearchTokenizer.INDEX_VERSION) {
+            return MessageSearchRebuildBatchResult(
+                indexedThroughMessageId = state.indexedThroughMessageId,
+                indexedCount = 0,
+                isComplete = true,
+            )
+        }
+
+        val messages = getMessagesForSessionSearchRebuild(sessionId, state.indexedThroughMessageId, batchSize)
+        messages.forEach { message ->
+            val indexed = MessageSearchTokenizer.index(message)
+            updateSearchFields(
+                messageId = message.id,
+                searchNormalized = indexed.searchNormalized,
+                searchTerms = indexed.searchTerms,
+            )
+        }
+        val cursor = messages.lastOrNull()?.id ?: state.indexedThroughMessageId
+        val complete = !hasSessionMessagesAfter(sessionId, cursor)
+        upsertSearchSessionState(
+            ConfigEntity(
+                key = key,
+                valueJson = encodeSessionSearchIndexState(
+                    state.copy(
+                        indexVersion = MessageSearchTokenizer.INDEX_VERSION,
+                        indexedThroughMessageId = cursor,
+                        isComplete = complete,
+                        updatedAt = now,
+                    ),
+                ),
+                updatedAt = now,
+            ),
+        )
+        return MessageSearchRebuildBatchResult(
+            indexedThroughMessageId = cursor,
+            indexedCount = messages.size,
+            isComplete = complete,
+        )
+    }
+
+    private suspend fun currentSearchIndexState(sessionId: Long): MessageSearchIndexStateEntity {
+        val global = getSearchIndexState()
+        if (global?.indexVersion == MessageSearchTokenizer.INDEX_VERSION && global.isComplete) return global
+
+        val session = readSessionSearchIndexState(
+            getSearchSessionStateJson(sessionSearchIndexStateKey(sessionId)),
+            sessionId,
+        )
+        return if (session.indexVersion == MessageSearchTokenizer.INDEX_VERSION) {
+            MessageSearchIndexStateEntity(
+                indexVersion = session.indexVersion,
+                indexedThroughMessageId = maxOf(
+                    session.indexedThroughMessageId,
+                    global?.takeIf { it.indexVersion == MessageSearchTokenizer.INDEX_VERSION }
+                        ?.indexedThroughMessageId ?: 0L,
+                ),
+                isComplete = session.isComplete,
+                updatedAt = session.updatedAt,
+            )
         } else {
-            MessageSearchIndexStateEntity(indexVersion = MessageSearchTokenizer.INDEX_VERSION)
+            MessageSearchIndexStateEntity(
+                indexVersion = MessageSearchTokenizer.INDEX_VERSION,
+                indexedThroughMessageId = global?.takeIf {
+                    it.indexVersion == MessageSearchTokenizer.INDEX_VERSION
+                }?.indexedThroughMessageId ?: 0L,
+            )
         }
     }
+
+    private fun sessionSearchIndexStateKey(sessionId: Long): String =
+        SESSION_SEARCH_INDEX_STATE_KEY_PREFIX + sessionId
+
+    private data class SessionSearchIndexState(
+        val sessionId: Long,
+        val indexVersion: Int = MessageSearchTokenizer.INDEX_VERSION,
+        val indexedThroughMessageId: Long = 0L,
+        val isComplete: Boolean = false,
+        val updatedAt: Long = 0L,
+    )
+
+    private fun readSessionSearchIndexState(raw: String?, sessionId: Long): SessionSearchIndexState =
+        runCatching {
+            val json = JsonParser.parseString(raw ?: "").asJsonObject
+            SessionSearchIndexState(
+                sessionId = json.get("sessionId").asLong,
+                indexVersion = json.get("indexVersion").asInt,
+                indexedThroughMessageId = json.get("indexedThroughMessageId").asLong,
+                isComplete = json.get("isComplete").asBoolean,
+                updatedAt = json.get("updatedAt").asLong,
+            ).takeIf { it.sessionId == sessionId && it.indexedThroughMessageId >= 0L }
+                ?: SessionSearchIndexState(sessionId = sessionId)
+        }.getOrElse { SessionSearchIndexState(sessionId = sessionId) }
+
+    private fun encodeSessionSearchIndexState(state: SessionSearchIndexState): String =
+        Gson().toJson(JsonObject().apply {
+            addProperty("sessionId", state.sessionId)
+            addProperty("indexVersion", state.indexVersion)
+            addProperty("indexedThroughMessageId", state.indexedThroughMessageId)
+            addProperty("isComplete", state.isComplete)
+            addProperty("updatedAt", state.updatedAt)
+        })
 
     @Query("SELECT COUNT(*) FROM messages WHERE sessionId = :sessionId AND branchId = 'main'")
     suspend fun messageCount(sessionId: Long): Int

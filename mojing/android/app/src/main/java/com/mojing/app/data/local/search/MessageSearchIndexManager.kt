@@ -1,8 +1,10 @@
 package com.mojing.app.data.local.search
 
 import com.mojing.app.data.local.dao.MessageDao
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -17,15 +19,35 @@ class MessageSearchIndexManager @Inject constructor(
     private val messageDao: MessageDao,
 ) {
     private val rebuildMutex = Mutex()
+    private val pendingSessionSearches = AtomicInteger()
 
     suspend fun rebuildIfNeeded() = withContext(Dispatchers.IO) {
-        rebuildMutex.withLock {
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            // A search needs only its current session. Let it take the next batch slot.
+            while (pendingSessionSearches.get() > 0) delay(10)
+            val result = rebuildMutex.withLock {
+                // A search may have arrived while the background rebuild waited for this lock.
+                if (pendingSessionSearches.get() > 0) null else messageDao.rebuildSearchIndexBatch()
+            }
+            if (result?.isComplete == true) return@withContext
+            yield()
+        }
+    }
+
+    suspend fun ensureSessionReady(sessionId: Long) = withContext(Dispatchers.IO) {
+        pendingSessionSearches.incrementAndGet()
+        try {
             while (true) {
                 currentCoroutineContext().ensureActive()
-                val result = messageDao.rebuildSearchIndexBatch()
-                if (result.isComplete) return@withLock
+                val result = rebuildMutex.withLock {
+                    messageDao.rebuildSessionSearchIndexBatch(sessionId)
+                }
+                if (result.isComplete) return@withContext
                 yield()
             }
+        } finally {
+            pendingSessionSearches.decrementAndGet()
         }
     }
 }

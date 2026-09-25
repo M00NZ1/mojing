@@ -44,7 +44,7 @@ class SearchViewModelTest {
         every { preferences.edit() } returns editor
         dao = mockk(relaxed = true)
         indexManager = mockk(relaxed = true)
-        coEvery { indexManager.rebuildIfNeeded() } returns Unit
+        coEvery { indexManager.ensureSessionReady(any()) } returns Unit
         val presentation = io.mockk.mockk<SearchPresentationLoader>()
         io.mockk.coEvery { presentation.load(any(), any()) } returns SearchPresentation()
         viewModel = SearchViewModel(application, dao, indexManager, presentation, SearchResultFormatter(dispatcher))
@@ -55,7 +55,7 @@ class SearchViewModelTest {
 
     @Test fun incompleteIndexDoesNotPublishPartialResultsOrCount() = runTest(dispatcher) {
         val rebuildFinished = CompletableDeferred<Unit>()
-        coEvery { indexManager.rebuildIfNeeded() } coAnswers { rebuildFinished.await() }
+        coEvery { indexManager.ensureSessionReady(1L) } coAnswers { rebuildFinished.await() }
         coEvery { dao.searchMainMessages(any(), any(), any(), any(), any()) } returns listOf(message(7L, "ＡＢＣ"))
         viewModel.setQuery("ABC")
         viewModel.search(1L, "main")
@@ -74,7 +74,7 @@ class SearchViewModelTest {
     }
 
     @Test fun indexRebuildFailureKeepsResultUnknownAndOffersRetry() = runTest(dispatcher) {
-        coEvery { indexManager.rebuildIfNeeded() } throws IllegalStateException("storage")
+        coEvery { indexManager.ensureSessionReady(1L) } throws IllegalStateException("storage")
         viewModel.setQuery("ABC")
         viewModel.search(1L, "main")
         advanceUntilIdle()
@@ -87,7 +87,7 @@ class SearchViewModelTest {
 
     @Test fun changingQueryCancelsIndexWaitWithoutPublishingOldResults() = runTest(dispatcher) {
         val rebuildFinished = CompletableDeferred<Unit>()
-        coEvery { indexManager.rebuildIfNeeded() } coAnswers { rebuildFinished.await() }
+        coEvery { indexManager.ensureSessionReady(1L) } coAnswers { rebuildFinished.await() }
         viewModel.setQuery("旧词")
         viewModel.search(1L, "main")
         runCurrent()

@@ -78,10 +78,14 @@ interface SessionDao {
     @Query("DELETE FROM app_config WHERE `key` LIKE 'memory_compaction_gap_checkpoint_v1:' || :id || ':%' OR `key` LIKE 'memory_gap_scan_v1:' || :id || ':%'")
     suspend fun deleteMemoryGapProgress(id: Long)
 
+    @Query("DELETE FROM app_config WHERE `key` = 'message_search_session_state_v2:' || :id")
+    suspend fun deleteSearchIndexCheckpoint(id: Long)
+
     @Transaction
     suspend fun delete(id: Long) {
         deleteMemoryCompactionCheckpoints(id)
         deleteMemoryGapProgress(id)
+        deleteSearchIndexCheckpoint(id)
         deleteRaw(id)
     }
 }
