@@ -11,11 +11,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontWeight
 import com.mojing.app.data.local.search.MessageSearchTokenizer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import java.text.BreakIterator
 import java.util.Locale
 
 /** Map normalized search text back to original grapheme ranges without changing the body. */
-internal fun messageSearchRanges(text: String, query: String): List<IntRange> {
+internal fun messageSearchRanges(
+    text: String,
+    query: String,
+    onProgress: (() -> Unit)? = null,
+): List<IntRange> {
     val needle = MessageSearchTokenizer.normalize(query.trim())
     if (needle.isEmpty() || text.isEmpty()) return emptyList()
     val normalized = StringBuilder()
@@ -25,6 +33,7 @@ internal fun messageSearchRanges(text: String, query: String): List<IntRange> {
     var start = iterator.first()
     var end = iterator.next()
     while (end != BreakIterator.DONE) {
+        onProgress?.invoke()
         val part = MessageSearchTokenizer.normalize(text.substring(start, end))
         normalized.append(part)
         repeat(part.length) { starts.add(start); ends.add(end) }
@@ -34,6 +43,7 @@ internal fun messageSearchRanges(text: String, query: String): List<IntRange> {
     val ranges = ArrayList<IntRange>()
     var from = 0
     while (from <= normalized.length - needle.length) {
+        onProgress?.invoke()
         val index = normalized.indexOf(needle, from)
         if (index < 0) break
         val range = starts[index] until ends[index + needle.lastIndex]
@@ -41,6 +51,20 @@ internal fun messageSearchRanges(text: String, query: String): List<IntRange> {
         from = index + needle.length
     }
     return ranges
+}
+
+internal class MessageSearchHighlightResult(
+    val ranges: List<IntRange>,
+    val annotated: AnnotatedString,
+)
+
+internal fun buildMessageSearchHighlight(
+    text: String,
+    query: String,
+    onProgress: (() -> Unit)? = null,
+): MessageSearchHighlightResult {
+    val ranges = messageSearchRanges(text, query, onProgress)
+    return MessageSearchHighlightResult(ranges, highlightedMessageText(text, ranges))
 }
 
 internal class MessageSearchHighlight(val query: String = "", val focus: Boolean = false) {
@@ -63,21 +87,37 @@ internal fun SearchableMessageText(
     maxLines: Int = Int.MAX_VALUE,
 ) {
     val highlight = LocalMessageSearchHighlight.current
-    val ranges = remember(text, highlight.query) { messageSearchRanges(text, highlight.query) }
-    val annotated = remember(text, ranges) { highlightedMessageText(text, ranges) }
-    val requester = remember { BringIntoViewRequester() }
-    var layout by remember(text) { mutableStateOf<TextLayoutResult?>(null) }
-    val focus = remember(highlight, text) {
-        (highlight.focus && !highlight.focusClaimed && ranges.isNotEmpty()).also {
-            if (it) highlight.focusClaimed = true
+    val query = remember(highlight.query) { MessageSearchTokenizer.normalize(highlight.query.trim()) }
+    if (query.isEmpty() || text.isEmpty()) {
+        Text(text, modifier = modifier, style = style, color = color, maxLines = maxLines)
+        return
+    }
+    val resultState = remember(text, query) {
+        mutableStateOf<MessageSearchHighlightResult?>(null)
+    }
+    LaunchedEffect(text, query) {
+        resultState.value = withContext(Dispatchers.Default) {
+            val context = currentCoroutineContext()
+            val result = buildMessageSearchHighlight(text, query) { context.ensureActive() }
+            context.ensureActive()
+            result
         }
     }
-    LaunchedEffect(highlight, layout, focus) {
+    val highlightResult = resultState.value
+    if (highlightResult == null) {
+        Text(text, modifier = modifier, style = style, color = color, maxLines = maxLines)
+        return
+    }
+    val ranges = highlightResult.ranges
+    val annotated = highlightResult.annotated
+    val requester = remember { BringIntoViewRequester() }
+    var layout by remember(text, highlightResult) { mutableStateOf<TextLayoutResult?>(null) }
+    LaunchedEffect(highlight, highlightResult, layout) {
         val result = layout ?: return@LaunchedEffect
-        if (focus) {
-            val line = result.getLineForOffset(ranges.first().first)
-            requester.bringIntoView(Rect(0f, result.getLineTop(line), result.size.width.toFloat(), result.getLineBottom(line)))
-        }
+        if (!highlight.focus || highlight.focusClaimed || ranges.isEmpty()) return@LaunchedEffect
+        highlight.focusClaimed = true
+        val line = result.getLineForOffset(ranges.first().first)
+        requester.bringIntoView(Rect(0f, result.getLineTop(line), result.size.width.toFloat(), result.getLineBottom(line)))
     }
     Text(annotated, modifier.bringIntoViewRequester(requester), style = style, color = color,
         maxLines = maxLines, onTextLayout = { layout = it })

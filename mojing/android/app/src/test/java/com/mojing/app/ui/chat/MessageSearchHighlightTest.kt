@@ -22,4 +22,26 @@ class MessageSearchHighlightTest {
         assertEquals(5, marked.spanStyles.single().end)
         assertNotEquals(marked.spanStyles.single().item.color, marked.spanStyles.single().item.background)
     }
+    @Test fun backgroundResultKeepsPlainBodyAndMappedRangesTogether() {
+        val result = buildMessageSearchHighlight("前文 夜雨 后文", "夜雨")
+
+        assertEquals(listOf(3..4), result.ranges)
+        assertEquals("前文 夜雨 后文", result.annotated.text)
+        assertEquals(3, result.annotated.spanStyles.single().start)
+        assertEquals(5, result.annotated.spanStyles.single().end)
+    }
+
+    @Test fun rangeMappingCanStopBetweenGraphemeClusters() {
+        var checks = 0
+
+        val result = runCatching {
+            messageSearchRanges("一二三四", "三") {
+                checks += 1
+                check(checks < 3)
+            }
+        }
+
+        assertTrue(result.isFailure)
+        assertEquals(3, checks)
+    }
 }
