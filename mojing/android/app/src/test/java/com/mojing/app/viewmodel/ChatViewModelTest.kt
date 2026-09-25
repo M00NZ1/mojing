@@ -22,6 +22,7 @@ import com.mojing.app.data.local.dao.SessionDao
 import com.mojing.app.data.local.dao.SessionBranchDao
 import com.mojing.app.data.local.dao.SessionWorldDao
 import com.mojing.app.data.local.dao.SessionMemoryCorrectionDao
+import com.mojing.app.data.local.branch.BranchVisibilityIndexManager
 import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.local.entity.MessageAttachmentEntity
 import com.mojing.app.data.local.entity.BranchSwipeSelectionEntity
@@ -132,6 +133,9 @@ class ChatViewModelTest {
         characterDao: CharacterDao = mockk(relaxed = true),
         sessionWorldDao: SessionWorldDao = mockk(relaxed = true),
         attachmentDao: AttachmentDao = mockk(relaxed = true),
+        branchVisibilityIndexManager: BranchVisibilityIndexManager = mockk(relaxed = true) {
+            coEvery { ensureReady() } returns Unit
+        },
         messageSubmissionTransaction: MessageSubmissionTransaction? = null,
         memoryCorrectionDao: SessionMemoryCorrectionDao = mockk(relaxed = true),
         eventNodeDao: SessionEventNodeDao = mockk(relaxed = true),
@@ -155,6 +159,7 @@ class ChatViewModelTest {
         participantDao = participantDao,
         sessionWorldDao = sessionWorldDao,
         sessionBranchDao = sessionBranchDao,
+        branchVisibilityIndexManager = branchVisibilityIndexManager,
         memorySegmentDao = memorySegmentDao,
         memoryCorrectionDao = memoryCorrectionDao,
         eventNodeDao = eventNodeDao,
@@ -774,6 +779,101 @@ class ChatViewModelTest {
         assertTrue(vm.state.value.sessionNotFound)
         assertEquals("对话不存在或已删除", vm.state.value.error)
         coVerify(exactly = 0) { sessionWorldDao.upsert(any<SessionWorldEntity>()) }
+    }
+
+    @Test
+    fun rememberedBranchWaitsForVisibilityRepairBeforePublishingReadyOrReadingTimeline() =
+        runTest(testDispatcher) {
+            val branch = SessionBranchEntity(
+                sessionId = 42L,
+                branchId = "branch-1",
+                sourceMessageId = 7L,
+            )
+            val branchDao = mockk<SessionBranchDao>(relaxed = true)
+            val messages = mockk<MessageDao>(relaxed = true)
+            val memorySegments = mockk<com.mojing.app.data.local.dao.SessionMemorySegmentDao>(relaxed = true)
+            val eventNodes = mockk<SessionEventNodeDao>(relaxed = true)
+            val visibilityManager = mockk<BranchVisibilityIndexManager>(relaxed = true)
+            val repairFinished = CompletableDeferred<Unit>()
+            coEvery { branchDao.getBySession(42L) } returns listOf(branch)
+            coEvery { visibilityManager.ensureReady() } coAnswers { repairFinished.await() }
+            coEvery { messages.getVisibleMessagesTail(42L, "branch-1", any()) } returns emptyList()
+
+            val vm = createViewModel(
+                messageDao = messages,
+                sessionBranchDao = branchDao,
+                memorySegmentDao = memorySegments,
+                eventNodeDao = eventNodes,
+                branchVisibilityIndexManager = visibilityManager,
+                uiPreferencesRepository = uiPreferences("branch-1"),
+            )
+            runCurrent()
+
+            assertFalse(vm.state.value.isReady)
+            assertEquals(null, vm.state.value.initialLoadError)
+            coVerify(exactly = 0) { messages.getVisibleMessagesTail(42L, "branch-1", any()) }
+            coVerify(exactly = 0) { memorySegments.getRecentForBranch(42L, "branch-1", any()) }
+            coVerify(exactly = 0) { eventNodes.getForBranch(42L, "branch-1") }
+
+            repairFinished.complete(Unit)
+            advanceUntilIdle()
+
+            assertTrue(vm.state.value.isReady)
+            coVerify(exactly = 1) { messages.getVisibleMessagesTail(42L, "branch-1", any()) }
+            coVerify(exactly = 1) { memorySegments.getRecentForBranch(42L, "branch-1", any()) }
+            coVerify(exactly = 1) { eventNodes.getForBranch(42L, "branch-1") }
+        }
+
+    @Test
+    fun visibilityRepairFailureIsRetryableDuringInitialLoad() = runTest(testDispatcher) {
+        val branch = SessionBranchEntity(
+            sessionId = 42L,
+            branchId = "branch-1",
+            sourceMessageId = 7L,
+        )
+        val branchDao = mockk<SessionBranchDao>(relaxed = true)
+        val messages = mockk<MessageDao>(relaxed = true)
+        val visibilityManager = mockk<BranchVisibilityIndexManager>(relaxed = true)
+        coEvery { branchDao.getBySession(42L) } returns listOf(branch)
+        coEvery { visibilityManager.ensureReady() } throws IllegalStateException("repair failed") andThen Unit
+        coEvery { messages.getVisibleMessagesTail(42L, "branch-1", any()) } returns emptyList()
+
+        val vm = createViewModel(
+            messageDao = messages,
+            sessionBranchDao = branchDao,
+            branchVisibilityIndexManager = visibilityManager,
+            uiPreferencesRepository = uiPreferences("branch-1"),
+        )
+        advanceUntilIdle()
+
+        assertFalse(vm.state.value.isReady)
+        assertEquals("对话加载失败，请重试", vm.state.value.initialLoadError)
+        coVerify(exactly = 0) { messages.getVisibleMessagesTail(42L, "branch-1", any()) }
+
+        vm.retryInitialization()
+        advanceUntilIdle()
+
+        assertTrue(vm.state.value.isReady)
+        assertEquals(null, vm.state.value.initialLoadError)
+        coVerify(exactly = 1) { messages.getVisibleMessagesTail(42L, "branch-1", any()) }
+        coVerify(exactly = 2) { visibilityManager.ensureReady() }
+    }
+
+    @Test
+    fun mainSessionWithoutBranchesSkipsVisibilityRepair() = runTest(testDispatcher) {
+        val branchDao = mockk<SessionBranchDao>(relaxed = true)
+        val visibilityManager = mockk<BranchVisibilityIndexManager>(relaxed = true)
+        coEvery { branchDao.getBySession(42L) } returns emptyList()
+
+        val vm = createViewModel(
+            sessionBranchDao = branchDao,
+            branchVisibilityIndexManager = visibilityManager,
+            uiPreferencesRepository = uiPreferences("main"),
+        )
+        advanceUntilIdle()
+
+        assertTrue(vm.state.value.isReady)
+        coVerify(exactly = 0) { visibilityManager.ensureReady() }
     }
 
     @Test

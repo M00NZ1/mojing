@@ -31,6 +31,7 @@ import com.mojing.app.data.local.dao.SessionMemorySegmentDao
 import com.mojing.app.data.local.dao.SessionMemoryCorrectionDao
 import com.mojing.app.data.local.dao.SessionWorldDao
 import com.mojing.app.data.local.dao.SessionBranchDao
+import com.mojing.app.data.local.branch.BranchVisibilityIndexManager
 import com.mojing.app.data.local.dao.CharacterStateDao
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.SessionWorldEntity
@@ -157,6 +158,7 @@ class ChatViewModel @Inject constructor(
     private val participantDao: ParticipantDao,
     private val sessionWorldDao: SessionWorldDao,
     private val sessionBranchDao: SessionBranchDao,
+    private val branchVisibilityIndexManager: BranchVisibilityIndexManager,
     private val memorySegmentDao: SessionMemorySegmentDao,
     private val memoryCorrectionDao: SessionMemoryCorrectionDao,
     private val eventNodeDao: SessionEventNodeDao,
@@ -863,6 +865,9 @@ class ChatViewModel @Inject constructor(
             world = sessionWorldDao.getBySession(sessionId)
         }
         val branches = sessionBranchDao.getBySession(sessionId)
+        // Do not treat a branch with stale derived visibility segments as an empty story.
+        // This also protects the reply-recovery and model-context reads after initialization.
+        if (branches.isNotEmpty()) branchVisibilityIndexManager.ensureReady()
         val rememberedBranchId = runCatching {
             uiPreferencesRepository.getLastChatBranch(sessionId)
         }.getOrDefault("main")
