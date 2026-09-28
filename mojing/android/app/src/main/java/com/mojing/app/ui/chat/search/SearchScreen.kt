@@ -206,8 +206,9 @@ fun SearchScreen(
     Surface(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(when (hit.message.speakerType) { "user" -> "我"; "narrator" -> "旁白"; else -> "角色" },
-                    Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+                Text(hit.speakerLabel.ifBlank { SearchSpeakerLabels().forMessage(hit.message) },
+                    Modifier.weight(1f), style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(formatDate(hit.message.createdAt), Modifier.padding(start = 12.dp),
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }

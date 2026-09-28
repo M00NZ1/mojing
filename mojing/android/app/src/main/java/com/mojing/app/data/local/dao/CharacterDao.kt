@@ -14,6 +14,8 @@ data class NewSessionCharacterOption(
     val createdAt: Long,
 )
 
+data class CharacterNameRow(val id: Long, val name: String)
+
 /** Only fields rendered by the character library; credentials and full prompts stay in Room. */
 data class CharacterListItem(
     val id: Long,
@@ -31,6 +33,9 @@ data class CharacterListItem(
 
 @Dao
 interface CharacterDao {
+    @Query("SELECT id, name FROM characters WHERE id IN (:ids)")
+    suspend fun getNamesByIds(ids: List<Long>): List<CharacterNameRow>
+
     @Query(
         """
         SELECT id, name, substr(personaPrompt, 1, 72) AS personaPreview,

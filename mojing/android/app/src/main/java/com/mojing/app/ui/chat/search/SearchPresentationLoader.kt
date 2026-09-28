@@ -9,6 +9,18 @@ import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
 data class SearchCharacter(val name: String, val avatar: String, val color: String, val card: String)
+data class SearchSpeakerLabels(
+    val characterNames: Map<Long, String> = emptyMap(),
+    val userName: String = "我",
+    val narratorName: String = "旁白",
+) {
+    fun forMessage(message: MessageEntity): String = when (message.speakerType) {
+        "user" -> userName.ifBlank { "我" }
+        "narrator" -> narratorName.ifBlank { "旁白" }
+        else -> message.characterId?.let(characterNames::get)?.takeIf(String::isNotBlank) ?: "角色"
+    }
+}
+
 data class SearchPresentation(
     val characters: Map<Long, SearchCharacter> = emptyMap(),
     val attachments: Map<Long, List<MessageAttachmentEntity>> = emptyMap(),
@@ -20,6 +32,16 @@ class SearchPresentationLoader @Inject constructor(
     private val worlds: SessionWorldDao, private val storage: SecureStorage,
     private val preferences: UiPreferencesRepository,
 ) {
+    /** Result cards need names, not full character prompts, credentials, attachments or world text. */
+    suspend fun loadSpeakerLabels(sessionId: Long, messages: List<MessageEntity>): SearchSpeakerLabels {
+        val characterIds = messages.filter { it.speakerType != "user" && it.speakerType != "narrator" }
+            .mapNotNull { it.characterId }.distinct()
+        val names = if (characterIds.isEmpty()) emptyMap()
+            else characters.getNamesByIds(characterIds).associate { it.id to it.name }
+        return SearchSpeakerLabels(names, storage.userName,
+            worlds.getNarratorNameBySession(sessionId) ?: "旁白")
+    }
+
     suspend fun load(sessionId: Long, messages: List<MessageEntity>): SearchPresentation {
         val cast = messages.mapNotNull { it.characterId }.distinct().mapNotNull { id ->
             characters.getById(id)?.let { id to SearchCharacter(it.name, it.avatarImagePath, it.avatarColor, it.cardImagePath) }

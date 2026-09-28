@@ -12,6 +12,9 @@ interface SessionWorldDao {
     @Query("SELECT * FROM session_worlds WHERE sessionId = :sessionId LIMIT 1")
     suspend fun getBySession(sessionId: Long): SessionWorldEntity?
 
+    @Query("SELECT narratorName FROM session_worlds WHERE sessionId = :sessionId LIMIT 1")
+    suspend fun getNarratorNameBySession(sessionId: Long): String?
+
     @Query("SELECT * FROM session_worlds WHERE sessionId = :sessionId LIMIT 1")
     fun observeBySession(sessionId: Long): Flow<SessionWorldEntity?>
 

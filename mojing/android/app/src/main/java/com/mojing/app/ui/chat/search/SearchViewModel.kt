@@ -19,7 +19,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /** Only the snippet and identifying fields survive after a result page is read. */
-data class SearchHit(val message: MessageEntity, val snippet: String)
+data class SearchHit(val message: MessageEntity, val snippet: String, val speakerLabel: String = "")
 enum class SearchPageDirection { NEWER, OLDER }
 enum class SearchContextDirection { BEFORE, AFTER }
 data class SearchState(
@@ -107,7 +107,7 @@ class SearchViewModel @Inject constructor(application: Application, private val 
                 if (token != revision) return@launch
                 _state.update { it.copy(indexing = false) }
                 val page = loadPage(sessionId, branchId, q, exact, Long.MAX_VALUE)
-                val hits = resultFormatter.format(page, q)
+                val hits = formatPage(sessionId, page, q)
                 if (token != revision) return@launch
                 _state.update { it.copy(searching = false, hits = hits,
                     totalMatches = if (page.size < PAGE_SIZE) page.size else null,
@@ -157,7 +157,7 @@ class SearchViewModel @Inject constructor(application: Application, private val 
         searchJob = viewModelScope.launch {
             try {
                 val page = loadPage(sessionId, branchId, current.completedQuery, current.exactMatch, cursor)
-                val formatted = resultFormatter.format(page, current.completedQuery)
+                val formatted = formatPage(sessionId, page, current.completedQuery)
                 if (token != revision) return@launch
                 _state.update {
                     val combined = (it.hits + formatted).distinctBy { hit -> hit.message.id }
@@ -189,7 +189,7 @@ class SearchViewModel @Inject constructor(application: Application, private val 
         searchJob = viewModelScope.launch {
             try {
                 val page = loadNewerPage(sessionId, branchId, current.completedQuery, current.exactMatch, cursor)
-                val formatted = resultFormatter.format(page.asReversed(), current.completedQuery)
+                val formatted = formatPage(sessionId, page.asReversed(), current.completedQuery)
                 if (token != revision) return@launch
                 _state.update {
                     val combined = (formatted + it.hits).distinctBy { hit -> hit.message.id }
@@ -368,6 +368,15 @@ class SearchViewModel @Inject constructor(application: Application, private val 
     private suspend fun loadPage(sessionId: Long, branchId: String, q: String, exact: Boolean, before: Long): List<MessageEntity> =
         if (branchId == "main") messageDao.searchMainMessages(sessionId, q, if (exact) 1 else 0, PAGE_SIZE, before)
         else messageDao.searchVisibleMessages(sessionId, branchId, q, if (exact) 1 else 0, PAGE_SIZE, before)
+
+    private suspend fun formatPage(sessionId: Long, page: List<MessageEntity>, query: String): List<SearchHit> {
+        val hits = resultFormatter.format(page, query)
+        if (hits.isEmpty()) return hits
+        val labels = try { presentationLoader.loadSpeakerLabels(sessionId, page) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { SearchSpeakerLabels() }
+        return hits.map { it.copy(speakerLabel = labels.forMessage(it.message)) }
+    }
 
     private suspend fun loadNewerPage(sessionId: Long, branchId: String, q: String, exact: Boolean, after: Long): List<MessageEntity> =
         if (branchId == "main") messageDao.searchMainMessagesAfter(sessionId, q, if (exact) 1 else 0, PAGE_SIZE, after)

@@ -36,6 +36,7 @@ class SearchViewModelTest {
     private lateinit var dao: MessageDao
     private lateinit var indexManager: MessageSearchIndexManager
     private lateinit var visibilityManager: BranchVisibilityIndexManager
+    private lateinit var presentation: SearchPresentationLoader
     private lateinit var viewModel: SearchViewModel
 
     @Before fun setUp() {
@@ -49,14 +50,27 @@ class SearchViewModelTest {
         coEvery { indexManager.ensureSessionReady(any()) } returns Unit
         visibilityManager = mockk(relaxed = true)
         coEvery { visibilityManager.ensureReady() } returns Unit
-        val presentation = io.mockk.mockk<SearchPresentationLoader>()
+        presentation = io.mockk.mockk()
         io.mockk.coEvery { presentation.load(any(), any()) } returns SearchPresentation()
+        coEvery { presentation.loadSpeakerLabels(any(), any()) } returns SearchSpeakerLabels()
         viewModel = SearchViewModel(application, dao, indexManager, visibilityManager,
             presentation, SearchResultFormatter(dispatcher))
         viewModel.initialize(1L, "main")
     }
 
     @After fun tearDown() { Dispatchers.resetMain() }
+
+    @Test fun resultCardsCarryResolvedSpeakerNamesWithoutLoadingFullMessages() = runTest(dispatcher) {
+        val row = message(7L, "雨夜").copy(speakerType = "character", characterId = 12L)
+        coEvery { dao.searchMainMessages(1L, "雨夜", 0, 40, Long.MAX_VALUE) } returns listOf(row)
+        coEvery { presentation.loadSpeakerLabels(1L, listOf(row)) } returns
+            SearchSpeakerLabels(characterNames = mapOf(12L to "阿沅"))
+
+        viewModel.setQuery("雨夜"); viewModel.search(1L, "main"); advanceUntilIdle()
+
+        assertEquals("阿沅", viewModel.state.value.hits.single().speakerLabel)
+        assertEquals("", viewModel.state.value.hits.single().message.content)
+    }
 
     @Test fun incompleteIndexDoesNotPublishPartialResultsOrCount() = runTest(dispatcher) {
         val rebuildFinished = CompletableDeferred<Unit>()
