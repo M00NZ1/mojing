@@ -160,9 +160,9 @@ fun EncyclopediaDetailScreen(
     var tlTitle by remember { mutableStateOf("") }
     var tlTime by remember { mutableStateOf("") }
     var tlOrder by remember { mutableStateOf("0") }
-    LaunchedEffect(state.mainTab) {
-        if (state.mainTab == EncyclopediaMainTab.TIMELINE) {
-            val next = (state.timelineEvents.maxOfOrNull { it.sortOrder } ?: -1) + 1
+    LaunchedEffect(state.mainTab, state.timelineLoaded) {
+        if (state.mainTab == EncyclopediaMainTab.TIMELINE && state.timelineLoaded) {
+            val next = state.timelineMaxSortOrder + 1
             tlOrder = next.coerceAtLeast(0).toString()
         }
     }
@@ -560,27 +560,61 @@ fun EncyclopediaDetailScreen(
                             .fillMaxSize()
                             .padding(horizontal = 16.dp, vertical = 8.dp)
                     ) {
-                        OutlinedTextField(value = tlTitle, onValueChange = { tlTitle = it }, label = { Text("事件标题") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                        OutlinedTextField(value = tlTitle, onValueChange = { tlTitle = it; viewModel.clearTimelineSaveError() }, label = { Text("事件标题") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
+                            enabled = !state.timelineSaving)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            OutlinedTextField(value = tlTime, onValueChange = { tlTime = it }, label = { Text("时间标签") }, modifier = Modifier.weight(1f), singleLine = true)
-                            OutlinedTextField(value = tlOrder, onValueChange = { tlOrder = it.filter { ch -> ch.isDigit() || ch == '-' } }, label = { Text("排序") }, modifier = Modifier.width(100.dp), singleLine = true)
+                            OutlinedTextField(value = tlTime, onValueChange = { tlTime = it; viewModel.clearTimelineSaveError() }, label = { Text("时间标签") }, modifier = Modifier.weight(1f), singleLine = true,
+                                enabled = !state.timelineSaving)
+                            OutlinedTextField(value = tlOrder, onValueChange = { tlOrder = it.filter { ch -> ch.isDigit() || ch == '-' }; viewModel.clearTimelineSaveError() }, label = { Text("排序") }, modifier = Modifier.width(100.dp), singleLine = true,
+                                enabled = !state.timelineSaving)
                         }
                         Button(onClick = {
                             val order = tlOrder.toIntOrNull() ?: 0
-                            val prevMax = state.timelineEvents.maxOfOrNull { it.sortOrder } ?: -1
-                            viewModel.addTimelineEvent(tlTitle, tlTime, order)
-                            tlTitle = ""
-                            tlTime = ""
-                            tlOrder = (kotlin.math.max(prevMax, order) + 1).toString()
-                        }, enabled = tlTitle.isNotBlank()) { Text("添加事件") }
+                            val prevMax = state.timelineMaxSortOrder
+                            viewModel.addTimelineEvent(tlTitle, tlTime, order) { saved ->
+                                if (saved) {
+                                    tlTitle = ""
+                                    tlTime = ""
+                                    tlOrder = (kotlin.math.max(prevMax, order) + 1).toString()
+                                }
+                            }
+                        }, enabled = tlTitle.isNotBlank() && state.timelineLoaded && !state.timelineLoading && !state.timelineSaving) {
+                            Text(if (state.timelineSaving) "正在保存…" else "添加事件")
+                        }
+                        state.timelineSaveError?.let { error ->
+                            Text(error, color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall)
+                        }
                         Spacer(Modifier.height(12.dp))
-                        if (state.timelineEvents.isEmpty()) {
+                        if (state.timelineLoading && !state.timelineLoaded) {
+                            LinearProgressIndicator(Modifier.fillMaxWidth())
+                            Text("正在读取时间线…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        state.timelineError?.let { error ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(error, Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
+                                TextButton(onClick = viewModel::retryTimelinePage) { Text("重试") }
+                            }
+                        }
+                        if (state.timelineLoaded && state.timelineEvents.isEmpty() && state.timelineError == null) {
                             Text(
                                 "还没有时间线事件，在上方填写标题后即可添加。",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(vertical = 12.dp),
                             )
+                        }
+                        if (state.timelineLoaded && state.timelineEvents.isNotEmpty()) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween) {
+                                TextButton(onClick = viewModel::previousTimelinePage,
+                                    enabled = state.timelinePageIndex > 0 && !state.timelineLoading) { Text("上一页") }
+                                Text("第 ${state.timelinePageIndex + 1} 页 · 本页 ${state.timelineEvents.size} 条",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                TextButton(onClick = viewModel::nextTimelinePage,
+                                    enabled = state.timelineHasNext && !state.timelineLoading) { Text("下一页") }
+                            }
                         }
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             items(
@@ -603,11 +637,11 @@ fun EncyclopediaDetailScreen(
                                         }
                                         scope.launch {
                                             snackbarHostState.showSnackbar(
-                                                if (wasPinned) "已取消置顶" else "已置顶",
+                                                if (wasPinned) "已取消本页置顶" else "已在本页置顶",
                                             )
                                         }
                                     },
-                                    onDelete = { timelineDeleteTarget = ev },
+                                    onDelete = { viewModel.clearTimelineDeleteError(); timelineDeleteTarget = ev },
                                     onClick = {
                                         ev.entryId?.let { entryId ->
                                             onEditEntry(entryId)
@@ -632,7 +666,7 @@ fun EncyclopediaDetailScreen(
                                                     if (ev.id in pinnedTimelineIds) {
                                                         Icon(
                                                             Icons.Default.Star,
-                                                            contentDescription = "置顶",
+                                                            contentDescription = "本页置顶",
                                                             tint = MaterialTheme.colorScheme.primary,
                                                             modifier = Modifier.padding(start = 6.dp).size(16.dp),
                                                         )
@@ -655,12 +689,23 @@ fun EncyclopediaDetailScreen(
                     }
                     val nodes = nodeIds.map { GraphNode(it, state.entryTitles[it] ?: "#$it") }
                     val edges = state.relations.map { GraphEdge(it.fromEntryId, it.toEntryId, it.relationType) }
-                    Column(
+                    LazyColumn(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        if (nodes.isEmpty()) {
+                        if (state.relationsLoading && !state.relationsLoaded) item {
+                            LinearProgressIndicator(Modifier.fillMaxWidth())
+                            Text("正在读取关系…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        state.relationsLoadError?.let { error -> item {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(error, Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
+                                TextButton(onClick = viewModel::retryRelationPage) { Text("重试") }
+                            }
+                        } }
+                        if (state.relationsLoaded && nodes.isEmpty() && state.relationsLoadError == null) item {
                             EmptyState(
                                 icon = Icons.Default.Link,
                                 title = "还没有条目关系",
@@ -679,7 +724,10 @@ fun EncyclopediaDetailScreen(
                                     }
                                 } else null,
                             )
-                        } else {
+                        }
+                        if (nodes.isNotEmpty()) item {
+                            Text("当前页关系图", style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurface)
                             EncyclopediaRelationCanvas(
                                 nodes = nodes,
                                 edges = edges,
@@ -687,8 +735,7 @@ fun EncyclopediaDetailScreen(
                                 onNodeTap = { onEditEntry(it) }
                             )
                         }
-                        Spacer(Modifier.height(8.dp))
-                        state.relations.forEach { r ->
+                        items(state.relations, key = { it.id }) { r ->
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                                 modifier = Modifier
@@ -709,6 +756,18 @@ fun EncyclopediaDetailScreen(
                                         Icon(Icons.Default.Close, "删除关系", tint = MaterialTheme.colorScheme.error)
                                     }
                                 }
+                            }
+                        }
+                        if (state.relationsLoaded && state.relations.isNotEmpty()) item {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween) {
+                                TextButton(onClick = viewModel::previousRelationPage,
+                                    enabled = state.relationPageIndex > 0 && !state.relationsLoading) { Text("上一页") }
+                                Text("第 ${state.relationPageIndex + 1} 页 · 本页 ${state.relations.size} 条",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                TextButton(onClick = viewModel::nextRelationPage,
+                                    enabled = state.relationsHasNext && !state.relationsLoading) { Text("下一页") }
                             }
                         }
                     }
@@ -1057,18 +1116,30 @@ fun EncyclopediaDetailScreen(
 
     timelineDeleteTarget?.let { event ->
         AlertDialog(
-            onDismissRequest = { timelineDeleteTarget = null },
+            onDismissRequest = { if (state.timelineDeletingId != event.id) timelineDeleteTarget = null },
             title = { Text("确认删除时间线事件") },
-            text = { Text("确定删除「${event.title.ifBlank { "未命名事件" }}」吗？删除后将无法恢复。") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("确定删除「${event.title.ifBlank { "未命名事件" }}」吗？删除后将无法恢复。")
+                    state.timelineDeleteError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.deleteTimelineEvent(event.id)
-                    pinnedTimelineIds = pinnedTimelineIds - event.id
-                    timelineDeleteTarget = null
-                    scope.launch { snackbarHostState.showSnackbar("时间线事件已删除") }
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                    viewModel.deleteTimelineEvent(event.id) { deleted ->
+                        if (deleted) {
+                            pinnedTimelineIds = pinnedTimelineIds - event.id
+                            timelineDeleteTarget = null
+                            scope.launch { snackbarHostState.showSnackbar("时间线事件已删除") }
+                        }
+                    }
+                }, enabled = state.timelineDeletingId != event.id) {
+                    Text(if (state.timelineDeletingId == event.id) "正在删除…" else "删除",
+                        color = MaterialTheme.colorScheme.error)
+                }
             },
-            dismissButton = { TextButton(onClick = { timelineDeleteTarget = null }) { Text("取消") } },
+            dismissButton = { TextButton(onClick = { timelineDeleteTarget = null },
+                enabled = state.timelineDeletingId != event.id) { Text("取消") } },
         )
     }
 

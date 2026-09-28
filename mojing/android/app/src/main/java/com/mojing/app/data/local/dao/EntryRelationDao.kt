@@ -8,6 +8,9 @@ interface EntryRelationDao {
     @Query("SELECT * FROM entry_relations WHERE encyclopediaId = :encId")
     suspend fun getByEncyclopedia(encId: Long): List<EntryRelationEntity>
 
+    @Query("SELECT * FROM entry_relations WHERE encyclopediaId = :encId AND id < :beforeId ORDER BY id DESC LIMIT :limit")
+    suspend fun getPage(encId: Long, beforeId: Long, limit: Int): List<EntryRelationEntity>
+
     @Query("SELECT * FROM entry_relations WHERE fromEntryId = :entryId OR toEntryId = :entryId")
     suspend fun getByEntry(entryId: Long): List<EntryRelationEntity>
 

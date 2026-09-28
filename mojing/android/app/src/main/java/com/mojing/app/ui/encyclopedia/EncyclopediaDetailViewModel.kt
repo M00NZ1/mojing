@@ -44,6 +44,10 @@ enum class EncyclopediaMainTab {
     SEDIMENT
 }
 
+data class TimelinePageCursor(val sortOrder: Int, val id: Long)
+
+private const val WORLD_DETAIL_PAGE_SIZE = 24
+
 data class EncyclopediaDetailState(
     val encyclopedia: EncyclopediaEntity? = null,
     val entries: List<EncyclopediaEntryEntity> = emptyList(),
@@ -60,7 +64,28 @@ data class EncyclopediaDetailState(
     val activeGenTasks: List<GenerationTaskEntity> = emptyList(),
     val mainTab: EncyclopediaMainTab = EncyclopediaMainTab.ENTRIES,
     val timelineEvents: List<TimelineEventEntity> = emptyList(),
+    val timelineCursors: List<TimelinePageCursor?> = listOf(null),
+    val timelinePageIndex: Int = 0,
+    val timelineHasNext: Boolean = false,
+    val timelineLoading: Boolean = false,
+    val timelineLoaded: Boolean = false,
+    val timelineError: String? = null,
+    val timelineRetryIndex: Int? = null,
+    val timelineRetryCursor: TimelinePageCursor? = null,
+    val timelineMaxSortOrder: Int = -1,
+    val timelineSaving: Boolean = false,
+    val timelineSaveError: String? = null,
+    val timelineDeletingId: Long? = null,
+    val timelineDeleteError: String? = null,
     val relations: List<EntryRelationEntity> = emptyList(),
+    val relationCursors: List<Long> = listOf(Long.MAX_VALUE),
+    val relationPageIndex: Int = 0,
+    val relationsHasNext: Boolean = false,
+    val relationsLoading: Boolean = false,
+    val relationsLoaded: Boolean = false,
+    val relationsLoadError: String? = null,
+    val relationRetryIndex: Int? = null,
+    val relationRetryCursor: Long = Long.MAX_VALUE,
     val entryTitles: Map<Long, String> = emptyMap(),
     val entryCount: Int = 0,
     val sedimentEntries: List<EncyclopediaEntryEntity> = emptyList(),
@@ -117,6 +142,7 @@ class EncyclopediaDetailViewModel @Inject constructor(
     // 同一百科的多次读取也必须按最后一次请求发布。
     private var loadRevision = 0L
     private var entriesRevision = 0L
+    private var timelineRevision = 0L
     private var relationsRevision = 0L
     // 离开再返回相同 ID 仍是新的页面归属。
     private var pageRevision = 0L
@@ -142,6 +168,7 @@ class EncyclopediaDetailViewModel @Inject constructor(
         }
         val requestRevision = ++loadRevision
         entriesRevision++
+        timelineRevision++
         relationsRevision++
         val initialNameRevision = nameRevision
         loadJob?.cancel()
@@ -188,9 +215,6 @@ class EncyclopediaDetailViewModel @Inject constructor(
                 val entries = rows.take(100)
                 val total = entryDao.countEntries(id, "")
                 val filteredCount = entryDao.countEntries(id, type)
-                val events = timelineEventDao.getByEncyclopedia(id)
-                val relations = entryRelationDao.getByEncyclopedia(id)
-                val titles = loadRelationTitles(id, relations)
                 if (requestRevision != loadRevision) return@launch
                 val current = _state.value.encyclopedia
                 val visibleEntries = entries
@@ -204,15 +228,17 @@ class EncyclopediaDetailViewModel @Inject constructor(
                     previewEntryId = _state.value.previewEntryId?.takeIf { previewId ->
                         visibleEntries.any { it.id == previewId }
                     },
-                    timelineEvents = events,
-                    relations = relations,
-                    entryTitles = titles,
                     entryCount = total,
                     isLoaded = true,
                     loadError = null,
                 )
                 reloadSediment()
                 startGenerationObservation(id)
+                when (_state.value.mainTab) {
+                    EncyclopediaMainTab.TIMELINE -> loadTimelinePage(0, null)
+                    EncyclopediaMainTab.GRAPH -> loadRelationPage(0, Long.MAX_VALUE)
+                    else -> Unit
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -246,9 +272,14 @@ class EncyclopediaDetailViewModel @Inject constructor(
     }
 
     fun setMainTab(tab: EncyclopediaMainTab) {
+        if (_state.value.mainTab == tab) return
+        timelineRevision++
+        relationsRevision++
         _state.value = _state.value.copy(mainTab = tab)
-        if (tab != EncyclopediaMainTab.ENTRIES) {
-            viewModelScope.launch { refreshTimelineAndRelations() }
+        when (tab) {
+            EncyclopediaMainTab.TIMELINE, EncyclopediaMainTab.GRAPH -> viewModelScope.launch { refreshTimelineAndRelations() }
+            EncyclopediaMainTab.SEDIMENT -> reloadSediment()
+            EncyclopediaMainTab.ENTRIES -> Unit
         }
     }
 
@@ -591,6 +622,7 @@ class EncyclopediaDetailViewModel @Inject constructor(
                 refreshEntries()
                 if (encId != targetId || loadRevision != revision) return@launch
                 refreshTimelineAndRelations()
+                if (_state.value.mainTab != EncyclopediaMainTab.SEDIMENT) reloadSediment()
                 if (encId == targetId && loadRevision == revision) showSnackbar("已确认 $count 条资料")
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) {
@@ -659,45 +691,216 @@ class EncyclopediaDetailViewModel @Inject constructor(
 
     private suspend fun refreshTimelineAndRelations() {
         val id = encId
-        val revision = ++relationsRevision
-        val events = timelineEventDao.getByEncyclopedia(id)
-        val rels = entryRelationDao.getByEncyclopedia(id)
-        val titles = loadRelationTitles(id, rels)
-        val total = entryDao.countEntries(id, "")
-        if (revision != relationsRevision || id != encId) return
-        _state.value = _state.value.copy(
-            timelineEvents = events,
-            relations = rels,
-            entryTitles = titles,
-            entryCount = total,
-        )
-        reloadSediment()
-    }
-
-    fun addTimelineEvent(title: String, timeLabel: String, sortOrder: Int) {
-        viewModelScope.launch {
-            if (title.isBlank()) {
-                showSnackbar(UserFacingStrings.timelineTitleRequired())
-                return@launch
-            }
-            timelineEventDao.upsert(
-                TimelineEventEntity(
-                    encyclopediaId = encId,
-                    entryId = null,
-                    title = title.trim(),
-                    description = "",
-                    eventTime = timeLabel.trim(),
-                    sortOrder = sortOrder
-                )
-            )
-            refreshTimelineAndRelations()
+        val total = try { entryDao.countEntries(id, "") }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { null }
+        if (id != encId) return
+        if (total != null) _state.value = _state.value.copy(entryCount = total)
+        when (_state.value.mainTab) {
+            EncyclopediaMainTab.TIMELINE -> loadTimelinePage(_state.value.timelinePageIndex,
+                _state.value.timelineCursors[_state.value.timelinePageIndex])
+            EncyclopediaMainTab.GRAPH -> loadRelationPage(_state.value.relationPageIndex,
+                _state.value.relationCursors[_state.value.relationPageIndex])
+            EncyclopediaMainTab.SEDIMENT -> reloadSediment()
+            EncyclopediaMainTab.ENTRIES -> Unit
         }
     }
 
-    fun deleteTimelineEvent(id: Long) {
+    private suspend fun loadTimelinePage(index: Int, cursor: TimelinePageCursor?) {
+        val id = encId
+        val revision = ++timelineRevision
+        _state.value = _state.value.copy(timelineLoading = true, timelineError = null)
+        try {
+            val rows = timelineEventDao.getPage(id, cursor?.sortOrder, cursor?.id, WORLD_DETAIL_PAGE_SIZE + 1)
+            val maxOrder = timelineEventDao.maxSortOrder(id)
+            if (id != encId || revision != timelineRevision || _state.value.mainTab != EncyclopediaMainTab.TIMELINE) return
+            if (rows.isEmpty() && index > 0) {
+                loadTimelinePage(index - 1, _state.value.timelineCursors[index - 1])
+                return
+            }
+            _state.value = _state.value.copy(
+                timelineEvents = rows.take(WORLD_DETAIL_PAGE_SIZE),
+                timelineCursors = _state.value.timelineCursors.take(index) + cursor,
+                timelinePageIndex = index,
+                timelineHasNext = rows.size > WORLD_DETAIL_PAGE_SIZE,
+                timelineLoading = false,
+                timelineLoaded = true,
+                timelineError = null,
+                timelineRetryIndex = null,
+                timelineRetryCursor = null,
+                timelineMaxSortOrder = maxOrder,
+            )
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) {
+            if (id == encId && revision == timelineRevision && _state.value.mainTab == EncyclopediaMainTab.TIMELINE) {
+                _state.value = _state.value.copy(timelineLoading = false,
+                    timelineError = "时间线读取失败，当前页已保留", timelineRetryIndex = index,
+                    timelineRetryCursor = cursor)
+            }
+        }
+    }
+
+    fun nextTimelinePage() {
+        val state = _state.value
+        if (state.timelineLoading || !state.timelineHasNext) return
+        val last = state.timelineEvents.lastOrNull() ?: return
+        viewModelScope.launch { loadTimelinePage(state.timelinePageIndex + 1, TimelinePageCursor(last.sortOrder, last.id)) }
+    }
+
+    fun previousTimelinePage() {
+        val state = _state.value
+        if (state.timelineLoading || state.timelinePageIndex == 0) return
+        val index = state.timelinePageIndex - 1
+        viewModelScope.launch { loadTimelinePage(index, state.timelineCursors[index]) }
+    }
+
+    fun retryTimelinePage() {
+        val state = _state.value
+        if (state.timelineLoading) return
+        val index = state.timelineRetryIndex ?: state.timelinePageIndex
+        val cursor = if (state.timelineRetryIndex != null) state.timelineRetryCursor else state.timelineCursors[index]
+        viewModelScope.launch { loadTimelinePage(index, cursor) }
+    }
+
+    private suspend fun loadRelationPage(index: Int, cursor: Long) {
+        val id = encId
+        val revision = ++relationsRevision
+        _state.value = _state.value.copy(relationsLoading = true, relationsLoadError = null)
+        try {
+            val rows = entryRelationDao.getPage(id, cursor, WORLD_DETAIL_PAGE_SIZE + 1)
+            val relations = rows.take(WORLD_DETAIL_PAGE_SIZE)
+            val titles = loadRelationTitles(id, relations)
+            if (id != encId || revision != relationsRevision || _state.value.mainTab != EncyclopediaMainTab.GRAPH) return
+            if (rows.isEmpty() && index > 0) {
+                loadRelationPage(index - 1, _state.value.relationCursors[index - 1])
+                return
+            }
+            _state.value = _state.value.copy(
+                relations = relations,
+                relationCursors = _state.value.relationCursors.take(index) + cursor,
+                relationPageIndex = index,
+                relationsHasNext = rows.size > WORLD_DETAIL_PAGE_SIZE,
+                relationsLoading = false,
+                relationsLoaded = true,
+                relationsLoadError = null,
+                relationRetryIndex = null,
+                relationRetryCursor = Long.MAX_VALUE,
+                entryTitles = titles,
+            )
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) {
+            if (id == encId && revision == relationsRevision && _state.value.mainTab == EncyclopediaMainTab.GRAPH) {
+                _state.value = _state.value.copy(relationsLoading = false,
+                    relationsLoadError = "关系读取失败，当前页已保留", relationRetryIndex = index,
+                    relationRetryCursor = cursor)
+            }
+        }
+    }
+
+    fun nextRelationPage() {
+        val state = _state.value
+        if (state.relationsLoading || !state.relationsHasNext) return
+        val lastId = state.relations.lastOrNull()?.id ?: return
+        viewModelScope.launch { loadRelationPage(state.relationPageIndex + 1, lastId) }
+    }
+
+    fun previousRelationPage() {
+        val state = _state.value
+        if (state.relationsLoading || state.relationPageIndex == 0) return
+        val index = state.relationPageIndex - 1
+        viewModelScope.launch { loadRelationPage(index, state.relationCursors[index]) }
+    }
+
+    fun retryRelationPage() {
+        val state = _state.value
+        if (state.relationsLoading) return
+        val index = state.relationRetryIndex ?: state.relationPageIndex
+        val cursor = if (state.relationRetryIndex != null) state.relationRetryCursor else state.relationCursors[index]
+        viewModelScope.launch { loadRelationPage(index, cursor) }
+    }
+
+    fun clearTimelineSaveError() {
+        _state.value = _state.value.copy(timelineSaveError = null)
+    }
+
+    fun addTimelineEvent(title: String, timeLabel: String, sortOrder: Int, onSaved: (Boolean) -> Unit = {}) {
+        if (_state.value.timelineSaving) return
+        val targetId = encId
+        val targetPage = pageRevision
+        val targetLoad = loadRevision
+        _state.value = _state.value.copy(timelineSaving = true, timelineSaveError = null)
         viewModelScope.launch {
-            timelineEventDao.delete(id)
-            refreshTimelineAndRelations()
+            if (title.isBlank()) {
+                _state.value = _state.value.copy(timelineSaving = false,
+                    timelineSaveError = UserFacingStrings.timelineTitleRequired())
+                onSaved(false)
+                return@launch
+            }
+            var committed = false
+            try {
+                timelineEventDao.upsert(
+                    TimelineEventEntity(
+                        encyclopediaId = targetId,
+                        entryId = null,
+                        title = title.trim(),
+                        description = "",
+                        eventTime = timeLabel.trim(),
+                        sortOrder = sortOrder,
+                    ),
+                )
+                committed = true
+                if (targetId != encId || targetPage != pageRevision || targetLoad != loadRevision) return@launch
+                onSaved(true)
+                refreshTimelineAndRelations()
+                showSnackbar("事件已保存，可按排序翻页查看")
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (targetId == encId && targetPage == pageRevision && targetLoad == loadRevision) {
+                    if (committed) showSnackbar("事件已保存，列表刷新失败，请重试读取")
+                    else {
+                        _state.value = _state.value.copy(timelineSaveError = "事件保存失败，输入已保留，请重试")
+                        onSaved(false)
+                    }
+                }
+            } finally {
+                if (targetId == encId && targetPage == pageRevision && targetLoad == loadRevision) {
+                    _state.value = _state.value.copy(timelineSaving = false)
+                }
+            }
+        }
+    }
+
+    fun clearTimelineDeleteError() {
+        _state.value = _state.value.copy(timelineDeleteError = null)
+    }
+
+    fun deleteTimelineEvent(id: Long, onResult: (Boolean) -> Unit = {}) {
+        if (_state.value.timelineDeletingId != null) return
+        val targetId = encId
+        val targetLoad = loadRevision
+        _state.value = _state.value.copy(timelineDeletingId = id, timelineDeleteError = null)
+        viewModelScope.launch {
+            var committed = false
+            try {
+                timelineEventDao.delete(id)
+                committed = true
+                if (targetId != encId || targetLoad != loadRevision) return@launch
+                onResult(true)
+                refreshTimelineAndRelations()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (targetId == encId && targetLoad == loadRevision) {
+                    if (committed) showSnackbar("事件已删除，列表刷新失败，请重试读取")
+                    else {
+                        _state.value = _state.value.copy(timelineDeleteError = "删除失败，请重试")
+                        onResult(false)
+                    }
+                }
+            } finally {
+                if (targetId == encId && targetLoad == loadRevision) {
+                    _state.value = _state.value.copy(timelineDeletingId = null)
+                }
+            }
         }
     }
 
@@ -739,7 +942,9 @@ class EncyclopediaDetailViewModel @Inject constructor(
             if (!saved || pageRevision != targetPage) return@launch
             onSaved()
             try {
-                refreshTimelineAndRelations()
+                if (_state.value.mainTab == EncyclopediaMainTab.GRAPH) {
+                    loadRelationPage(0, Long.MAX_VALUE)
+                } else refreshTimelineAndRelations()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {

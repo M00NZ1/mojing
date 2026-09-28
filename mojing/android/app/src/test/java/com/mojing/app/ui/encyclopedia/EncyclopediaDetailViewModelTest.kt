@@ -7,12 +7,15 @@ import com.mojing.app.data.local.dao.EntryRelationDao
 import com.mojing.app.data.local.dao.TimelineEventDao
 import com.mojing.app.data.local.entity.EncyclopediaEntity
 import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
+import com.mojing.app.data.local.entity.EntryRelationEntity
+import com.mojing.app.data.local.entity.TimelineEventEntity
 import com.mojing.app.data.remote.LlmApiService
 import com.mojing.app.domain.encyclopedia.WorldInfoAiConverter
 import com.mojing.app.domain.generation.GenerationQueueProcessor
 import com.mojing.app.domain.usecase.DeleteEncyclopediaEntryUseCase
 import com.mojing.app.domain.usecase.SaveCharacterEntryUseCase
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +36,111 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class EncyclopediaDetailViewModelTest {
     private val dispatcher = UnconfinedTestDispatcher()
+
+    @Test
+    fun openingEntriesDoesNotReadTimelineOrRelationBodies() = runTest(dispatcher) {
+        val encyclopediaDao = mockk<EncyclopediaDao>(relaxed = true)
+        val timelineDao = mockk<TimelineEventDao>(relaxed = true)
+        val relationDao = mockk<EntryRelationDao>(relaxed = true)
+        coEvery { encyclopediaDao.getById(3L) } returns EncyclopediaEntity(id = 3L, name = "世界")
+        val vm = createViewModel(encyclopediaDao, relationDao = relationDao, timelineDao = timelineDao)
+
+        vm.load(3L)
+
+        assertTrue(vm.state.value.isLoaded)
+        coVerify(exactly = 0) { timelineDao.getByEncyclopedia(any()) }
+        coVerify(exactly = 0) { timelineDao.getPage(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { relationDao.getByEncyclopedia(any()) }
+        coVerify(exactly = 0) { relationDao.getPage(any(), any(), any()) }
+    }
+
+    @Test
+    fun timelinePageKeepsStableOrderAcrossBoundary() = runTest(dispatcher) {
+        val encyclopediaDao = mockk<EncyclopediaDao>(relaxed = true)
+        val timelineDao = mockk<TimelineEventDao>(relaxed = true)
+        coEvery { encyclopediaDao.getById(3L) } returns EncyclopediaEntity(id = 3L, name = "世界")
+        val events = (1L..25L).map { TimelineEventEntity(id = it, encyclopediaId = 3L) }
+        coEvery { timelineDao.getPage(3L, null, null, 25) } returns events
+        coEvery { timelineDao.getPage(3L, 0, 24L, 25) } returns events.drop(24)
+        coEvery { timelineDao.maxSortOrder(3L) } returns 0
+        val vm = createViewModel(encyclopediaDao, timelineDao = timelineDao)
+        vm.load(3L)
+
+        vm.setMainTab(EncyclopediaMainTab.TIMELINE)
+        assertEquals(24, vm.state.value.timelineEvents.size)
+        assertTrue(vm.state.value.timelineHasNext)
+        vm.nextTimelinePage()
+        assertEquals(listOf(25L), vm.state.value.timelineEvents.map { it.id })
+        assertEquals(1, vm.state.value.timelinePageIndex)
+        vm.previousTimelinePage()
+        assertEquals(1L, vm.state.value.timelineEvents.first().id)
+    }
+
+    @Test
+    fun failedTimelineSaveDoesNotConfirmOrDiscardTheDraft() = runTest(dispatcher) {
+        val encyclopediaDao = mockk<EncyclopediaDao>(relaxed = true)
+        val timelineDao = mockk<TimelineEventDao>(relaxed = true)
+        coEvery { encyclopediaDao.getById(3L) } returns EncyclopediaEntity(id = 3L, name = "世界")
+        coEvery { timelineDao.upsert(any()) } throws IllegalStateException("disk unavailable")
+        val vm = createViewModel(encyclopediaDao, timelineDao = timelineDao)
+        vm.load(3L)
+        vm.setMainTab(EncyclopediaMainTab.TIMELINE)
+        val results = mutableListOf<Boolean>()
+
+        vm.addTimelineEvent("纪元开始", "元年", 1) { results += it }
+
+        assertEquals(listOf(false), results)
+        assertFalse(vm.state.value.timelineSaving)
+        assertEquals("事件保存失败，输入已保留，请重试", vm.state.value.timelineSaveError)
+        coEvery { timelineDao.upsert(any()) } returns 9L
+        vm.addTimelineEvent("纪元开始", "元年", 1) { results += it }
+        assertEquals(listOf(false, true), results)
+        assertEquals(null, vm.state.value.timelineSaveError)
+    }
+
+    @Test
+    fun timelineDeleteConfirmsOnlyAfterDatabaseWrite() = runTest(dispatcher) {
+        val encyclopediaDao = mockk<EncyclopediaDao>(relaxed = true)
+        val timelineDao = mockk<TimelineEventDao>(relaxed = true)
+        coEvery { encyclopediaDao.getById(3L) } returns EncyclopediaEntity(id = 3L, name = "世界")
+        coEvery { timelineDao.delete(7L) } throws IllegalStateException("disk unavailable")
+        val vm = createViewModel(encyclopediaDao, timelineDao = timelineDao)
+        vm.load(3L)
+        vm.setMainTab(EncyclopediaMainTab.TIMELINE)
+        val results = mutableListOf<Boolean>()
+
+        vm.deleteTimelineEvent(7L) { results += it }
+        assertEquals(listOf(false), results)
+        assertEquals("删除失败，请重试", vm.state.value.timelineDeleteError)
+        coEvery { timelineDao.delete(7L) } returns Unit
+        vm.deleteTimelineEvent(7L) { results += it }
+        assertEquals(listOf(false, true), results)
+        assertEquals(null, vm.state.value.timelineDeleteError)
+        assertEquals(null, vm.state.value.timelineDeletingId)
+    }
+
+    @Test
+    fun relationNextPageFailureKeepsVisiblePageAndRetries() = runTest(dispatcher) {
+        val encyclopediaDao = mockk<EncyclopediaDao>(relaxed = true)
+        val relationDao = mockk<EntryRelationDao>(relaxed = true)
+        coEvery { encyclopediaDao.getById(3L) } returns EncyclopediaEntity(id = 3L, name = "世界")
+        val relations = (25L downTo 1L).map { EntryRelationEntity(id = it, encyclopediaId = 3L,
+            fromEntryId = 1L, toEntryId = 2L) }
+        coEvery { relationDao.getPage(3L, Long.MAX_VALUE, 25) } returns relations
+        coEvery { relationDao.getPage(3L, 2L, 25) } throws IllegalStateException("read failed")
+        val vm = createViewModel(encyclopediaDao, relationDao = relationDao)
+        vm.load(3L)
+        vm.setMainTab(EncyclopediaMainTab.GRAPH)
+
+        vm.nextRelationPage()
+        assertEquals(24, vm.state.value.relations.size)
+        assertEquals(0, vm.state.value.relationPageIndex)
+        assertEquals("关系读取失败，当前页已保留", vm.state.value.relationsLoadError)
+        coEvery { relationDao.getPage(3L, 2L, 25) } returns relations.drop(24)
+        vm.retryRelationPage()
+        assertEquals(listOf(1L), vm.state.value.relations.map { it.id })
+        assertEquals(1, vm.state.value.relationPageIndex)
+    }
 
     @Test
     fun createEntryReturnsPersistedIdAndRefreshesTheCurrentEncyclopedia() = runTest(dispatcher) {
@@ -249,19 +357,20 @@ class EncyclopediaDetailViewModelTest {
         assertEquals(null, vm.state.value.relationError)
     }
 
-    @Test fun relationRefreshFailureDoesNotReportWriteFailure() = runTest(dispatcher) {
+    @Test fun relationRefreshFailureKeepsSavedResultAndOffersReadRetry() = runTest(dispatcher) {
         val dao = mockk<EncyclopediaDao>(relaxed = true)
         val relations = mockk<EntryRelationDao>(relaxed = true)
         coEvery { dao.getById(1) } returns EncyclopediaEntity(id = 1, name = "世界")
         val vm = createViewModel(dao, relationDao = relations)
         vm.load(1)
+        vm.setMainTab(EncyclopediaMainTab.GRAPH)
         coEvery { relations.upsert(any()) } returns 1L
-        coEvery { relations.getByEncyclopedia(1) } throws IllegalStateException("read failed")
+        coEvery { relations.getPage(1, Long.MAX_VALUE, 25) } throws IllegalStateException("read failed")
         var saved = false
         vm.addRelation(10, 20, "盟友", "") { saved = true }
         assertTrue(saved)
         assertEquals(null, vm.state.value.relationError)
-        assertEquals("关系已保存，列表刷新失败，请重新打开百科", vm.state.value.snackbar)
+        assertEquals("关系读取失败，当前页已保留", vm.state.value.relationsLoadError)
     }
 
     @Test fun pendingRelationWriteRejectsDuplicatesAndDoesNotCloseAnotherWorldEditor() = runTest(dispatcher) {
