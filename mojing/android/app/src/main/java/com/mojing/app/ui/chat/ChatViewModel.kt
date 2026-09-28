@@ -199,7 +199,6 @@ class ChatViewModel @Inject constructor(
         const val BOOKMARK_PAGE_SIZE = 40
         const val MEMORY_SEGMENT_PAGE_SIZE = 16
         const val MAX_MESSAGE_WINDOW_SIZE = 200
-        const val SEARCH_RESULT_LIMIT = 100
         const val MODEL_CONTEXT_MESSAGE_LIMIT = 400
         const val DRAFT_SUBMISSION_JSON_KEY = "draftSubmissionId"
     }
@@ -291,8 +290,6 @@ class ChatViewModel @Inject constructor(
     private var branchTransitionJob: Job? = null
     private var initializationJob: Job? = null
     private var historyLoadJob: Job? = null
-    private var messageSearchJob: Job? = null
-    private var messageSearchRevision = 0L
     private var activeDraftSubmissionId: String? = null
     private var narratorDraftRevision = 0L
     private var imageDraftRevision = 0L
@@ -1601,8 +1598,6 @@ class ChatViewModel @Inject constructor(
                     hasNewerMessages = anchor != null && afterRows.size > radius,
                     isLoadingHistory = false,
                     focusedMessageId = anchor?.id,
-                    searchResults = emptyList(),
-                    isSearchingMessages = false,
                     messageAttachments = map,
                     bookmarkedMessageIds = bookmarkIds,
                     branches = branches,
@@ -3960,56 +3955,6 @@ class ChatViewModel @Inject constructor(
                 _state.update { it.copy(bookmarkBusyIds = it.bookmarkBusyIds - messageId) }
             }
         }
-    }
-
-    fun searchSession(query: String, exactMatch: Boolean = false, beforeMessageId: Long = Long.MAX_VALUE) {
-        val previous = _state.value
-        clearSearch()
-        val q = query.trim()
-        if (q.isEmpty()) return
-        val revision = messageSearchRevision
-        val searchedSession = sessionId
-        val branchId = currentBranchId()
-        fun isCurrent() = revision == messageSearchRevision && sessionId == searchedSession && currentBranchId() == branchId
-        _state.update {
-            if (previous.completedSearchQuery == q && previous.searchExactMatch == exactMatch) {
-                it.copy(isSearchingMessages = true, searchResults = previous.searchResults,
-                    searchPreviews = previous.searchPreviews, completedSearchQuery = q,
-                    searchBeforeId = previous.searchBeforeId, searchHasOlder = previous.searchHasOlder,
-                    searchExactMatch = exactMatch)
-            } else it.copy(isSearchingMessages = true)
-        }
-        messageSearchJob = viewModelScope.launch {
-            try {
-                val page = if (branchId == "main") {
-                    messageDao.searchMainMessages(searchedSession, q, if (exactMatch) 1 else 0, SEARCH_RESULT_LIMIT + 1, beforeMessageId)
-                } else {
-                    messageDao.searchVisibleMessages(searchedSession, branchId, q, if (exactMatch) 1 else 0, SEARCH_RESULT_LIMIT + 1, beforeMessageId)
-                }
-                val hits = page.take(SEARCH_RESULT_LIMIT)
-                val previews = withContext(Dispatchers.Default) {
-                    hits.associate { it.id to ChatMessageTextFormat.searchPreview(it.content, it.speakerType, q) }
-                }
-                if (isCurrent()) _state.update { it.copy(searchResults = hits, searchPreviews = previews, completedSearchQuery = q, searchHasOlder = page.size > SEARCH_RESULT_LIMIT, searchBeforeId = beforeMessageId, searchExactMatch = exactMatch, isSearchingMessages = false) }
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) {
-                if (isCurrent()) _state.update { it.copy(isSearchingMessages = false, searchError = "搜索未完成，请重试") }
-            }
-        }
-    }
-
-    fun olderSearchResults() {
-        val state = _state.value
-        if (state.isSearchingMessages || !state.searchHasOlder) return
-        val beforeId = state.searchResults.lastOrNull()?.id ?: return
-        searchSession(state.completedSearchQuery, state.searchExactMatch, beforeId)
-    }
-
-    fun clearSearch() {
-        messageSearchRevision++
-        messageSearchJob?.cancel()
-        messageSearchJob = null
-        _state.update { it.copy(searchResults = emptyList(), searchPreviews = emptyMap(), completedSearchQuery = "", searchHasOlder = false, searchBeforeId = Long.MAX_VALUE, isSearchingMessages = false, searchError = null) }
     }
 
     /** 将主分支按固定快照上界分页写为 UTF-8 JSON；调用方持有并关闭输出流。 */

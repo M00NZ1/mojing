@@ -3775,7 +3775,7 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun searchIsBoundedAndOpensUnloadedResultWindow() = runTest(testDispatcher) {
+    fun historyJumpOpensUnloadedResultWindow() = runTest(testDispatcher) {
         val messageDao = mockk<MessageDao>(relaxed = true)
         val target = MessageEntity(id = 500L, sessionId = 42L, content = "远页钟声")
         val before = (499L downTo 458L).map { id ->
@@ -3784,23 +3784,12 @@ class ChatViewModelTest {
         val after = (501L..542L).map { id ->
             MessageEntity(id = id, sessionId = 42L, content = "新消息$id")
         }
-        coEvery {
-            messageDao.searchMainMessages(42L, "钟声", 0, 101, Long.MAX_VALUE)
-        } returns listOf(target)
         coEvery { messageDao.getMainMessageById(42L, 500L) } returns target
         coEvery { messageDao.getMainMessagesBefore(42L, 500L, 41) } returns before
         coEvery { messageDao.getMainMessagesAfter(42L, 500L, 41) } returns after
 
         val vm = createViewModel(messageDao = messageDao)
         advanceUntilIdle()
-
-        vm.searchSession("钟声")
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-            kotlinx.coroutines.withTimeout(5000) { vm.state.first { it.completedSearchQuery == "钟声" } }
-        }
-        advanceUntilIdle()
-        assertEquals(listOf(500L), vm.state.value.searchResults.map { it.id })
-        assertFalse(vm.state.value.isSearchingMessages)
 
         vm.openMessageInHistory(500L)
         advanceUntilIdle()
@@ -3811,76 +3800,6 @@ class ChatViewModelTest {
         assertEquals(500L, vm.state.value.focusedMessageId)
         assertTrue(vm.state.value.hasOlderMessages)
         assertTrue(vm.state.value.hasNewerMessages)
-    }
-
-    @Test
-    fun clearedOrSupersededSearchCannotPublishLateResults() = runTest(testDispatcher) {
-        val dao = mockk<MessageDao>(relaxed = true)
-        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
-        coEvery { dao.searchMainMessages(42L, "旧", 0, 101, Long.MAX_VALUE) } coAnswers {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { release.await() }
-            listOf(MessageEntity(id = 1, sessionId = 42, content = "旧"))
-        }
-        coEvery { dao.searchMainMessages(42L, "新", 0, 101, Long.MAX_VALUE) } returns
-            listOf(MessageEntity(id = 2, sessionId = 42, content = "新"))
-        val vm = createViewModel(messageDao = dao)
-        advanceUntilIdle()
-        vm.searchSession("旧")
-        runCurrent()
-        vm.clearSearch()
-        assertEquals("", vm.state.value.completedSearchQuery)
-        vm.searchSession("新")
-        runCurrent()
-        release.complete(Unit)
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-            kotlinx.coroutines.withTimeout(5000) { vm.state.first { it.completedSearchQuery == "新" } }
-        }
-        advanceUntilIdle()
-        assertEquals(listOf(2L), vm.state.value.searchResults.map { it.id })
-        assertEquals("新", vm.state.value.completedSearchQuery)
-        assertFalse(vm.state.value.isSearchingMessages)
-        vm.clearSearch()
-        assertTrue(vm.state.value.searchResults.isEmpty())
-    }
-
-    @Test
-    fun searchPagesUseLastVisibleIdAndReplaceTheWindow() = runTest(testDispatcher) {
-        val dao = mockk<MessageDao>(relaxed = true)
-        val rows = (250L downTo 1L).map { MessageEntity(id = it, sessionId = 42, content = "线索 $it") }
-        var failOlder = false
-        coEvery { dao.searchMainMessages(42L, "线索", 0, 101, any()) } coAnswers {
-            if (failOlder) error("read failed")
-            rows.filter { it.id < arg<Long>(4) }.take(101)
-        }
-        val vm = createViewModel(messageDao = dao)
-        advanceUntilIdle()
-        suspend fun awaitPage(firstId: Long) {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                kotlinx.coroutines.withTimeout(5000) { vm.state.first { it.searchResults.firstOrNull()?.id == firstId && !it.isSearchingMessages } }
-            }
-        }
-        vm.searchSession("线索")
-        awaitPage(250)
-        assertEquals(100, vm.state.value.searchResults.size)
-        failOlder = true
-        vm.olderSearchResults()
-        advanceUntilIdle()
-        assertEquals(250L, vm.state.value.searchResults.first().id)
-        assertTrue(vm.state.value.searchHasOlder)
-        assertTrue(vm.state.value.searchError != null)
-        failOlder = false
-        vm.olderSearchResults()
-        awaitPage(150)
-        assertEquals(null, vm.state.value.searchError)
-        assertEquals(100, vm.state.value.searchResults.size)
-        assertEquals(151L, vm.state.value.searchBeforeId)
-        vm.olderSearchResults()
-        awaitPage(50)
-        assertEquals(50, vm.state.value.searchResults.size)
-        assertFalse(vm.state.value.searchHasOlder)
-        vm.searchSession("线索")
-        awaitPage(250)
-        assertEquals(Long.MAX_VALUE, vm.state.value.searchBeforeId)
     }
 
     @Test
