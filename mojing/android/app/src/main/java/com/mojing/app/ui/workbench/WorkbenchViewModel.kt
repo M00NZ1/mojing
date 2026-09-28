@@ -282,7 +282,7 @@ class WorkbenchViewModel @Inject constructor(
                 }
                 UsbSessionLog.i(
                     "WorkbenchGen",
-                    "start worldType=${worldType.trim()} coreThemeLen=${coreTheme.length} toneLen=${tone.length} extraLen=${extra.length} labelLen=${label.length} prompt=${clipLog(userPrompt)}",
+                    "start worldTypeLen=${worldType.length} coreThemeLen=${coreTheme.length} toneLen=${tone.length} extraLen=${extra.length} labelLen=${label.length} promptLen=${userPrompt.length}",
                 )
                 data class Outcome(val message: String, val saved: Boolean)
                 val outcome = withContext(Dispatchers.IO) {
@@ -299,7 +299,7 @@ class WorkbenchViewModel @Inject constructor(
                     )
                     UsbSessionLog.i(
                         "WorkbenchGen",
-                        "rawLen=${raw.length} raw=${clipLog(raw)}",
+                        "rawLen=${raw.length}",
                     )
                     val root = extractTopLevelJsonObject(raw)
                         ?: return@withContext Outcome("模型未返回可解析的 JSON，请缩短「详细要求」后重试", false)
@@ -319,7 +319,7 @@ class WorkbenchViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                UsbSessionLog.e("WorkbenchGen", "failed", e)
+                UsbSessionLog.e("WorkbenchGen", "failed type=${e::class.simpleName}")
                 onResult("生成失败: ${e.message ?: e.javaClass.simpleName}")
             } finally {
                 val currentJob = currentCoroutineContext()[Job]
@@ -726,9 +726,5 @@ keywords_json 必须是 JSON 数组（可为字符串数组或空数组）。至
             return runCatching { JsonParser.parseString(t.substring(start, end + 1)).asJsonObject }.getOrNull()
         }
 
-        private fun clipLog(text: String, limit: Int = 400): String {
-            val t = text.trim()
-            return if (t.length <= limit) t else t.take(limit) + "…len=" + t.length
-        }
     }
 }

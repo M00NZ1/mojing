@@ -48,19 +48,19 @@ class ImageRepository @Inject constructor(
                 )
                 if (imageUrl != null) {
                     if (i > 0) {
-                        UsbSessionLog.i("ImageGen", "fallback line ok model=$model base=${b.take(48)}…")
+                        UsbSessionLog.i("ImageGen", "fallback line ok model=$model")
                     }
                     onUsedBase?.invoke(b)
                     val elapsed = (System.currentTimeMillis() - t0).toInt()
                     costRecorder.recordImage(sessionId, characterId, model, true, elapsed)
                     return Result.success(imageUrl)
                 }
-                UsbSessionLog.w("ImageGen", "no url model=$model base=${b.take(48)}…")
+                UsbSessionLog.w("ImageGen", "no url model=$model")
                 lastFailure = Exception("图片生成失败：未返回图片地址")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                UsbSessionLog.w("ImageGen", "line failed model=$model base=${b.take(48)}… err=${e.message}")
+                UsbSessionLog.w("ImageGen", "line failed model=$model type=${e::class.simpleName}")
                 lastFailure = e
             }
         }

@@ -75,7 +75,7 @@ object FishAudioTts {
             client.executeCancellable(req) { response ->
                 if (!response.isSuccessful) {
                     val errBody = response.body?.string()?.take(400).orEmpty()
-                    UsbSessionLog.w("FishTts", "HTTP ${response.code} url=$url model=$headerModel $errBody")
+                    UsbSessionLog.w("FishTts", "HTTP ${response.code} model=$headerModel responseLen=${errBody.length}")
                     null to formatError(response.code, errBody, headerModel, ref != null)
                 } else {
                     val bytes = response.body?.bytes()?.takeIf { it.isNotEmpty() }

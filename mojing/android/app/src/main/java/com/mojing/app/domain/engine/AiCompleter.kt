@@ -60,7 +60,7 @@ class AiCompleter @Inject constructor(
         if (request.targetType == "world_template") {
             UsbSessionLog.i(
                 "AiCompleter",
-                "type=${request.targetType} model=${model.trim()} base=${baseUrl.trim()} extraLen=${request.extraContext.length} currentLen=${currentJson.length} rawLen=${result.length} raw=${clipLog(result)}",
+                "type=${request.targetType} model=${model.trim()} extraLen=${request.extraContext.length} currentLen=${currentJson.length} rawLen=${result.length}",
             )
         }
 
@@ -70,11 +70,6 @@ class AiCompleter @Inject constructor(
         } catch (_: Exception) {
             emptyMap()
         }
-    }
-
-    private fun clipLog(text: String, limit: Int = 400): String {
-        val t = text.trim()
-        return if (t.length <= limit) t else t.take(limit) + "…len=" + t.length
     }
 
     private fun extractJson(text: String): String {

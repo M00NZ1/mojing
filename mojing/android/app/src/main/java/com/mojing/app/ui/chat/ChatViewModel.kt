@@ -653,7 +653,7 @@ class ChatViewModel @Inject constructor(
         if (result.isFailure && shouldRetryImageGenWithPublic(primary)) {
             UsbSessionLog.w(
                 "ChatImageGen",
-                "primary image line failed, retry public: ${result.exceptionOrNull()?.message}",
+                "primary image line failed, retry public: type=${result.exceptionOrNull()?.javaClass?.simpleName}",
             )
             val pub = ApiKeyResolver.resolveImageGenStrictPublicResolved(secureStorage)
             result = imageRepository.generateImage(
@@ -750,8 +750,7 @@ class ChatViewModel @Inject constructor(
                         onFailure = { e ->
                             UsbSessionLog.e(
                                 "ChatImageGen",
-                                "auto char image failed sid=$sessionId model=${attempt.modelUsed}",
-                                e,
+                                "auto char image failed sid=$sessionId model=${attempt.modelUsed} type=${e.javaClass.simpleName}",
                             )
                             messageDao.updateContent(insertedId, "🖼 配图生成失败")
                         },
@@ -1865,7 +1864,7 @@ class ChatViewModel @Inject constructor(
                 if (primary.apiKey.isBlank()) {
                     UsbSessionLog.w(
                         "ChatImageGen",
-                        "user image gen: missing key sid=$sessionId base=${primary.baseUrlRaw.take(48)}… model=${primary.model}",
+                        "user image gen: missing key sid=$sessionId model=${primary.model}",
                     )
                     _state.value = _state.value.copy(
                         error = UserFacingStrings.imageGenKeyMissing()
@@ -1939,8 +1938,7 @@ class ChatViewModel @Inject constructor(
                         onFailure = { e ->
                             UsbSessionLog.e(
                                 "ChatImageGen",
-                                "user image gen failed sid=$sessionId model=${attempt.modelUsed}",
-                                e,
+                                "user image gen failed sid=$sessionId model=${attempt.modelUsed} type=${e.javaClass.simpleName}",
                             )
                             _state.value = _state.value.copy(error = UserFacingStrings.streamErrorDetail(e.message))
                         }
@@ -1951,7 +1949,7 @@ class ChatViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                UsbSessionLog.e("ChatImageGen", "user image gen exception sid=$sessionId", e)
+                UsbSessionLog.e("ChatImageGen", "user image gen exception sid=$sessionId type=${e.javaClass.simpleName}")
                 generation.ensureCurrent()
                 _state.value = _state.value.copy(error = UserFacingStrings.streamErrorDetail(e.message))
             }
@@ -2247,7 +2245,7 @@ class ChatViewModel @Inject constructor(
                 }
                 UsbSessionLog.i(
                     "ChatSend",
-                    "session=$sessionId branch=${generation.branchId} textLen=${displayContent.length} images=${pendingImageLocalPaths.size} text=${clipLog(displayContent)}",
+                    "session=$sessionId branch=${generation.branchId} textLen=${displayContent.length} images=${pendingImageLocalPaths.size}",
                 )
                 generation.ensureCurrent()
                 val attachments = pendingImageLocalPaths.map { path ->
@@ -2340,11 +2338,6 @@ class ChatViewModel @Inject constructor(
             .orEmpty()
             .ifBlank { "新对话" }
         sessionDao.touchWithGeneratedTitle(sessionId, generatedTitle)
-    }
-
-    private fun clipLog(text: String, limit: Int = 400): String {
-        val t = text.trim()
-        return if (t.length <= limit) t else t.take(limit) + "…len=" + t.length
     }
 
     private fun getModelMaxContext(model: String): Int {
@@ -2542,14 +2535,14 @@ class ChatViewModel @Inject constructor(
                         val gid = generation.swipeGroupId
                         UsbSessionLog.i(
                             "ChatLlm",
-                            "session=$sessionId done base=${streamBase.trim()} model=${model.trim()} rawLen=${s.fullText.length} raw=${clipLog(s.fullText)}",
+                            "session=$sessionId done model=${model.trim()} rawLen=${s.fullText.length}",
                         )
                         val parsed = CharacterMediaMarkers.parse(s.fullText)
                         var displayContent = parsed.displayText.trim()
                         displayContent = OutputProcessor.normalizeOptions(displayContent)
                         UsbSessionLog.i(
                             "ChatLlm",
-                            "session=$sessionId displayLen=${displayContent.length} display=${clipLog(displayContent)}",
+                            "session=$sessionId displayLen=${displayContent.length}",
                         )
                         if (displayContent.isBlank()) {
                             streamErrorMessage = "模型返回了空内容"
@@ -2654,7 +2647,7 @@ class ChatViewModel @Inject constructor(
                     streamErrorMessage = s.message
                     UsbSessionLog.w(
                         "ChatLlm",
-                        "session=$sessionId error base=${streamBase.trim()} model=${model.trim()} msg=${clipLog(s.message)}",
+                        "session=$sessionId error model=${model.trim()} messageLen=${s.message.length}",
                     )
                 }
             }
@@ -2941,7 +2934,7 @@ class ChatViewModel @Inject constructor(
                                     sawDone = true
                                     UsbSessionLog.i(
                                         "Narrator",
-                                        "session=$sessionId done base=${nb.trim()} model=${model.trim()} rawLen=${s.fullText.length} raw=${clipLog(s.fullText)}",
+                                        "session=$sessionId done model=${model.trim()} rawLen=${s.fullText.length}",
                                     )
                                     val normalizedNarrContent = OutputProcessor.normalizeOptions(
                                         CharacterMediaMarkers.parse(s.fullText).displayText.trim()
@@ -2960,7 +2953,7 @@ class ChatViewModel @Inject constructor(
                                         else structuredContentJsonFor(narrContent)
                                     UsbSessionLog.i(
                                         "Narrator",
-                                        "session=$sessionId displayLen=${narrContent.length} display=${clipLog(narrContent)}",
+                                        "session=$sessionId displayLen=${narrContent.length}",
                                     )
                                     val completedReply = MessageEntity(
                                             sessionId = sessionId,
@@ -3023,7 +3016,7 @@ class ChatViewModel @Inject constructor(
                                     errMsg = s.message
                                     UsbSessionLog.w(
                                         "Narrator",
-                                        "session=$sessionId error base=${nb.trim()} model=${model.trim()} msg=${clipLog(s.message)}",
+                                        "session=$sessionId error model=${model.trim()} messageLen=${s.message.length}",
                                     )
                                 }
                             }

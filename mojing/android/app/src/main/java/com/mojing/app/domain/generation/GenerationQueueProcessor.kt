@@ -280,7 +280,7 @@ class GenerationQueueProcessor @Inject constructor(
                         )
                     }
                 } catch (e: Exception) {
-                    UsbSessionLog.e("GenQueue", "task $tid", e)
+                    UsbSessionLog.e("GenQueue", "task $tid failed type=${e.javaClass.simpleName}")
                     val cur = taskDao.getById(tid)
                     if (cur?.status == GenerationTaskStatus.RUNNING) {
                         taskDao.setTerminal(
@@ -292,7 +292,7 @@ class GenerationQueueProcessor @Inject constructor(
                     }
                 }
             } catch (e: Exception) {
-                UsbSessionLog.e("GenQueue", "runLoop", e)
+                UsbSessionLog.e("GenQueue", "runLoop failed type=${e.javaClass.simpleName}")
                 delay(800)
             }
         }
@@ -768,7 +768,7 @@ class GenerationQueueProcessor @Inject constructor(
             }
             UsbSessionLog.i(
                 "GenWorldTemplate",
-                "result taskId=$taskId keys=${result.keys.joinToString(",")} rawSummaryLen=${(result["summary"] as? String)?.length ?: 0} rawWorldPromptLen=${(result["worldPrompt"] as? String)?.length ?: (result["world_prompt"] as? String)?.length ?: 0}",
+                "result taskId=$taskId fieldCount=${result.size} rawSummaryLen=${(result["summary"] as? String)?.length ?: 0} rawWorldPromptLen=${(result["worldPrompt"] as? String)?.length ?: (result["world_prompt"] as? String)?.length ?: 0}",
             )
             if (result.isEmpty()) {
                 taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, "模型返回空，请检查网络、模型或 Base URL 配置", now())
