@@ -70,6 +70,7 @@ fun SearchScreen(
     sessionId: Long,
     branchId: String = "main",
     onBack: () -> Unit,
+    onOpenInChat: (Long) -> Boolean,
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -81,7 +82,7 @@ fun SearchScreen(
     CompositionLocalProvider(LocalBillingCurrencyState provides currency,
         LocalReplyUsageLookup provides remember(billing) { { id -> billing.observeRecord(id) } }) {
     Surface(Modifier.fillMaxSize().systemBarsPadding()) {
-        if (state.selectedMessageId != null) SearchContextScreen(state, viewModel, sessionId, branchId)
+        if (state.selectedMessageId != null) SearchContextScreen(state, viewModel, sessionId, branchId, onBack, onOpenInChat)
         else SearchResultsScreen(state, viewModel, sessionId, branchId, onBack, resultListState)
     }
     }
@@ -233,9 +234,13 @@ fun SearchScreen(
     }
 }
 
-@Composable private fun SearchContextScreen(state: SearchState, vm: SearchViewModel, sessionId: Long, branchId: String) {
+@Composable private fun SearchContextScreen(
+    state: SearchState, vm: SearchViewModel, sessionId: Long, branchId: String,
+    onBack: () -> Unit, onOpenInChat: (Long) -> Boolean,
+) {
     val index = state.hits.indexOfFirst { it.message.id == state.selectedMessageId }
     val current = (state.firstHitOffset + index + 1).coerceAtLeast(1)
+    var openInChatError by remember(state.selectedMessageId) { mutableStateOf<String?>(null) }
     var readerQuery by androidx.compose.runtime.saveable.rememberSaveable(state.completedQuery) { mutableStateOf(state.completedQuery) }
     val focus = LocalFocusManager.current
     val submit = {
@@ -327,9 +332,21 @@ fun SearchScreen(
         }
         Surface(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
             shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 1.dp) {
-            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("$current / ${state.totalMatches?.toString() ?: "${state.firstHitOffset + state.hits.size}+"}", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                TextButton(onClick = vm::closeHit) { Text("以列表显示") }
+            Column(Modifier.fillMaxWidth()) {
+                openInChatError?.let { error ->
+                    Text(error, Modifier.padding(start = 20.dp, end = 12.dp, top = 8.dp),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+                Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("$current / ${state.totalMatches?.toString() ?: "${state.firstHitOffset + state.hits.size}+"}", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    TextButton(enabled = state.contextMessages.any { it.id == state.selectedMessageId } && !state.searching,
+                        onClick = {
+                            val messageId = state.selectedMessageId ?: return@TextButton
+                            if (onOpenInChat(messageId)) onBack()
+                            else openInChatError = "当前正在生成或加载历史，请稍后重试"
+                        }) { Text("打开对话") }
+                    TextButton(onClick = vm::closeHit) { Text("结果列表") }
+                }
             }
         }
     }
