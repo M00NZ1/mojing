@@ -13,6 +13,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -126,6 +127,22 @@ class LlmRetryTest {
         }.exceptionOrNull()
         assertTrue(error is java.io.IOException)
         assertEquals(listOf("first"), chunks)
+        verify(exactly = 1) { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun activeStoryStreamCanContinueBeyondFiveMinutes() = runTest {
+        every { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) } returns flow {
+            emit("开篇")
+            delay(5 * 60 * 1_000L + 1)
+            emit("后续")
+        }
+        val chunks = mutableListOf<String>()
+        val result = retry.chatCompletionStreamingWithRetry(
+            "key", "url", "model", messages, onDelta = chunks::add,
+        )
+        assertEquals("开篇后续", result)
+        assertEquals(listOf("开篇", "后续"), chunks)
         verify(exactly = 1) { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) }
     }
 

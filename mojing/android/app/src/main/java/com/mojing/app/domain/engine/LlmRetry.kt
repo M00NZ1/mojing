@@ -13,10 +13,6 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
-import java.net.SocketTimeoutException
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -93,8 +89,7 @@ class LlmRetry @Inject constructor(
         onDelta: (String) -> Unit = {},
         onRetry: (nextAttempt: Int, delayMs: Long) -> Unit = { _, _ -> },
         onAttempt: (Int) -> Unit = {},
-    ): String = try {
-      withTimeout(STORY_TIMEOUT_MS) {
+    ): String {
         val prompt = messages.joinToString("\n") { it.content }
         val attempts = maxRetries.coerceAtLeast(1)
         var last: Exception? = null
@@ -121,7 +116,7 @@ class LlmRetry @Inject constructor(
                     usageProvided = usage != null, cachedPromptTokens = usage?.cachedPromptTokens ?: 0,
                     status = "success",
                 ) }
-                return@withTimeout output.toString()
+                return output.toString()
             } catch (e: CancellationException) {
                 if (!recorded) recordCancellationSafely(model, prompt, started, request, "llm_stream", output.toString(), usage)
                 throw e
@@ -137,10 +132,6 @@ class LlmRetry @Inject constructor(
             }
         }
         throw last ?: IOException("LLM streaming request failed")
-      }
-    } catch (timeout: TimeoutCancellationException) {
-        currentCoroutineContext().ensureActive()
-        throw SocketTimeoutException("Story generation timed out")
     }
 
     private fun shouldRetry(error: Throwable, attempt: Int, attempts: Int): Boolean {
@@ -200,7 +191,6 @@ class LlmRetry @Inject constructor(
         .coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
 
     companion object {
-        private const val STORY_TIMEOUT_MS = 5 * 60 * 1000L
         private const val CANCEL_RECORD_TIMEOUT_MS = 2_000L
     }
 }
