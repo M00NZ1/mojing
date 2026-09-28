@@ -124,6 +124,22 @@ private const val CURRENT_MESSAGES_SEARCH_QUERY = """
     $CURRENT_MESSAGES_FROM_QUERY
 """
 
+/** Role-name hits stay in the same selected-message and branch visibility query as body hits. */
+private const val SPEAKER_NAME_SEARCH_MATCH = """
+    (message.speakerType = 'character' AND message.characterId IN (
+        SELECT id FROM characters WHERE
+            (:exactMatch = 1 AND lower(name) = :normalizedQuery) OR
+            (:exactMatch = 0 AND instr(lower(name), :normalizedQuery) > 0)
+    ))
+"""
+
+private const val MESSAGE_BODY_SEARCH_MATCH = """
+    ((:exactMatch = 1 AND ((message.searchNormalized <> '' AND message.searchNormalized = :normalizedQuery) OR
+        (message.searchNormalized = '' AND message.content = :query))) OR
+     (:exactMatch = 0 AND ((message.searchNormalized <> '' AND instr(message.searchNormalized, :normalizedQuery) > 0) OR
+        (message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0))))
+"""
+
 private const val MAIN_SELECTED_MESSAGES_QUERY = """
     SELECT message.*
     FROM messages AS message
@@ -570,13 +586,8 @@ interface MessageDao {
             "WHERE message.sessionId = :sessionId AND message.branchId = 'main' " +
             "AND (message.id IN (" +
             "SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression" +
-            ") OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId)) " +
-            "AND ((:exactMatch = 1 AND ((message.searchNormalized <> '' " +
-            "AND message.searchNormalized = :normalizedQuery) OR " +
-            "(message.searchNormalized = '' AND message.content = :query))) OR " +
-            "(:exactMatch = 0 AND ((message.searchNormalized <> '' " +
-            "AND instr(message.searchNormalized, :normalizedQuery) > 0) OR " +
-            "(message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0)))) " +
+            ") OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId) OR $SPEAKER_NAME_SEARCH_MATCH) " +
+            "AND ($MESSAGE_BODY_SEARCH_MATCH OR $SPEAKER_NAME_SEARCH_MATCH) " +
             "AND message.id < :beforeMessageId ORDER BY message.id DESC LIMIT :limit",
     )
     suspend fun searchMainMessagesIndexedRows(
@@ -632,9 +643,8 @@ interface MessageDao {
             "message.branchId, message.content, message.createdAt FROM messages AS message " +
             "WHERE message.sessionId = :sessionId AND message.branchId = 'main' " +
             "AND (message.id IN (SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression) " +
-            "OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId)) " +
-            "AND ((:exactMatch = 1 AND ((message.searchNormalized <> '' AND message.searchNormalized = :normalizedQuery) OR (message.searchNormalized = '' AND message.content = :query))) " +
-            "OR (:exactMatch = 0 AND ((message.searchNormalized <> '' AND instr(message.searchNormalized, :normalizedQuery) > 0) OR (message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0)))) " +
+            "OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId) OR $SPEAKER_NAME_SEARCH_MATCH) " +
+            "AND ($MESSAGE_BODY_SEARCH_MATCH OR $SPEAKER_NAME_SEARCH_MATCH) " +
             "AND message.id > :afterMessageId ORDER BY message.id ASC LIMIT :limit",
     )
     suspend fun searchMainMessagesAfterIndexedRows(sessionId: Long, query: String, normalizedQuery: String, matchExpression: String, exactMatch: Int,
@@ -656,9 +666,8 @@ interface MessageDao {
     @Query(
         "SELECT COUNT(*) FROM messages AS message WHERE message.sessionId = :sessionId AND message.branchId = 'main' " +
             "AND (message.id IN (SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression) " +
-            "OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId)) " +
-            "AND ((:exactMatch = 1 AND ((message.searchNormalized <> '' AND message.searchNormalized = :normalizedQuery) OR (message.searchNormalized = '' AND message.content = :query))) " +
-            "OR (:exactMatch = 0 AND ((message.searchNormalized <> '' AND instr(message.searchNormalized, :normalizedQuery) > 0) OR (message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0))))",
+            "OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId) OR $SPEAKER_NAME_SEARCH_MATCH) " +
+            "AND ($MESSAGE_BODY_SEARCH_MATCH OR $SPEAKER_NAME_SEARCH_MATCH)",
     )
     suspend fun countMainMessagesIndexed(sessionId: Long, query: String, normalizedQuery: String, matchExpression: String, exactMatch: Int, indexedThroughMessageId: Long, indexComplete: Int): Int
 
@@ -786,13 +795,8 @@ interface MessageDao {
     @Query(
         "$CURRENT_MESSAGES_SEARCH_QUERY AND (message.id IN (" +
             "SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression" +
-            ") OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId)) " +
-            "AND ((:exactMatch = 1 AND ((message.searchNormalized <> '' " +
-            "AND message.searchNormalized = :normalizedQuery) OR " +
-            "(message.searchNormalized = '' AND message.content = :query))) OR " +
-            "(:exactMatch = 0 AND ((message.searchNormalized <> '' " +
-            "AND instr(message.searchNormalized, :normalizedQuery) > 0) OR " +
-            "(message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0)))) " +
+            ") OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId) OR $SPEAKER_NAME_SEARCH_MATCH) " +
+            "AND ($MESSAGE_BODY_SEARCH_MATCH OR $SPEAKER_NAME_SEARCH_MATCH) " +
             "AND message.id < :beforeMessageId ORDER BY message.id DESC LIMIT :limit",
     )
     suspend fun searchVisibleMessagesIndexedRows(
@@ -850,9 +854,8 @@ interface MessageDao {
     @Query(
         "$CURRENT_MESSAGES_SEARCH_QUERY AND (message.id IN (" +
             "SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression" +
-            ") OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId)) " +
-            "AND ((:exactMatch = 1 AND ((message.searchNormalized <> '' AND message.searchNormalized = :normalizedQuery) OR (message.searchNormalized = '' AND message.content = :query))) " +
-            "OR (:exactMatch = 0 AND ((message.searchNormalized <> '' AND instr(message.searchNormalized, :normalizedQuery) > 0) OR (message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0)))) " +
+            ") OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId) OR $SPEAKER_NAME_SEARCH_MATCH) " +
+            "AND ($MESSAGE_BODY_SEARCH_MATCH OR $SPEAKER_NAME_SEARCH_MATCH) " +
             "AND message.id > :afterMessageId ORDER BY message.id ASC LIMIT :limit",
     )
     suspend fun searchVisibleMessagesAfterIndexedRows(sessionId: Long, branchId: String, query: String, normalizedQuery: String, matchExpression: String,
@@ -873,9 +876,8 @@ interface MessageDao {
 
     @Query(
         "SELECT COUNT(*) FROM ($CURRENT_MESSAGES_QUERY) AS message WHERE (message.id IN (SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression) " +
-            "OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId)) " +
-            "AND ((:exactMatch = 1 AND ((message.searchNormalized <> '' AND message.searchNormalized = :normalizedQuery) OR (message.searchNormalized = '' AND message.content = :query))) " +
-            "OR (:exactMatch = 0 AND ((message.searchNormalized <> '' AND instr(message.searchNormalized, :normalizedQuery) > 0) OR (message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0))))",
+            "OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId) OR $SPEAKER_NAME_SEARCH_MATCH) " +
+            "AND ($MESSAGE_BODY_SEARCH_MATCH OR $SPEAKER_NAME_SEARCH_MATCH)",
     )
     suspend fun countVisibleMessagesIndexed(sessionId: Long, branchId: String, query: String, normalizedQuery: String, matchExpression: String, exactMatch: Int, indexedThroughMessageId: Long, indexComplete: Int): Int
 

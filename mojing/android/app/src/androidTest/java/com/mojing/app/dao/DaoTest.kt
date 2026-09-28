@@ -425,6 +425,37 @@ class MessageDaoTest {
     }
 
     @Test
+    fun roleNameSearchKeepsBodyHitsCountsAndBranchVisibility() = runBlocking {
+        val sessionId = sessionDao.insert(SessionEntity(title = "按角色名搜索"))
+        val otherSession = sessionDao.insert(SessionEntity(title = "其他故事"))
+        val characterId = db.characterDao().upsert(CharacterEntity(name = "阿沅"))
+        val roleHit = messageDao.insert(MessageEntity(sessionId = sessionId, speakerType = "character",
+            characterId = characterId, content = "走进图书馆"))
+        val bodyHit = messageDao.insert(MessageEntity(sessionId = sessionId, content = "阿沅留下了信"))
+        messageDao.insert(MessageEntity(sessionId = otherSession, speakerType = "character",
+            characterId = characterId, content = "其他会话的发言"))
+
+        assertEquals(listOf(bodyHit, roleHit), messageDao.searchMainMessages(sessionId, "阿沅", 0, 10).map { it.id })
+        assertEquals(2, messageDao.countMainMessages(sessionId, "阿沅", 0))
+        assertEquals(listOf(roleHit), messageDao.searchMainMessages(sessionId, "阿沅", 1, 10).map { it.id })
+        assertEquals(listOf(roleHit), messageDao.searchMainMessages(sessionId, "阿沅", 0, 10, bodyHit).map { it.id })
+        val latinCharacter = db.characterDao().upsert(CharacterEntity(name = "Aria-7"))
+        val latinHit = messageDao.insert(MessageEntity(sessionId = sessionId, speakerType = "character",
+            characterId = latinCharacter, content = "没有英文姓名的正文"))
+        assertEquals(listOf(latinHit), messageDao.searchMainMessages(sessionId, "ＡＲＩＡ－７", 0, 10).map { it.id })
+
+        val branch = SessionBranchEntity(sessionId = sessionId, branchId = "role_branch", sourceMessageId = roleHit)
+        sessionBranchDao.insert(branch)
+        val branchHit = messageDao.insert(MessageEntity(sessionId = sessionId, branchId = branch.branchId,
+            speakerType = "character", characterId = characterId, content = "沿另一条路出发"))
+        assertEquals(listOf(branchHit, roleHit),
+            messageDao.searchVisibleMessages(sessionId, branch.branchId, "阿沅", 0, 10).map { it.id })
+        assertEquals(2, messageDao.countVisibleMessages(sessionId, branch.branchId, "阿沅", 0))
+        assertEquals(listOf(branchHit), messageDao.searchVisibleMessagesAfter(sessionId, branch.branchId,
+            "阿沅", 0, 10, roleHit).map { it.id })
+    }
+
+    @Test
     fun incompleteIndexFallsBackThenRebuildsInRestartableBatches() = runBlocking {
         val sessionId = sessionDao.insert(SessionEntity(title = "索引重建"))
         repeat(5) { index ->

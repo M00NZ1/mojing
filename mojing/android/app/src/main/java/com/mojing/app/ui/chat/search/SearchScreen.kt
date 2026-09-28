@@ -205,10 +205,14 @@ fun SearchScreen(
 }
 
 @Composable private fun SearchResultCard(hit: SearchHit, query: String, enabled: Boolean, onClick: () -> Unit) {
+    val speaker = hit.speakerLabel.ifBlank { SearchSpeakerLabels().forMessage(hit.message) }
+    val highlightedSpeaker = remember(speaker, query) {
+        highlightedMessageText(speaker, messageSearchRanges(speaker, query))
+    }
     Surface(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(hit.speakerLabel.ifBlank { SearchSpeakerLabels().forMessage(hit.message) },
+                Text(highlightedSpeaker,
                     Modifier.weight(1f), style = MaterialTheme.typography.labelLarge,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(formatDate(hit.message.createdAt), Modifier.padding(start = 12.dp),
