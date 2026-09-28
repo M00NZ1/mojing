@@ -15,10 +15,18 @@ import com.mojing.app.data.remote.LlmProtocolException
 import com.mojing.app.domain.billing.CostRecorder
 import com.mojing.app.domain.config.OpenAiCompatibleRouting
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import retrofit2.HttpException
 import java.io.IOException
+import java.net.SocketTimeoutException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -102,10 +110,28 @@ class ChatEngine @Inject constructor(
                     ChatRequest(model = model, messages = messages, temperature = temperature, max_tokens = maxTokens),
                     onUsage = { usage = it })
             }
-            source.collect { chunk ->
-                if (chunk.startsWith("__ERROR__")) throw IOException(chunk.removePrefix("__ERROR__"))
-                text.append(chunk)
-                emit(StreamState.Generating(text.toString()))
+            coroutineScope {
+                val contentSignal = Channel<Unit>(Channel.CONFLATED)
+                val idleWatchdog = launch {
+                    while (true) {
+                        try { withTimeout(CHAT_CONTENT_IDLE_TIMEOUT_MS) { contentSignal.receive() } }
+                        catch (_: TimeoutCancellationException) {
+                            currentCoroutineContext().ensureActive()
+                            throw SocketTimeoutException("Chat stream received no content")
+                        }
+                    }
+                }
+                try {
+                    source.collect { chunk ->
+                        if (chunk.startsWith("__ERROR__")) throw IOException(chunk.removePrefix("__ERROR__"))
+                        text.append(chunk)
+                        contentSignal.trySend(Unit)
+                        emit(StreamState.Generating(text.toString()))
+                    }
+                } finally {
+                    idleWatchdog.cancel()
+                    contentSignal.close()
+                }
             }
             StreamState.Done(text.toString(), record(true, "success"))
         } catch (cancelled: CancellationException) {
@@ -241,5 +267,9 @@ class ChatEngine @Inject constructor(
             temperature = temperature,
             maxTokens = maxTokens,
         )
+    }
+
+    companion object {
+        private const val CHAT_CONTENT_IDLE_TIMEOUT_MS = 5 * 60 * 1_000L
     }
 }

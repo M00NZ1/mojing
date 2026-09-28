@@ -13,9 +13,15 @@ import io.mockk.verify
 import io.mockk.coEvery
 import io.mockk.coVerify
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.runCurrent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -97,6 +103,58 @@ class ChatEngineUsageTest {
         assertEquals("模型输出达到上限，回复未完整结束。", (states.last() as StreamState.Error).message)
         coVerify(exactly = 1) {
             costs.recordLlm(1L, 9L, "model", "llm_stream", 0, 0, any(), false, any(), "已收到的回复", snapshot, false, 0, "failed")
+        }
+    }
+
+    @Test
+    fun activeChatStreamCanContinueBeyondFiveMinutes() = runTest {
+        every { api.streamChatCompletionWithUsage(any(), any(), any(), any()) } returns flow {
+            repeat(7) { index ->
+                emit("${index + 1}")
+                delay(60_000L)
+            }
+        }
+
+        val states = engine.streamGenerate(1, character, emptyList(), "key", "https://api.test", "model", 0.7f, 100).toList()
+
+        assertEquals("1234567", (states.last() as StreamState.Done).fullText)
+    }
+
+    @Test
+    fun chatContentIdleTimeoutRetainsPartialReply() = runTest {
+        every { api.streamChatCompletionWithUsage(any(), any(), any(), any()) } returns flow {
+            emit("已收到正文")
+            delay(5 * 60 * 1_000L + 1)
+            emit("不应到达")
+        }
+
+        val states = engine.streamGenerate(1, character, emptyList(), "key", "https://api.test", "model", 0.7f, 100).toList()
+
+        assertEquals("已收到正文", (states.first() as StreamState.Generating).partialText)
+        assertTrue((states.last() as StreamState.Error).message.contains("timeout", ignoreCase = true))
+        coVerify(exactly = 1) {
+            costs.recordLlm(1L, 9L, "model", "llm_stream", 0, 0, any(), false, any(), "已收到正文", snapshot, false, 0, "failed")
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun userStopStillCancelsChatInsteadOfReportingIdleFailure() = runTest {
+        every { api.streamChatCompletionWithUsage(any(), any(), any(), any()) } returns flow {
+            emit("停止前正文")
+            delay(Long.MAX_VALUE)
+        }
+        val states = mutableListOf<StreamState>()
+        val job = launch {
+            engine.streamGenerate(1, character, emptyList(), "key", "https://api.test", "model", 0.7f, 100)
+                .collect { states += it }
+        }
+        runCurrent()
+        job.cancelAndJoin()
+
+        assertEquals("停止前正文", (states.single() as StreamState.Generating).partialText)
+        coVerify(exactly = 1) {
+            costs.recordLlm(1L, 9L, "model", "llm_stream", 0, 0, any(), false, any(), "停止前正文", snapshot, false, 0, "cancelled")
         }
     }
 
