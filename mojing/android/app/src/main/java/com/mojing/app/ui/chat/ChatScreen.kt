@@ -1031,6 +1031,32 @@ fun ChatScreen(
                                 onDiscard = viewModel::discardRecoveredReply,
                             )
                         }
+                        if (state.hasNewerMessages) {
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        "正在查看较早消息，先回到最新再续聊",
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    )
+                                    TextButton(
+                                        enabled = !state.isLoadingHistory && !state.isGenerating,
+                                        onClick = {
+                                            if (!viewModel.returnToLatestMessages()) {
+                                                scope.launch { snackbarHostState.showSnackbar("当前无法加载最新消息，请稍后重试") }
+                                            }
+                                        },
+                                    ) { Text(if (state.isLoadingHistory) "加载中…" else "回到最新") }
+                                }
+                            }
+                        }
                         InputBar(
                             modelSelector = {
                                 Row(verticalAlignment = Alignment.CenterVertically) {

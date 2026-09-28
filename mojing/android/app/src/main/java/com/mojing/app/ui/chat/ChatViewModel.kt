@@ -1271,7 +1271,18 @@ class ChatViewModel @Inject constructor(
         persistCurrentDraft()
     }
 
+    private fun canContinueFromCurrentWindow(): Boolean {
+        val message = when {
+            _state.value.isLoadingHistory -> "历史消息加载中，请稍后再续聊"
+            _state.value.hasNewerMessages -> "正在查看较早消息，请先回到最新再续聊"
+            else -> return true
+        }
+        _state.update { it.copy(error = message) }
+        return false
+    }
+
     fun submitNarratorGuidance(guidance: String): Boolean {
+        if (!canContinueFromCurrentWindow()) return false
         val revision = narratorDraftRevision
         return requestNarrator(guidance, onGuidanceCommitted = {
             if (revision == narratorDraftRevision && _state.value.narratorGuidance.trim() == guidance.trim()) {
@@ -2205,6 +2216,7 @@ class ChatViewModel @Inject constructor(
     fun sendMessage() {
         val current = _state.value
         if (!current.isReady || current.sessionNotFound) return
+        if (!canContinueFromCurrentWindow()) return
         if (current.memoryOperationRunning) {
             _state.update { it.copy(error = "记忆整理中，请稍候再发送") }
             return
@@ -2783,6 +2795,7 @@ class ChatViewModel @Inject constructor(
         chapterTitle: String = "",
         onGuidanceCommitted: (() -> Unit)? = null,
     ): Boolean {
+        if (nextChapter && !canContinueFromCurrentWindow()) return false
         if (_state.value.isGenerating || generationJob?.isActive == true) return false
         val world = _state.value.world ?: return false
         val character = CharacterEntity(name = world.narratorName)

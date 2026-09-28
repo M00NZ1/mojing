@@ -3803,6 +3803,38 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun historicalWindowPreservesDraftsUntilReturningToLatest() = runTest(testDispatcher) {
+        val messageDao = mockk<MessageDao>(relaxed = true)
+        val target = MessageEntity(id = 500L, sessionId = 42L, content = "旧剧情")
+        val release = CompletableDeferred<MessageEntity?>()
+        coEvery { messageDao.getMainMessageById(42L, 500L) } coAnswers { release.await() }
+        coEvery { messageDao.getMainMessagesAfter(42L, 500L, 41) } returns
+            (501L..541L).map { MessageEntity(id = it, sessionId = 42L, content = "后续剧情") }
+        val vm = createViewModel(messageDao = messageDao)
+        advanceUntilIdle()
+        vm.updateInput("待发送的正文")
+        vm.updateNarratorGuidance("下一段走向")
+
+        assertTrue(vm.openMessageInHistory(500L))
+        runCurrent()
+        vm.sendMessage()
+        assertEquals("历史消息加载中，请稍后再续聊", vm.state.value.error)
+        assertEquals("待发送的正文", vm.state.value.inputText)
+
+        release.complete(target)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.hasNewerMessages)
+        vm.sendMessage()
+        assertFalse(vm.submitNarratorGuidance("下一段走向"))
+        assertFalse(vm.requestNarrator(nextChapter = true, chapterTitle = "下一章"))
+        assertEquals("正在查看较早消息，请先回到最新再续聊", vm.state.value.error)
+        assertEquals("待发送的正文", vm.state.value.inputText)
+        assertEquals("下一段走向", vm.state.value.narratorGuidance)
+        assertFalse(vm.state.value.isGenerating)
+        coVerify(exactly = 0) { messageDao.insert(any()) }
+    }
+
+    @Test
     fun tavernImportUsesOneStableAtomicBatchAndSkipsDuplicateRetry() = runTest(testDispatcher) {
         val messageDao = mockk<MessageDao>(relaxed = true)
         val participantDao = mockk<ParticipantDao>(relaxed = true)
