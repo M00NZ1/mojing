@@ -15,12 +15,12 @@ interface SessionDao {
     @Query("SELECT * FROM sessions ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, updatedAt DESC")
     fun observeAll(): Flow<List<SessionEntity>>
 
-    /** Latest-message lookups rely on the (sessionId, branchId, createdAt, id) index. */
+    /** The card follows the same ID-based reading order as the chat window. */
     @Query(
         """
         SELECT s.*,
-          (SELECT substr(m.content, 1, 1024) FROM messages m WHERE m.sessionId = s.id AND m.branchId = 'main' ORDER BY m.createdAt DESC, m.id DESC LIMIT 1) AS last_msg_preview,
-          (SELECT m.speakerType FROM messages m WHERE m.sessionId = s.id AND m.branchId = 'main' ORDER BY m.createdAt DESC, m.id DESC LIMIT 1) AS last_msg_speaker_type,
+          (SELECT substr(m.content, 1, 1024) FROM messages m WHERE m.sessionId = s.id AND m.branchId = 'main' ORDER BY m.id DESC LIMIT 1) AS last_msg_preview,
+          (SELECT m.speakerType FROM messages m WHERE m.sessionId = s.id AND m.branchId = 'main' ORDER BY m.id DESC LIMIT 1) AS last_msg_speaker_type,
           (SELECT COUNT(*) FROM messages m2 WHERE m2.sessionId = s.id AND m2.branchId = 'main') AS msg_count,
           (SELECT COUNT(*) FROM session_participants sp WHERE sp.sessionId = s.id) AS participant_count
         FROM sessions s

@@ -17,6 +17,7 @@ import com.mojing.app.data.local.dao.WorldLoreEntryDao
 import com.mojing.app.data.local.dao.WorldTemplateDao
 import com.mojing.app.data.local.entity.*
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -44,6 +45,17 @@ class MessageDaoTest {
 
     @After
     fun teardown() { db.close() }
+
+    @Test
+    fun storyCardPreviewUsesTheSameMainTailAsChatWhenTimestampsDiffer() = runBlocking {
+        val sessionId = sessionDao.insert(SessionEntity(title = "时间戳乱序"))
+        messageDao.insert(MessageEntity(sessionId = sessionId, content = "较早写入", createdAt = 500L))
+        messageDao.insert(MessageEntity(sessionId = sessionId, content = "最新写入", createdAt = 100L))
+
+        val card = sessionDao.observeAllWithListMeta().first().single()
+        assertEquals("最新写入", card.lastMessagePreview)
+        assertEquals(messageDao.getMainMessagesTail(sessionId, 1).single().content, card.lastMessagePreview)
+    }
 
     @Test fun characterSnapshotCursorUsesVisibleUserIdsAndBranchState() = runBlocking {
         val sid = sessionDao.insert(SessionEntity(title = "角色状态分支"))
