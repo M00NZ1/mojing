@@ -138,6 +138,9 @@ fun SessionListScreen(
     }
     var showCreateDialog by rememberSaveable { mutableStateOf(false) }
     var creationRequestId by rememberSaveable { mutableStateOf("") }
+    var newSessionFormEdited by rememberSaveable { mutableStateOf(false) }
+    var confirmDiscardNewSession by rememberSaveable { mutableStateOf(false) }
+    var discardThenOpenCharacters by rememberSaveable { mutableStateOf(false) }
     var pendingTemplateId by rememberSaveable { mutableStateOf<Long?>(null) }
     var dialogLoadRequestVersion by rememberSaveable { mutableIntStateOf(0) }
     var resetDialogFormOnNextLoad by rememberSaveable { mutableStateOf(true) }
@@ -172,6 +175,9 @@ fun SessionListScreen(
     fun openNewSessionDialog(templateId: Long? = null) {
         pendingTemplateId = templateId
         creationRequestId = UUID.randomUUID().toString()
+        newSessionFormEdited = false
+        confirmDiscardNewSession = false
+        discardThenOpenCharacters = false
         resetDialogFormOnNextLoad = true
         worldSelectionInitialized = false
         dialogDataReady = false
@@ -183,6 +189,9 @@ fun SessionListScreen(
     fun closeNewSessionDialog() {
         pendingTemplateId = null
         creationRequestId = ""
+        newSessionFormEdited = false
+        confirmDiscardNewSession = false
+        discardThenOpenCharacters = false
         resetDialogFormOnNextLoad = true
         isLoadingDialogData = false
         dialogLoadError = null
@@ -190,6 +199,20 @@ fun SessionListScreen(
         showConversationOptions = false
         focusManager.clearFocus()
         showCreateDialog = false
+    }
+
+    fun requestCloseNewSessionDialog(openCharacters: Boolean = false) {
+        when {
+            isCreatingSession -> Toast.makeText(context, "正在创建对话，请稍候", Toast.LENGTH_SHORT).show()
+            newSessionFormEdited -> {
+                discardThenOpenCharacters = openCharacters
+                confirmDiscardNewSession = true
+            }
+            else -> {
+                closeNewSessionDialog()
+                if (openCharacters) onCharactersClick()
+            }
+        }
     }
 
     LaunchedEffect(newSessionRequestId) {
@@ -592,15 +615,20 @@ fun SessionListScreen(
                 selectedCharacterIds = openingCharacterSelection(selectableCharacters.map { it.id }.toSet(), selectedCharacterIds)
             }
         }
+        val currentCreating by rememberUpdatedState(isCreatingSession)
+        val currentFormEdited by rememberUpdatedState(newSessionFormEdited)
         ModalBottomSheet(
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            onDismissRequest = {
-                if (isCreatingSession) {
-                    Toast.makeText(context, "正在创建对话，请稍候", Toast.LENGTH_SHORT).show()
-                } else {
-                    closeNewSessionDialog()
+            sheetState = rememberModalBottomSheetState(
+                skipPartiallyExpanded = true,
+                confirmValueChange = { next ->
+                    if (next == SheetValue.Hidden && currentCreating) false
+                    else if (next == SheetValue.Hidden && currentFormEdited) {
+                        confirmDiscardNewSession = true
+                        false
+                    } else true
                 }
-            },
+            ),
+            onDismissRequest = { requestCloseNewSessionDialog() },
         ) {
             val newSessionScroll = rememberScrollState()
             Column(
@@ -629,7 +657,7 @@ fun SessionListScreen(
                         Text("设定这一幕，然后开始书写", style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    IconButton(onClick = { closeNewSessionDialog() }, enabled = !isCreatingSession) {
+                    IconButton(onClick = { requestCloseNewSessionDialog() }, enabled = !isCreatingSession) {
                         Icon(Icons.Default.Close, contentDescription = "关闭新建对话")
                     }
                 }
@@ -681,9 +709,10 @@ fun SessionListScreen(
                 }
                 OutlinedTextField(
                     value = newSessionTitle,
-                    onValueChange = { newSessionTitle = it },
+                    onValueChange = { newSessionTitle = it; newSessionFormEdited = true },
                     label = { Text("标题") },
                     singleLine = true,
+                    enabled = !isCreatingSession,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedButton(onClick = { worldPickerOpen = true },
@@ -712,10 +741,7 @@ fun SessionListScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     TextButton(
-                        onClick = {
-                            closeNewSessionDialog()
-                            onCharactersClick()
-                        },
+                        onClick = { requestCloseNewSessionDialog(openCharacters = true) },
                         enabled = !isCreatingSession && !isLoadingDialogData,
                     ) {
                         Icon(Icons.Default.PersonAdd, contentDescription = null)
@@ -729,10 +755,7 @@ fun SessionListScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     TextButton(
-                        onClick = {
-                            closeNewSessionDialog()
-                            onCharactersClick()
-                        },
+                        onClick = { requestCloseNewSessionDialog(openCharacters = true) },
                         enabled = !isCreatingSession && !isLoadingDialogData,
                     ) {
                         Icon(Icons.Default.PersonAdd, contentDescription = null)
@@ -780,11 +803,11 @@ fun SessionListScreen(
                     Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         MoJingToggleRow("启用旁白", "回复中加入场景叙述", narratorOn,
-                            { narratorOn = it }, enabled = !isCreatingSession)
+                            { narratorOn = it; newSessionFormEdited = true }, enabled = !isCreatingSession)
                         if (narratorOn) {
                             OutlinedTextField(
                                 value = narratorName,
-                                onValueChange = { narratorName = it },
+                                onValueChange = { narratorName = it; newSessionFormEdited = true },
                                 label = { Text("旁白名称") },
                                 singleLine = true,
                                 enabled = !isCreatingSession,
@@ -793,13 +816,16 @@ fun SessionListScreen(
                         }
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         MoJingToggleRow("生成剧情选项", "回复后给出可选行动", choiceOn,
-                            { choiceOn = it }, enabled = !isCreatingSession)
+                            { choiceOn = it; newSessionFormEdited = true }, enabled = !isCreatingSession)
                         if (choiceOn) {
                             OutlinedTextField(
                                 value = maxChoicesStr,
                                 onValueChange = { v ->
-                                    if (v.isEmpty()) maxChoicesStr = ""
-                                    else if (v.length <= 2 && v.all { it.isDigit() }) maxChoicesStr = v
+                                    if (v.isEmpty()) { maxChoicesStr = ""; newSessionFormEdited = true }
+                                    else if (v.length <= 2 && v.all { it.isDigit() }) {
+                                        maxChoicesStr = v
+                                        newSessionFormEdited = true
+                                    }
                                 },
                                 label = { Text("每轮最多选项") },
                                 singleLine = true,
@@ -810,13 +836,14 @@ fun SessionListScreen(
                         }
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         MoJingToggleRow("保持世界规则", "提醒角色遵守当前世界的限制与设定",
-                            antiCheatOn, { antiCheatOn = it }, enabled = !isCreatingSession)
+                            antiCheatOn, { antiCheatOn = it; newSessionFormEdited = true }, enabled = !isCreatingSession)
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         OutlinedTextField(
                             value = displayContextLimitStr,
                             onValueChange = { v ->
                                 if (v.length <= 10 && (v.isEmpty() || v.all { it.isDigit() })) {
                                     displayContextLimitStr = v
+                                    newSessionFormEdited = true
                                 }
                             },
                             label = { Text("聊天容量提示") },
@@ -913,6 +940,7 @@ fun SessionListScreen(
                 selectedEncId = encyclopediaId
                 selectedTemplateId = template?.id
                 worldSelectionInitialized = true
+                newSessionFormEdited = true
                 worldPickerOpen = false
             },
             onDismiss = { worldPickerOpen = false },
@@ -920,8 +948,24 @@ fun SessionListScreen(
         if (characterPickerOpen) NewSessionCharacterPicker(
             characters = selectableCharacters,
             selectedIds = selectedCharacterIds,
-            onSelectionChange = { selectedCharacterIds = it },
+            onSelectionChange = { selectedCharacterIds = it; newSessionFormEdited = true },
             onDismiss = { characterPickerOpen = false },
+        )
+        if (confirmDiscardNewSession) AlertDialog(
+            onDismissRequest = { confirmDiscardNewSession = false },
+            title = { Text("放弃本次对话设定？") },
+            text = { Text("尚未创建对话，当前填写的标题和开局设定将被放弃。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val openCharacters = discardThenOpenCharacters
+                    closeNewSessionDialog()
+                    if (openCharacters) onCharactersClick()
+                }) {
+                    Text(if (discardThenOpenCharacters) "放弃并去创建角色" else "放弃设定",
+                        color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmDiscardNewSession = false }) { Text("继续编辑") } },
         )
     }
 
