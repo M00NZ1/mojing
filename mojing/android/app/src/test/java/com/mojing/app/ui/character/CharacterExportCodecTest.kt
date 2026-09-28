@@ -1,7 +1,7 @@
 package com.mojing.app.ui.character
 
 import com.mojing.app.data.local.entity.CharacterEntity
-import com.mojing.app.data.local.entity.EncyclopediaEntity
+import com.mojing.app.data.local.dao.EncyclopediaNameOption
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -31,7 +31,7 @@ class CharacterExportCodecTest {
             thinkMaxModelName = "think-x",
             boundEncyclopediaId = 9,
         )
-        val encyclopedia = EncyclopediaEntity(id = 9, name = "修仙世界")
+        val encyclopedia = EncyclopediaNameOption(id = 9, name = "修仙世界")
 
         val json = CharacterExportCodec.toJson(listOf(character), listOf(encyclopedia))
         val imported = CharacterExportCodec.fromJson(json).single()
@@ -54,8 +54,8 @@ class CharacterExportCodecTest {
     @Test
     fun resolvesBindingOnlyForOneExactEncyclopediaName() {
         val encyclopedias = listOf(
-            EncyclopediaEntity(id = 1, name = "修仙世界"),
-            EncyclopediaEntity(id = 2, name = "科幻世界"),
+            EncyclopediaNameOption(id = 1, name = "修仙世界"),
+            EncyclopediaNameOption(id = 2, name = "科幻世界"),
         )
 
         assertEquals(1L, CharacterExportCodec.resolveBoundEncyclopediaId(" 修仙世界 ", encyclopedias))
@@ -64,7 +64,7 @@ class CharacterExportCodecTest {
             0L,
             CharacterExportCodec.resolveBoundEncyclopediaId(
                 "修仙世界",
-                encyclopedias + EncyclopediaEntity(id = 3, name = "修仙世界"),
+                encyclopedias + EncyclopediaNameOption(id = 3, name = "修仙世界"),
             ),
         )
     }

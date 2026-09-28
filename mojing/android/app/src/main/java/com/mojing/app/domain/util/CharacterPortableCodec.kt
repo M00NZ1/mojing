@@ -66,8 +66,10 @@ object CharacterPortableCodec {
         return "$TXT_HEADER\n${gson.toJson(meta)}$TXT_SEP$persona"
     }
 
+    fun normalizedNameBase(base: String): String = base.trim().ifBlank { "未命名" }.take(120)
+
     fun allocateUniqueName(existingNames: Collection<String>, base: String): String {
-        val clean = base.trim().ifBlank { "未命名" }.take(120)
+        val clean = normalizedNameBase(base)
         if (clean !in existingNames) return clean
         for (i in 2..4999) {
             val c = "${clean}_$i".take(120)

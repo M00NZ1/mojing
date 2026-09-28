@@ -7,10 +7,10 @@ import com.mojing.app.data.local.dao.CharacterListItem
 import com.mojing.app.data.local.dao.CharacterProfileDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.EncyclopediaFilterOption
+import com.mojing.app.data.local.dao.EncyclopediaNameOption
 import com.mojing.app.data.local.dao.EncyclopediaEntryDao
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.CharacterProfileEntity
-import com.mojing.app.data.local.entity.EncyclopediaEntity
 import com.mojing.app.data.prefs.UiPreferencesRepository
 import com.mojing.app.domain.usecase.SmartImportUseCase
 import com.mojing.app.domain.usecase.CreateSessionUseCase
@@ -123,7 +123,7 @@ internal object CharacterExportCodec {
 
     private val gson = Gson()
 
-    fun toJson(characters: List<CharacterEntity>, encyclopedias: List<EncyclopediaEntity>): String {
+    fun toJson(characters: List<CharacterEntity>, encyclopedias: List<EncyclopediaNameOption>): String {
         val encNameById = encyclopedias.associate { it.id to it.name }
         val data = characters.map { character ->
             mapOf(
@@ -195,7 +195,7 @@ internal object CharacterExportCodec {
         }
     }
 
-    fun resolveBoundEncyclopediaId(name: String, encyclopedias: List<EncyclopediaEntity>): Long {
+    fun resolveBoundEncyclopediaId(name: String, encyclopedias: List<EncyclopediaNameOption>): Long {
         val normalized = name.trim()
         if (normalized.isEmpty()) return 0L
         val matches = encyclopedias.filter { it.name.trim().equals(normalized, ignoreCase = true) }
@@ -474,7 +474,7 @@ class CharacterListViewModel @Inject constructor(
 
     suspend fun exportJson(): String {
         val characters = characterDao.getAll()
-        val encyclopedias = encyclopediaDao.getAll()
+        val encyclopedias = encyclopediaDao.getAllNameOptions()
         return withContext(Dispatchers.Default) {
             CharacterExportCodec.toJson(characters, encyclopedias)
         }
@@ -548,8 +548,9 @@ class CharacterListViewModel @Inject constructor(
         parsed: CharacterPortableCodec.ParsedPortable,
         portableLabel: String,
     ): CharacterImportResult {
-        val names = characterDao.getAll().map { it.name }
-        val name = CharacterPortableCodec.allocateUniqueName(names, parsed.name.ifBlank { "未命名" })
+        val base = CharacterPortableCodec.normalizedNameBase(parsed.name)
+        val names = characterDao.getNamesStartingWith(base).toHashSet()
+        val name = CharacterPortableCodec.allocateUniqueName(names, base)
         val entity = CharacterEntity(
             name = name,
             personaPrompt = parsed.personaPrompt,
@@ -594,7 +595,7 @@ class CharacterListViewModel @Inject constructor(
         return try {
             val json = smartImportUseCase.parseToStructuredJson(text, "character")
             val data = withContext(Dispatchers.Default) { CharacterExportCodec.fromJson(json) }
-            val encyclopedias = encyclopediaDao.getAll()
+            val encyclopedias = encyclopediaDao.getAllNameOptions()
             data.forEach { exported ->
                 val boundId = CharacterExportCodec.resolveBoundEncyclopediaId(
                     exported.boundEncyclopediaName,

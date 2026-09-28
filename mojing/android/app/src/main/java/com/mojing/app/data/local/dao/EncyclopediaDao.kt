@@ -12,6 +12,8 @@ data class EncyclopediaFilterOption(
     val updatedAt: Long,
 )
 
+data class EncyclopediaNameOption(val id: Long, val name: String)
+
 @Dao
 interface EncyclopediaDao {
     @Query(
@@ -34,6 +36,10 @@ interface EncyclopediaDao {
 
     @Query("SELECT name FROM world_encyclopedias WHERE id = :id")
     suspend fun getNameById(id: Long): String?
+
+    /** Import/export mapping keeps only portable names, not full world prompts. */
+    @Query("SELECT id, name FROM world_encyclopedias ORDER BY id")
+    suspend fun getAllNameOptions(): List<EncyclopediaNameOption>
 
     @Query("SELECT * FROM world_encyclopedias ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, updatedAt DESC")
     suspend fun getAll(): List<EncyclopediaEntity>

@@ -153,6 +153,10 @@ interface CharacterDao {
     @Query("SELECT * FROM characters ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, favorite DESC, createdAt DESC, id DESC")
     suspend fun getAll(): List<CharacterEntity>
 
+    /** Name collision checks never need persona text or provider credentials. */
+    @Query("SELECT name FROM characters WHERE substr(name, 1, length(:prefix)) = :prefix")
+    suspend fun getNamesStartingWith(prefix: String): List<String>
+
     @Query("SELECT * FROM characters WHERE id = :id")
     suspend fun getById(id: Long): CharacterEntity?
 
