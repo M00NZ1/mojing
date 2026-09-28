@@ -50,6 +50,8 @@ internal fun CharacterFilterPicker(
     loadPage: suspend (String, EncyclopediaFilterOption?) -> CharacterFilterPage,
     onSelect: (EncyclopediaFilterOption?) -> Unit,
     onDismiss: () -> Unit,
+    title: String = "按百科筛选",
+    noSelectionLabel: String = "全部角色",
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var requestedPage by remember { mutableIntStateOf(0) }
@@ -86,7 +88,7 @@ internal fun CharacterFilterPicker(
         }
     }
 
-    val showAll = displayedPage == 0 && (query.isBlank() || "全部角色".contains(query.trim(), ignoreCase = true))
+    val showAll = displayedPage == 0 && noSelectionLabel.contains(query.trim(), ignoreCase = true)
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
             Modifier.fillMaxWidth().widthIn(max = 560.dp).padding(horizontal = 16.dp)
@@ -96,7 +98,7 @@ internal fun CharacterFilterPicker(
         ) {
             Column(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                    ModelPickerHeader("按百科筛选", query, { value ->
+                    ModelPickerHeader(title, query, { value ->
                         query = value
                         requestedPage = 0
                         displayedPage = 0
@@ -116,7 +118,7 @@ internal fun CharacterFilterPicker(
                 } else {
                     LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false), state = listState) {
                         if (showAll) item(key = "all") {
-                            FilterOptionRow("全部角色", selectedId == null, !loading && !readError) {
+                            FilterOptionRow(noSelectionLabel, selectedId == null, !loading && !readError) {
                                 onSelect(null)
                             }
                         }

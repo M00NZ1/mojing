@@ -6,9 +6,9 @@ import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.CharacterProfileDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
+import com.mojing.app.data.local.dao.EncyclopediaFilterOption
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.CharacterProfileEntity
-import com.mojing.app.data.local.entity.EncyclopediaEntity
 import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.CharacterDraftSnapshot
 import com.mojing.app.data.CharacterEditDraftStore
@@ -102,7 +102,9 @@ data class CharacterEditState(
     val isGeneratingCardImage: Boolean = false,
     /** 绑定百科后，会话选该库时仅可选这些角色；并在百科中镜像一条「角色」条目 */
     val boundEncyclopediaId: Long = 0L,
-    val encyclopediaOptions: List<EncyclopediaEntity> = emptyList(),
+    val boundEncyclopediaName: String? = null,
+    val boundEncyclopediaNameResolved: Boolean = false,
+    val boundEncyclopediaReadError: Boolean = false,
     val recoverableDraft: CharacterDraftSnapshot? = null,
     val draftError: String? = null,
     val draftUnreadable: Boolean = false,
@@ -205,6 +207,9 @@ private fun CharacterEditState.withRecoveredDraft(draft: CharacterDraftSnapshot)
     voiceApiKey = draft.voiceApiKey,
     voiceModel = draft.voiceModel,
     boundEncyclopediaId = draft.boundEncyclopediaId,
+    boundEncyclopediaName = null,
+    boundEncyclopediaNameResolved = false,
+    boundEncyclopediaReadError = false,
 )
 
 enum class PortableExportFormat {
@@ -233,6 +238,8 @@ class CharacterEditViewModel @Inject constructor(
     private var lastLoadedCharacterId: Long? = null
     private var genObserveJob: Job? = null
     private var personaWatchdogJob: Job? = null
+    private var encyclopediaNameJob: Job? = null
+    private var encyclopediaNameRevision = 0
     private var personaReadRevision = 0L
     private var prevCharacterGenBusy = false
     private var savedDraft = _state.value.toDraftSnapshot()
@@ -331,6 +338,7 @@ class CharacterEditViewModel @Inject constructor(
         val restored = _state.value.withRecoveredDraft(draft).copy(recoverableDraft = null, draftError = null)
         _state.value = restored.copy(isDirty = restored.toDraftSnapshot() != savedDraft)
         persistCurrentDraft()
+        refreshBoundEncyclopediaName()
     }
 
     fun discardStoredDraft() {
@@ -482,43 +490,47 @@ class CharacterEditViewModel @Inject constructor(
             }
             genObserveJob?.cancel()
             personaWatchdogJob?.cancel()
+            encyclopediaNameJob?.cancel()
+            encyclopediaNameRevision++
             draftWriteRevision++
             draftWriteJob?.cancel()
             lastLoadedCharacterId = id
             _state.value = current.copy(isLoaded = false, loadError = null)
             try {
                 val entity = if (id > 0L) characterDao.getById(id) else null
-                val encs = encyclopediaDao.getAll()
-                currentEntity = entity
+                if (lastLoadedCharacterId != id) return@launch
                 val loaded = when {
                     entity != null -> {
                         val profileJson = characterProfileDao.getByCharacter(entity.id)?.characterCardJson?.trim().orEmpty()
                             .ifBlank { "{}" }
                         CharacterEditState(
                             hasPublicTextKey = secureStorage.publicApiKey.isNotBlank(),
-                            encyclopediaOptions = encs,
                         ).withPersistedDraft(entity, profileJson).copy(isDirty = false)
                     }
                     id <= 0L -> CharacterEditState(
                         isLoaded = true,
                         hasPublicTextKey = secureStorage.publicApiKey.isNotBlank(),
-                        encyclopediaOptions = encs,
                     )
                     else -> CharacterEditState(
                         isLoaded = true,
                         loadError = "找不到这个角色，它可能已经被删除",
                         hasPublicTextKey = secureStorage.publicApiKey.isNotBlank(),
-                        encyclopediaOptions = encs,
                     )
                 }
+                if (lastLoadedCharacterId != id) return@launch
+                currentEntity = entity
                 savedDraft = loaded.toDraftSnapshot()
                 _state.value = if (id > 0L && loaded.loadError == null) loaded.copy(isLoaded = false) else loaded
                 if (loaded.loadError == null) readRecoveryDraft(id)
-                if (lastLoadedCharacterId == id) _state.update { it.copy(isLoaded = true) }
-                startCharacterQueueObservation(id)
+                if (lastLoadedCharacterId == id) {
+                    _state.update { it.copy(isLoaded = true) }
+                    refreshBoundEncyclopediaName()
+                    startCharacterQueueObservation(id)
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
+                if (lastLoadedCharacterId != id) return@launch
                 currentEntity = null
                 val failed = CharacterEditState(
                     isLoaded = true,
@@ -532,7 +544,47 @@ class CharacterEditViewModel @Inject constructor(
     }
 
     fun updateName(v: String) = updateDraft { it.copy(name = v) }
-    fun updateBoundEncyclopediaId(v: Long) = updateDraft { it.copy(boundEncyclopediaId = v) }
+    fun updateBoundEncyclopediaId(v: Long, name: String? = null) {
+        updateDraft { it.copy(boundEncyclopediaId = v,
+            boundEncyclopediaName = name?.ifBlank { "未命名百科" },
+            boundEncyclopediaNameResolved = v <= 0L || name != null,
+            boundEncyclopediaReadError = false) }
+        encyclopediaNameJob?.cancel()
+        encyclopediaNameRevision++
+        if (v > 0L && name == null && _state.value.boundEncyclopediaId == v) refreshBoundEncyclopediaName()
+    }
+
+    internal suspend fun loadEncyclopediaPickerPage(query: String, cursor: EncyclopediaFilterOption?): CharacterFilterPage {
+        val rows = encyclopediaDao.getCharacterFilterPage(
+            query.trim(), cursor?.pinnedAt?.let { if (it > 0L) 1 else 0 },
+            cursor?.pinnedAt, cursor?.updatedAt, cursor?.id, 41,
+        )
+        return CharacterFilterPage(rows.take(40), rows.size > 40)
+    }
+
+    fun refreshBoundEncyclopediaName() {
+        encyclopediaNameJob?.cancel()
+        val revision = ++encyclopediaNameRevision
+        val id = _state.value.boundEncyclopediaId
+        if (id <= 0L) {
+            _state.update { it.copy(boundEncyclopediaName = null, boundEncyclopediaNameResolved = true,
+                boundEncyclopediaReadError = false) }
+            return
+        }
+        _state.update { it.copy(boundEncyclopediaNameResolved = false, boundEncyclopediaReadError = false) }
+        encyclopediaNameJob = viewModelScope.launch {
+            try {
+                val name = encyclopediaDao.getNameById(id)
+                if (revision == encyclopediaNameRevision && _state.value.boundEncyclopediaId == id)
+                    _state.update { it.copy(boundEncyclopediaName = name?.ifBlank { "未命名百科" },
+                        boundEncyclopediaNameResolved = true) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (revision == encyclopediaNameRevision && _state.value.boundEncyclopediaId == id)
+                    _state.update { it.copy(boundEncyclopediaReadError = true, boundEncyclopediaNameResolved = false) }
+            }
+        }
+    }
     fun updatePersonaPrompt(v: String) = updateDraft { it.copy(personaPrompt = v) }
     fun updateApiKey(v: String) = updateDraft { it.copy(apiKey = v) }
     fun updateApiBaseUrl(v: String) = updateDraft { it.copy(apiBaseUrl = v) }

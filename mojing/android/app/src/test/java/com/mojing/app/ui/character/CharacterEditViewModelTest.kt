@@ -7,6 +7,7 @@ import com.mojing.app.data.CharacterEditDraftStore
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.CharacterProfileDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
+import com.mojing.app.data.local.dao.EncyclopediaFilterOption
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.CharacterProfileEntity
 import com.mojing.app.data.local.entity.GenerationTaskEntity
@@ -68,10 +69,8 @@ class CharacterEditViewModelTest {
         draftStore: CharacterEditDraftStore = mockk(relaxed = true) {
             coEvery { load(any()) } returns null
         },
+        encyclopediaDao: EncyclopediaDao = mockk(relaxed = true),
     ): TestSubject {
-        val encyclopediaDao = mockk<EncyclopediaDao> {
-            coEvery { getAll() } returns emptyList()
-        }
         val queue = mockk<GenerationQueueProcessor>(relaxed = true)
         every { queue.observeActiveForCharacter(any()) } returns activeTasks
         val secureStorage = mockk<SecureStorage>(relaxed = true)
@@ -95,6 +94,65 @@ class CharacterEditViewModelTest {
             profileDao = profileDao,
             draftStore = draftStore,
         )
+    }
+
+    @Test
+    fun editingCharacterDoesNotLoadWholeEncyclopediaAndNameFailureIsRetryable() = runTest(dispatcher) {
+        val characterDao = mockk<CharacterDao> {
+            coEvery { getById(7L) } returns CharacterEntity(id = 7L, name = "守塔人", boundEncyclopediaId = 3L)
+        }
+        val encyclopediaDao = mockk<EncyclopediaDao>()
+        coEvery { encyclopediaDao.getNameById(3L) } throws IllegalStateException("temporary read failure")
+        val vm = createSubject(characterDao, encyclopediaDao = encyclopediaDao).viewModel
+        vm.load(7L)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.isLoaded)
+        assertEquals("守塔人", vm.state.value.name)
+        assertEquals(3L, vm.state.value.boundEncyclopediaId)
+        assertTrue(vm.state.value.boundEncyclopediaReadError)
+        coEvery { encyclopediaDao.getNameById(3L) } returns "雾港"
+        vm.refreshBoundEncyclopediaName()
+        advanceUntilIdle()
+        assertEquals("雾港", vm.state.value.boundEncyclopediaName)
+        assertFalse(vm.state.value.boundEncyclopediaReadError)
+        coVerify(exactly = 0) { encyclopediaDao.getAll() }
+    }
+
+    @Test
+    fun bindingPickerPagesAllWorldsWhileKeepingChosenId() = runTest(dispatcher) {
+        val encyclopediaDao = mockk<EncyclopediaDao>()
+        val rows = (1L..41L).map { EncyclopediaFilterOption(it, "百科 $it", 0, 42 - it) }
+        coEvery { encyclopediaDao.getCharacterFilterPage(any(), any(), any(), any(), any(), any()) } returns rows
+        val vm = createSubject(mockk(relaxed = true), encyclopediaDao = encyclopediaDao).viewModel
+        vm.load(0L)
+        advanceUntilIdle()
+        vm.updateBoundEncyclopediaId(41L, "远方百科")
+        val first = vm.loadEncyclopediaPickerPage(" 百科 ", null)
+        assertEquals(40, first.rows.size)
+        assertTrue(first.hasMore)
+        vm.loadEncyclopediaPickerPage("", first.rows.last())
+        assertEquals(41L, vm.state.value.boundEncyclopediaId)
+        assertEquals("远方百科", vm.state.value.boundEncyclopediaName)
+        coVerify { encyclopediaDao.getCharacterFilterPage("百科", null, null, null, null, 41) }
+        coVerify { encyclopediaDao.getCharacterFilterPage("", 0, 0, 2, 40, 41) }
+    }
+
+    @Test
+    fun oldEncyclopediaNameReadCannotReplaceNewBinding() = runTest(dispatcher) {
+        val dao = mockk<CharacterDao> {
+            coEvery { getById(7L) } returns CharacterEntity(id = 7L, name = "守塔人", boundEncyclopediaId = 3L)
+        }
+        val pendingName = CompletableDeferred<String?>()
+        val encyclopedias = mockk<EncyclopediaDao> {
+            coEvery { getNameById(3L) } coAnswers { pendingName.await() }
+        }
+        val vm = createSubject(dao, encyclopediaDao = encyclopedias).viewModel
+        vm.load(7L)
+        vm.updateBoundEncyclopediaId(4L, "新百科")
+        pendingName.complete("旧百科")
+        advanceUntilIdle()
+        assertEquals(4L, vm.state.value.boundEncyclopediaId)
+        assertEquals("新百科", vm.state.value.boundEncyclopediaName)
     }
 
     @Test

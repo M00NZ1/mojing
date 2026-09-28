@@ -47,6 +47,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -92,6 +93,7 @@ fun CharacterEditScreen(
     var isAvatarImporting by remember { mutableStateOf(false) }
     var isCardImageProcessing by remember { mutableStateOf(false) }
     var showMacroSheet by remember { mutableStateOf(false) }
+    var encBindPickerOpen by remember { mutableStateOf(false) }
     var appearanceOpen by rememberSaveable { mutableStateOf(false) }
     var routesOpen by rememberSaveable { mutableStateOf(false) }
     var advancedOpen by rememberSaveable { mutableStateOf(false) }
@@ -325,47 +327,23 @@ fun CharacterEditScreen(
             CharacterEditorSectionTitle("基本资料", "名称与百科归属")
 
             OutlinedTextField(value = state.name, onValueChange = { viewModel.updateName(it) }, label = { Text("角色名") }, placeholder = { Text("如：林云") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-            var encBindExpanded by remember { mutableStateOf(false) }
-            ExposedDropdownMenuBox(
-                expanded = encBindExpanded,
-                onExpandedChange = { encBindExpanded = it },
-            ) {
-                OutlinedTextField(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .menuAnchor(),
-                    readOnly = true,
-                    value = when {
-                        state.boundEncyclopediaId <= 0L -> "暂不绑定百科"
-                        else -> state.encyclopediaOptions.find { it.id == state.boundEncyclopediaId }?.name?.ifBlank { null }
-                            ?: "百科资料不可用"
-                    },
-                    onValueChange = {},
-                    label = { Text("所属百科（可选）") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = encBindExpanded) },
-                    singleLine = true,
-                )
-                ExposedDropdownMenu(
-                    expanded = encBindExpanded,
-                    onDismissRequest = { encBindExpanded = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("暂不绑定百科") },
-                        onClick = {
-                            viewModel.updateBoundEncyclopediaId(0L)
-                            encBindExpanded = false
-                        },
-                    )
-                    state.encyclopediaOptions.forEach { enc ->
-                        DropdownMenuItem(
-                            text = { Text(enc.name.ifBlank { "未命名百科" }) },
-                            onClick = {
-                                viewModel.updateBoundEncyclopediaId(enc.id)
-                                encBindExpanded = false
-                            },
-                        )
-                    }
-                }
+            val encyclopediaLabel = when {
+                state.boundEncyclopediaId <= 0L -> "暂不绑定百科"
+                state.boundEncyclopediaReadError -> "名称暂时无法读取 · ${state.boundEncyclopediaId}"
+                !state.boundEncyclopediaNameResolved -> "正在读取所属百科…"
+                state.boundEncyclopediaName == null -> "百科资料不可用 · ${state.boundEncyclopediaId}"
+                else -> state.boundEncyclopediaName
+            }
+            OutlinedButton(onClick = { encBindPickerOpen = true }, modifier = Modifier.fillMaxWidth(),
+                enabled = state.isLoaded && state.loadError == null && state.recoverableDraft == null &&
+                    !state.draftUnreadable && !state.isSaving) {
+                Text("所属百科 · $encyclopediaLabel", maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            if (state.boundEncyclopediaReadError) Row(Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text("已绑定的百科名称读取失败，角色资料仍可编辑。", Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = viewModel::refreshBoundEncyclopediaName) { Text("重试") }
             }
             HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
             CharacterEditorSectionTitle("人设与表达", "决定角色如何理解和回应对话")
@@ -831,6 +809,17 @@ fun CharacterEditScreen(
             }
         }
     }
+
+    if (encBindPickerOpen) CharacterFilterPicker(
+        selectedId = state.boundEncyclopediaId.takeIf { it > 0L },
+        loadPage = viewModel::loadEncyclopediaPickerPage,
+        onSelect = { option ->
+            viewModel.updateBoundEncyclopediaId(option?.id ?: 0L, option?.name)
+            encBindPickerOpen = false
+        },
+        onDismiss = { encBindPickerOpen = false },
+        title = "所属百科", noSelectionLabel = "暂不绑定百科",
+    )
 
     pendingExit?.takeIf { state.recoverableDraft == null && !state.draftUnreadable }?.let { destination ->
         AlertDialog(
