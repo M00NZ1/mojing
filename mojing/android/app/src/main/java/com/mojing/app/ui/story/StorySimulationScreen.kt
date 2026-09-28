@@ -370,7 +370,7 @@ fun StorySimulationScreen(
         AlertDialog(
             onDismissRequest = { dismissStopDialog() },
             title = { Text(if (state.hasPendingStory) "放弃尚未保存的正文？" else "停止生成并离开？") },
-            text = { Text(if (state.hasPendingStory) "放弃后将清除这篇待保存正文。可以先返回保存或复制全文。" else "当前小说还在生成。停止后不会保存这次未完成的结果，你填写的故事设定会继续保留。") },
+            text = { Text(if (state.hasPendingStory) "放弃后将清除这篇待保存正文。可以先返回保存或复制全文。" else "当前小说还在生成。停止后会保留故事设定和已收到的有限预览；完整小说不会保存。若预览暂存失败，将留在此页供你复制或重试。") },
             confirmButton = {
                 TextButton(onClick = {
                     if (state.isSaving) {
@@ -380,8 +380,12 @@ fun StorySimulationScreen(
                     }
                     val action = pendingNavigation
                     dismissStopDialog()
+                    isLeaving = true
                     scope.launch {
-                        if (if (state.hasPendingStory) viewModel.discardPendingStory() else viewModel.stopGeneration()) action?.invoke()
+                        try {
+                            if (if (state.hasPendingStory) viewModel.discardPendingStory()
+                                else viewModel.stopGenerationAndWaitForPreview()) action?.invoke()
+                        } finally { isLeaving = false }
                     }
                 }) { Text(if (state.hasPendingStory) "放弃正文" else "停止并离开") }
             },

@@ -614,7 +614,10 @@ class StorySimulationViewModel @Inject constructor(
         val current = _state.value
         if (current.isRestoring || current.recoveryError != null || current.isGenerating || current.isSaving) return false
         if (current.hasPendingStory || current.savedSessionId != null) return true
-        return try { inputDraftStore.commit(current.inputDraft()); true }
+        return try {
+            if (!flushGenerationPreview()) false
+            else { inputDraftStore.commit(current.inputDraft()); true }
+        }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { _state.update { it.copy(error = "创作设定暂存失败，请重试后再离开。") }; false }
     }
@@ -684,6 +687,14 @@ class StorySimulationViewModel @Inject constructor(
         return true
     }
 
+    /** Navigation waits for the cancellation handler and the latest preview write. */
+    suspend fun stopGenerationAndWaitForPreview(): Boolean {
+        val job = creationJob.get()
+        if (_state.value.isGenerating && job?.isActive == true) job.cancel()
+        job?.join()
+        return flushInputDraftBeforeLeaving()
+    }
+
     private fun updateGenerationProgress(
         progress: StoryWritingProgress, token: Long, generationId: String, input: StoryOpeningInputDraft,
     ) {
@@ -733,15 +744,15 @@ class StorySimulationViewModel @Inject constructor(
         }
     }
 
-    private suspend fun flushGenerationPreview() = withContext(NonCancellable) {
-        val generationId = activeGenerationId ?: return@withContext
-        val input = activeGenerationInput ?: return@withContext
+    private suspend fun flushGenerationPreview(): Boolean = withContext(NonCancellable) {
+        val generationId = activeGenerationId ?: return@withContext true
+        val input = activeGenerationInput ?: return@withContext true
         val latest = latestGenerationProgress.get()?.takeIf {
             it.token == _state.value.requestToken && it.requestId == generationId
-        } ?: return@withContext
+        } ?: return@withContext true
         val progress = latest.progress
         val preview = progress.preview.takeLast(MAX_PREVIEW_CHARS)
-        if (preview.isBlank()) return@withContext
+        if (preview.isBlank()) return@withContext true
         try {
             generationPersistMutex.withLock {
                 inputDraftStore.persistGenerationPreview(StoryOpeningGenerationState(
@@ -750,8 +761,10 @@ class StorySimulationViewModel @Inject constructor(
                     elapsedMs = progress.elapsedMs,
                 ))
             }
+            true
         } catch (_: Exception) {
-            _state.update { it.copy(error = "生成预览暂存失败，正文仍会继续生成。") }
+            _state.update { it.copy(error = "生成预览暂存失败，请留在当前页复制预览，或重试离开。") }
+            false
         }
     }
 

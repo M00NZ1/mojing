@@ -33,6 +33,7 @@ import io.mockk.mockk
 import io.mockk.slot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
@@ -280,6 +281,59 @@ class StorySimulationViewModelTest {
         }
         coVerify(exactly = 0) { messageDao.insert(any()) }
         coVerify(exactly = 0) { sessionDao.bumpUpdatedAt(any(), any()) }
+    }
+
+    @Test
+    fun stopAndLeaveWaitsForLatestPreviewToPersist() = runTest(dispatcher) {
+        val progress = slot<(StoryWritingProgress) -> Unit>()
+        val writing = mockk<StoryWritingUseCase>()
+        coEvery { writing.write(any(), any(), any(), any(), capture(progress)) } coAnswers {
+            CompletableDeferred<StoryWritingResult>().await()
+        }
+        val saveGate = CompletableDeferred<Unit>()
+        val drafts = mockk<StoryOpeningInputDraftStore>(relaxed = true) {
+            coEvery { load() } returns null
+            coEvery { persistGenerationPreview(any()) } coAnswers { saveGate.await() }
+        }
+        val storage = mockk<SecureStorage>(relaxed = true) {
+            every { publicApiKey } returns "key"; every { publicBaseUrl } returns "https://example.com"; every { publicModel } returns "model"
+        }
+        val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true),
+            storyWriting = writing, secureStorage = storage, inputDraftStore = drafts)
+        runCurrent(); vm.updatePremise("雾港来信"); vm.createStory {}; runCurrent()
+        progress.captured(StoryWritingProgress("接收正文", "model", 100, 20, 4, "已收到正文"))
+
+        val leaving = async { vm.stopGenerationAndWaitForPreview() }
+        runCurrent()
+        assertFalse(leaving.isCompleted)
+        saveGate.complete(Unit)
+        assertTrue(leaving.await())
+        coVerify(atLeast = 1) { drafts.persistGenerationPreview(match { it.preview == "已收到正文" }) }
+    }
+
+    @Test
+    fun stopAndLeaveKeepsPreviewVisibleWhenSavingFails() = runTest(dispatcher) {
+        val progress = slot<(StoryWritingProgress) -> Unit>()
+        val writing = mockk<StoryWritingUseCase>()
+        coEvery { writing.write(any(), any(), any(), any(), capture(progress)) } coAnswers {
+            CompletableDeferred<StoryWritingResult>().await()
+        }
+        val drafts = mockk<StoryOpeningInputDraftStore>(relaxed = true) {
+            coEvery { load() } returns null
+            coEvery { persistGenerationPreview(any()) } throws java.io.IOException("disk")
+        }
+        val storage = mockk<SecureStorage>(relaxed = true) {
+            every { publicApiKey } returns "key"; every { publicBaseUrl } returns "https://example.com"; every { publicModel } returns "model"
+        }
+        val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true),
+            storyWriting = writing, secureStorage = storage, inputDraftStore = drafts)
+        runCurrent(); vm.updatePremise("雾港来信"); vm.createStory {}; runCurrent()
+        progress.captured(StoryWritingProgress("接收正文", "model", 100, 20, 4, "已收到正文"))
+
+        assertFalse(vm.stopGenerationAndWaitForPreview())
+        assertEquals("已收到正文", vm.state.value.preview)
+        assertTrue(vm.state.value.error.orEmpty().contains("复制预览"))
+        assertFalse(vm.flushInputDraftBeforeLeaving())
     }
 
     @Test
