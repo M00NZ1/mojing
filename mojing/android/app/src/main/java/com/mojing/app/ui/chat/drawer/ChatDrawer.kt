@@ -956,7 +956,7 @@ fun TimelineTab(
     var selectedFilter by remember(currentBranchId) { mutableStateOf(0) }
     val visibleEvents = remember(events, selectedFilter) {
         events.filter { selectedFilter == 0 || it.resolved == (selectedFilter == 2) }
-            .sortedWith(compareBy({ it.createdAt }, { it.id }))
+            .sortedWith(compareByDescending<SessionEventNodeEntity> { it.createdAt }.thenByDescending { it.id })
     }
     val timeFormat = remember { java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()) }
     val pendingDelete = events.firstOrNull { it.id == deleteTarget }
