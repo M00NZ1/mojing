@@ -45,9 +45,14 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.OutputStream
+import java.io.OutputStreamWriter
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
+
+// Full world prompts can be much larger than list projections, so export uses smaller batches.
+private const val TEMPLATE_EXPORT_BATCH_SIZE = 32
 
 data class TemplateDeleteState(
     val templateId: Long? = null,
@@ -398,20 +403,42 @@ class WorkbenchViewModel @Inject constructor(
         return "已写入本地「${saved.template.label}」（设定条目 ${saved.loreCount} 条）"
     }
 
-    suspend fun exportJson(): String {
-        val templatesSnapshot = templateDao.getAll()
-        return withContext(Dispatchers.Default) {
-            val data = templatesSnapshot.map { t ->
-                mapOf(
-                    "label" to t.label, "category" to t.category,
-                    "summary" to t.summary, "gameplayMode" to t.gameplayMode,
-                    "worldPrompt" to t.worldPrompt, "antiCheatPrompt" to t.antiCheatPrompt,
-                    "suggestedChoicesJson" to t.suggestedChoicesJson,
-                    "coverImagePath" to t.coverImagePath,
+    suspend fun exportJson(output: OutputStream) = withContext(Dispatchers.IO) {
+        val gson = Gson()
+        val writer = com.google.gson.stream.JsonWriter(OutputStreamWriter(output, Charsets.UTF_8))
+        writer.beginObject()
+        writer.name("version").value(1)
+        writer.name("type").value("templates")
+        writer.name("data").beginArray()
+        var cursor: WorldTemplateEntity? = null
+        do {
+            currentCoroutineContext().ensureActive()
+            val rows = templateDao.getExportPage(
+                cursorGroup = cursor?.let { if (it.pinnedAt > 0) 0 else 1 },
+                cursorPinnedAt = cursor?.pinnedAt,
+                cursorUpdatedAt = cursor?.updatedAt,
+                cursorId = cursor?.id,
+                limit = TEMPLATE_EXPORT_BATCH_SIZE,
+            )
+            rows.forEach { t ->
+                currentCoroutineContext().ensureActive()
+                gson.toJson(
+                    mapOf(
+                        "label" to t.label, "category" to t.category,
+                        "summary" to t.summary, "gameplayMode" to t.gameplayMode,
+                        "worldPrompt" to t.worldPrompt, "antiCheatPrompt" to t.antiCheatPrompt,
+                        "suggestedChoicesJson" to t.suggestedChoicesJson,
+                        "coverImagePath" to t.coverImagePath,
+                    ),
+                    Map::class.java,
+                    writer,
                 )
             }
-            Gson().toJson(mapOf("version" to 1, "type" to "templates", "data" to data))
-        }
+            cursor = rows.lastOrNull()
+        } while (rows.size == TEMPLATE_EXPORT_BATCH_SIZE)
+        writer.endArray()
+        writer.endObject()
+        writer.flush()
     }
 
     suspend fun importJson(text: String): String = try {

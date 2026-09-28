@@ -113,6 +113,9 @@ class WorkbenchViewModelCoverTest {
     @Test
     fun failedPageKeepsCardsAndExportStillIncludesEveryTemplate() = runTest(dispatcher) {
         val all = (1L..26L).map { id -> WorldTemplateEntity(id = id, label = "模板$id") }
+        val exportRows = (70L downTo 1L).map { id ->
+            WorldTemplateEntity(id = id, label = "模板$id", worldPrompt = "设定$id")
+        }
         var nextReads = 0
         val templateDao = mockk<WorldTemplateDao> {
             coEvery { getLibraryPage(any(), any(), any(), any(), any(), any()) } coAnswers {
@@ -123,7 +126,9 @@ class WorkbenchViewModelCoverTest {
                     listOf(all.last().libraryItem())
                 }
             }
-            coEvery { getAll() } returns all
+            coEvery { getExportPage(any(), any(), any(), any(), 32) } coAnswers {
+                exportRows.filter { row -> arg<Long?>(3)?.let { row.id < it } ?: true }.take(32)
+            }
         }
         val viewModel = createViewModel(templateDao)
         assertEquals(24, viewModel.library.value.items.size)
@@ -136,8 +141,16 @@ class WorkbenchViewModelCoverTest {
         assertEquals(listOf(all.last().libraryItem()), viewModel.library.value.items)
         assertEquals(1, viewModel.library.value.pageIndex)
 
-        val exported = com.google.gson.JsonParser.parseString(viewModel.exportJson()).asJsonObject
-        assertEquals(26, exported.getAsJsonArray("data").size())
-        coVerify(exactly = 1) { templateDao.getAll() }
+        val output = java.io.ByteArrayOutputStream()
+        viewModel.exportJson(output)
+        val exported = com.google.gson.JsonParser.parseString(output.toString("UTF-8")).asJsonObject
+        assertEquals(1, exported.get("version").asInt)
+        assertEquals("templates", exported.get("type").asString)
+        val data = exported.getAsJsonArray("data")
+        assertEquals(70, data.size())
+        assertEquals("模板70", data[0].asJsonObject.get("label").asString)
+        assertEquals("设定1", data[69].asJsonObject.get("worldPrompt").asString)
+        coVerify(exactly = 3) { templateDao.getExportPage(any(), any(), any(), any(), 32) }
+        coVerify(exactly = 0) { templateDao.getAll() }
     }
 }

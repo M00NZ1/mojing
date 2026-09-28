@@ -1696,6 +1696,22 @@ class WorldTemplateDaoTest {
         } while (rows.size > 24)
         assertEquals(55, seen.size)
         assertEquals(55, seen.toSet().size)
+        val exportSeen = mutableListOf<Long>()
+        var exportCursor: WorldTemplateEntity? = null
+        do {
+            val rows = templateDao.getExportPage(
+                cursorGroup = exportCursor?.let { if (it.pinnedAt > 0) 0 else 1 },
+                cursorPinnedAt = exportCursor?.pinnedAt,
+                cursorUpdatedAt = exportCursor?.updatedAt,
+                cursorId = exportCursor?.id,
+                limit = 32,
+            )
+            exportSeen += rows.map { it.id }
+            assertTrue(rows.all { it.worldPrompt.length == "完整世界设定".length * 1000 })
+            exportCursor = rows.lastOrNull()
+        } while (rows.size == 32)
+        assertEquals(55, exportSeen.size)
+        assertEquals(55, exportSeen.toSet().size)
         val searched = templateDao.getLibraryPage("尾页线索", null, null, null, null, 25)
         assertEquals(1, searched.size)
         assertTrue(searched.single().summary.length <= 96)
