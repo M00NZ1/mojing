@@ -10,6 +10,8 @@ import com.mojing.app.data.local.entity.SessionWorldEntity
 import com.mojing.app.data.local.entity.MessageBookmarkEntity
 import com.mojing.app.data.local.entity.SessionMemoryCorrectionEntity
 
+internal const val EVENT_NODE_PAGE_SIZE = 24
+
 data class SavedImageNotice(val messageId: Long, val branchId: String)
 
 /** A reply retained after generation stopped, pending an explicit user decision. */
@@ -124,6 +126,8 @@ object ChatContract {
         val memoryCorrections: List<SessionMemoryCorrectionEntity> = emptyList(),
         val lastMemoryCorrectionPromptTrace: MemoryCorrectionPromptTrace? = null,
         val eventNodes: List<SessionEventNodeEntity> = emptyList(),
+        /** User-expanded capacity survives optimistic deletion until the page is refilled. */
+        val eventNodesWindowSize: Int = EVENT_NODE_PAGE_SIZE,
         val eventNodesHasMore: Boolean = false,
         val eventNodesLoadingMore: Boolean = false,
         val eventNodesLoadError: String? = null,

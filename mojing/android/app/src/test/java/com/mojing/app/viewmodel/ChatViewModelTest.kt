@@ -2763,6 +2763,56 @@ class ChatViewModelTest {
         assertEquals((100L downTo 77L).toList(), vm.state.value.eventNodes.map { it.id })
     }
 
+    @Test fun deletingAnExpandedEventRefillsTheLoadedWindow() = runTest(testDispatcher) {
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        coEvery { events.getPageForBranch(42L, "main", null, null, 25) } returns
+            (100L downTo 76L).map { id -> SessionEventNodeEntity(id = id, sessionId = 42L, createdAt = id) }
+        coEvery { events.getPageForBranch(42L, "main", 77L, 77L, 25) } returns
+            (76L downTo 52L).map { id -> SessionEventNodeEntity(id = id, sessionId = 42L, createdAt = id) }
+        coEvery { events.getPageForBranch(42L, "main", null, null, 49) } returns
+            (99L downTo 51L).map { id -> SessionEventNodeEntity(id = id, sessionId = 42L, createdAt = id) }
+        val vm = createViewModel(eventNodeDao = events)
+        advanceUntilIdle()
+
+        vm.loadMoreEventNodes()
+        advanceUntilIdle()
+        assertEquals(48, vm.state.value.eventNodes.size)
+        assertEquals(48, vm.state.value.eventNodesWindowSize)
+
+        vm.deleteEventNode(100L)
+        advanceUntilIdle()
+        assertEquals((99L downTo 52L).toList(), vm.state.value.eventNodes.map { it.id })
+        assertEquals(48, vm.state.value.eventNodesWindowSize)
+        assertTrue(vm.state.value.eventNodesHasMore)
+        coVerify(exactly = 1) { events.getPageForBranch(42L, "main", null, null, 49) }
+    }
+
+    @Test fun delayedEventRefreshCannotCollapseAnExpandedPage() = runTest(testDispatcher) {
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        val first = (100L downTo 76L).map { id ->
+            SessionEventNodeEntity(id = id, sessionId = 42L, createdAt = id)
+        }
+        coEvery { events.getPageForBranch(42L, "main", null, null, 25) } returns first
+        coEvery { events.getPageForBranch(42L, "main", 77L, 77L, 25) } returns
+            (76L downTo 52L).map { id -> SessionEventNodeEntity(id = id, sessionId = 42L, createdAt = id) }
+        val vm = createViewModel(eventNodeDao = events)
+        advanceUntilIdle()
+
+        val delayedRefresh = CompletableDeferred<List<SessionEventNodeEntity>>()
+        coEvery { events.getPageForBranch(42L, "main", null, null, 25) } coAnswers { delayedRefresh.await() }
+        vm.switchBranch("main")
+        runCurrent()
+        vm.loadMoreEventNodes()
+        advanceUntilIdle()
+        assertEquals(48, vm.state.value.eventNodes.size)
+        assertEquals(48, vm.state.value.eventNodesWindowSize)
+
+        delayedRefresh.complete(first)
+        advanceUntilIdle()
+        assertEquals((100L downTo 53L).toList(), vm.state.value.eventNodes.map { it.id })
+        assertEquals(48, vm.state.value.eventNodesWindowSize)
+    }
+
     @Test fun eventTimelineKeepsLoadedPageWhenOlderReadFailsAndCanRetry() = runTest(testDispatcher) {
         val events = mockk<SessionEventNodeDao>(relaxed = true)
         val first = (30L downTo 6L).map { id ->
