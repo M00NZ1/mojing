@@ -1761,6 +1761,36 @@ class CharacterDaoTest {
     fun teardown() { db.close() }
 
     @Test
+    fun addParticipantPickerFiltersIneligibleRowsAndPagesPastForty() = runBlocking {
+        val sessionId = db.sessionDao().insert(SessionEntity(title = "添加角色"))
+        val ids = (1..42).map { n ->
+            characterDao.upsert(CharacterEntity(
+                name = if (n == 1) "遥远灯塔" else "角色$n",
+                boundEncyclopediaId = 3L, createdAt = 100L,
+            ))
+        }
+        characterDao.upsert(CharacterEntity(name = "未绑定", boundEncyclopediaId = 0L))
+        characterDao.upsert(CharacterEntity(name = "其他世界", boundEncyclopediaId = 4L))
+        db.participantDao().upsert(SessionParticipantEntity(sessionId = sessionId, characterId = ids[1]))
+
+        val first = characterDao.getAddParticipantPage(sessionId, 3L, "", null, null, null, null, 41)
+        assertEquals(41, first.size)
+        assertFalse(first.any { it.id == ids[1] })
+        val cursor = first[39]
+        val second = characterDao.getAddParticipantPage(
+            sessionId, 3L, "", cursor.pinnedAt, cursor.favorite, cursor.createdAt, cursor.id, 41,
+        )
+        assertEquals(1, second.size)
+        assertTrue(first.take(40).map { it.id }.intersect(second.map { it.id }.toSet()).isEmpty())
+        assertEquals(ids[0], characterDao.getAddParticipantPage(
+            sessionId, 3L, "灯塔", null, null, null, null, 41,
+        ).single().id)
+        assertEquals(42, characterDao.getAddParticipantPage(
+            sessionId, null, "", null, null, null, null, 50,
+        ).size)
+    }
+
+    @Test
     fun createAndQueryCharacter() = runBlocking {
         val id = characterDao.upsert(CharacterEntity(name = "主角", personaPrompt = "勇敢的冒险者"))
         val result = characterDao.getById(id)

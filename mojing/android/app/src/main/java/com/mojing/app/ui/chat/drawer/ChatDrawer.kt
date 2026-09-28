@@ -1093,65 +1093,6 @@ private fun EventPaginationFooter(
 }
 
 @Composable
-fun AddParticipantDialog(
-    availableCharacters: List<com.mojing.app.data.local.entity.CharacterEntity>,
-    isLoading: Boolean = false,
-    loadError: String? = null,
-    isSubmitting: Boolean = false,
-    onRetry: () -> Unit = {},
-    onDismiss: () -> Unit,
-    onSelect: (Long) -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = { if (!isSubmitting) onDismiss() },
-        title = { Text("选择角色") },
-        text = {
-            if (isSubmitting) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Text("正在添加角色…")
-                }
-            } else if (isLoading) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Text("正在加载角色…")
-                }
-            } else if (loadError != null) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(loadError, color = MaterialTheme.colorScheme.error)
-                    TextButton(onClick = onRetry) { Text("重新加载") }
-                }
-            } else if (availableCharacters.isEmpty()) {
-                Text("暂无可用的角色，请先创建角色。", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-            } else {
-                LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
-                    items(availableCharacters, key = { it.id }) { character ->
-                        TextButton(
-                            onClick = { onSelect(character.id) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(character.name, modifier = Modifier.weight(1f))
-                            if (character.favorite) Icon(Icons.Default.Star, "收藏", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss, enabled = !isSubmitting) { Text("取消") }
-        }
-    )
-}
-
-@Composable
 internal fun ExpandableMemoryText(text: String, collapsedLines: Int = 4) {
     var expanded by remember(text) { mutableStateOf(false) }
     var overflowing by remember(text, collapsedLines) { mutableStateOf(false) }

@@ -150,6 +150,29 @@ interface CharacterDao {
         limit: Int,
     ): List<NewSessionCharacterOption>
 
+    /** Only characters accepted by addParticipant, excluding this session's existing participants. */
+    @Query(
+        """
+        SELECT c.id, c.name, c.pinnedAt, c.favorite, c.createdAt FROM characters c
+        WHERE c.boundEncyclopediaId > 0
+          AND (:encyclopediaId IS NULL OR c.boundEncyclopediaId = :encyclopediaId)
+          AND NOT EXISTS (SELECT 1 FROM session_participants sp
+                          WHERE sp.sessionId = :sessionId AND sp.characterId = c.id)
+          AND (:query = '' OR instr(lower(c.name), lower(:query)) > 0)
+          AND (:cursorId IS NULL OR c.pinnedAt < :cursorPinnedAt
+            OR (c.pinnedAt = :cursorPinnedAt AND c.favorite < :cursorFavorite)
+            OR (c.pinnedAt = :cursorPinnedAt AND c.favorite = :cursorFavorite AND c.createdAt < :cursorCreatedAt)
+            OR (c.pinnedAt = :cursorPinnedAt AND c.favorite = :cursorFavorite AND c.createdAt = :cursorCreatedAt AND c.id < :cursorId))
+        ORDER BY c.pinnedAt DESC, c.favorite DESC, c.createdAt DESC, c.id DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getAddParticipantPage(
+        sessionId: Long, encyclopediaId: Long?, query: String,
+        cursorPinnedAt: Long?, cursorFavorite: Boolean?, cursorCreatedAt: Long?, cursorId: Long?,
+        limit: Int,
+    ): List<NewSessionCharacterOption>
+
     @Query("SELECT * FROM characters ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, favorite DESC, createdAt DESC, id DESC")
     suspend fun getAll(): List<CharacterEntity>
 

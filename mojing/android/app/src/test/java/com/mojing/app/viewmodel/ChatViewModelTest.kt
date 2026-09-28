@@ -13,6 +13,7 @@ import com.mojing.app.data.local.dao.BookmarkDao
 import com.mojing.app.data.local.entity.MessageBookmarkEntity
 import com.mojing.app.data.local.dao.AttachmentDao
 import com.mojing.app.data.local.dao.CharacterDao
+import com.mojing.app.data.local.dao.NewSessionCharacterOption
 import com.mojing.app.data.local.dao.MessageDao
 import com.mojing.app.data.local.dao.SessionEventNodeDao
 import com.mojing.app.data.local.entity.SessionEventNodeEntity
@@ -1083,6 +1084,32 @@ class ChatViewModelTest {
         assertTrue(vm.state.value.participants.isEmpty())
         assertEquals("添加角色失败，请重试", vm.state.value.error)
         assertFalse(vm.state.value.error.orEmpty().contains("database unavailable"))
+    }
+
+    @Test
+    fun addParticipantPickerReadsOnlyBoundEligiblePageWithStableCursor() = runTest(testDispatcher) {
+        val characterDao = mockk<CharacterDao>(relaxed = true)
+        val worldDao = mockk<SessionWorldDao>(relaxed = true)
+        coEvery { worldDao.getBySession(42L) } returns SessionWorldEntity(
+            sessionId = 42L, encyclopediaId = 3L,
+        )
+        val options = (1L..41L).map { id ->
+            NewSessionCharacterOption(id, "角色$id", 5L, false, 100L - id)
+        }
+        coEvery { characterDao.getAddParticipantPage(42L, 3L, "青", null, null, null, null, 41) } returns options
+        coEvery { characterDao.getAddParticipantPage(42L, 3L, "青", 5L, false, 60L, 40L, 41) } returns
+            listOf(options.last())
+        val vm = createViewModel(characterDao = characterDao, sessionWorldDao = worldDao)
+        advanceUntilIdle()
+
+        val first = vm.loadAddParticipantPage(" 青 ", null)
+        val second = vm.loadAddParticipantPage("青", first.rows.last())
+
+        assertEquals(40, first.rows.size)
+        assertTrue(first.hasMore)
+        assertEquals(listOf(41L), second.rows.map { it.id })
+        assertFalse(second.hasMore)
+        coVerify(exactly = 0) { characterDao.getAll() }
     }
 
     @Test

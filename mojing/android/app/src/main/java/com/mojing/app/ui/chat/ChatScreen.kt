@@ -194,10 +194,7 @@ fun ChatScreen(
     val scope = rememberCoroutineScope()
     var showAddParticipant by remember { mutableStateOf(false) }
     var isAddingParticipant by remember(sessionId) { mutableStateOf(false) }
-    var allCharacters by remember { mutableStateOf<List<com.mojing.app.data.local.entity.CharacterEntity>>(emptyList()) }
-    var isLoadingParticipants by remember(sessionId) { mutableStateOf(false) }
-    var participantLoadError by remember(sessionId) { mutableStateOf<String?>(null) }
-    var participantLoadRevision by remember(sessionId) { mutableStateOf(0) }
+    var participantSubmitError by remember(sessionId) { mutableStateOf<String?>(null) }
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -446,35 +443,6 @@ fun ChatScreen(
         }
     }
 
-    LaunchedEffect(
-        showAddParticipant,
-        state.world?.encyclopediaId,
-        state.participants,
-        participantLoadRevision,
-    ) {
-        if (showAddParticipant) {
-            isLoadingParticipants = true
-            participantLoadError = null
-            try {
-                val raw = viewModel.getAllCharacters()
-                val enc = state.world?.encyclopediaId?.takeIf { it > 0L }
-                val existingIds = state.participants.map { it.characterId }.toSet()
-                allCharacters = raw
-                    .asSequence()
-                    .filter { it.id !in existingIds }
-                    .filter { enc == null || it.boundEncyclopediaId <= 0L || it.boundEncyclopediaId == enc }
-                    .toList()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                allCharacters = emptyList()
-                participantLoadError = "角色列表加载失败，请重试"
-            } finally {
-                isLoadingParticipants = false
-            }
-        }
-    }
-
     LaunchedEffect(listState) {
         snapshotFlow {
             val info = listState.layoutInfo
@@ -674,8 +642,7 @@ fun ChatScreen(
                             },
                             onRemoveParticipant = { viewModel.removeParticipant(it) },
                             onAddParticipant = {
-                                isLoadingParticipants = true
-                                participantLoadError = null
+                                participantSubmitError = null
                                 showAddParticipant = true
                             },
                             onClose = { scope.launch { drawerState.close() } },
@@ -1367,20 +1334,20 @@ fun ChatScreen(
 
     if (showAddParticipant) {
         AddParticipantDialog(
-            availableCharacters = allCharacters,
-            isLoading = isLoadingParticipants,
-            loadError = participantLoadError,
+            loadPage = viewModel::loadAddParticipantPage,
             isSubmitting = isAddingParticipant,
-            onRetry = { participantLoadRevision++ },
+            submitError = participantSubmitError,
             onDismiss = {
                 if (!isAddingParticipant) showAddParticipant = false
             },
             onSelect = { characterId ->
                 if (!isAddingParticipant) {
+                    participantSubmitError = null
                     isAddingParticipant = true
                     viewModel.addParticipant(characterId) { added ->
                         isAddingParticipant = false
                         if (added) showAddParticipant = false
+                        else participantSubmitError = viewModel.state.value.error ?: "添加角色失败，请重试"
                     }
                 }
             }

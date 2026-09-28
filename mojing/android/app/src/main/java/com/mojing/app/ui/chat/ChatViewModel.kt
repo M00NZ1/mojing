@@ -16,6 +16,7 @@ import com.mojing.app.data.local.dao.MessageRecallBlockedException
 import com.mojing.app.data.local.dao.AttachmentDao
 import com.mojing.app.data.local.dao.BookmarkDao
 import com.mojing.app.data.local.dao.CharacterDao
+import com.mojing.app.data.local.dao.NewSessionCharacterOption
 import com.mojing.app.data.local.dao.MessageDao
 import com.mojing.app.data.local.dao.ReplyRecoveryMetadata
 import com.mojing.app.data.local.dao.ParticipantDao
@@ -104,6 +105,10 @@ private data class CharacterUiMaps(
     val colors: Map<Long, String>,
     val cardImages: Map<Long, String>,
 )
+
+internal data class AddParticipantPage(val rows: List<NewSessionCharacterOption>, val hasMore: Boolean)
+
+private const val ADD_PARTICIPANT_PAGE_SIZE = 40
 
 private class GenerationContext(
     val branchId: String,
@@ -3224,6 +3229,15 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    internal suspend fun loadAddParticipantPage(query: String, cursor: NewSessionCharacterOption?): AddParticipantPage {
+        val encyclopediaId = sessionWorldDao.getBySession(sessionId)?.encyclopediaId?.takeIf { it > 0L }
+        val rows = characterDao.getAddParticipantPage(
+            sessionId, encyclopediaId, query.trim(), cursor?.pinnedAt, cursor?.favorite,
+            cursor?.createdAt, cursor?.id, ADD_PARTICIPANT_PAGE_SIZE + 1,
+        )
+        return AddParticipantPage(rows.take(ADD_PARTICIPANT_PAGE_SIZE), rows.size > ADD_PARTICIPANT_PAGE_SIZE)
+    }
+
     fun addParticipant(
         characterId: Long,
         onResult: (Boolean) -> Unit = {},
@@ -3386,8 +3400,6 @@ class ChatViewModel @Inject constructor(
             }
         }
     }
-
-    suspend fun getAllCharacters(): List<CharacterEntity> = characterDao.getAll()
 
     fun stopGeneration() {
         val job = generationJob ?: return
