@@ -207,6 +207,7 @@ fun VoiceChoicePicker(
 
     val searchQuery = query.trim()
     val displayVoices = (listOf(VoiceOption("", if (selectedEngine == "azure") "默认 · 晓晓" else "引擎默认")) + voices.filter { it.id.isNotBlank() })
+        .distinctBy { it.id }
         .filter { searchQuery.isBlank() || it.name.contains(searchQuery, true) || it.id.contains(searchQuery, true) }
 
     val currentSaving by rememberUpdatedState(saving)

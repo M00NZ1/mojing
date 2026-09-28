@@ -60,7 +60,7 @@ object VoiceEngineCatalog {
         } catch (e: Exception) {
             throw IllegalStateException("无法读取所选朗读引擎的音色，请检查引擎是否可用", e)
         }
-        return result.sortedWith(compareBy<VoiceOption> { it.name }.thenBy { it.id })
+        return normalizeVoiceOptions(result)
     }
 
     private suspend fun queryVoices(context: Context, packageName: String?): List<VoiceOption> {
@@ -117,3 +117,10 @@ object VoiceEngineCatalog {
         return VoiceOption(name, label)
     }
 }
+
+/** System TTS implementations may expose several Voice rows with the same selectable name. */
+internal fun normalizeVoiceOptions(options: Iterable<VoiceOption>): List<VoiceOption> =
+    options
+        .filter { it.id.isNotBlank() }
+        .distinctBy { it.id }
+        .sortedWith(compareBy<VoiceOption> { it.name }.thenBy { it.id })
