@@ -1539,6 +1539,39 @@ class EncyclopediaDaoTest {
     }
 
     @Test
+    fun libraryPagesUseStableCursorAndKeepWorldPromptsOutOfCards() = runBlocking {
+        repeat(55) { index ->
+            encyclopediaDao.upsert(
+                EncyclopediaEntity(
+                    name = "世界 ${index.toString().padStart(2, '0')}",
+                    description = "简介".repeat(100),
+                    worldPrompt = "完整设定".repeat(1000),
+                    pinnedAt = if (index % 11 == 0) 100L else 0L,
+                    updatedAt = 200L,
+                ),
+            )
+        }
+        val seen = mutableListOf<Long>()
+        var cursor: com.mojing.app.data.local.dao.EncyclopediaLibraryItem? = null
+        do {
+            val rows = encyclopediaDao.getLibraryPage(
+                query = "", cursorPinned = cursor?.let { if (it.pinnedAt > 0) 1 else 0 },
+                cursorPinnedAt = cursor?.pinnedAt, cursorUpdatedAt = cursor?.updatedAt,
+                cursorId = cursor?.id, limit = 25,
+            )
+            val page = rows.take(24)
+            seen += page.map { it.id }
+            cursor = page.lastOrNull()
+        } while (rows.size > 24)
+        assertEquals(55, seen.size)
+        assertEquals(55, seen.toSet().size)
+        val searched = encyclopediaDao.getLibraryPage("世界 54", null, null, null, null, 25)
+        assertEquals(1, searched.size)
+        assertTrue(searched.single().preview.length <= 160)
+        assertFalse(searched.single().preview.contains("完整设定"))
+    }
+
+    @Test
     fun entryCrudAndFilter() = runBlocking {
         val encId = encyclopediaDao.upsert(EncyclopediaEntity(name = "百科"))
         entryDao.upsert(EncyclopediaEntryEntity(encyclopediaId = encId, title = "角色A", entryType = "character"))

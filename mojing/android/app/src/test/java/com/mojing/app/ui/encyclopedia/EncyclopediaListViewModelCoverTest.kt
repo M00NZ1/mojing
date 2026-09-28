@@ -4,6 +4,7 @@ import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.EncyclopediaEntryDao
+import com.mojing.app.data.local.dao.EncyclopediaLibraryItem
 import com.mojing.app.data.local.dao.GenerationTaskDao
 import com.mojing.app.data.local.entity.EncyclopediaEntity
 import com.mojing.app.data.prefs.UiPreferencesRepository
@@ -36,6 +37,12 @@ import java.nio.file.Files
 @OptIn(ExperimentalCoroutinesApi::class)
 class EncyclopediaListViewModelCoverTest {
     private lateinit var dispatcher: TestDispatcher
+
+    private fun EncyclopediaEntity.libraryItem() = EncyclopediaLibraryItem(
+        id = id, name = name, coverImagePath = coverImagePath, pinnedAt = pinnedAt,
+        updatedAt = updatedAt, genreTags = genreTags,
+        preview = description.ifBlank { worldPrompt }.take(160),
+    )
 
     @Before
     fun setUp() {
@@ -180,7 +187,8 @@ class EncyclopediaListViewModelCoverTest {
         val original = EncyclopediaEntity(id = 7L, name = "测试百科", coverImagePath = "old.jpg")
         val updated = original.copy(coverImagePath = localFile.absolutePath)
         val encyclopediaDao = mockk<EncyclopediaDao> {
-            coEvery { getAll() } returnsMany listOf(listOf(original), listOf(updated))
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any()) } returnsMany
+                listOf(listOf(original.libraryItem()), listOf(updated.libraryItem()))
             coEvery { updateCover(7L, localFile.absolutePath, any()) } returns 1
         }
         val viewModel = createViewModel(
@@ -193,7 +201,7 @@ class EncyclopediaListViewModelCoverTest {
         val message = viewModel.updateEncyclopediaCover(7L, localFile.absolutePath)
 
         assertEquals("已更新封面", message)
-        assertEquals(localFile.absolutePath, viewModel.encyclopedias.value.single().coverImagePath)
+        assertEquals(localFile.absolutePath, viewModel.library.value.items.single().coverImagePath)
         assertTrue(localFile.exists())
     }
 
@@ -223,7 +231,7 @@ class EncyclopediaListViewModelCoverTest {
     fun createNewReturnsInsertedIdOnlyAfterRoomUpsertAndRefresh() = runTest(dispatcher) {
         val created = EncyclopediaEntity(id = 42L, name = "新百科库")
         val encyclopediaDao = mockk<EncyclopediaDao> {
-            coEvery { getAll() } returns listOf(created)
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any()) } returns listOf(created.libraryItem())
             coEvery { upsert(any()) } returns 42L
         }
         val viewModel = createViewModel(
@@ -238,7 +246,7 @@ class EncyclopediaListViewModelCoverTest {
         assertTrue(result.isSuccess)
         assertEquals(42L, result.getOrThrow())
         coVerify(exactly = 1) { encyclopediaDao.upsert(match { it.name == "新百科库" }) }
-        assertEquals(listOf(created), viewModel.encyclopedias.value)
+        assertEquals(listOf(created.libraryItem()), viewModel.library.value.items)
     }
 
     @Test
@@ -258,6 +266,40 @@ class EncyclopediaListViewModelCoverTest {
 
         assertTrue(result.isFailure)
         assertEquals("百科创建失败，请重试", result.exceptionOrNull()?.message)
-        assertTrue(viewModel.encyclopedias.value.isEmpty())
+        assertTrue(viewModel.library.value.items.isEmpty())
+    }
+
+    @Test
+    fun failedNextPageKeepsVisibleWorldsAndRetryUsesSameCursor() = runTest(dispatcher) {
+        val first = (1L..25L).map { id ->
+            EncyclopediaEntity(id = id, name = "世界$id", updatedAt = 100L).libraryItem()
+        }
+        val last = EncyclopediaEntity(id = 26L, name = "最后一个世界", updatedAt = 100L).libraryItem()
+        var nextReads = 0
+        val encyclopediaDao = mockk<EncyclopediaDao> {
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any()) } coAnswers {
+                if (arg<Long?>(4) == null) first else {
+                    nextReads++
+                    if (nextReads == 1) throw IllegalStateException("read failed")
+                    listOf(last)
+                }
+            }
+        }
+        val viewModel = createViewModel(
+            encyclopediaDao, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true),
+        )
+        assertEquals(24, viewModel.library.value.items.size)
+        assertTrue(viewModel.library.value.hasNext)
+
+        viewModel.nextPage()
+        assertEquals(0, viewModel.library.value.pageIndex)
+        assertEquals(24, viewModel.library.value.items.size)
+        assertEquals("世界列表加载失败，请重试", viewModel.library.value.error)
+
+        viewModel.retryPage()
+        assertEquals(1, viewModel.library.value.pageIndex)
+        assertEquals(listOf(last), viewModel.library.value.items)
+        assertFalse(viewModel.library.value.hasNext)
+        assertEquals(2, nextReads)
     }
 }

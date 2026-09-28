@@ -14,8 +14,42 @@ data class EncyclopediaFilterOption(
 
 data class EncyclopediaNameOption(val id: Long, val name: String)
 
+/** Only the fields needed by the world library; full prompts stay in Room until detail/export. */
+data class EncyclopediaLibraryItem(
+    val id: Long,
+    val name: String,
+    val coverImagePath: String,
+    val pinnedAt: Long,
+    val updatedAt: Long,
+    val genreTags: String,
+    val preview: String,
+)
+
 @Dao
 interface EncyclopediaDao {
+    @Query(
+        """
+        SELECT id, name, coverImagePath, pinnedAt, updatedAt,
+               substr(genreTags, 1, 120) AS genreTags,
+               CASE WHEN length(trim(description)) > 0
+                    THEN substr(trim(description), 1, 160)
+                    ELSE substr(trim(worldPrompt), 1, 160) END AS preview
+        FROM world_encyclopedias
+        WHERE (:query = '' OR instr(lower(name), lower(:query)) > 0)
+          AND (:cursorId IS NULL OR
+               (CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) < :cursorPinned OR
+               ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND pinnedAt < :cursorPinnedAt) OR
+               ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND pinnedAt = :cursorPinnedAt AND updatedAt < :cursorUpdatedAt) OR
+               ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND pinnedAt = :cursorPinnedAt AND updatedAt = :cursorUpdatedAt AND id < :cursorId))
+        ORDER BY CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END DESC, pinnedAt DESC, updatedAt DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getLibraryPage(
+        query: String, cursorPinned: Int?, cursorPinnedAt: Long?, cursorUpdatedAt: Long?,
+        cursorId: Long?, limit: Int,
+    ): List<EncyclopediaLibraryItem>
+
     @Query(
         """
         SELECT id, name, pinnedAt, updatedAt FROM world_encyclopedias

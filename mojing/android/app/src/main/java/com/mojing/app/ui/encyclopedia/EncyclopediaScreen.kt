@@ -38,7 +38,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavHostController
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
-import com.mojing.app.data.local.entity.EncyclopediaEntity
+import com.mojing.app.data.local.dao.EncyclopediaLibraryItem
 import com.mojing.app.media.CharacterCardImageProcessor
 import com.mojing.app.ui.character.components.CardCoverCropSheetHost
 import com.mojing.app.ui.common.EmptyState
@@ -54,6 +54,7 @@ import com.mojing.app.util.ContentDocumentWriter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -67,7 +68,8 @@ fun EncyclopediaScreen(
     onGenerationTasksClick: () -> Unit,
     viewModel: EncyclopediaListViewModel = hiltViewModel()
 ) {
-    val encyclopedias by viewModel.encyclopedias.collectAsStateWithLifecycle()
+    val library by viewModel.library.collectAsStateWithLifecycle()
+    val encyclopedias = library.items
     val listLayout by viewModel.encyclopediaListLayout.collectAsStateWithLifecycle()
     val hasPublicLlmKey by viewModel.hasPublicLlmKey.collectAsStateWithLifecycle()
     val pendingGenTasks by viewModel.pendingGenerationTaskCount.collectAsStateWithLifecycle()
@@ -81,26 +83,32 @@ fun EncyclopediaScreen(
         viewModel.syncPublicLlmKeyFromStorage()
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    var renameTarget by remember { mutableStateOf<EncyclopediaEntity?>(null) }
+    var renameTarget by remember { mutableStateOf<EncyclopediaLibraryItem?>(null) }
     var renameDraft by remember { mutableStateOf("") }
     var renameError by remember { mutableStateOf<String?>(null) }
     var renaming by remember { mutableStateOf(false) }
-    var deleteTarget by remember { mutableStateOf<EncyclopediaEntity?>(null) }
+    var deleteTarget by remember { mutableStateOf<EncyclopediaLibraryItem?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var isImportingDocument by remember { mutableStateOf(false) }
     var isExportingDocument by rememberSaveable { mutableStateOf(false) }
-    var coverPickTarget by remember { mutableStateOf<EncyclopediaEntity?>(null) }
+    var coverPickTarget by remember { mutableStateOf<EncyclopediaLibraryItem?>(null) }
     var coverCropBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var coverPendingEncId by remember { mutableStateOf<Long?>(null) }
     var isCoverTaskBusy by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
     var isCreating by remember { mutableStateOf(false) }
     var createError by rememberSaveable { mutableStateOf<String?>(null) }
+    var searchDraft by rememberSaveable { mutableStateOf("") }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    fun requestCoverGeneration(encyclopedia: EncyclopediaEntity) {
+    LaunchedEffect(searchDraft) {
+        delay(200)
+        viewModel.setSearchQuery(searchDraft)
+    }
+
+    fun requestCoverGeneration(encyclopedia: EncyclopediaLibraryItem) {
         val started = viewModel.generateEncyclopediaCoverAi(encyclopedia.id) { message ->
             scope.launch { snackbarHostState.showSnackbar(UserFacingStrings.appendAndroidIfNeeded(message)) }
         }
@@ -110,7 +118,7 @@ fun EncyclopediaScreen(
     }
 
     @Composable
-    fun GenerateCoverMenuItem(encyclopedia: EncyclopediaEntity) {
+    fun GenerateCoverMenuItem(encyclopedia: EncyclopediaLibraryItem) {
         val isGenerating = encyclopedia.id in coverGeneratingEncyclopediaIds
         DropdownMenuItem(
             text = { Text(if (isGenerating) "生成中…" else "生成封面") },
@@ -300,7 +308,7 @@ fun EncyclopediaScreen(
             MainAppBottomNavigation(navController)
         },
         floatingActionButton = {
-            if (encyclopedias.isNotEmpty()) {
+            if (library.loaded && (encyclopedias.isNotEmpty() || searchDraft.isNotBlank())) {
                 FloatingActionButton(onClick = { if (!isCreating) createEncyclopedia() }) {
                     if (isCreating) {
                         CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
@@ -317,6 +325,21 @@ fun EncyclopediaScreen(
                 .background(MaterialTheme.colorScheme.surfaceContainerLowest)
                 .padding(padding),
         ) {
+            OutlinedTextField(
+                value = searchDraft,
+                onValueChange = { searchDraft = it },
+                label = { Text("搜索世界名称") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                trailingIcon = {
+                    if (searchDraft.isNotEmpty()) {
+                        IconButton(onClick = { searchDraft = "" }) {
+                            Icon(Icons.Default.Close, contentDescription = "清除搜索")
+                        }
+                    }
+                },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = MoJingListTokens.rowStart, vertical = 8.dp),
+            )
             if (createError != null) {
                 Card(
                     modifier = Modifier
@@ -337,18 +360,45 @@ fun EncyclopediaScreen(
                     }
                 }
             }
-            if (encyclopedias.isEmpty()) {
+            if (library.loading && !library.loaded) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            } else if (library.error != null && !library.loaded) {
                 EmptyState(
                     icon = Icons.AutoMirrored.Filled.MenuBook,
-                    title = "还没有世界百科",
-                    message = "创建百科后，可以整理世界规则、地点、势力、事件和人物关系。",
-                    actionLabel = if (isCreating) "正在创建…" else "新建百科",
-                    onAction = ::createEncyclopedia,
+                    title = "世界列表暂时无法读取",
+                    message = library.error.orEmpty(),
+                    actionLabel = "重试",
+                    onAction = viewModel::retryPage,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
+            } else if (encyclopedias.isEmpty()) {
+                EmptyState(
+                    icon = Icons.AutoMirrored.Filled.MenuBook,
+                    title = if (library.query.isBlank()) "还没有世界百科" else "没有找到世界",
+                    message = if (library.query.isBlank()) "创建百科后，可以整理世界规则、地点、势力、事件和人物关系。" else "试试其他名称，或清除搜索条件。",
+                    actionLabel = if (library.query.isBlank()) (if (isCreating) "正在创建…" else "新建百科") else "清除搜索",
+                    onAction = if (library.query.isBlank()) ::createEncyclopedia else ({ searchDraft = "" }),
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
                 )
             } else {
+                if (library.loading || library.error != null) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = MoJingListTokens.rowStart),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            if (library.loading) "正在读取世界…" else library.error.orEmpty(),
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (library.error != null) TextButton(onClick = viewModel::retryPage) { Text("重试") }
+                    }
+                }
                 if (!hasPublicLlmKey) {
                     LlmKeySetupHintCard(
                         message = "请先在设置填写 API Key",
@@ -464,6 +514,19 @@ fun EncyclopediaScreen(
                 }
                 }
             }
+            if (library.loaded && encyclopedias.isNotEmpty()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = MoJingListTokens.rowStart, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("第 ${library.pageIndex + 1} 页", style = MaterialTheme.typography.labelMedium)
+                    Row {
+                        TextButton(onClick = viewModel::previousPage, enabled = !library.loading && library.pageIndex > 0) { Text("上一页") }
+                        TextButton(onClick = viewModel::nextPage, enabled = !library.loading && library.hasNext) { Text("下一页") }
+                    }
+                }
+            }
         }
     }
 
@@ -542,7 +605,7 @@ fun EncyclopediaScreen(
 }
 
 @Composable
-private fun EncyclopediaListRowInner(enc: EncyclopediaEntity) {
+private fun EncyclopediaListRowInner(enc: EncyclopediaLibraryItem) {
     val context = LocalContext.current
     ListItem(
         modifier = Modifier.fillMaxWidth(),
@@ -584,7 +647,7 @@ private fun EncyclopediaListRowInner(enc: EncyclopediaEntity) {
         },
         supportingContent = {
             Column {
-                val preview = enc.description.ifBlank { enc.worldPrompt }.trim()
+                val preview = enc.preview
                 if (preview.isNotBlank()) {
                     Text(
                         preview,
@@ -609,7 +672,7 @@ private fun EncyclopediaListRowInner(enc: EncyclopediaEntity) {
 }
 
 @Composable
-private fun EncyclopediaGridCard(enc: EncyclopediaEntity) {
+private fun EncyclopediaGridCard(enc: EncyclopediaLibraryItem) {
     val context = LocalContext.current
     Card(
         modifier = Modifier
@@ -660,7 +723,7 @@ private fun EncyclopediaGridCard(enc: EncyclopediaEntity) {
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                val gridPreview = enc.description.ifBlank { enc.worldPrompt }.trim()
+                val gridPreview = enc.preview
                 if (gridPreview.isNotBlank()) {
                     Text(
                         gridPreview,

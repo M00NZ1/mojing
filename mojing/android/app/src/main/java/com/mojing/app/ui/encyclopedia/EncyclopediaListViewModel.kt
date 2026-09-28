@@ -6,6 +6,7 @@ import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.EncyclopediaEntryDao
+import com.mojing.app.data.local.dao.EncyclopediaLibraryItem
 import com.mojing.app.data.local.dao.GenerationTaskDao
 import com.mojing.app.data.local.entity.EncyclopediaEntity
 import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
@@ -26,6 +27,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +39,16 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
+
+data class EncyclopediaLibraryState(
+    val items: List<EncyclopediaLibraryItem> = emptyList(),
+    val query: String = "",
+    val pageIndex: Int = 0,
+    val hasNext: Boolean = false,
+    val loading: Boolean = false,
+    val loaded: Boolean = false,
+    val error: String? = null,
+)
 
 internal object EncyclopediaExportCodec {
     data class ExportedEntry(
@@ -160,8 +172,75 @@ class EncyclopediaListViewModel @Inject constructor(
     private val coverGenerationOwner = KeyedOperationOwner<Long>()
     val coverGeneratingEncyclopediaIds: StateFlow<Set<Long>> = coverGenerationOwner.activeKeys
 
-    private val _encyclopedias = MutableStateFlow<List<EncyclopediaEntity>>(emptyList())
-    val encyclopedias: StateFlow<List<EncyclopediaEntity>> = _encyclopedias.asStateFlow()
+    private val libraryPageSize = 24 // Image-heavy world cards use the project list standard.
+    private val _library = MutableStateFlow(EncyclopediaLibraryState())
+    val library: StateFlow<EncyclopediaLibraryState> = _library.asStateFlow()
+    private val pageCursors = mutableListOf<EncyclopediaLibraryItem?>(null)
+    private var loadJob: Job? = null
+    private var loadRevision = 0
+    private var pendingPageIndex = 0
+
+    fun setSearchQuery(query: String) {
+        val normalized = query.trim()
+        if (normalized == _library.value.query) return
+        _library.value = EncyclopediaLibraryState(query = normalized)
+        pageCursors.clear()
+        pageCursors.add(null)
+        loadPage(0)
+    }
+
+    fun nextPage() {
+        val state = _library.value
+        if (state.loading || state.error != null || !state.hasNext) return
+        val cursor = state.items.lastOrNull() ?: return
+        pageCursors.add(cursor)
+        loadPage(state.pageIndex + 1)
+    }
+
+    fun previousPage() {
+        val state = _library.value
+        if (state.loading || state.pageIndex == 0) return
+        loadPage(state.pageIndex - 1)
+    }
+
+    fun retryPage() = loadPage(pendingPageIndex)
+
+    private fun loadPage(index: Int) {
+        loadJob?.cancel()
+        pendingPageIndex = index
+        val revision = ++loadRevision
+        val current = _library.value
+        _library.value = current.copy(loading = true, error = null)
+        val cursor = pageCursors.getOrNull(index)
+        loadJob = viewModelScope.launch {
+            try {
+                val rows = encyclopediaDao.getLibraryPage(
+                    query = current.query,
+                    cursorPinned = cursor?.let { if (it.pinnedAt > 0) 1 else 0 },
+                    cursorPinnedAt = cursor?.pinnedAt,
+                    cursorUpdatedAt = cursor?.updatedAt,
+                    cursorId = cursor?.id,
+                    limit = libraryPageSize + 1,
+                )
+                if (revision != loadRevision) return@launch
+                _library.value = current.copy(
+                    items = rows.take(libraryPageSize),
+                    pageIndex = index,
+                    hasNext = rows.size > libraryPageSize,
+                    loading = false,
+                    loaded = true,
+                    error = null,
+                )
+                while (pageCursors.size > index + 1) pageCursors.removeAt(pageCursors.lastIndex)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (revision == loadRevision) {
+                    _library.value = current.copy(loading = false, error = "世界列表加载失败，请重试")
+                }
+            }
+        }
+    }
 
     private val _hasPublicLlmKey = MutableStateFlow(false)
     val hasPublicLlmKey: StateFlow<Boolean> = _hasPublicLlmKey.asStateFlow()
@@ -185,7 +264,7 @@ class EncyclopediaListViewModel @Inject constructor(
 
     init {
         syncPublicLlmKeyFromStorage()
-        viewModelScope.launch { createMutex.withLock { _encyclopedias.value = encyclopediaDao.getAll() } }
+        loadPage(0)
     }
 
     suspend fun createNew(): Result<Long> = createMutex.withLock {
@@ -193,15 +272,7 @@ class EncyclopediaListViewModel @Inject constructor(
         try {
             val id = encyclopediaDao.upsert(entity)
             if (id <= 0L) return@withLock Result.failure(IllegalStateException("百科创建失败，请重试"))
-            try {
-                _encyclopedias.value = encyclopediaDao.getAll()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                // The row already exists; keep it visible if the refresh read fails.
-                _encyclopedias.value = (_encyclopedias.value + entity.copy(id = id))
-                    .distinctBy { it.id }
-            }
+            refresh()
             Result.success(id)
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -214,14 +285,14 @@ class EncyclopediaListViewModel @Inject constructor(
         if (name.isBlank()) return "请输入百科名称"
         return try {
             if (encyclopediaDao.updateName(id, name.trim(), System.currentTimeMillis()) == 0) "百科已不存在"
-            else { _encyclopedias.value = encyclopediaDao.getAll(); null }
+            else { refresh(); null }
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { "名称保存失败，请重试" }
     }
 
     suspend fun delete(id: Long): String? = try {
         val error = deleteWorld(id)
-        if (error == null) _encyclopedias.value = encyclopediaDao.getAll()
+        if (error == null) refresh()
         error
     } catch (cancelled: CancellationException) {
         throw cancelled
@@ -231,9 +302,17 @@ class EncyclopediaListViewModel @Inject constructor(
 
     fun setEncyclopediaPinned(id: Long, pinned: Boolean) {
         viewModelScope.launch {
-            val now = System.currentTimeMillis()
-            if (encyclopediaDao.updatePinned(id, if (pinned) now else 0L, now) > 0) {
-                _encyclopedias.value = encyclopediaDao.getAll()
+            try {
+                val now = System.currentTimeMillis()
+                if (encyclopediaDao.updatePinned(id, if (pinned) now else 0L, now) > 0) {
+                    refresh()
+                } else {
+                    _library.value = _library.value.copy(error = "世界已不存在，请重试")
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _library.value = _library.value.copy(error = "置顶状态保存失败，请重试")
             }
         }
     }
@@ -241,7 +320,9 @@ class EncyclopediaListViewModel @Inject constructor(
     fun refresh() {
         viewModelScope.launch {
             syncPublicLlmKeyFromStorage()
-            createMutex.withLock { _encyclopedias.value = encyclopediaDao.getAll() }
+            pageCursors.clear()
+            pageCursors.add(null)
+            loadPage(0)
         }
     }
 
@@ -258,11 +339,7 @@ class EncyclopediaListViewModel @Inject constructor(
                     UserFacingStrings.localSaveFailed("封面")
                 }
             }
-            _encyclopedias.value = runCatching { encyclopediaDao.getAll() }.getOrElse {
-                _encyclopedias.value.map { encyclopedia ->
-                    if (encyclopedia.id == id) encyclopedia.copy(coverImagePath = path, updatedAt = now) else encyclopedia
-                }
-            }
+            refresh()
             "已更新封面"
         } catch (_: Exception) {
             runCatching { File(path).delete() }
@@ -394,7 +471,7 @@ class EncyclopediaListViewModel @Inject constructor(
             }
         }
         if (rejectedMessage != null) return rejectedMessage
-        _encyclopedias.value = encyclopediaDao.getAll()
+        refresh()
         return "封面已生成并保存"
     }
 
@@ -449,7 +526,7 @@ class EncyclopediaListViewModel @Inject constructor(
                 entryCount++
             }
         }
-        _encyclopedias.value = encyclopediaDao.getAll()
+        refresh()
         "导入 $encCount 个百科，共 $entryCount 个词条"
     } catch (cancelled: CancellationException) {
         throw cancelled
