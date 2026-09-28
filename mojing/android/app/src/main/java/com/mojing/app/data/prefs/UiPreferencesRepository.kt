@@ -121,6 +121,18 @@ class UiPreferencesRepository @Inject constructor(
             ?: MAIN_BRANCH
     }
 
+    /** 一次读取所有会话的续聊位置，避免故事列表的每张卡片分别订阅 DataStore。 */
+    val lastChatBranches: Flow<Map<Long, String>> = dataStore.data.map { prefs ->
+        prefs.asMap().mapNotNull { (key, value) ->
+            val sessionId = key.name.takeIf { it.startsWith(LAST_CHAT_BRANCH_PREFIX) }
+                ?.removePrefix(LAST_CHAT_BRANCH_PREFIX)
+                ?.toLongOrNull()
+                ?.takeIf { it > 0L }
+            val branchId = (value as? String)?.trim()?.takeIf { it.isNotEmpty() && it != MAIN_BRANCH }
+            if (sessionId != null && branchId != null) sessionId to branchId else null
+        }.toMap()
+    }
+
     suspend fun setLastChatBranch(sessionId: Long, branchId: String) {
         if (sessionId <= 0L) return
         val normalized = branchId.trim().ifBlank { MAIN_BRANCH }
@@ -139,9 +151,10 @@ class UiPreferencesRepository @Inject constructor(
     }
 
     private fun lastChatBranchKey(sessionId: Long) =
-        stringPreferencesKey("chat_last_branch_$sessionId")
+        stringPreferencesKey("$LAST_CHAT_BRANCH_PREFIX$sessionId")
 
     private companion object {
         const val MAIN_BRANCH = "main"
+        const val LAST_CHAT_BRANCH_PREFIX = "chat_last_branch_"
     }
 }

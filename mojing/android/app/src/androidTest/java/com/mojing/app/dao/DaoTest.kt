@@ -364,6 +364,7 @@ class MessageDaoTest {
 
         val latest = messageDao.getVisibleMessagesTail(sessionId, branchB.branchId, 3)
         assertEquals(listOf(branchBTail, branchATail, replacementId), latest.map { it.id })
+        assertEquals("B 后续", messageDao.getVisibleStoryCardPreview(sessionId, branchB.branchId)?.contentPrefix)
         val older = messageDao.getVisibleMessagesBefore(sessionId, branchB.branchId, replacementId, 3)
         assertEquals(listOf(main1), older.map { it.id })
         assertNull(messageDao.getVisibleMessageById(sessionId, branchB.branchId, main2))
@@ -380,11 +381,14 @@ class MessageDaoTest {
         sessionBranchDao.deleteAllVisibilitySegments()
         assertTrue(messageDao.getVisibleMessagesTail(sessionId, branchB.branchId, 3).isEmpty())
         assertTrue(sessionBranchDao.repairVisibilitySegmentsIfNeeded())
+        assertEquals("B 后续", messageDao.getVisibleStoryCardPreview(sessionId, branchB.branchId)?.contentPrefix)
         assertEquals(
             listOf(branchBTail, branchATail, replacementId),
             messageDao.getVisibleMessagesTail(sessionId, branchB.branchId, 3).map { it.id },
         )
         assertFalse(sessionBranchDao.repairVisibilitySegmentsIfNeeded())
+        messageDao.insert(MessageEntity(sessionId = sessionId, branchId = branchB.branchId, content = "长".repeat(2000)))
+        assertEquals(1024, messageDao.getVisibleStoryCardPreview(sessionId, branchB.branchId)?.contentPrefix?.length)
     }
 
     @Test

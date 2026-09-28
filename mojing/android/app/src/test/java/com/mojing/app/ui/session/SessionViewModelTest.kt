@@ -4,12 +4,17 @@ import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.GenerationTaskDao
+import com.mojing.app.data.local.dao.MessageDao
+import com.mojing.app.data.local.dao.SessionBranchDao
 import com.mojing.app.data.local.dao.SessionDao
+import com.mojing.app.data.local.dao.StoryBranchPreviewSource
 import com.mojing.app.data.local.dao.WorldTemplateDao
+import com.mojing.app.data.local.branch.BranchVisibilityIndexManager
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.EncyclopediaEntity
 import com.mojing.app.data.local.entity.SessionEntity
 import com.mojing.app.data.local.entity.SessionWithListMeta
+import com.mojing.app.data.local.entity.SessionBranchEntity
 import com.mojing.app.data.local.entity.WorldTemplateEntity
 import com.mojing.app.data.prefs.UiPreferencesRepository
 import com.mojing.app.domain.usecase.CreateSessionUseCase
@@ -43,11 +48,15 @@ class SessionViewModelTest {
     private val sessionDao = mockk<SessionDao>(relaxed = true) {
         every { observeAllWithListMeta() } returns flowOf(emptyList())
     }
+    private val sessionBranchDao = mockk<SessionBranchDao>(relaxed = true)
+    private val messageDao = mockk<MessageDao>(relaxed = true)
+    private val branchVisibilityIndexManager = mockk<BranchVisibilityIndexManager>(relaxed = true)
     private val generationTaskDao = mockk<GenerationTaskDao>(relaxed = true) {
         every { observeActiveCount() } returns flowOf(0)
     }
     private val preferences = mockk<UiPreferencesRepository>(relaxed = true) {
         every { quickStartGuideDismissed } returns flowOf(false)
+        every { lastChatBranches } returns flowOf(emptyMap())
     }
     private val secureStorage = mockk<SecureStorage>(relaxed = true)
     private val transaction = mockk<SessionCreationTransaction>(relaxed = true)
@@ -147,6 +156,89 @@ class SessionViewModelTest {
         advanceUntilIdle()
         assertEquals(SessionLibraryUiState.Loaded(listOf(recovered)), viewModel.sessionLibraryState.value)
         assertEquals(2, attempts)
+    }
+
+    @Test
+    fun branchCardPreviewReadsRememberedBranchWithoutLoadingFullMessages() = runTest(dispatcher) {
+        coEvery { sessionBranchDao.getByBranch(7L, "branch-a") } returns
+            SessionBranchEntity(sessionId = 7L, branchId = "branch-a", label = "雨后", sourceMessageId = 3L)
+        coEvery { messageDao.getVisibleStoryCardPreview(7L, "branch-a") } returns
+            StoryBranchPreviewSource("新一幕", "narrator")
+        val viewModel = createViewModel()
+
+        viewModel.loadBranchCardPreview(7L, "branch-a", 10L)
+        advanceUntilIdle()
+
+        assertEquals(
+            BranchCardPreviewState("branch-a", 10L, 1L, label = "雨后", contentPrefix = "新一幕",
+                speakerType = "narrator", loading = false),
+            viewModel.branchCardPreviews.value[7L],
+        )
+        coVerify(exactly = 1) { branchVisibilityIndexManager.ensureReady() }
+        coVerify(exactly = 1) { messageDao.getVisibleStoryCardPreview(7L, "branch-a") }
+    }
+
+    @Test
+    fun staleBranchCardPreviewCannotReplaceNewlySelectedBranch() = runTest(dispatcher) {
+        val oldRead = CompletableDeferred<StoryBranchPreviewSource?>()
+        coEvery { sessionBranchDao.getByBranch(7L, "branch-a") } returns
+            SessionBranchEntity(sessionId = 7L, branchId = "branch-a", sourceMessageId = 3L)
+        coEvery { sessionBranchDao.getByBranch(7L, "branch-b") } returns
+            SessionBranchEntity(sessionId = 7L, branchId = "branch-b", sourceMessageId = 4L)
+        coEvery { messageDao.getVisibleStoryCardPreview(7L, "branch-a") } coAnswers { oldRead.await() }
+        coEvery { messageDao.getVisibleStoryCardPreview(7L, "branch-b") } returns
+            StoryBranchPreviewSource("另一幕", "character")
+        val viewModel = createViewModel()
+
+        viewModel.loadBranchCardPreview(7L, "branch-a", 10L)
+        runCurrent()
+        viewModel.loadBranchCardPreview(7L, "branch-b", 10L)
+        advanceUntilIdle()
+        oldRead.complete(StoryBranchPreviewSource("过期内容", "narrator"))
+        advanceUntilIdle()
+
+        assertEquals("branch-b", viewModel.branchCardPreviews.value[7L]?.branchId)
+        assertEquals("另一幕", viewModel.branchCardPreviews.value[7L]?.contentPrefix)
+    }
+
+    @Test
+    fun failedBranchCardPreviewCanRetryWithoutChangingRememberedBranch() = runTest(dispatcher) {
+        coEvery { sessionBranchDao.getByBranch(7L, "branch-a") } returns
+            SessionBranchEntity(sessionId = 7L, branchId = "branch-a", sourceMessageId = 3L)
+        var reads = 0
+        coEvery { messageDao.getVisibleStoryCardPreview(7L, "branch-a") } coAnswers {
+            if (++reads == 1) throw IllegalStateException("temporary read failure")
+            StoryBranchPreviewSource("恢复的预览", "character")
+        }
+        val viewModel = createViewModel()
+
+        viewModel.loadBranchCardPreview(7L, "branch-a", 10L)
+        advanceUntilIdle()
+        assertTrue(viewModel.branchCardPreviews.value[7L]?.error == true)
+        viewModel.loadBranchCardPreview(7L, "branch-a", 10L, retry = true)
+        advanceUntilIdle()
+
+        assertEquals("恢复的预览", viewModel.branchCardPreviews.value[7L]?.contentPrefix)
+        assertFalse(viewModel.branchCardPreviews.value[7L]?.error == true)
+        assertEquals(2, reads)
+    }
+
+    @Test
+    fun returningToLibraryDropsInFlightBranchPreview() = runTest(dispatcher) {
+        val pending = CompletableDeferred<StoryBranchPreviewSource?>()
+        coEvery { sessionBranchDao.getByBranch(7L, "branch-a") } returns
+            SessionBranchEntity(sessionId = 7L, branchId = "branch-a", sourceMessageId = 3L)
+        coEvery { messageDao.getVisibleStoryCardPreview(7L, "branch-a") } coAnswers { pending.await() }
+        val viewModel = createViewModel()
+
+        viewModel.loadBranchCardPreview(7L, "branch-a", 10L)
+        runCurrent()
+        viewModel.refreshBranchCardPreviews()
+        pending.complete(StoryBranchPreviewSource("旧预览", "narrator"))
+        advanceUntilIdle()
+
+        assertEquals(1L, viewModel.branchPreviewEpoch.value)
+        assertTrue(viewModel.branchCardPreviews.value.isEmpty())
     }
 
     @Test
@@ -397,6 +489,9 @@ class SessionViewModelTest {
 
     private fun createViewModel(): SessionViewModel = SessionViewModel(
         sessionDao = sessionDao,
+        sessionBranchDao = sessionBranchDao,
+        messageDao = messageDao,
+        branchVisibilityIndexManager = branchVisibilityIndexManager,
         worldTemplateDao = worldTemplateDao,
         encyclopediaDao = encyclopediaDao,
         characterDao = characterDao,

@@ -22,6 +22,9 @@ interface SessionBranchDao {
     @Query("SELECT * FROM session_branches WHERE sessionId = :sessionId")
     suspend fun getBySession(sessionId: Long): List<SessionBranchEntity>
 
+    @Query("SELECT * FROM session_branches WHERE sessionId = :sessionId AND branchId = :branchId LIMIT 1")
+    suspend fun getByBranch(sessionId: Long, branchId: String): SessionBranchEntity?
+
     @Query("SELECT * FROM session_branches")
     suspend fun getAll(): List<SessionBranchEntity>
 

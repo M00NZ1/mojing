@@ -5,8 +5,11 @@ import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.GenerationTaskDao
+import com.mojing.app.data.local.dao.MessageDao
 import com.mojing.app.data.local.dao.SessionDao
+import com.mojing.app.data.local.dao.SessionBranchDao
 import com.mojing.app.data.local.dao.WorldTemplateDao
+import com.mojing.app.data.local.branch.BranchVisibilityIndexManager
 import com.mojing.app.data.local.entity.EncyclopediaEntity
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.SessionWithListMeta
@@ -21,9 +24,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import javax.inject.Inject
 
 internal sealed interface SessionLibraryUiState {
@@ -35,6 +41,18 @@ internal sealed interface SessionLibraryUiState {
     ) : SessionLibraryUiState
     data object Failed : SessionLibraryUiState
 }
+
+data class BranchCardPreviewState(
+    val branchId: String,
+    val sessionUpdatedAt: Long,
+    val revision: Long,
+    val label: String = "",
+    val contentPrefix: String? = null,
+    val speakerType: String? = null,
+    val loading: Boolean = true,
+    val error: Boolean = false,
+    val fallsBackToMain: Boolean = false,
+)
 
 internal data class SessionDeletionState(
     val sessionId: Long? = null,
@@ -53,6 +71,9 @@ internal data class SessionRenameState(
 @HiltViewModel
 class SessionViewModel @Inject constructor(
     private val sessionDao: SessionDao,
+    private val sessionBranchDao: SessionBranchDao,
+    private val messageDao: MessageDao,
+    private val branchVisibilityIndexManager: BranchVisibilityIndexManager,
     private val worldTemplateDao: WorldTemplateDao,
     private val encyclopediaDao: EncyclopediaDao,
     private val characterDao: CharacterDao,
@@ -80,6 +101,17 @@ class SessionViewModel @Inject constructor(
     private val _sessionLibraryState = MutableStateFlow<SessionLibraryUiState>(SessionLibraryUiState.Loading)
     internal val sessionLibraryState: StateFlow<SessionLibraryUiState> = _sessionLibraryState.asStateFlow()
     private var sessionLibraryJob: Job? = null
+    internal val lastChatBranches: StateFlow<Map<Long, String>?> = uiPreferencesRepository.lastChatBranches
+        .catch { emit(emptyMap()) }
+        .map<Map<Long, String>, Map<Long, String>?> { it }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    private val _branchCardPreviews = MutableStateFlow<Map<Long, BranchCardPreviewState>>(emptyMap())
+    internal val branchCardPreviews: StateFlow<Map<Long, BranchCardPreviewState>> = _branchCardPreviews.asStateFlow()
+    private val _branchPreviewEpoch = MutableStateFlow(0L)
+    internal val branchPreviewEpoch: StateFlow<Long> = _branchPreviewEpoch.asStateFlow()
+    private val branchPreviewJobs = mutableMapOf<Long, Job>()
+    private val branchPreviewReadSlots = Semaphore(4)
+    private var branchPreviewRevision = 0L
 
     init {
         observeSessionLibrary()
@@ -87,6 +119,70 @@ class SessionViewModel @Inject constructor(
 
     internal fun retrySessionLibrary() {
         observeSessionLibrary()
+    }
+
+    internal fun refreshBranchCardPreviews() {
+        branchPreviewJobs.values.toList().forEach { it.cancel() }
+        branchPreviewJobs.clear()
+        _branchCardPreviews.value = emptyMap()
+        _branchPreviewEpoch.value += 1L
+    }
+
+    internal fun clearBranchCardPreview(sessionId: Long) {
+        branchPreviewJobs.remove(sessionId)?.cancel()
+        _branchCardPreviews.value = _branchCardPreviews.value - sessionId
+    }
+
+    internal fun loadBranchCardPreview(sessionId: Long, branchId: String, updatedAt: Long, retry: Boolean = false) {
+        if (sessionId <= 0L || branchId == "main") return
+        val previous = _branchCardPreviews.value[sessionId]
+        if (!retry && previous?.branchId == branchId && previous.sessionUpdatedAt == updatedAt && !previous.error) return
+        branchPreviewJobs.remove(sessionId)?.cancel()
+        val revision = ++branchPreviewRevision
+        publishBranchCardPreview(sessionId, BranchCardPreviewState(branchId, updatedAt, revision))
+        val job = viewModelScope.launch {
+            try {
+                val result = branchPreviewReadSlots.withPermit {
+                    val branch = sessionBranchDao.getByBranch(sessionId, branchId)
+                    if (branch == null) {
+                        BranchCardPreviewState(branchId, updatedAt, revision, fallsBackToMain = true, loading = false)
+                    } else {
+                        branchVisibilityIndexManager.ensureReady()
+                        val preview = messageDao.getVisibleStoryCardPreview(sessionId, branchId)
+                        BranchCardPreviewState(
+                            branchId = branchId, sessionUpdatedAt = updatedAt, revision = revision,
+                            label = branch.label.ifBlank { "故事线" }, contentPrefix = preview?.contentPrefix,
+                            speakerType = preview?.speakerType, loading = false,
+                        )
+                    }
+                }
+                publishBranchCardPreviewIfCurrent(sessionId, result)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                publishBranchCardPreviewIfCurrent(
+                    sessionId, BranchCardPreviewState(branchId, updatedAt, revision, loading = false, error = true),
+                )
+            }
+        }
+        branchPreviewJobs[sessionId] = job
+        job.invokeOnCompletion { if (branchPreviewJobs[sessionId] === job) branchPreviewJobs.remove(sessionId) }
+    }
+
+    private fun publishBranchCardPreviewIfCurrent(sessionId: Long, state: BranchCardPreviewState) {
+        if (_branchCardPreviews.value[sessionId]?.revision == state.revision) publishBranchCardPreview(sessionId, state)
+    }
+
+    private fun publishBranchCardPreview(sessionId: Long, state: BranchCardPreviewState) {
+        val next = LinkedHashMap(_branchCardPreviews.value)
+        next.remove(sessionId)
+        next[sessionId] = state
+        while (next.size > 80) {
+            val oldest = next.keys.first()
+            next.remove(oldest)
+            branchPreviewJobs.remove(oldest)?.cancel()
+        }
+        _branchCardPreviews.value = next
     }
 
     private fun observeSessionLibrary() {
@@ -299,6 +395,8 @@ class SessionViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 sessionDao.delete(id)
+                branchPreviewJobs.remove(id)?.cancel()
+                _branchCardPreviews.value = _branchCardPreviews.value - id
                 _deletionState.value = SessionDeletionState(id, completed = true)
                 runCatching { uiPreferencesRepository.clearLastChatBranch(id) }
             } catch (cancelled: CancellationException) {

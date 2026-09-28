@@ -30,6 +30,12 @@ data class MessagePreviewSource(
     val content: String,
 )
 
+/** Story-card projection: never bring a whole chapter into the library state. */
+data class StoryBranchPreviewSource(
+    val contentPrefix: String,
+    val speakerType: String,
+)
+
 data class MessageSearchRebuildBatchResult(
     val indexedThroughMessageId: Long,
     val indexedCount: Int,
@@ -658,6 +664,14 @@ interface MessageDao {
         val state = currentSearchIndexState(sessionId)
         return countMainMessagesIndexed(sessionId, query, MessageSearchTokenizer.normalize(query), MessageSearchTokenizer.matchExpression(sessionId, query), exactMatch, state.indexedThroughMessageId, if (state.isComplete) 1 else 0)
     }
+
+    /** 故事卡片只取当前可见故事线最后一条消息的有限正文。 */
+    @Query(
+        "SELECT substr(message.content, 1, 1024) AS contentPrefix, " +
+            "message.speakerType AS speakerType $CURRENT_MESSAGES_FROM_QUERY " +
+            "ORDER BY message.id DESC LIMIT 1",
+    )
+    suspend fun getVisibleStoryCardPreview(sessionId: Long, branchId: String): StoryBranchPreviewSource?
 
     /** 当前故事线最后一页。返回倒序，调用方只反转本页，不读取整段历史。 */
     @Query("$CURRENT_MESSAGES_QUERY ORDER BY message.id DESC LIMIT :limit")

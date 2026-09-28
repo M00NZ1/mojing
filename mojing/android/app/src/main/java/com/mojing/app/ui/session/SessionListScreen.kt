@@ -101,6 +101,9 @@ fun SessionListScreen(
     val sessionLibraryState by viewModel.sessionLibraryState.collectAsStateWithLifecycle()
     val loadedLibrary = sessionLibraryState as? SessionLibraryUiState.Loaded
     val sessions = loadedLibrary?.sessions.orEmpty()
+    val lastChatBranches by viewModel.lastChatBranches.collectAsStateWithLifecycle()
+    val branchCardPreviews by viewModel.branchCardPreviews.collectAsStateWithLifecycle()
+    val branchPreviewEpoch by viewModel.branchPreviewEpoch.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val generatingSessions by com.mojing.app.ui.chat.RetainedChatSessions.running.collectAsStateWithLifecycle()
     val backgroundFailures by com.mojing.app.ui.chat.RetainedChatSessions.stores.failures.collectAsStateWithLifecycle()
@@ -110,7 +113,10 @@ fun SessionListScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) viewModel.syncPublicLlmKeyFromStorage()
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.syncPublicLlmKeyFromStorage()
+                viewModel.refreshBranchCardPreviews()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         viewModel.syncPublicLlmKeyFromStorage()
@@ -624,7 +630,7 @@ fun SessionListScreen(
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(if (searchQuery.isBlank()) "故事列表" else "搜索结果", style = MaterialTheme.typography.titleMedium)
                                 Text(
-                                    "此处预览主线；打开后接续上次阅读的故事线",
+                                    "预览接续上次阅读的故事线；消息数仅统计主线",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -639,6 +645,17 @@ fun SessionListScreen(
                         }
                     }
                     itemsIndexed(filteredSessions, key = { _, r -> r.session.id }) { index, row ->
+                        val rememberedBranchId = lastChatBranches?.get(row.session.id) ?: if (lastChatBranches == null) null else "main"
+                        val branchPreview = branchCardPreviews[row.session.id]?.takeIf {
+                            it.branchId == rememberedBranchId && it.sessionUpdatedAt == row.session.updatedAt
+                        }
+                        val isGenerating = row.session.id in generatingSessions
+                        LaunchedEffect(row.session.id, rememberedBranchId, row.session.updatedAt, branchPreviewEpoch, isGenerating) {
+                            if (isGenerating) viewModel.clearBranchCardPreview(row.session.id)
+                            else if (rememberedBranchId != null && rememberedBranchId != "main") {
+                                viewModel.loadBranchCardPreview(row.session.id, rememberedBranchId, row.session.updatedAt)
+                            }
+                        }
                         val openRename = {
                             viewModel.clearRenameResult()
                             renameTargetId = row.session.id
@@ -661,7 +678,13 @@ fun SessionListScreen(
                                 onClick = { onSessionClick(row.session.id) },
                                 onRename = openRename,
                             ) {
-                                SessionListRowInner(row = row, isGenerating = row.session.id in generatingSessions,
+                                SessionListRowInner(row = row, isGenerating = isGenerating,
+                                    rememberedBranchId = rememberedBranchId, branchPreview = branchPreview,
+                                    onPreviewRetry = {
+                                        if (rememberedBranchId != null) viewModel.loadBranchCardPreview(
+                                            row.session.id, rememberedBranchId, row.session.updatedAt, retry = true,
+                                        )
+                                    },
                                     backgroundFailure = backgroundFailures[row.session.id]?.message,
                                     onStop = { com.mojing.app.ui.chat.RetainedChatSessions.stores.stop(row.session.id) },
                                     onRename = openRename)
@@ -1123,14 +1146,25 @@ private fun QuickStartGuideSteps(onCharacters: () -> Unit, onCreateSession: () -
 }
 
 @Composable
-fun SessionListRowInner(row: SessionWithListMeta, isGenerating: Boolean = false, onStop: (() -> Unit)? = null, backgroundFailure: String? = null, onRename: (() -> Unit)? = null) {
+fun SessionListRowInner(
+    row: SessionWithListMeta,
+    isGenerating: Boolean = false,
+    onStop: (() -> Unit)? = null,
+    backgroundFailure: String? = null,
+    onRename: (() -> Unit)? = null,
+    rememberedBranchId: String? = "main",
+    branchPreview: BranchCardPreviewState? = null,
+    onPreviewRetry: (() -> Unit)? = null,
+) {
     val session = row.session
     val dateTimeFormat = remember { SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()) }
+    val showingMain = rememberedBranchId == "main" || branchPreview?.fallsBackToMain == true
     val preview = ChatMessageTextFormat.sessionListPreview(
-        rawPrefix = row.lastMessagePreview.orEmpty(),
-        speakerType = row.lastMessageSpeakerType,
+        rawPrefix = if (showingMain) row.lastMessagePreview.orEmpty() else branchPreview?.contentPrefix.orEmpty(),
+        speakerType = if (showingMain) row.lastMessageSpeakerType else branchPreview?.speakerType,
         maxChars = 72,
     )
+    val previewLabel = if (showingMain) "主线" else branchPreview?.label?.takeIf(String::isNotBlank) ?: "上次故事线"
     val meta = "主线 ${row.messageCount} 条 · ${row.participantCount} 角色"
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 15.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
@@ -1171,8 +1205,24 @@ fun SessionListRowInner(row: SessionWithListMeta, isGenerating: Boolean = false,
             }
             if (!isGenerating && backgroundFailure != null) Text("生成未完成 · $backgroundFailure",
                 maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-            if (!isGenerating && backgroundFailure == null && preview.isNotEmpty()) Text("主线 · $preview", style = MaterialTheme.typography.bodyMedium,
-                maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!isGenerating && backgroundFailure == null && rememberedBranchId == null) {
+                Text("正在读取续聊位置…", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else if (!isGenerating && backgroundFailure == null && rememberedBranchId != "main" && branchPreview?.error == true) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("故事线预览读取失败", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                    if (onPreviewRetry != null) TextButton(onClick = onPreviewRetry) { Text("重试") }
+                }
+            } else if (!isGenerating && backgroundFailure == null && rememberedBranchId != "main" && (branchPreview == null || branchPreview.loading)) {
+                Text("正在读取上次故事线…", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else if (!isGenerating && backgroundFailure == null && (preview.isNotEmpty() || rememberedBranchId != "main")) {
+                Text(previewLabel, style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(preview.ifEmpty { "暂无消息" }, style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(meta, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("·", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
