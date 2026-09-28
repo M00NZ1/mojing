@@ -4,6 +4,7 @@ import com.mojing.app.data.remote.ChatMessage
 import com.mojing.app.data.remote.ChatRequest
 import com.mojing.app.data.remote.LlmApiService
 import com.mojing.app.data.remote.LlmHttpException
+import com.mojing.app.data.remote.LlmProtocolException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collect
@@ -160,6 +161,65 @@ class LlmApiServiceTest {
             var usage: com.mojing.app.data.remote.TokenUsage? = com.mojing.app.data.remote.TokenUsage(1, 1)
             api.streamChatCompletionWithUsage("test-key", server.baseUrl, testRequest()) { usage = it }.collect { }
             assertNull(usage)
+        } finally { server.close() }
+    }
+
+    @Test
+    fun ordinaryChatKeepsReceivedChunksButRejectsEarlyEof() = runBlocking {
+        val server = RawHttpServer { socket ->
+            readRequest(socket)
+            socket.getOutputStream().apply {
+                write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n".toByteArray())
+                write("data: {\"choices\":[{\"delta\":{\"content\":\"半截正文\"}}]}\n\n".toByteArray())
+                flush()
+            }
+        }
+        server.start()
+        try {
+            val chunks = mutableListOf<String>()
+            val error = runCatching {
+                api.streamChatCompletion("test-key", server.baseUrl, testRequest()).collect { chunks += it }
+            }.exceptionOrNull()
+            assertTrue(error is IOException)
+            assertEquals(listOf("半截正文"), chunks)
+        } finally { server.close() }
+    }
+
+    @Test
+    fun ordinaryChatAcceptsFinishStopWithoutDoneMarker() = runBlocking {
+        val server = RawHttpServer { socket ->
+            readRequest(socket)
+            socket.getOutputStream().apply {
+                write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n".toByteArray())
+                write("data: {\"choices\":[{\"delta\":{\"content\":\"完整正文\"},\"finish_reason\":\"stop\"}]}\n\n".toByteArray())
+                flush()
+            }
+        }
+        server.start()
+        try {
+            assertEquals(listOf("完整正文"), api.streamChatCompletion("test-key", server.baseUrl, testRequest()).toList())
+        } finally { server.close() }
+    }
+
+    @Test
+    fun ordinaryChatReportsOutputLimitInsteadOfSavingTruncatedReply() = runBlocking {
+        val server = RawHttpServer { socket ->
+            readRequest(socket)
+            socket.getOutputStream().apply {
+                write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n".toByteArray())
+                write("data: {\"choices\":[{\"delta\":{\"content\":\"达到上限\"},\"finish_reason\":\"length\"}]}\n\n".toByteArray())
+                flush()
+            }
+        }
+        server.start()
+        try {
+            val chunks = mutableListOf<String>()
+            val error = runCatching {
+                api.streamChatCompletion("test-key", server.baseUrl, testRequest()).collect { chunks += it }
+            }.exceptionOrNull()
+            assertTrue(error is LlmProtocolException)
+            assertEquals("output_limit", (error as LlmProtocolException).reason)
+            assertEquals(listOf("达到上限"), chunks)
         } finally { server.close() }
     }
 

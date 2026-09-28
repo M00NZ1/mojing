@@ -3,6 +3,7 @@ package com.mojing.app.engine
 import com.mojing.app.domain.engine.*
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.remote.LlmApiService
+import com.mojing.app.data.remote.LlmProtocolException
 import com.mojing.app.data.remote.TokenUsage
 import com.mojing.app.domain.billing.BillingRequestSnapshot
 import com.mojing.app.domain.billing.CostRecorder
@@ -80,6 +81,22 @@ class ChatEngineUsageTest {
         assertTrue(states.last() is StreamState.Error)
         coVerify(exactly = 1) {
             costs.recordLlm(1L, 9L, "model", "llm_stream", 0, 0, any(), false, any(), "部分", snapshot, false, 0, "failed")
+        }
+    }
+
+    @Test
+    fun outputLimitShowsRecoverableErrorWithReceivedText() = runTest {
+        every { api.streamChatCompletionWithUsage(any(), any(), any(), any()) } returns flow {
+            emit("已收到的回复")
+            throw LlmProtocolException("output_limit")
+        }
+
+        val states = engine.streamGenerate(1, character, emptyList(), "key", "https://api.test", "model", 0.7f, 100).toList()
+
+        assertEquals("已收到的回复", (states[0] as StreamState.Generating).partialText)
+        assertEquals("模型输出达到上限，回复未完整结束。", (states.last() as StreamState.Error).message)
+        coVerify(exactly = 1) {
+            costs.recordLlm(1L, 9L, "model", "llm_stream", 0, 0, any(), false, any(), "已收到的回复", snapshot, false, 0, "failed")
         }
     }
 

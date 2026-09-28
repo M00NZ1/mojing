@@ -200,7 +200,7 @@ class LlmApiService @Inject constructor() {
                         val source = response.body?.source() ?: throw LlmProtocolException("empty_response")
                         var usage: TokenUsage? = null
                         val completed = readSseResponse(source, strict, onUsageFound = { usage = it; onUsage(it) }) { chunk -> trySendBlocking(chunk).getOrThrow() }
-                        if (strict && !completed) throw IOException("Streaming response ended before completion")
+                        if (!completed) throw IOException("Streaming response ended before completion")
                         if (usage == null) onUsage(null)
                         close()
                     } catch (e: Throwable) {
@@ -341,7 +341,7 @@ class LlmApiService @Inject constructor() {
             }
         }
         if (!done && dataLines.isNotEmpty()) done = emitSseEvent(dataLines, strict, onUsageFound, emitChunk) { sawFinishStop = true }
-        return done || (strict && sawFinishStop)
+        return done || sawFinishStop
     }
 
     private fun emitSseEvent(
@@ -381,10 +381,10 @@ class LlmApiService @Inject constructor() {
             else -> ""
         }
         if (chunk.isNotEmpty()) emitChunk(chunk)
-        if (strict && finish != null && finish != "stop") {
+        if (finish != null && finish != "stop") {
             throw LlmProtocolException(if (finish == "length") "output_limit" else "incomplete_output")
         }
-        if (strict && finish == "stop") onFinishStop()
+        if (finish == "stop") onFinishStop()
         return false
     }
 

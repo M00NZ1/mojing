@@ -11,6 +11,7 @@ import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.remote.ChatMessage
 import com.mojing.app.data.remote.ChatRequest
 import com.mojing.app.data.remote.LlmApiService
+import com.mojing.app.data.remote.LlmProtocolException
 import com.mojing.app.domain.billing.CostRecorder
 import com.mojing.app.domain.config.OpenAiCompatibleRouting
 import kotlinx.coroutines.CancellationException
@@ -37,6 +38,11 @@ class ChatEngine @Inject constructor(
 ) {
 
     private fun describeThrowable(e: Throwable): String {
+        if (e is LlmProtocolException) return when (e.reason) {
+            "output_limit" -> "模型输出达到上限，回复未完整结束。"
+            "incomplete_output", "provider_stream_error" -> "模型回复未完整结束，请检查平台状态。"
+            else -> "模型回复格式异常，请检查平台配置。"
+        }
         val parts = mutableListOf<String>()
         parts += e::class.java.simpleName
         e.message?.trim()?.takeIf { it.isNotEmpty() }?.let { parts += it }
