@@ -3106,6 +3106,38 @@ class ChatViewModelTest {
         assertEquals(600L, vm.state.value.focusedMessageId)
     }
 
+    @Test
+    fun searchHistoryJumpWaitsForLoadedTargetAndKeepsFailedHitOpen() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        val release = CompletableDeferred<MessageEntity?>()
+        coEvery { dao.getMainMessageById(42L, 500L) } coAnswers { release.await() }
+        coEvery { dao.getMainMessageById(42L, 600L) } returns null
+        val vm = createViewModel(messageDao = dao)
+        advanceUntilIdle()
+
+        val outcomes = mutableListOf<Boolean>()
+        assertTrue(vm.openSearchMessageInHistory(500L, outcomes::add))
+        runCurrent()
+        assertTrue(vm.state.value.isLoadingHistory)
+        assertTrue(outcomes.isEmpty())
+        assertFalse(vm.openSearchMessageInHistory(600L, outcomes::add))
+        release.complete(MessageEntity(id = 500L, sessionId = 42L, content = "搜索命中"))
+        advanceUntilIdle()
+        assertEquals(listOf(true), outcomes)
+        assertEquals(500L, vm.state.value.focusedMessageId)
+
+        assertTrue(vm.openSearchMessageInHistory(600L, outcomes::add))
+        advanceUntilIdle()
+        assertEquals(listOf(true, false), outcomes)
+        assertEquals(500L, vm.state.value.focusedMessageId)
+
+        coEvery { dao.getMainMessageById(42L, 600L) } throws IllegalStateException("read failed")
+        assertTrue(vm.openSearchMessageInHistory(600L, outcomes::add))
+        advanceUntilIdle()
+        assertEquals(listOf(true, false, false), outcomes)
+        assertEquals(500L, vm.state.value.focusedMessageId)
+    }
+
     @Test fun sourceNavigationLoadsRequestedBranchAndFocusesOriginalMessage() = runTest(testDispatcher) {
         val dao = mockk<MessageDao>(relaxed = true)
         val branches = mockk<SessionBranchDao>(relaxed = true)

@@ -1771,6 +1771,21 @@ class ChatViewModel @Inject constructor(
             }
         }
 
+    fun openSearchMessageInHistory(messageId: Long, onResult: (Boolean) -> Unit): Boolean =
+        launchHistoryLoad { branchId ->
+            var opened = false
+            try {
+                opened = loadMessageWindow(branchId, messageId) &&
+                    currentBranchId() == branchId && _state.value.messages.any { it.id == messageId }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Search keeps its context and offers an inline retry for failed reads.
+            } finally {
+                onResult(opened)
+            }
+        }
+
     fun openBookmarkedMessage(messageId: Long, onOpened: () -> Unit = {}) {
         if (!_state.value.isReady) return
         val launched = launchBranchTransition {

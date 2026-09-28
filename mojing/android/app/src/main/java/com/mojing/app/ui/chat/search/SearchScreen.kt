@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -70,7 +71,7 @@ fun SearchScreen(
     sessionId: Long,
     branchId: String = "main",
     onBack: () -> Unit,
-    onOpenInChat: (Long) -> Boolean,
+    onOpenInChat: (Long, (Boolean) -> Unit) -> Boolean,
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -236,11 +237,14 @@ fun SearchScreen(
 
 @Composable private fun SearchContextScreen(
     state: SearchState, vm: SearchViewModel, sessionId: Long, branchId: String,
-    onBack: () -> Unit, onOpenInChat: (Long) -> Boolean,
+    onBack: () -> Unit, onOpenInChat: (Long, (Boolean) -> Unit) -> Boolean,
 ) {
     val index = state.hits.indexOfFirst { it.message.id == state.selectedMessageId }
     val current = (state.firstHitOffset + index + 1).coerceAtLeast(1)
     var openInChatError by remember(state.selectedMessageId) { mutableStateOf<String?>(null) }
+    var openingInChat by remember(state.selectedMessageId) { mutableStateOf(false) }
+    var currentHitActive by remember(state.selectedMessageId) { mutableStateOf(true) }
+    DisposableEffect(state.selectedMessageId) { onDispose { currentHitActive = false } }
     var readerQuery by androidx.compose.runtime.saveable.rememberSaveable(state.completedQuery) { mutableStateOf(state.completedQuery) }
     val focus = LocalFocusManager.current
     val submit = {
@@ -339,12 +343,21 @@ fun SearchScreen(
                 }
                 Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("$current / ${state.totalMatches?.toString() ?: "${state.firstHitOffset + state.hits.size}+"}", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                    TextButton(enabled = state.contextMessages.any { it.id == state.selectedMessageId } && !state.searching,
+                    TextButton(enabled = state.contextMessages.any { it.id == state.selectedMessageId } && !state.searching && !openingInChat,
                         onClick = {
                             val messageId = state.selectedMessageId ?: return@TextButton
-                            if (onOpenInChat(messageId)) onBack()
-                            else openInChatError = "当前正在生成或加载历史，请稍后重试"
-                        }) { Text("打开对话") }
+                            openInChatError = null
+                            openingInChat = true
+                            if (!onOpenInChat(messageId, result@{ opened ->
+                                    if (!currentHitActive) return@result
+                                    openingInChat = false
+                                    if (opened) onBack()
+                                    else openInChatError = "消息不可用或加载失败，请重试"
+                                })) {
+                                openingInChat = false
+                                openInChatError = "当前正在生成或加载历史，请稍后重试"
+                            }
+                        }) { Text(if (openingInChat) "定位中…" else "打开对话") }
                     TextButton(onClick = vm::closeHit) { Text("结果列表") }
                 }
             }

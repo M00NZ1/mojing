@@ -1384,7 +1384,7 @@ fun ChatScreen(
         com.mojing.app.ui.chat.search.SearchScreen(
             sessionId = sessionId, branchId = state.currentBranchId,
             onBack = { showSearchDialog = false },
-            onOpenInChat = viewModel::openMessageInHistory,
+            onOpenInChat = viewModel::openSearchMessageInHistory,
         )
     }
 
