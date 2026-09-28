@@ -15,6 +15,7 @@
 | 文档 | 内容 |
 |---|---|
 | [构建与维护](MAINTENANCE.md) | 测试、迁移、构建与发布命令 |
+| [工程标准](../../docs/ENGINEERING_STANDARDS.md) | 分页、内存、请求、文件与验证的项目默认值 |
 | [Android 开发指南](ANDROID.md) | 原生架构、导航、数据与签名 |
 | [Web 构建说明](../frontend/APP_BUILD.md) | 开发代理、生产构建与静态页面 |
 | [内置资料](../data/builtin_pack/README.md) | 雾港目录、资源与初始化 |

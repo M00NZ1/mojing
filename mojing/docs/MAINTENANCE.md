@@ -176,7 +176,7 @@ GitHub Releases 由发布流程单独上传 APK。发布时沿用项目版本与
 
 `.env`、数据库、媒体、签名文件和 `local.properties` 属于本机状态。日常构建使用现有依赖与缓存，临时输出放在 `.codex-work/`，交付文件放在 `outputs/`。
 
-提交按本批文件清单暂存，检查 `git diff --cached` 后创建独立提交。产品介绍维护在 [PROJECT.md](../PROJECT.md)，后续工作维护在[优化目标](../../docs/PRODUCT_GAP_MAP.md)。
+提交按本批文件清单暂存，检查 `git diff --cached` 后创建独立提交。新功能和改动流程的分页、内存、超时与验证默认值见[工程标准](../../docs/ENGINEERING_STANDARDS.md)；产品介绍维护在 [PROJECT.md](../PROJECT.md)，后续工作维护在[优化目标](../../docs/PRODUCT_GAP_MAP.md)。
 
 ## 品牌图标
 

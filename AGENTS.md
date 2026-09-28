@@ -45,6 +45,7 @@
 
 - `docs/PROJECT_STATE.md`：持续优化任务的短状态、当前证据边界与受保护状态；
 - `docs/PRODUCT_GAP_MAP.md`：仍未闭环问题的风险/收益排序与下一批完成标准；
+- `docs/ENGINEERING_STANDARDS.md`：新功能与改动流程的分页、内存、超时、重试、文件和验收默认值；
 - `mojing/README.md`：快速入口与运行方式；
 - `mojing/PROJECT.md`：当前产品定位、能力矩阵、优先级和已知限制的单一事实来源；
 - `mojing/docs/MAINTENANCE.md`：构建、测试、运行、清理和证据记录；
