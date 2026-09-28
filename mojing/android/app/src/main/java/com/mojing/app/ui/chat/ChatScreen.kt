@@ -179,7 +179,7 @@ fun ChatScreen(
     }
     val listState = rememberLazyListState()
     var stickToBottom by remember { mutableStateOf(true) }
-    var hasAutoPositionedInitially by remember(sessionId) { mutableStateOf(false) }
+    var hasAutoPositionedInitially by remember(sessionId, state.currentBranchId) { mutableStateOf(false) }
     var speakerTurnMode by remember { mutableStateOf(viewModel.currentSpeakerTurnMode()) }
     val snackbarHostState = remember { SnackbarHostState() }
     val backgroundFailures by RetainedChatSessions.stores.failures.collectAsStateWithLifecycle()
@@ -493,8 +493,13 @@ fun ChatScreen(
         }
     }
 
-    LaunchedEffect(sessionId, visibleDisplayLines.size) {
-        if (hasAutoPositionedInitially) return@LaunchedEffect
+    LaunchedEffect(sessionId, state.currentBranchId, state.isReady, state.focusedMessageId, visibleDisplayLines.size) {
+        if (!state.isReady || hasAutoPositionedInitially || visibleDisplayLines.isEmpty()) return@LaunchedEffect
+        if (state.focusedMessageId != null) {
+            // Cross-branch bookmark or search navigation owns the scroll position.
+            hasAutoPositionedInitially = true
+            return@LaunchedEffect
+        }
         val total = listState.layoutInfo.totalItemsCount
         if (total > 0) {
             hasAutoPositionedInitially = true
