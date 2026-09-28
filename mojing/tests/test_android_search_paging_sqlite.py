@@ -11,7 +11,7 @@ def search_sql(method):
     annotation = DAO[DAO.rfind("@Query(", 0, declaration):declaration]
     sql = "".join(re.findall(r'"([^"\n]*)"', annotation))
     for name in ("CURRENT_MESSAGES_QUERY", "CURRENT_MESSAGES_SEARCH_QUERY", "CURRENT_MESSAGES_FROM_QUERY",
-                 "SPEAKER_NAME_SEARCH_MATCH", "MESSAGE_BODY_SEARCH_MATCH"):
+                 "SEARCH_RESULT_CONTENT", "SPEAKER_NAME_SEARCH_MATCH", "MESSAGE_BODY_SEARCH_MATCH"):
         constant = re.search(rf'private const val {name} = """(.*?)"""', DAO, re.S)[1]
         sql = sql.replace(f"${name}", constant)
     return sql
@@ -81,13 +81,21 @@ def test_name_only_hits_share_cursor_count_and_branch_visibility_with_body_hits(
             INSERT INTO branch_visibility_segments VALUES(42,'A','main',1),(42,'A','A',5);
             INSERT INTO message_search_fts(rowid,tokens) VALUES(2,'hit'),(3,'hit');
         """)
+        name_only_body = "走进图书馆" + "风" * 10000
+        body_match = "阿沅" + "风" * 10000
+        db.execute("UPDATE messages SET content=?, searchNormalized=? WHERE id=1", (name_only_body, name_only_body))
+        db.execute("UPDATE messages SET content=?, searchNormalized=? WHERE id=3", (body_match, body_match))
         params = dict(sessionId=42, branchId="A", query="阿沅", normalizedQuery="阿沅",
                       matchExpression="hit", exactMatch=0, indexComplete=1,
                       indexedThroughMessageId=5, limit=2, beforeMessageId=2**63 - 1)
-        assert [row[0] for row in db.execute(search_sql("searchMainMessagesIndexed"), params)] == [3, 2]
+        main_page = db.execute(search_sql("searchMainMessagesIndexed"), params).fetchall()
+        assert [row[0] for row in main_page] == [3, 2]
+        assert main_page[0][5] == body_match
         assert db.execute(search_sql("countMainMessagesIndexed"), params).fetchone()[0] == 3
         params["beforeMessageId"] = 2
-        assert [row[0] for row in db.execute(search_sql("searchMainMessagesIndexed"), params)] == [1]
+        older_page = db.execute(search_sql("searchMainMessagesIndexed"), params).fetchall()
+        assert [row[0] for row in older_page] == [1]
+        assert older_page[0][5] == name_only_body[:2048]
         params["beforeMessageId"] = 2**63 - 1
         assert [row[0] for row in db.execute(search_sql("searchVisibleMessagesIndexed"), params)] == [5, 1]
         assert db.execute(search_sql("countVisibleMessagesIndexed"), params).fetchone()[0] == 2

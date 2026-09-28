@@ -118,12 +118,6 @@ private const val CURRENT_MESSAGES_QUERY = """
     $CURRENT_MESSAGES_FROM_QUERY
 """
 
-private const val CURRENT_MESSAGES_SEARCH_QUERY = """
-    SELECT message.id, message.sessionId, message.speakerType, message.characterId,
-           message.branchId, message.content, message.createdAt
-    $CURRENT_MESSAGES_FROM_QUERY
-"""
-
 /** Role-name hits stay in the same selected-message and branch visibility query as body hits. */
 private const val SPEAKER_NAME_SEARCH_MATCH = """
     (message.speakerType = 'character' AND message.characterId IN (
@@ -138,6 +132,18 @@ private const val MESSAGE_BODY_SEARCH_MATCH = """
         (message.searchNormalized = '' AND message.content = :query))) OR
      (:exactMatch = 0 AND ((message.searchNormalized <> '' AND instr(message.searchNormalized, :normalizedQuery) > 0) OR
         (message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0))))
+"""
+
+/** Name-only matches need a preview, not an entire chapter; body matches still need the hit text. */
+private const val SEARCH_RESULT_CONTENT = """
+    CASE WHEN $MESSAGE_BODY_SEARCH_MATCH THEN message.content
+         ELSE substr(message.content, 1, 2048) END AS content
+"""
+
+private const val CURRENT_MESSAGES_SEARCH_QUERY = """
+    SELECT message.id, message.sessionId, message.speakerType, message.characterId,
+           message.branchId, $SEARCH_RESULT_CONTENT, message.createdAt
+    $CURRENT_MESSAGES_FROM_QUERY
 """
 
 private const val MAIN_SELECTED_MESSAGES_QUERY = """
@@ -582,7 +588,7 @@ interface MessageDao {
 
     @Query(
         "SELECT message.id, message.sessionId, message.speakerType, message.characterId, " +
-            "message.branchId, message.content, message.createdAt FROM messages AS message " +
+            "message.branchId, $SEARCH_RESULT_CONTENT, message.createdAt FROM messages AS message " +
             "WHERE message.sessionId = :sessionId AND message.branchId = 'main' " +
             "AND (message.id IN (" +
             "SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression" +
@@ -640,7 +646,7 @@ interface MessageDao {
 
     @Query(
         "SELECT message.id, message.sessionId, message.speakerType, message.characterId, " +
-            "message.branchId, message.content, message.createdAt FROM messages AS message " +
+            "message.branchId, $SEARCH_RESULT_CONTENT, message.createdAt FROM messages AS message " +
             "WHERE message.sessionId = :sessionId AND message.branchId = 'main' " +
             "AND (message.id IN (SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression) " +
             "OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId) OR $SPEAKER_NAME_SEARCH_MATCH) " +

@@ -20,7 +20,11 @@ object ChatMessageTextFormat {
     }
 
     fun searchPreview(raw: String, speakerType: String?, query: String, maxChars: Int = 120): String {
-        val text = ConversationMessageText.forUserVisibleText(raw, speakerType)
+        val truncatedStructure = speakerType != "user" &&
+            (sessionPreviewDisplayTag.containsMatchIn(raw) || sessionPreviewHiddenTail.containsMatchIn(raw)) &&
+            !StructuredParser.isStructured(raw)
+        val text = (if (truncatedStructure) sessionListPreview(raw, speakerType, raw.length)
+            else ConversationMessageText.forUserVisibleText(raw, speakerType))
             .replace(Regex("\\s+"), " ").trim()
         if (text.isEmpty()) return "（无正文）"
         val size = maxChars.coerceAtLeast(2)

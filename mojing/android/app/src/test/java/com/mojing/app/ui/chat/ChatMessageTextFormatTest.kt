@@ -3,6 +3,7 @@ package com.mojing.app.ui.chat
 import com.mojing.app.media.TtsSpeakText
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatMessageTextFormatTest {
@@ -69,6 +70,14 @@ class ChatMessageTextFormatTest {
         assertEquals(preview, String(preview.toByteArray(Charsets.UTF_8), Charsets.UTF_8))
         assertEquals("hello WORLD", ChatMessageTextFormat.searchPreview("hello WORLD", "user", "world"))
         assertEquals("（无正文）", ChatMessageTextFormat.searchPreview("  ", "user", "x"))
+    }
+
+    @Test fun searchPreviewHidesOpenTagInNameOnlyChapterPrefix() {
+        val prefix = ("<NARRATION>" + "雨夜里的渡口。".repeat(400)).take(2048)
+        val preview = ChatMessageTextFormat.searchPreview(prefix, "character", "阿沅")
+        assertTrue(preview.startsWith("雨夜里的渡口。"))
+        assertFalse(preview.contains("<NARRATION>"))
+        assertTrue(preview.length <= 121)
     }
 
 
