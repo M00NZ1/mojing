@@ -1517,7 +1517,10 @@ class ChatViewModel @Inject constructor(
     private suspend fun refreshMessagesUi(
         requestedBranchId: String = currentBranchId(),
         anchorMessageId: Long? = null,
+        switchBranchOnSuccess: Boolean = false,
     ) {
+        val startingBranchId = currentBranchId()
+        if (!switchBranchOnSuccess && requestedBranchId != startingBranchId) return
         val eventRevision = eventRefreshRevision.incrementAndGet()
         val correctionRevision = correctionRefreshRevision.incrementAndGet()
         val branches = sessionBranchDao.getBySession(sessionId)
@@ -1569,6 +1572,8 @@ class ChatViewModel @Inject constructor(
             val bookmarkIds = bookmarkedIdsForWindow(msgs)
             memorySummaryListRevision.incrementAndGet()
             _state.update { current ->
+                // An older read must not restore its branch after another navigation completed.
+                if (current.currentBranchId != startingBranchId) return@update current
                 val applyEventPage = current.currentBranchId != branchId ||
                     eventRefreshRevision.get() == eventRevision
                 current.copy(
@@ -1772,7 +1777,7 @@ class ChatViewModel @Inject constructor(
                             _state.update { it.copy(bookmarkReadOnlyMessage = target) }
                             opened = true
                         } else {
-                            refreshMessagesUi(target.branchId, anchorMessageId = messageId)
+                            refreshMessagesUi(target.branchId, anchorMessageId = messageId, switchBranchOnSuccess = true)
                             opened = _state.value.currentBranchId == target.branchId && _state.value.focusedMessageId == messageId
                             if (opened) persistCurrentBranchSelection()
                         }
@@ -3135,7 +3140,7 @@ class ChatViewModel @Inject constructor(
                 val updatedBranches = sessionBranchDao.getBySession(sessionId)
                 branchAvailableInList = updatedBranches.any { it.branchId == newBranchId }
                 _state.update { it.copy(branches = updatedBranches) }
-                refreshMessagesUi(newBranchId)
+                refreshMessagesUi(newBranchId, switchBranchOnSuccess = true)
                 check(currentBranchId() == newBranchId) { "新故事线尚未加载" }
                 persistCurrentBranchSelection()
             } catch (e: CancellationException) {
@@ -3182,7 +3187,7 @@ class ChatViewModel @Inject constructor(
                     _state.update { it.copy(error = "故事线已不存在，请刷新后重试") }
                     return@switchTransition
                 }
-                refreshMessagesUi(branchId)
+                refreshMessagesUi(branchId, switchBranchOnSuccess = true)
                 if (currentBranchId() != branchId) {
                     _state.update { it.copy(error = "故事线已不存在，已返回主线") }
                     persistCurrentBranchSelection()
@@ -3698,7 +3703,7 @@ class ChatViewModel @Inject constructor(
                 editCommitted = true
                 editedMessage = replacement.copy(id = replacementId)
                 sessionDao.bumpUpdatedAt(sessionId)
-                refreshMessagesUi(branchId)
+                refreshMessagesUi(branchId, switchBranchOnSuccess = true)
                 if (currentBranchId() != branchId) {
                     _state.update { it.copy(error = "消息已编辑，但新故事线加载失败，请重新进入对话") }
                     return@editTransition

@@ -342,6 +342,41 @@ class ChatViewModelTest {
         assertFalse(vm.state.value.novelMetadataSaving)
     }
 
+    @Test fun chapterRenameRefreshDoesNotRestorePreviousBranchAfterNavigation() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        val chapter = MessageEntity(id = 501L, sessionId = 42L, content = "原线章节")
+        val branchMessage = MessageEntity(id = 502L, sessionId = 42L, branchId = "B", content = "新线章节")
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(chapter)
+        coEvery { messages.getMainMessageById(42L, 501L) } returns chapter
+        coEvery { messages.getVisibleMessagesTail(42L, "B", any()) } returns listOf(branchMessage)
+        coEvery { branches.getBySession(42L) } returns listOf(
+            SessionBranchEntity(sessionId = 42L, branchId = "B", sourceMessageId = 501L),
+        )
+        val vm = createViewModel(messageDao = messages, sessionBranchDao = branches)
+        advanceUntilIdle()
+
+        val oldRefresh = CompletableDeferred<Unit>()
+        coEvery { messages.getMainMessagesTail(42L, any()) } coAnswers {
+            oldRefresh.await()
+            listOf(chapter)
+        }
+        vm.renameChapter(501L, "新章名") {}
+        runCurrent()
+        assertTrue(vm.state.value.novelMetadataSaving)
+
+        vm.switchBranch("B")
+        advanceUntilIdle()
+        assertEquals("B", vm.state.value.currentBranchId)
+        assertEquals(listOf(branchMessage), vm.state.value.messages)
+
+        oldRefresh.complete(Unit)
+        advanceUntilIdle()
+        assertEquals("B", vm.state.value.currentBranchId)
+        assertEquals(listOf(branchMessage), vm.state.value.messages)
+        assertFalse(vm.state.value.novelMetadataSaving)
+    }
+
     @Test
     fun bookmarkActionsKeepHistoryAndIgnoreDuplicateClicks() = runTest(testDispatcher) {
         val message = MessageEntity(id = 501L, sessionId = 42L, content = "保留当前阅读位置")
