@@ -2,6 +2,7 @@ package com.mojing.app.ui.workbench
 
 import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.local.dao.WorldTemplateDao
+import com.mojing.app.data.local.dao.WorldTemplateLibraryItem
 import com.mojing.app.data.local.entity.WorldTemplateEntity
 import com.mojing.app.data.prefs.UiPreferencesRepository
 import com.mojing.app.data.remote.BackendWorldsApi
@@ -12,6 +13,7 @@ import com.mojing.app.domain.usecase.SaveWorldTemplatePackageUseCase
 import com.mojing.app.domain.usecase.SmartImportUseCase
 import dagger.Lazy
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -32,6 +34,12 @@ import java.nio.file.Files
 @OptIn(ExperimentalCoroutinesApi::class)
 class WorkbenchViewModelCoverTest {
     private lateinit var dispatcher: TestDispatcher
+
+    private fun WorldTemplateEntity.libraryItem() = WorldTemplateLibraryItem(
+        id = id, templateId = templateId, label = label, category = category,
+        summary = summary.take(96), coverImagePath = coverImagePath,
+        pinnedAt = pinnedAt, updatedAt = updatedAt,
+    )
 
     @Before
     fun setUp() {
@@ -72,7 +80,8 @@ class WorkbenchViewModelCoverTest {
         val original = WorldTemplateEntity(id = 7L, templateId = "world", label = "测试世界", coverImagePath = "old.jpg")
         val updated = original.copy(coverImagePath = localFile.absolutePath)
         val templateDao = mockk<WorldTemplateDao> {
-            coEvery { getAll() } returnsMany listOf(listOf(original), listOf(updated))
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any()) } returnsMany
+                listOf(listOf(original.libraryItem()), listOf(updated.libraryItem()))
             coEvery { updateCover(7L, localFile.absolutePath, any()) } returns 1
         }
         val viewModel = createViewModel(templateDao)
@@ -80,7 +89,7 @@ class WorkbenchViewModelCoverTest {
         val message = viewModel.updateTemplateCover(7L, localFile.absolutePath)
 
         assertEquals("已更新封面", message)
-        assertEquals(localFile.absolutePath, viewModel.templates.value.single().coverImagePath)
+        assertEquals(localFile.absolutePath, viewModel.library.value.items.single().coverImagePath)
         assertTrue(localFile.exists())
     }
 
@@ -89,7 +98,7 @@ class WorkbenchViewModelCoverTest {
         val localFile = Files.createTempFile("failed-manual-template-cover", ".jpg").toFile()
         val template = WorldTemplateEntity(id = 7L, templateId = "world", label = "测试世界", coverImagePath = "old.jpg")
         val templateDao = mockk<WorldTemplateDao> {
-            coEvery { getAll() } returns listOf(template)
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any()) } returns listOf(template.libraryItem())
             coEvery { updateCover(7L, localFile.absolutePath, any()) } throws
                 IllegalStateException("database unavailable")
         }
@@ -99,5 +108,36 @@ class WorkbenchViewModelCoverTest {
 
         assertEquals("封面未能保存到本机，请重试。", message)
         assertFalse(localFile.exists())
+    }
+
+    @Test
+    fun failedPageKeepsCardsAndExportStillIncludesEveryTemplate() = runTest(dispatcher) {
+        val all = (1L..26L).map { id -> WorldTemplateEntity(id = id, label = "模板$id") }
+        var nextReads = 0
+        val templateDao = mockk<WorldTemplateDao> {
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any()) } coAnswers {
+                if (arg<Long?>(4) == null) all.take(25).map { it.libraryItem() }
+                else {
+                    nextReads++
+                    if (nextReads == 1) throw IllegalStateException("read failed")
+                    listOf(all.last().libraryItem())
+                }
+            }
+            coEvery { getAll() } returns all
+        }
+        val viewModel = createViewModel(templateDao)
+        assertEquals(24, viewModel.library.value.items.size)
+
+        viewModel.nextPage()
+        assertEquals(24, viewModel.library.value.items.size)
+        assertEquals(0, viewModel.library.value.pageIndex)
+        assertEquals("模板列表加载失败，请重试", viewModel.library.value.error)
+        viewModel.retryPage()
+        assertEquals(listOf(all.last().libraryItem()), viewModel.library.value.items)
+        assertEquals(1, viewModel.library.value.pageIndex)
+
+        val exported = com.google.gson.JsonParser.parseString(viewModel.exportJson()).asJsonObject
+        assertEquals(26, exported.getAsJsonArray("data").size())
+        coVerify(exactly = 1) { templateDao.getAll() }
     }
 }

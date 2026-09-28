@@ -56,7 +56,7 @@ class WorkbenchViewModelWorldGenerationTest {
         val llmStarted = CompletableDeferred<Unit>()
         val llmRelease = CompletableDeferred<String>()
         val templateDao = mockk<WorldTemplateDao> {
-            coEvery { getAll() } returns emptyList()
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any()) } returns emptyList()
         }
         val llmRetry = mockk<LlmRetry> {
             coEvery { chatCompletionWithRetry(any(), any(), any(), any(), any(), any(), any()) } coAnswers {
@@ -79,7 +79,7 @@ class WorkbenchViewModelWorldGenerationTest {
         assertFalse(viewModel.generateBusy.value)
         assertTrue(results.isEmpty())
         coVerify(exactly = 0) { savePackage.invoke(any(), any()) }
-        coVerify(exactly = 1) { templateDao.getAll() }
+        coVerify(exactly = 1) { templateDao.getLibraryPage(any(), any(), any(), any(), any(), any()) }
         assertFalse(viewModel.cancelWorldGeneration())
     }
 
@@ -88,7 +88,7 @@ class WorkbenchViewModelWorldGenerationTest {
         val llmStarted = CompletableDeferred<Unit>()
         val llmRelease = CompletableDeferred<String>()
         val templateDao = mockk<WorldTemplateDao> {
-            coEvery { getAll() } returns emptyList()
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any()) } returns emptyList()
         }
         val llmRetry = mockk<LlmRetry> {
             coEvery { chatCompletionWithRetry(any(), any(), any(), any(), any(), any(), any()) } coAnswers {
@@ -115,7 +115,7 @@ class WorkbenchViewModelWorldGenerationTest {
         val saveStarted = CompletableDeferred<Unit>()
         val saveRelease = CompletableDeferred<Unit>()
         val templateDao = mockk<WorldTemplateDao> {
-            coEvery { getAll() } returns emptyList()
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any()) } returns emptyList()
         }
         val llmRetry = mockk<LlmRetry> {
             coEvery { chatCompletionWithRetry(any(), any(), any(), any(), any(), any(), any()) } returns VALID_WORLD_JSON
@@ -150,7 +150,7 @@ class WorkbenchViewModelWorldGenerationTest {
         assertEquals(1, results.size)
         assertTrue(results.single().contains("已写入本地「雾都」"))
         coVerify(exactly = 1) { savePackage.invoke(any(), match { it.size == 3 }) }
-        coVerify(exactly = 2) { templateDao.getAll() }
+        coVerify(exactly = 2) { templateDao.getLibraryPage(any(), any(), any(), any(), any(), any()) }
     }
 
     private suspend fun awaitGenerationIdle(viewModel: WorkbenchViewModel) {

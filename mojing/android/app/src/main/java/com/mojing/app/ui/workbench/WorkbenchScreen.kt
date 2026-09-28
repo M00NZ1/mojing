@@ -43,7 +43,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavHostController
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
-import com.mojing.app.data.local.entity.WorldTemplateEntity
+import com.mojing.app.data.local.dao.WorldTemplateLibraryItem
 import com.mojing.app.domain.usecase.DeleteWorldTemplateResult
 import com.mojing.app.media.CharacterCardImageProcessor
 import com.mojing.app.ui.character.components.CardCoverCropSheetHost
@@ -59,6 +59,7 @@ import com.mojing.app.util.ContentDocumentReader
 import com.mojing.app.util.ContentDocumentWriter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -83,7 +84,8 @@ fun WorkbenchScreen(
     onSettingsClick: () -> Unit,
     viewModel: WorkbenchViewModel = hiltViewModel()
 ) {
-    val templates by viewModel.templates.collectAsStateWithLifecycle()
+    val library by viewModel.library.collectAsStateWithLifecycle()
+    val templates = library.items
     val listLayout by viewModel.workbenchListLayout.collectAsStateWithLifecycle()
     val plainImportBusy by viewModel.plainImportBusy.collectAsStateWithLifecycle()
     val generateBusy by viewModel.generateBusy.collectAsStateWithLifecycle()
@@ -91,13 +93,20 @@ fun WorkbenchScreen(
     val coverGeneratingTemplateIds by viewModel.coverGeneratingTemplateIds.collectAsStateWithLifecycle()
     val promotedTemplateIds by viewModel.promotedTemplateIds.collectAsStateWithLifecycle()
     val deleteTemplateState by viewModel.deleteTemplateState.collectAsStateWithLifecycle()
-    var deleteTarget by remember { mutableStateOf<WorldTemplateEntity?>(null) }
+    var deleteTarget by remember { mutableStateOf<WorldTemplateLibraryItem?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var isImportingDocument by remember { mutableStateOf(false) }
     var isExportingDocument by rememberSaveable { mutableStateOf(false) }
     var isCoverTaskBusy by remember { mutableStateOf(false) }
     var mainTab by remember { mutableStateOf(WorkbenchMainTab.TEMPLATES) }
-    var templateSearch by remember { mutableStateOf("") }
+    var templateSearch by rememberSaveable { mutableStateOf(viewModel.library.value.query) }
+    LaunchedEffect(Unit) {
+        if (viewModel.library.value.loaded) viewModel.refresh()
+    }
+    LaunchedEffect(templateSearch) {
+        delay(200)
+        viewModel.setSearchQuery(templateSearch)
+    }
     var plainImportText by remember { mutableStateOf("") }
     var genWorldType by remember { mutableStateOf("修仙") }
     var genCoreTheme by remember { mutableStateOf("") }
@@ -171,7 +180,7 @@ fun WorkbenchScreen(
         }
     }
 
-    fun requestCoverGeneration(template: WorldTemplateEntity) {
+    fun requestCoverGeneration(template: WorldTemplateLibraryItem) {
         val started = viewModel.generateTemplateCoverAi(template.id) { message ->
             scope.launch { snackbarHostState.showSnackbar(UserFacingStrings.appendAndroidIfNeeded(message)) }
         }
@@ -181,23 +190,13 @@ fun WorkbenchScreen(
     }
 
     @Composable
-    fun GenerateCoverMenuItem(template: WorldTemplateEntity) {
+    fun GenerateCoverMenuItem(template: WorldTemplateLibraryItem) {
         val isGenerating = template.id in coverGeneratingTemplateIds
         DropdownMenuItem(
             text = { Text(if (template.id in promotedTemplateIds) "封面请在世界百科维护" else if (isGenerating) "生成中…" else "生成封面") },
             enabled = template.id !in promotedTemplateIds && !isGenerating && !isCoverTaskBusy,
             onClick = { requestCoverGeneration(template) },
         )
-    }
-
-    val filteredTemplates = remember(templates, templateSearch) {
-        val q = templateSearch.trim().lowercase()
-        if (q.isEmpty()) templates
-        else templates.filter { t ->
-            t.label.lowercase().contains(q) ||
-                t.summary.lowercase().contains(q) ||
-                t.category.lowercase().contains(q)
-        }
     }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
@@ -250,7 +249,7 @@ fun WorkbenchScreen(
         }
     }
 
-    var coverPickTemplate by remember { mutableStateOf<WorldTemplateEntity?>(null) }
+    var coverPickTemplate by remember { mutableStateOf<WorldTemplateLibraryItem?>(null) }
     var coverCropBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var coverPendingTemplateId by remember { mutableStateOf<Long?>(null) }
     val coverPickLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -388,7 +387,7 @@ fun WorkbenchScreen(
             )
         },
         floatingActionButton = {
-            if (mainTab == WorkbenchMainTab.TEMPLATES && templates.isNotEmpty() && !isImeKeyboardOpen()) {
+            if (mainTab == WorkbenchMainTab.TEMPLATES && library.loaded && templates.isNotEmpty() && !isImeKeyboardOpen()) {
                 ExtendedFloatingActionButton(
                     onClick = ::createTemplate,
                     icon = { Icon(Icons.Default.Add, "新建") },
@@ -430,35 +429,62 @@ fun WorkbenchScreen(
                         searchDescription = "搜索模板", clearDescription = "清除搜索",
                         placeholder = "搜索名称、摘要或分类",
                     )
-                    Text("${filteredTemplates.size} 个设定模板", Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (filteredTemplates.isEmpty()) {
+                    if (library.loaded) {
+                        Text("本页 ${templates.size} 个设定模板", Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (library.loaded && (library.loading || library.error != null)) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = MoJingListTokens.rowStart),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                if (library.loading) "正在读取模板…" else library.error.orEmpty(),
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            if (library.error != null) TextButton(onClick = viewModel::retryPage) { Text("重试") }
+                        }
+                    }
+                    if (!library.loaded && library.loading) {
+                        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                    } else if (!library.loaded && library.error != null) {
                         EmptyState(
-                            icon = if (templates.isEmpty()) Icons.Default.Public else Icons.Default.SearchOff,
-                            title = if (templates.isEmpty()) "还没有设定模板" else "没有匹配的模板",
-                            message = if (templates.isEmpty()) {
+                            icon = Icons.Default.Public,
+                            title = "模板列表暂时无法读取",
+                            message = library.error.orEmpty(),
+                            actionLabel = "重试",
+                            onAction = viewModel::retryPage,
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                        )
+                    } else if (templates.isEmpty()) {
+                        EmptyState(
+                            icon = if (library.query.isBlank()) Icons.Default.Public else Icons.Default.SearchOff,
+                            title = if (library.query.isBlank()) "还没有设定模板" else "没有匹配的模板",
+                            message = if (library.query.isBlank()) {
                                 "新建模板，或通过「文本导入」和「智能生成」建立世界设定。"
                             } else {
                                 "试试其他关键词，或清除当前搜索。"
                             },
-                            actionLabel = if (templates.isEmpty()) "新建模板" else "清除搜索",
-                            onAction = if (templates.isEmpty()) {
+                            actionLabel = if (library.query.isBlank()) "新建模板" else "清除搜索",
+                            onAction = if (library.query.isBlank()) {
                                 ::createTemplate
                             } else {
                                 { templateSearch = "" }
                             },
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
                         )
                     } else {
                         if (listLayout == "grid") {
                             LazyVerticalGrid(
                                 columns = GridCells.Adaptive(156.dp),
-                                modifier = Modifier.fillMaxSize(),
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
                                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
-                                lazyGridItems(filteredTemplates, key = { it.id }) { template ->
+                                lazyGridItems(templates, key = { it.id }) { template ->
                                     SwipeRevealListRow(
                                         swipeEnabled = false,
                                         isPinned = template.pinnedAt > 0,
@@ -512,10 +538,10 @@ fun WorkbenchScreen(
                             }
                         } else {
                             LazyColumn(
-                                modifier = Modifier.fillMaxSize(),
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
                                 contentPadding = PaddingValues(bottom = 96.dp),
                             ) {
-                                itemsIndexed(filteredTemplates, key = { _, t -> t.id }) { index, template ->
+                                itemsIndexed(templates, key = { _, t -> t.id }) { index, template ->
                                     Column(Modifier.fillMaxWidth()) {
                                         SwipeRevealListRow(
                                             swipeEnabled = true,
@@ -566,7 +592,7 @@ fun WorkbenchScreen(
                                                 onStartChat = { onStartChat(template.id) },
                                             )
                                         }
-                                        if (index < filteredTemplates.lastIndex) {
+                                        if (index < templates.lastIndex) {
                                             HorizontalDivider(
                                                 modifier = Modifier.padding(start = MoJingListTokens.dividerInset),
                                                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
@@ -574,6 +600,19 @@ fun WorkbenchScreen(
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+                    if (library.loaded && templates.isNotEmpty()) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = MoJingListTokens.rowStart, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("第 ${library.pageIndex + 1} 页", style = MaterialTheme.typography.labelMedium)
+                            Row {
+                                TextButton(onClick = viewModel::previousPage, enabled = !library.loading && library.pageIndex > 0) { Text("上一页") }
+                                TextButton(onClick = viewModel::nextPage, enabled = !library.loading && library.error == null && library.hasNext) { Text("下一页") }
                             }
                         }
                     }
@@ -906,7 +945,7 @@ fun WorkbenchScreen(
 
 @Composable
 private fun WorkbenchTemplateListRowInner(
-    template: WorldTemplateEntity,
+    template: WorldTemplateLibraryItem,
     canonical: Boolean,
     onStartChat: () -> Unit,
 ) {
@@ -981,7 +1020,7 @@ private fun WorkbenchTemplateListRowInner(
 
 @Composable
 private fun WorkbenchTemplateGridCard(
-    template: WorldTemplateEntity,
+    template: WorldTemplateLibraryItem,
     canonical: Boolean,
     onStartChat: () -> Unit,
 ) {

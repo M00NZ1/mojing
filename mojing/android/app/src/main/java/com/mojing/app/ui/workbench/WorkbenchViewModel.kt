@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.local.dao.WorldTemplateDao
+import com.mojing.app.data.local.dao.WorldTemplateLibraryItem
 import com.mojing.app.data.local.dao.LegacyWorldMappingDao
 import com.mojing.app.data.local.entity.WorldLoreEntryEntity
 import com.mojing.app.data.local.entity.WorldTemplateEntity
@@ -40,6 +41,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -51,6 +53,16 @@ data class TemplateDeleteState(
     val templateId: Long? = null,
     val isDeleting: Boolean = false,
     val result: DeleteWorldTemplateResult? = null,
+)
+
+data class TemplateLibraryState(
+    val items: List<WorldTemplateLibraryItem> = emptyList(),
+    val query: String = "",
+    val pageIndex: Int = 0,
+    val hasNext: Boolean = false,
+    val loading: Boolean = false,
+    val loaded: Boolean = false,
+    val error: String? = null,
 )
 
 @HiltViewModel
@@ -70,8 +82,72 @@ class WorkbenchViewModel @Inject constructor(
     private val coverGenerationOwner = KeyedOperationOwner<Long>()
     val coverGeneratingTemplateIds: StateFlow<Set<Long>> = coverGenerationOwner.activeKeys
 
-    private val _templates = MutableStateFlow<List<WorldTemplateEntity>>(emptyList())
-    val templates: StateFlow<List<WorldTemplateEntity>> = _templates.asStateFlow()
+    private val libraryPageSize = 24 // Cover-heavy cards follow the project list standard.
+    private val _library = MutableStateFlow(TemplateLibraryState())
+    val library: StateFlow<TemplateLibraryState> = _library.asStateFlow()
+    private val pageCursors = mutableListOf<WorldTemplateLibraryItem?>(null)
+    private var loadJob: Job? = null
+    private var loadRevision = 0
+    private var pendingPageIndex = 0
+
+    fun setSearchQuery(query: String) {
+        val normalized = query.trim()
+        if (normalized == _library.value.query) return
+        _library.value = TemplateLibraryState(query = normalized)
+        pageCursors.clear()
+        pageCursors.add(null)
+        loadPage(0)
+    }
+
+    fun nextPage() {
+        val state = _library.value
+        if (state.loading || state.error != null || !state.hasNext) return
+        val cursor = state.items.lastOrNull() ?: return
+        pageCursors.add(cursor)
+        loadPage(state.pageIndex + 1)
+    }
+
+    fun previousPage() {
+        val state = _library.value
+        if (state.loading || state.pageIndex == 0) return
+        loadPage(state.pageIndex - 1)
+    }
+
+    fun retryPage() = loadPage(pendingPageIndex)
+
+    private fun loadPage(index: Int) {
+        loadJob?.cancel()
+        pendingPageIndex = index
+        val revision = ++loadRevision
+        val current = _library.value
+        _library.value = current.copy(loading = true, error = null)
+        val cursor = pageCursors.getOrNull(index)
+        loadJob = viewModelScope.launch {
+            try {
+                val rows = templateDao.getLibraryPage(
+                    query = current.query,
+                    cursorPinned = cursor?.let { if (it.pinnedAt > 0) 1 else 0 },
+                    cursorPinnedAt = cursor?.pinnedAt,
+                    cursorUpdatedAt = cursor?.updatedAt,
+                    cursorId = cursor?.id,
+                    limit = libraryPageSize + 1,
+                )
+                if (revision != loadRevision) return@launch
+                _library.value = current.copy(
+                    items = rows.take(libraryPageSize), pageIndex = index,
+                    hasNext = rows.size > libraryPageSize, loading = false,
+                    loaded = true, error = null,
+                )
+                while (pageCursors.size > index + 1) pageCursors.removeAt(pageCursors.lastIndex)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (revision == loadRevision) {
+                    _library.value = current.copy(loading = false, error = "模板列表加载失败，请重试")
+                }
+            }
+        }
+    }
     private val _deleteTemplateState = MutableStateFlow(TemplateDeleteState())
     val deleteTemplateState: StateFlow<TemplateDeleteState> = _deleteTemplateState.asStateFlow()
     private val deletingTemplateIds = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
@@ -110,9 +186,15 @@ class WorkbenchViewModel @Inject constructor(
     val generateSaving: StateFlow<Boolean> = _generateSaving.asStateFlow()
     private val worldGenerationJob = AtomicReference<Job?>(null)
 
-    init { viewModelScope.launch { _templates.value = templateDao.getAll() } }
+    init { loadPage(0) }
 
-    fun refresh() { viewModelScope.launch { _templates.value = templateDao.getAll() } }
+    fun refresh() {
+        viewModelScope.launch {
+            pageCursors.clear()
+            pageCursors.add(null)
+            loadPage(0)
+        }
+    }
 
     fun deleteTemplate(id: Long) {
         if (!deletingTemplateIds.add(id)) return
@@ -121,7 +203,8 @@ class WorkbenchViewModel @Inject constructor(
             try {
                 val result = deleteWorldTemplateUseCase(id)
                 if (result is DeleteWorldTemplateResult.Deleted) {
-                    _templates.value = _templates.value.filterNot { it.id == id }
+                    _library.update { state -> state.copy(items = state.items.filterNot { it.id == id }) }
+                    refresh()
                 }
                 _deleteTemplateState.value = TemplateDeleteState(templateId = id, result = result)
             } catch (cause: CancellationException) {
@@ -140,9 +223,17 @@ class WorkbenchViewModel @Inject constructor(
 
     fun setTemplatePinned(id: Long, pinned: Boolean) {
         viewModelScope.launch {
-            val now = System.currentTimeMillis()
-            if (templateDao.updatePinned(id, if (pinned) now else 0L, now) > 0) {
-                _templates.value = templateDao.getAll()
+            try {
+                val now = System.currentTimeMillis()
+                if (templateDao.updatePinned(id, if (pinned) now else 0L, now) > 0) {
+                    refresh()
+                } else {
+                    _library.value = _library.value.copy(error = "模板已不存在，请重新读取")
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _library.value = _library.value.copy(error = "置顶状态保存失败，请再次操作")
             }
         }
     }
@@ -188,7 +279,7 @@ class WorkbenchViewModel @Inject constructor(
                     "WorkbenchGen",
                     "start worldType=${worldType.trim()} coreThemeLen=${coreTheme.length} toneLen=${tone.length} extraLen=${extra.length} labelLen=${label.length} prompt=${clipLog(userPrompt)}",
                 )
-                data class Outcome(val message: String, val templates: List<WorldTemplateEntity>?)
+                data class Outcome(val message: String, val saved: Boolean)
                 val outcome = withContext(Dispatchers.IO) {
                     val raw = llmRetry.chatCompletionWithRetry(
                         apiKey = apiKey,
@@ -206,22 +297,19 @@ class WorkbenchViewModel @Inject constructor(
                         "rawLen=${raw.length} raw=${clipLog(raw)}",
                     )
                     val root = extractTopLevelJsonObject(raw)
-                        ?: return@withContext Outcome("模型未返回可解析的 JSON，请缩短「详细要求」后重试", null)
+                        ?: return@withContext Outcome("模型未返回可解析的 JSON，请缩短「详细要求」后重试", false)
                     if (!root.has("template") || !root.get("template").isJsonObject) {
-                        return@withContext Outcome("返回 JSON 缺少 template 对象，请重试", null)
+                        return@withContext Outcome("返回 JSON 缺少 template 对象，请重试", false)
                     }
                     currentCoroutineContext().ensureActive()
                     _generateSaving.value = true
                     withContext(NonCancellable) {
                         val msg = persistWorldGenerationPackage(root)
-                        val list = templateDao.getAll()
-                        Outcome(msg, list)
+                        Outcome(msg, true)
                     }
                 }
                 currentCoroutineContext().ensureActive()
-                if (outcome.templates != null) {
-                    _templates.value = outcome.templates
-                }
+                if (outcome.saved) refresh()
                 onResult(outcome.message)
             } catch (e: CancellationException) {
                 throw e
@@ -311,7 +399,7 @@ class WorkbenchViewModel @Inject constructor(
     }
 
     suspend fun exportJson(): String {
-        val templatesSnapshot = _templates.value
+        val templatesSnapshot = templateDao.getAll()
         return withContext(Dispatchers.Default) {
             val data = templatesSnapshot.map { t ->
                 mapOf(
@@ -397,7 +485,7 @@ class WorkbenchViewModel @Inject constructor(
             templateDao.upsert(template)
             count++
         }
-        _templates.value = templateDao.getAll()
+        refresh()
         return if (count > 0) "成功导入 $count 个模板" else "未解析出有效模板（需含 label 字段）"
     }
 
@@ -458,11 +546,8 @@ class WorkbenchViewModel @Inject constructor(
                     UserFacingStrings.localSaveFailed("封面")
                 }
             }
-            _templates.value = runCatching { templateDao.getAll() }.getOrElse {
-                _templates.value.map { template ->
-                    if (template.id == id) template.copy(coverImagePath = path, updatedAt = now) else template
-                }
-            }
+            showSavedCover(id, path, now)
+            refresh()
             "已更新封面"
         } catch (_: Exception) {
             runCatching { File(path).delete() }
@@ -540,13 +625,14 @@ class WorkbenchViewModel @Inject constructor(
     }
 
     private suspend fun persistTemplateCover(id: Long, expectedPath: String, finalPath: String): String {
+        val savedAt = System.currentTimeMillis()
         val rejectedMessage = withContext(NonCancellable) {
             try {
                 val updated = templateDao.updateCoverIfUnchanged(
                     id = id,
                     expectedPath = expectedPath,
                     newPath = finalPath,
-                    updatedAt = System.currentTimeMillis(),
+                    updatedAt = savedAt,
                 )
                 if (updated > 0) return@withContext null
                 runCatching { File(finalPath).delete() }
@@ -561,8 +647,17 @@ class WorkbenchViewModel @Inject constructor(
             }
         }
         if (rejectedMessage != null) return rejectedMessage
-        _templates.value = templateDao.getAll()
+        showSavedCover(id, finalPath, savedAt)
+        refresh()
         return "封面已生成并保存"
+    }
+
+    private fun showSavedCover(id: Long, path: String, updatedAt: Long) {
+        _library.update { state ->
+            state.copy(items = state.items.map { item ->
+                if (item.id == id) item.copy(coverImagePath = path, updatedAt = updatedAt) else item
+            })
+        }
     }
 
     companion object {

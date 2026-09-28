@@ -14,8 +14,41 @@ data class NewSessionWorldOption(
     val updatedAt: Long,
 )
 
+data class WorldTemplateLibraryItem(
+    val id: Long,
+    val templateId: String,
+    val label: String,
+    val category: String,
+    val summary: String,
+    val coverImagePath: String,
+    val pinnedAt: Long,
+    val updatedAt: Long,
+)
+
 @Dao
 interface WorldTemplateDao {
+    @Query(
+        """
+        SELECT id, templateId, label, substr(category, 1, 80) AS category,
+               substr(summary, 1, 96) AS summary, coverImagePath, pinnedAt, updatedAt
+        FROM world_templates
+        WHERE (:query = '' OR instr(lower(label), lower(:query)) > 0
+               OR instr(lower(summary), lower(:query)) > 0
+               OR instr(lower(category), lower(:query)) > 0)
+          AND (:cursorId IS NULL OR
+               (CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) < :cursorPinned OR
+               ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND pinnedAt < :cursorPinnedAt) OR
+               ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND pinnedAt = :cursorPinnedAt AND updatedAt < :cursorUpdatedAt) OR
+               ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND pinnedAt = :cursorPinnedAt AND updatedAt = :cursorUpdatedAt AND id < :cursorId))
+        ORDER BY CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END DESC, pinnedAt DESC, updatedAt DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getLibraryPage(
+        query: String, cursorPinned: Int?, cursorPinnedAt: Long?, cursorUpdatedAt: Long?,
+        cursorId: Long?, limit: Int,
+    ): List<WorldTemplateLibraryItem>
+
     @Query("SELECT * FROM world_templates ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, updatedAt DESC")
     suspend fun getAll(): List<WorldTemplateEntity>
 

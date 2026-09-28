@@ -1644,6 +1644,40 @@ class WorldTemplateDaoTest {
     fun teardown() { db.close() }
 
     @Test
+    fun templateLibraryPaginatesPinnedTiesAndSearchesBeyondFirstPage() = runBlocking {
+        repeat(55) { index ->
+            templateDao.upsert(
+                WorldTemplateEntity(
+                    label = "模板 ${index.toString().padStart(2, '0')}",
+                    category = if (index == 54) "特殊分类" else "普通",
+                    summary = if (index == 54) "尾页线索" + "长".repeat(200) else "摘要",
+                    worldPrompt = "完整世界设定".repeat(1000),
+                    pinnedAt = if (index % 11 == 0) 100L else 0L,
+                    updatedAt = 200L,
+                ),
+            )
+        }
+        val seen = mutableListOf<Long>()
+        var cursor: com.mojing.app.data.local.dao.WorldTemplateLibraryItem? = null
+        do {
+            val rows = templateDao.getLibraryPage(
+                query = "", cursorPinned = cursor?.let { if (it.pinnedAt > 0) 1 else 0 },
+                cursorPinnedAt = cursor?.pinnedAt, cursorUpdatedAt = cursor?.updatedAt,
+                cursorId = cursor?.id, limit = 25,
+            )
+            val page = rows.take(24)
+            seen += page.map { it.id }
+            cursor = page.lastOrNull()
+        } while (rows.size > 24)
+        assertEquals(55, seen.size)
+        assertEquals(55, seen.toSet().size)
+        val searched = templateDao.getLibraryPage("尾页线索", null, null, null, null, 25)
+        assertEquals(1, searched.size)
+        assertTrue(searched.single().summary.length <= 96)
+        assertFalse(searched.single().summary.contains("完整世界设定"))
+    }
+
+    @Test
     fun atomicTemplateUpdatesPreserveOtherFieldsAndDoNotRecreateDeletedRows() = runBlocking {
         val templateId = templateDao.upsert(
             WorldTemplateEntity(templateId = "safe", label = "原名称", summary = "原摘要"),

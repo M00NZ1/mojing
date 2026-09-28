@@ -40,7 +40,9 @@ class WorkbenchViewModelTemplateDeleteTest {
     @Test
     fun repeatedSubmissionForSameIdRunsOnceAndPublishesResult() = runTest(dispatcher) {
         val release = CompletableDeferred<Unit>()
-        val templateDao = mockk<WorldTemplateDao> { coEvery { getAll() } returns emptyList() }
+        val templateDao = mockk<WorldTemplateDao> {
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any()) } returns emptyList()
+        }
         val delete = mockk<DeleteWorldTemplateUseCase>()
         coEvery { delete(7L) } coAnswers {
             release.await()
@@ -60,7 +62,9 @@ class WorkbenchViewModelTemplateDeleteTest {
 
     @Test
     fun failedDeleteCanRetryWithoutReportingSuccessEarly() = runTest(dispatcher) {
-        val templateDao = mockk<WorldTemplateDao> { coEvery { getAll() } returns emptyList() }
+        val templateDao = mockk<WorldTemplateDao> {
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any()) } returns emptyList()
+        }
         val delete = mockk<DeleteWorldTemplateUseCase>()
         coEvery { delete(7L) } returnsMany listOf(
             DeleteWorldTemplateResult.Failed(IllegalStateException("db unavailable")),
