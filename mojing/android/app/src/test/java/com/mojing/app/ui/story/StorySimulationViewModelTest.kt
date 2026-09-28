@@ -534,6 +534,36 @@ class StorySimulationViewModelTest {
     }
 
     @Test
+    fun failedGenerationCleanupDoesNotDiscardPendingFullStory() = runTest(dispatcher) {
+        val body = "待保存的完整正文".repeat(4_000)
+        val draft = StoryOpeningDraft(premise = "雾港", direction = "", tone = "悬疑", template = null,
+            encyclopediaId = null, characterIds = emptyList(), worldPrompt = "雾港规则",
+            result = StoryWritingResult("雾港", listOf(StoryChapter(1, "来信", body)), emptyList()), model = "原模型")
+        val stored = mockk<StoryOpeningDraftStore>(relaxed = true) {
+            coEvery { load() } returns StoryOpeningRecord.Pending(draft)
+        }
+        var cleanupFails = true
+        val inputs = mockk<StoryOpeningInputDraftStore>(relaxed = true) {
+            coEvery { clearGeneration() } coAnswers {
+                if (cleanupFails) throw IllegalStateException("storage unavailable")
+            }
+        }
+        val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true),
+            draftStore = stored, inputDraftStore = inputs)
+        runCurrent()
+
+        assertFalse(vm.discardPendingStory())
+        assertTrue(vm.state.value.hasPendingStory)
+        assertTrue(vm.pendingStoryText().contains(body))
+        coVerify(exactly = 0) { stored.discard(draft.id) }
+
+        cleanupFails = false
+        assertTrue(vm.discardPendingStory())
+        assertFalse(vm.state.value.hasPendingStory)
+        coVerify(exactly = 1) { stored.discard(draft.id) }
+    }
+
+    @Test
     fun navigationFailureReopensSavedIdWithoutCreatingAnotherSession() = runTest(dispatcher) {
         val writing = mockk<StoryWritingUseCase>(relaxed = true)
         coEvery { writing.write(any(), any(), any(), any(), any()) } returns StoryWritingResult("小说",

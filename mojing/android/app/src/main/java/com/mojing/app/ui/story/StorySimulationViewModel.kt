@@ -590,9 +590,9 @@ class StorySimulationViewModel @Inject constructor(
         _state.update { it.copy(isSaving = true) }
         return try {
             inputDraftStore.commit(_state.value.inputDraft())
+            inputDraftStore.clearGeneration()
             if (_state.value.draftPersisted) draftStore.discard(pending.id)
             pendingStory = null
-            inputDraftStore.clearGeneration()
             _state.update { it.copy(hasPendingStory = false, error = null, preview = "", generationStage = null,
                 generationModel = null, storyTitle = "", draftPersisted = false, recoveredStory = false) }
             true
