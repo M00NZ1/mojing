@@ -72,6 +72,24 @@ class SearchViewModelTest {
         assertEquals("", viewModel.state.value.hits.single().message.content)
     }
 
+    @Test fun returningFromOriginalKeepsResultPositionUntilAnotherSearch() = runTest(dispatcher) {
+        val row = message(7L, "雨夜")
+        coEvery { dao.searchMainMessages(1L, "雨夜", 0, 40, Long.MAX_VALUE) } returns listOf(row)
+        coEvery { dao.getMainMessageById(1L, 7L) } returns row
+        coEvery { dao.getMainMessagesBefore(1L, any(), any()) } returns emptyList()
+        coEvery { dao.getMainMessagesAfter(1L, any(), any()) } returns emptyList()
+        viewModel.setQuery("雨夜"); viewModel.search(1L, "main"); advanceUntilIdle()
+        val firstSearchRevision = viewModel.state.value.resultRevision
+
+        viewModel.openHit(1L, "main", 7L); advanceUntilIdle()
+        viewModel.closeHit()
+        assertEquals(firstSearchRevision, viewModel.state.value.resultRevision)
+        assertEquals(listOf(7L), viewModel.state.value.hits.map { it.message.id })
+
+        viewModel.search(1L, "main"); advanceUntilIdle()
+        assertTrue(viewModel.state.value.resultRevision > firstSearchRevision)
+    }
+
     @Test fun incompleteIndexDoesNotPublishPartialResultsOrCount() = runTest(dispatcher) {
         val rebuildFinished = CompletableDeferred<Unit>()
         coEvery { indexManager.ensureSessionReady(1L) } coAnswers { rebuildFinished.await() }

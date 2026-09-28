@@ -25,6 +25,7 @@ enum class SearchContextDirection { BEFORE, AFTER }
 data class SearchState(
     val presentation: SearchPresentation = SearchPresentation(),
     val query: String = "", val completedQuery: String = "", val exactMatch: Boolean = false,
+    val resultRevision: Long = 0L,
     val searching: Boolean = false, val error: String? = null,
     val indexing: Boolean = false,
     val visibilityIndexing: Boolean = false,
@@ -93,7 +94,7 @@ class SearchViewModel @Inject constructor(application: Application, private val 
         _state.update { it.copy(searching = true, indexing = true, visibilityIndexing = branchId != "main",
             error = null, hits = emptyList(), totalMatches = null,
             counting = false, countError = null,
-            completedQuery = q, hasOlder = false, hasNewer = false, firstHitOffset = 0,
+            completedQuery = q, resultRevision = token, hasOlder = false, hasNewer = false, firstHitOffset = 0,
             failedPage = null, selectedMessageId = null, contextMessages = emptyList()) }
         searchJob = viewModelScope.launch {
             try {

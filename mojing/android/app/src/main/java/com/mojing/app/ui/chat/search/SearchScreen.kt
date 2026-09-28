@@ -79,6 +79,9 @@ fun SearchScreen(
     val currency by billing.state.collectAsStateWithLifecycle()
     val resultListState = rememberLazyListState()
     LaunchedEffect(sessionId, branchId) { viewModel.initialize(sessionId, branchId) }
+    LaunchedEffect(sessionId, branchId, state.resultRevision) {
+        resultListState.scrollToItem(0)
+    }
     BackHandler { if (state.selectedMessageId != null) viewModel.closeHit() else onBack() }
     CompositionLocalProvider(LocalBillingCurrencyState provides currency,
         LocalReplyUsageLookup provides remember(billing) { { id -> billing.observeRecord(id) } }) {
@@ -92,7 +95,6 @@ fun SearchScreen(
 @Composable private fun SearchResultsScreen(state: SearchState, vm: SearchViewModel, sessionId: Long, branchId: String, onBack: () -> Unit, listState: androidx.compose.foundation.lazy.LazyListState) {
     val focus = LocalFocusManager.current
     fun submit() { focus.clearFocus(); vm.search(sessionId, branchId) }
-    LaunchedEffect(state.completedQuery) { if (state.completedQuery.isNotBlank()) listState.scrollToItem(0) }
     Column(Modifier.fillMaxSize().imePadding()) {
         SearchQueryToolbar(state.query, vm::setQuery, onBack, ::submit, !state.searching)
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
