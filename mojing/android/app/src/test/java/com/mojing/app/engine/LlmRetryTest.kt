@@ -20,6 +20,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.SocketTimeoutException
 
 class LlmRetryTest {
     private val api = mockk<LlmApiService>()
@@ -133,16 +134,46 @@ class LlmRetryTest {
     @Test
     fun activeStoryStreamCanContinueBeyondFiveMinutes() = runTest {
         every { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) } returns flow {
-            emit("开篇")
-            delay(5 * 60 * 1_000L + 1)
-            emit("后续")
+            repeat(7) { index ->
+                emit("第${index + 1}段")
+                delay(60_000L)
+            }
         }
         val chunks = mutableListOf<String>()
         val result = retry.chatCompletionStreamingWithRetry(
             "key", "url", "model", messages, onDelta = chunks::add,
         )
-        assertEquals("开篇后续", result)
-        assertEquals(listOf("开篇", "后续"), chunks)
+        assertEquals((1..7).joinToString("") { "第${it}段" }, result)
+        assertEquals(7, chunks.size)
+        verify(exactly = 1) { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun storyStreamWithoutContentTimesOutEvenIfConnectionRemainsOpen() = runTest {
+        every { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) } returns flow {
+            delay(5 * 60 * 1_000L + 1)
+            emit("太迟的正文")
+        }
+        val error = runCatching {
+            retry.chatCompletionStreamingWithRetry("key", "url", "model", messages, maxRetries = 1)
+        }.exceptionOrNull()
+        assertTrue(error is SocketTimeoutException)
+        verify(exactly = 1) { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun contentIdleTimeoutKeepsReceivedTextAndDoesNotRetry() = runTest {
+        every { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) } returns flow {
+            emit("已收到正文")
+            delay(5 * 60 * 1_000L + 1)
+            emit("不应到达")
+        }
+        val chunks = mutableListOf<String>()
+        val error = runCatching {
+            retry.chatCompletionStreamingWithRetry("key", "url", "model", messages, onDelta = chunks::add)
+        }.exceptionOrNull()
+        assertTrue(error is SocketTimeoutException)
+        assertEquals(listOf("已收到正文"), chunks)
         verify(exactly = 1) { api.streamStoryCompletionWithUsage(any(), any(), any(), any()) }
     }
 

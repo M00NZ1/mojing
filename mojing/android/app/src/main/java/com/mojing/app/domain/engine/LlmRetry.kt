@@ -8,15 +8,23 @@ import com.mojing.app.data.remote.LlmProtocolException
 import com.mojing.app.data.remote.TokenUsage
 import com.mojing.app.domain.billing.CostRecorder
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.timeout
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.NonCancellable
 import java.io.IOException
+import java.net.SocketTimeoutException
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.min
+import kotlin.time.Duration.Companion.minutes
 
 @Singleton
 class LlmRetry @Inject constructor(
@@ -78,6 +86,7 @@ class LlmRetry @Inject constructor(
         throw last ?: IOException("LLM request failed")
     }
 
+    @OptIn(FlowPreview::class)
     suspend fun chatCompletionStreamingWithRetry(
         apiKey: String,
         baseUrl: String,
@@ -101,13 +110,20 @@ class LlmRetry @Inject constructor(
             var usage: TokenUsage? = null
             var recorded = false
             try {
-                llmApi.streamStoryCompletionWithUsage(
+                val stream = llmApi.streamStoryCompletionWithUsage(
                     apiKey, baseUrl,
                     ChatRequest(model, messages, temperature, maxTokens, stream = true, jsonOutput = true),
                     onUsage = { usage = it },
-                ).collect { chunk ->
-                    output.append(chunk)
-                    onDelta(chunk)
+                )
+                try {
+                    // SSE heartbeats are not content; wait for the next actual chunk, not a total duration.
+                    stream.onEach { chunk ->
+                        output.append(chunk)
+                        onDelta(chunk)
+                    }.timeout(STORY_CONTENT_IDLE_TIMEOUT_MINUTES.minutes).collect()
+                } catch (_: TimeoutCancellationException) {
+                    currentCoroutineContext().ensureActive()
+                    throw SocketTimeoutException("Story stream received no content")
                 }
                 recorded = true
                 recordSafely { costRecorder.recordLlm(
@@ -191,6 +207,7 @@ class LlmRetry @Inject constructor(
         .coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
 
     companion object {
+        private const val STORY_CONTENT_IDLE_TIMEOUT_MINUTES = 5
         private const val CANCEL_RECORD_TIMEOUT_MS = 2_000L
     }
 }
