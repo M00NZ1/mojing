@@ -5,12 +5,36 @@ import androidx.room.Query
 import androidx.room.Upsert
 import com.mojing.app.data.local.entity.EncyclopediaEntity
 
-data class EncyclopediaNameOption(val id: Long, val name: String)
+data class EncyclopediaFilterOption(
+    val id: Long,
+    val name: String,
+    val pinnedAt: Long,
+    val updatedAt: Long,
+)
 
 @Dao
 interface EncyclopediaDao {
-    @Query("SELECT id, name FROM world_encyclopedias ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, updatedAt DESC, id DESC")
-    suspend fun getNameOptions(): List<EncyclopediaNameOption>
+    @Query(
+        """
+        SELECT id, name, pinnedAt, updatedAt FROM world_encyclopedias
+        WHERE (:query = '' OR instr(lower(name), lower(:query)) > 0)
+          AND (:cursorId IS NULL OR
+               (CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) < :cursorPinned OR
+               ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND pinnedAt < :cursorPinnedAt) OR
+               ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND pinnedAt = :cursorPinnedAt AND updatedAt < :cursorUpdatedAt) OR
+               ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND pinnedAt = :cursorPinnedAt AND updatedAt = :cursorUpdatedAt AND id < :cursorId))
+        ORDER BY CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END DESC, pinnedAt DESC, updatedAt DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getCharacterFilterPage(
+        query: String, cursorPinned: Int?, cursorPinnedAt: Long?, cursorUpdatedAt: Long?,
+        cursorId: Long?, limit: Int,
+    ): List<EncyclopediaFilterOption>
+
+    @Query("SELECT name FROM world_encyclopedias WHERE id = :id")
+    suspend fun getNameById(id: Long): String?
+
     @Query("SELECT * FROM world_encyclopedias ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, updatedAt DESC")
     suspend fun getAll(): List<EncyclopediaEntity>
 

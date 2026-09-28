@@ -68,8 +68,7 @@ fun CharacterListScreen(
     val characters = page.items
     val listLayout by viewModel.characterListLayout.collectAsStateWithLifecycle()
     val filterEnc by viewModel.filterEncyclopediaId.collectAsStateWithLifecycle()
-    val encOptions by viewModel.encyclopedias.collectAsStateWithLifecycle()
-    val filterOptionsFailed by viewModel.encyclopediaFilterError.collectAsStateWithLifecycle()
+    val selectedFilterName by viewModel.selectedFilterName.collectAsStateWithLifecycle()
     val startingCharacterId by viewModel.startingCharacterId.collectAsStateWithLifecycle()
     val creatingCharacter by viewModel.creatingCharacter.collectAsStateWithLifecycle()
     val deletingCharacterId by viewModel.deletingCharacterId.collectAsStateWithLifecycle()
@@ -77,7 +76,7 @@ fun CharacterListScreen(
     var deleteTarget by remember { mutableStateOf<CharacterListItem?>(null) }
     var deleteError by remember { mutableStateOf<String?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
-    var filterMenuExpanded by remember { mutableStateOf(false) }
+    var filterPickerOpen by remember { mutableStateOf(false) }
     var isImportingDocument by remember { mutableStateOf(false) }
     var importResult by remember { mutableStateOf<CharacterImportResult?>(null) }
     var isExportingDocument by rememberSaveable { mutableStateOf(false) }
@@ -86,13 +85,9 @@ fun CharacterListScreen(
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
-        viewModel.refreshEncyclopediaFilterOptions()
+        viewModel.refreshSelectedFilterName()
         viewModel.setSortOrder(sortOrder)
         viewModel.refreshList(keepVisible = false)
-    }
-
-    val encNameById = remember(encOptions) {
-        encOptions.associate { it.id to it.name.ifBlank { "百科 ${it.id}" } }
     }
 
     fun launchCreateCharacter() {
@@ -164,7 +159,6 @@ fun CharacterListScreen(
                         sortOrder = CharacterLibrarySort.RECENT
                         viewModel.setSortOrder(sortOrder)
                         viewModel.refreshList(keepVisible = false)
-                        viewModel.refreshEncyclopediaFilterOptions()
                     }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -260,50 +254,20 @@ fun CharacterListScreen(
                     .padding(horizontal = 16.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                ExposedDropdownMenuBox(
-                    expanded = filterMenuExpanded,
-                    onExpandedChange = { filterMenuExpanded = it },
+                Surface(
+                    onClick = { filterPickerOpen = true },
                     modifier = Modifier.weight(1f),
+                    shape = MaterialTheme.shapes.small,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
                 ) {
-                    Surface(Modifier.fillMaxWidth().menuAnchor(), shape = MaterialTheme.shapes.small,
-                        color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                        Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 14.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Icon(Icons.Default.Public, "按百科筛选", Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(when (val fid = filterEnc) {
-                                null -> "全部角色"
-                                else -> encOptions.find { it.id == fid }?.name?.ifBlank { null } ?: "百科 $fid"
-                            }, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = filterMenuExpanded)
-                        }
-                    }
-                    ExposedDropdownMenu(
-                        expanded = filterMenuExpanded,
-                        onDismissRequest = { filterMenuExpanded = false },
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("全部角色") },
-                            onClick = {
-                                viewModel.setEncyclopediaFilter(null)
-                                filterMenuExpanded = false
-                            },
-                        )
-                        encOptions.forEach { enc ->
-                            DropdownMenuItem(
-                                text = { Text(enc.name.ifBlank { "百科 ${enc.id}" }) },
-                                onClick = {
-                                    viewModel.setEncyclopediaFilter(enc.id)
-                                    filterMenuExpanded = false
-                                },
-                            )
-                        }
-                        if (filterOptionsFailed) {
-                            DropdownMenuItem(
-                                text = { Text("百科列表加载失败，重试") },
-                                onClick = { viewModel.refreshEncyclopediaFilterOptions() },
-                            )
-                        }
+                    Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Icon(Icons.Default.Public, "按百科筛选", Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (filterEnc == null) "全部角色" else selectedFilterName?.ifBlank { null } ?: "百科 $filterEnc",
+                            Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Icon(Icons.Default.KeyboardArrowDown, "打开百科筛选", Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -363,7 +327,7 @@ fun CharacterListScreen(
                     EmptyState(icon = Icons.Default.ErrorOutline, title = "角色加载失败", message = page.error.orEmpty(),
                         actionLabel = "重试", onAction = viewModel::retryPage, modifier = Modifier.fillMaxSize())
                 } else if (characters.isEmpty()) {
-                    val selectedEncyclopedia = filterEnc?.let(encNameById::get)
+                    val selectedEncyclopedia = selectedFilterName
                     EmptyState(
                         icon = Icons.Default.PersonAdd,
                         title = if (filterEnc == null) "还没有角色" else "这个百科还没有角色",
@@ -404,7 +368,7 @@ fun CharacterListScreen(
                             ) {
                                 CharacterGridCard(
                                     character = character,
-                                    encyclopediaLabel = encNameById[character.boundEncyclopediaId],
+                                    encyclopediaLabel = character.encyclopediaName,
                                     startEnabled = startingCharacterId == null,
                                     isStarting = startingCharacterId == character.id,
                                     onStartChat = { startChat(character) },
@@ -434,7 +398,7 @@ fun CharacterListScreen(
                                 ) {
                                     CharacterListRowInner(
                                         character = character,
-                                        encyclopediaLabel = encNameById[character.boundEncyclopediaId],
+                                        encyclopediaLabel = character.encyclopediaName,
                                         startEnabled = startingCharacterId == null,
                                         isStarting = startingCharacterId == character.id,
                                         onStartChat = { startChat(character) },
@@ -466,6 +430,16 @@ fun CharacterListScreen(
             }
         }
     }
+
+    if (filterPickerOpen) CharacterFilterPicker(
+        selectedId = filterEnc,
+        loadPage = viewModel::loadEncyclopediaFilterPage,
+        onSelect = { option ->
+            viewModel.setEncyclopediaFilter(option?.id, option?.name)
+            filterPickerOpen = false
+        },
+        onDismiss = { filterPickerOpen = false },
+    )
 
     deleteTarget?.let { c ->
         val deleting = deletingCharacterId == c.id

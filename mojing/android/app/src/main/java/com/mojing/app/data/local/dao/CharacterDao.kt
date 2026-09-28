@@ -23,6 +23,7 @@ data class CharacterListItem(
     val avatarImagePath: String,
     val cardImagePath: String,
     val boundEncyclopediaId: Long,
+    val encyclopediaName: String?,
     val pinnedAt: Long,
     val favorite: Boolean,
     val createdAt: Long,
@@ -34,6 +35,7 @@ interface CharacterDao {
         """
         SELECT id, name, substr(personaPrompt, 1, 72) AS personaPreview,
                avatarColor, avatarImagePath, cardImagePath, boundEncyclopediaId,
+               (SELECT name FROM world_encyclopedias WHERE id = boundEncyclopediaId) AS encyclopediaName,
                pinnedAt, favorite, createdAt
         FROM characters
         WHERE (:encyclopediaId IS NULL OR boundEncyclopediaId = :encyclopediaId)
@@ -56,6 +58,7 @@ interface CharacterDao {
         """
         SELECT id, name, substr(personaPrompt, 1, 72) AS personaPreview,
                avatarColor, avatarImagePath, cardImagePath, boundEncyclopediaId,
+               (SELECT name FROM world_encyclopedias WHERE id = boundEncyclopediaId) AS encyclopediaName,
                pinnedAt, favorite, createdAt
         FROM characters
         WHERE (:encyclopediaId IS NULL OR boundEncyclopediaId = :encyclopediaId)
@@ -75,6 +78,7 @@ interface CharacterDao {
         """
         SELECT id, name, substr(personaPrompt, 1, 72) AS personaPreview,
                avatarColor, avatarImagePath, cardImagePath, boundEncyclopediaId,
+               (SELECT name FROM world_encyclopedias WHERE id = boundEncyclopediaId) AS encyclopediaName,
                pinnedAt, favorite, createdAt
         FROM characters
         WHERE (:encyclopediaId IS NULL OR boundEncyclopediaId = :encyclopediaId)

@@ -6,7 +6,7 @@ import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.CharacterListItem
 import com.mojing.app.data.local.dao.CharacterProfileDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
-import com.mojing.app.data.local.dao.EncyclopediaNameOption
+import com.mojing.app.data.local.dao.EncyclopediaFilterOption
 import com.mojing.app.data.local.dao.EncyclopediaEntryDao
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.CharacterProfileEntity
@@ -46,7 +46,13 @@ data class CharacterLibraryPage(
     val error: String? = null,
 )
 
+data class CharacterFilterPage(
+    val rows: List<EncyclopediaFilterOption>,
+    val hasMore: Boolean,
+)
+
 private const val CHARACTER_LIBRARY_PAGE_SIZE = 40
+private const val CHARACTER_FILTER_PAGE_SIZE = 40
 
 internal fun newCharacterDraft(encyclopediaId: Long = 0L): CharacterEntity =
     CharacterEntity(name = "新角色", boundEncyclopediaId = encyclopediaId)
@@ -225,10 +231,8 @@ class CharacterListViewModel @Inject constructor(
     private val _filterEncyclopediaId = MutableStateFlow<Long?>(null)
     val filterEncyclopediaId: StateFlow<Long?> = _filterEncyclopediaId.asStateFlow()
 
-    private val _encyclopedias = MutableStateFlow<List<EncyclopediaNameOption>>(emptyList())
-    val encyclopedias: StateFlow<List<EncyclopediaNameOption>> = _encyclopedias.asStateFlow()
-    private val _encyclopediaFilterError = MutableStateFlow(false)
-    val encyclopediaFilterError: StateFlow<Boolean> = _encyclopediaFilterError.asStateFlow()
+    private val _selectedFilterName = MutableStateFlow<String?>(null)
+    val selectedFilterName: StateFlow<String?> = _selectedFilterName.asStateFlow()
 
     private val _startingCharacterId = MutableStateFlow<Long?>(null)
     val startingCharacterId: StateFlow<Long?> = _startingCharacterId.asStateFlow()
@@ -320,21 +324,34 @@ class CharacterListViewModel @Inject constructor(
     val characterListLayout = uiPreferencesRepository.characterListLayout
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "list")
 
-    fun refreshEncyclopediaFilterOptions() {
+    suspend fun loadEncyclopediaFilterPage(query: String, cursor: EncyclopediaFilterOption?): CharacterFilterPage {
+        val rows = encyclopediaDao.getCharacterFilterPage(
+            query.trim(), cursor?.pinnedAt?.let { if (it > 0) 1 else 0 }, cursor?.pinnedAt,
+            cursor?.updatedAt, cursor?.id, CHARACTER_FILTER_PAGE_SIZE + 1,
+        )
+        return CharacterFilterPage(rows.take(CHARACTER_FILTER_PAGE_SIZE), rows.size > CHARACTER_FILTER_PAGE_SIZE)
+    }
+
+    fun refreshSelectedFilterName() {
+        val id = _filterEncyclopediaId.value ?: return
         viewModelScope.launch {
             try {
-                _encyclopedias.value = encyclopediaDao.getNameOptions()
-                _encyclopediaFilterError.value = false
+                val name = encyclopediaDao.getNameById(id)
+                if (_filterEncyclopediaId.value == id) _selectedFilterName.value = name
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
-                _encyclopediaFilterError.value = true
-            }
+            } catch (_: Exception) { /* Keep the selected ID visible when its label cannot be read. */ }
         }
     }
 
-    fun setEncyclopediaFilter(encyclopediaId: Long?) {
+    fun setEncyclopediaFilter(encyclopediaId: Long?, name: String? = null) {
         val next = encyclopediaId?.takeIf { it > 0L }
+        _selectedFilterName.value = when {
+            next == null -> null
+            name != null -> name
+            next == _filterEncyclopediaId.value -> _selectedFilterName.value
+            else -> null
+        }
         if (_filterEncyclopediaId.value != next) {
             _filterEncyclopediaId.value = next
             refreshList(keepVisible = false)
