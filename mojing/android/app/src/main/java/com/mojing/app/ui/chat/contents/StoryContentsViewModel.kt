@@ -48,6 +48,7 @@ class StoryContentsViewModel @Inject constructor(
 
     fun loadMore() {
         if (_state.value.isLoading || _state.value.isLoadingMore || !_state.value.hasMore) return
+        _state.value = _state.value.copy(isLoadingMore = true, error = null)
         fetch(reset = false, requestToken)
     }
 
@@ -75,14 +76,15 @@ class StoryContentsViewModel @Inject constructor(
     }
 
     private fun fetch(reset: Boolean, token: Long) = viewModelScope.launch {
-        if (!reset) _state.value = _state.value.copy(isLoadingMore = true, error = null)
         try {
-            val rows = messageDao.getVisibleStoryContentsBefore(sessionId, branchId, cursor, PAGE_SIZE)
+            val rows = messageDao.getVisibleStoryContentsBefore(sessionId, branchId, cursor, PAGE_SIZE + 1)
             if (token != requestToken) return@launch
-            val mapped = rows.toContentsEntries()
-            if (rows.isNotEmpty()) cursor = rows.minOf { it.id }
-            _state.value = if (reset) StoryContentsState(entries = mapped, hasMore = rows.size == PAGE_SIZE)
-            else _state.value.copy(entries = _state.value.entries + mapped, isLoadingMore = false, hasMore = rows.size == PAGE_SIZE)
+            val page = rows.take(PAGE_SIZE)
+            val mapped = page.toContentsEntries()
+            if (page.isNotEmpty()) cursor = page.last().id
+            val hasMore = rows.size > PAGE_SIZE
+            _state.value = if (reset) StoryContentsState(entries = mapped, hasMore = hasMore)
+            else _state.value.copy(entries = _state.value.entries + mapped, isLoadingMore = false, hasMore = hasMore)
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (t: Throwable) {
