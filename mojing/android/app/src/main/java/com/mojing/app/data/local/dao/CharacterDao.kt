@@ -173,6 +173,25 @@ interface CharacterDao {
         limit: Int,
     ): List<NewSessionCharacterOption>
 
+    /** Preserve getAll ordering while scanning names for an existing encyclopedia character. */
+    @Query(
+        """
+        SELECT id, name, pinnedAt, favorite, createdAt FROM characters
+        WHERE boundEncyclopediaId = :encyclopediaId
+          AND (:cursorId IS NULL OR pinnedAt < :cursorPinnedAt
+            OR (pinnedAt = :cursorPinnedAt AND favorite < :cursorFavorite)
+            OR (pinnedAt = :cursorPinnedAt AND favorite = :cursorFavorite AND createdAt < :cursorCreatedAt)
+            OR (pinnedAt = :cursorPinnedAt AND favorite = :cursorFavorite AND createdAt = :cursorCreatedAt AND id < :cursorId))
+        ORDER BY pinnedAt DESC, favorite DESC, createdAt DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getBoundCharacterNamePage(
+        encyclopediaId: Long,
+        cursorPinnedAt: Long?, cursorFavorite: Boolean?, cursorCreatedAt: Long?, cursorId: Long?,
+        limit: Int,
+    ): List<NewSessionCharacterOption>
+
     @Query("SELECT * FROM characters ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, favorite DESC, createdAt DESC, id DESC")
     suspend fun getAll(): List<CharacterEntity>
 

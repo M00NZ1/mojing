@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.mojing.app.data.local.AppDatabase
 import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
+import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.EncyclopediaEntity
 import com.mojing.app.data.local.entity.EntryRelationEntity
 import com.mojing.app.data.local.entity.EntryVersionEntity
@@ -43,6 +44,29 @@ class SaveCharacterEntryUseCaseInstrumentedTest {
     @After
     fun tearDown() {
         database.close()
+    }
+
+    @Test
+    fun characterEntryReusesBoundNameBeyondFirstMetadataPage() = runBlocking {
+        val characterDao = database.characterDao()
+        val targetId = characterDao.upsert(CharacterEntity(
+            name = "星河", boundEncyclopediaId = firstEncyclopediaId,
+            personaPrompt = "旧人设".repeat(1000), createdAt = 100L,
+        ))
+        repeat(129) { n ->
+            characterDao.upsert(CharacterEntity(name = "其他角色$n",
+                boundEncyclopediaId = firstEncyclopediaId, createdAt = 100L))
+        }
+        val otherWorldId = characterDao.upsert(CharacterEntity(name = "星河",
+            boundEncyclopediaId = secondEncyclopediaId, createdAt = 100L))
+
+        val saved = saveCharacterEntry(EncyclopediaEntryEntity(
+            encyclopediaId = firstEncyclopediaId, title = "星河", entryType = "character", content = "新人设",
+        ))
+
+        assertEquals(targetId, CharacterEncyclopediaSync.readLinkedCharacterId(saved.metaJson))
+        assertEquals("新人设", characterDao.getById(targetId)?.personaPrompt)
+        assertEquals(secondEncyclopediaId, characterDao.getById(otherWorldId)?.boundEncyclopediaId)
     }
 
     @Test

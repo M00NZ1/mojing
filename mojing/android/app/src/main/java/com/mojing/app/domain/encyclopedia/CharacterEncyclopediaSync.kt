@@ -11,6 +11,8 @@ import com.google.gson.JsonParser
  */
 object CharacterEncyclopediaSync {
 
+    private const val MIRROR_SCAN_PAGE_SIZE = 128
+
     /** 对话来源的独立资料在确认、改名或调整类型后仍保留原身份。 */
     fun isConversationNote(entry: EncyclopediaEntryEntity): Boolean =
         (entry.sourceSessionId ?: 0L) > 0L &&
@@ -29,9 +31,25 @@ object CharacterEncyclopediaSync {
         characterId: Long,
     ) {
         if (encyclopediaId <= 0L || characterId <= 0L) return
-        entryDao.getByType(encyclopediaId, "character")
-            .filter { readLinkedCharacterId(it.metaJson) == characterId }
-            .forEach { entryDao.delete(it.id) }
+        findCharacterMirrorIds(entryDao, encyclopediaId, characterId)
+            .forEach { entryDao.delete(it) }
+    }
+
+    /** Metadata-only keyset scan keeps large entry bodies out of character save transactions. */
+    suspend fun findCharacterMirrorIds(
+        entryDao: EncyclopediaEntryDao,
+        encyclopediaId: Long,
+        characterId: Long,
+    ): List<Long> {
+        if (encyclopediaId <= 0L || characterId <= 0L) return emptyList()
+        val matches = mutableListOf<Long>()
+        var afterId = 0L
+        do {
+            val page = entryDao.getCharacterMirrorMetadataPage(encyclopediaId, afterId, MIRROR_SCAN_PAGE_SIZE)
+            page.forEach { if (readLinkedCharacterId(it.metaJson) == characterId) matches += it.id }
+            afterId = page.lastOrNull()?.id ?: afterId
+        } while (page.size == MIRROR_SCAN_PAGE_SIZE)
+        return matches
     }
 
     /**
@@ -45,10 +63,9 @@ object CharacterEncyclopediaSync {
         val encyclopediaId = character.boundEncyclopediaId
         if (characterId <= 0L || encyclopediaId <= 0L) return null
 
-        val mirrors = entryDao.getByType(encyclopediaId, "character")
-            .filter { readLinkedCharacterId(it.metaJson) == characterId }
-        val existing = mirrors.firstOrNull()
-        mirrors.drop(1).forEach { entryDao.delete(it.id) }
+        val mirrorIds = findCharacterMirrorIds(entryDao, encyclopediaId, characterId)
+        val existing = mirrorIds.firstOrNull()?.let { entryDao.getById(it) }
+        mirrorIds.drop(1).forEach { entryDao.delete(it) }
 
         val now = System.currentTimeMillis()
         val persona = character.personaPrompt.trim()

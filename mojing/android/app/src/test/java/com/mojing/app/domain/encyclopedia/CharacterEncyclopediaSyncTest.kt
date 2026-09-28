@@ -1,6 +1,7 @@
 package com.mojing.app.domain.encyclopedia
 
 import com.mojing.app.data.local.dao.EncyclopediaEntryDao
+import com.mojing.app.data.local.dao.CharacterMirrorMetadata
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
 import io.mockk.coEvery
@@ -28,7 +29,7 @@ class CharacterEncyclopediaSyncTest {
     @Test
     fun createsMirrorWithLinkedCharacterId() = runTest {
         val saved = slot<EncyclopediaEntryEntity>()
-        coEvery { entryDao.getByType(9, "character") } returns emptyList()
+        coEvery { entryDao.getCharacterMirrorMetadataPage(9, 0, 128) } returns emptyList()
         coEvery { entryDao.upsert(capture(saved)) } returns 12
 
         val result = CharacterEncyclopediaSync.syncCharacterToEntry(
@@ -54,7 +55,9 @@ class CharacterEncyclopediaSyncTest {
         val duplicate = mirror(id = 13, linkedCharacterId = 5)
         val unrelated = mirror(id = 14, linkedCharacterId = 6)
         val saved = slot<EncyclopediaEntryEntity>()
-        coEvery { entryDao.getByType(9, "character") } returns listOf(first, duplicate, unrelated)
+        coEvery { entryDao.getCharacterMirrorMetadataPage(9, 0, 128) } returns
+            listOf(first, duplicate, unrelated).map { CharacterMirrorMetadata(it.id, it.metaJson) }
+        coEvery { entryDao.getById(12) } returns first
         coEvery { entryDao.upsert(capture(saved)) } returns 12
 
         CharacterEncyclopediaSync.syncCharacterToEntry(
@@ -71,12 +74,12 @@ class CharacterEncyclopediaSyncTest {
 
     @Test
     fun removeDeletesOnlyMatchingLinkedIds() = runTest {
-        coEvery { entryDao.getByType(9, "character") } returns listOf(
+        coEvery { entryDao.getCharacterMirrorMetadataPage(9, 0, 128) } returns listOf(
             mirror(id = 12, linkedCharacterId = 5),
             mirror(id = 13, linkedCharacterId = 5),
             mirror(id = 14, linkedCharacterId = 6),
             EncyclopediaEntryEntity(id = 15, encyclopediaId = 9, entryType = "character", title = "同名用户条目"),
-        )
+        ).map { CharacterMirrorMetadata(it.id, it.metaJson) }
 
         CharacterEncyclopediaSync.removeCharacterMirrors(entryDao, 9, 5)
 
@@ -84,6 +87,18 @@ class CharacterEncyclopediaSyncTest {
         coVerify(exactly = 1) { entryDao.delete(13) }
         coVerify(exactly = 0) { entryDao.delete(14) }
         coVerify(exactly = 0) { entryDao.delete(15) }
+    }
+
+    @Test
+    fun mirrorScanCrossesPageBoundaryWithoutLoadingEntryBodies() = runTest {
+        val metadata = (1L..130L).map { id ->
+            CharacterMirrorMetadata(id, if (id == 129L) "{\"linkedCharacterId\":5}" else "{}")
+        }
+        coEvery { entryDao.getCharacterMirrorMetadataPage(9, 0, 128) } returns metadata.take(128)
+        coEvery { entryDao.getCharacterMirrorMetadataPage(9, 128, 128) } returns metadata.drop(128)
+
+        assertEquals(listOf(129L), CharacterEncyclopediaSync.findCharacterMirrorIds(entryDao, 9, 5))
+        coVerify(exactly = 0) { entryDao.getByType(any(), any()) }
     }
 
     private fun mirror(id: Long, linkedCharacterId: Long, metaJson: String? = null) =

@@ -6,6 +6,7 @@ import androidx.room.Upsert
 import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
 
 data class EncyclopediaEntryOption(val id: Long, val title: String, val entryType: String)
+data class CharacterMirrorMetadata(val id: Long, val metaJson: String)
 
 @Dao
 interface EncyclopediaEntryDao {
@@ -73,6 +74,10 @@ interface EncyclopediaEntryDao {
 
     @Query("SELECT * FROM encyclopedia_entries WHERE encyclopediaId = :encId AND entryType = :type ORDER BY id ASC")
     suspend fun getByType(encId: Long, type: String): List<EncyclopediaEntryEntity>
+
+    /** Mirror scans never need the potentially long entry content. */
+    @Query("SELECT id, metaJson FROM encyclopedia_entries WHERE encyclopediaId = :encId AND entryType = 'character' AND id > :afterId ORDER BY id ASC LIMIT :limit")
+    suspend fun getCharacterMirrorMetadataPage(encId: Long, afterId: Long, limit: Int): List<CharacterMirrorMetadata>
 
     @Query("SELECT * FROM encyclopedia_entries WHERE id = :id")
     suspend fun getById(id: Long): EncyclopediaEntryEntity?

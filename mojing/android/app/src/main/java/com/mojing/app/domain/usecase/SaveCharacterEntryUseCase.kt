@@ -2,6 +2,7 @@ package com.mojing.app.domain.usecase
 
 import androidx.room.withTransaction
 import com.mojing.app.data.local.AppDatabase
+import com.mojing.app.data.local.dao.NewSessionCharacterOption
 import com.mojing.app.data.local.entity.EntryVersionEntity
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
@@ -20,6 +21,8 @@ import javax.inject.Singleton
 class SaveCharacterEntryUseCase @Inject constructor(
     private val database: AppDatabase,
 ) {
+    private companion object { const val CHARACTER_NAME_SCAN_PAGE_SIZE = 128 }
+
     /** 编辑入口：旧正文快照与新条目共享一次事务。 */
     suspend fun saveEdited(entry: EncyclopediaEntryEntity): EncyclopediaEntryEntity = database.withTransaction {
         val previous = if (entry.id > 0L) database.encyclopediaEntryDao().getById(entry.id) else null
@@ -75,14 +78,7 @@ class SaveCharacterEntryUseCase @Inject constructor(
             val linkedCharacter = linkedId?.let { characterDao.getById(it) }
             val title = entry.title.trim().ifBlank { "未命名角色" }
             val persona = entry.content.trim()
-            val byName = if (linkedCharacter == null) {
-                characterDao.getAll().firstOrNull {
-                    it.boundEncyclopediaId == entry.encyclopediaId &&
-                        it.name.equals(title, ignoreCase = true)
-                }
-            } else {
-                null
-            }
+            val byName = if (linkedCharacter == null) findBoundCharacterByName(entry.encyclopediaId, title) else null
             val previousCharacter = linkedCharacter ?: byName
             val now = System.currentTimeMillis()
             val character = if (previousCharacter != null) {
@@ -135,14 +131,27 @@ class SaveCharacterEntryUseCase @Inject constructor(
                 ),
             )
 
-            entryDao.getByType(entry.encyclopediaId, "character")
-                .filter {
-                    it.id != saved.id &&
-                        CharacterEncyclopediaSync.readLinkedCharacterId(it.metaJson) == characterId
-                }
-                .forEach { entryDao.delete(it.id) }
+            CharacterEncyclopediaSync.findCharacterMirrorIds(entryDao, entry.encyclopediaId, characterId)
+                .filter { it != saved.id }
+                .forEach { entryDao.delete(it) }
             saved
         }
+
+    /** Match Kotlin's case-insensitive name semantics and original library ordering without loading full cards. */
+    private suspend fun findBoundCharacterByName(encyclopediaId: Long, title: String): CharacterEntity? {
+        val characterDao = database.characterDao()
+        var cursor: NewSessionCharacterOption? = null
+        while (true) {
+            val page = characterDao.getBoundCharacterNamePage(
+                encyclopediaId, cursor?.pinnedAt, cursor?.favorite, cursor?.createdAt, cursor?.id,
+                CHARACTER_NAME_SCAN_PAGE_SIZE,
+            )
+            page.firstOrNull { it.name.equals(title, ignoreCase = true) }
+                ?.let { return characterDao.getById(it.id) }
+            if (page.size < CHARACTER_NAME_SCAN_PAGE_SIZE) return null
+            cursor = page.last()
+        }
+    }
 
     private suspend fun upsertEntry(entry: EncyclopediaEntryEntity): EncyclopediaEntryEntity {
         val entryDao = database.encyclopediaEntryDao()
