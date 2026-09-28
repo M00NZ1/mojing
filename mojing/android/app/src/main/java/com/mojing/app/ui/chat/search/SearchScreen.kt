@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mojing.app.data.local.entity.MessageEntity
+import com.mojing.app.data.local.search.MessageSearchTokenizer
 import com.mojing.app.ui.chat.ChatMessageTextFormat
 import java.time.Instant
 import java.time.ZoneId
@@ -247,6 +248,14 @@ fun SearchScreen(
 ) {
     val index = state.hits.indexOfFirst { it.message.id == state.selectedMessageId }
     val current = (state.firstHitOffset + index + 1).coerceAtLeast(1)
+    val selectedHit = state.hits.getOrNull(index)
+    val matchingSpeaker = remember(selectedHit, state.completedQuery, state.exactMatch) {
+        selectedHit?.takeIf { it.message.speakerType == "character" }?.speakerLabel?.takeIf { name ->
+            val query = MessageSearchTokenizer.normalize(state.completedQuery)
+            val normalizedName = MessageSearchTokenizer.normalize(name)
+            query.isNotEmpty() && (if (state.exactMatch) normalizedName == query else normalizedName.contains(query))
+        }
+    }
     var openInChatError by remember(state.selectedMessageId) { mutableStateOf<String?>(null) }
     var openingInChat by remember(state.selectedMessageId) { mutableStateOf(false) }
     var currentHitActive by remember(state.selectedMessageId) { mutableStateOf(true) }
@@ -346,6 +355,11 @@ fun SearchScreen(
                 openInChatError?.let { error ->
                     Text(error, Modifier.padding(start = 20.dp, end = 12.dp, top = 8.dp),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+                matchingSpeaker?.let { name ->
+                    Text("角色名匹配：$name", Modifier.padding(start = 20.dp, end = 12.dp, top = 8.dp),
+                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("$current / ${state.totalMatches?.toString() ?: "${state.firstHitOffset + state.hits.size}+"}", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
