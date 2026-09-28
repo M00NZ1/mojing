@@ -23,8 +23,9 @@ import com.mojing.app.data.local.entity.*
         SessionMemoryCorrectionEntity::class, BranchSwipeSelectionEntity::class,
         BranchContextExclusionEntity::class,
         LegacyWorldMappingEntity::class, LegacyLoreMappingEntity::class,
+        BranchEventStatusEntity::class,
     ],
-    version = 26,
+    version = 27,
     exportSchema = true
 )
 @TypeConverters(Converters::class)

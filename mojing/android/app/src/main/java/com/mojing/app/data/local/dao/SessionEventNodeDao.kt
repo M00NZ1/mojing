@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import com.mojing.app.data.local.entity.BranchEventStatusEntity
 import com.mojing.app.data.local.entity.SessionEventNodeEntity
 
 private const val VISIBLE_EVENT_NODES_QUERY = """
@@ -43,9 +44,12 @@ interface SessionEventNodeDao {
     @Query("$VISIBLE_EVENT_NODES_QUERY ORDER BY event.importance DESC, event.id DESC")
     suspend fun getVisibleForBranch(sessionId: Long, branchId: String): List<SessionEventNodeEntity>
 
-    suspend fun getForBranch(sessionId: Long, branchId: String): List<SessionEventNodeEntity> =
-        if (branchId == "main") getBySessionAndBranch(sessionId, branchId)
-        else getVisibleForBranch(sessionId, branchId)
+    suspend fun getForBranch(sessionId: Long, branchId: String): List<SessionEventNodeEntity> {
+        val rows = if (branchId == "main") getBySessionAndBranch(sessionId, branchId)
+            else getVisibleForBranch(sessionId, branchId)
+        if (branchId == "main" || rows.isEmpty()) return rows
+        return applyEventStatusOverrides(rows, getAllStatusOverrides(sessionId, branchId))
+    }
 
     @Query("SELECT * FROM session_event_nodes WHERE sessionId = :sessionId AND branchId = :branchId ORDER BY createdAt DESC, id DESC LIMIT :limit")
     suspend fun getRecentBySessionAndBranch(
@@ -97,28 +101,41 @@ interface SessionEventNodeDao {
         beforeCreatedAt: Long? = null,
         beforeId: Long? = null,
         limit: Int,
-    ): List<SessionEventNodeEntity> = when {
-        branchId == "main" && beforeCreatedAt == null ->
-            getRecentBySessionAndBranch(sessionId, branchId, limit)
-        branchId == "main" ->
-            getOlderBySessionAndBranch(
-                sessionId,
-                branchId,
-                requireNotNull(beforeCreatedAt),
-                requireNotNull(beforeId),
-                limit,
-            )
-        beforeCreatedAt == null ->
-            getRecentVisibleForBranch(sessionId, branchId, limit)
-        else ->
-            getOlderVisibleForBranch(
-                sessionId,
-                branchId,
-                requireNotNull(beforeCreatedAt),
-                requireNotNull(beforeId),
-                limit,
-            )
+    ): List<SessionEventNodeEntity> {
+        val rows = when {
+            branchId == "main" && beforeCreatedAt == null ->
+                getRecentBySessionAndBranch(sessionId, branchId, limit)
+            branchId == "main" ->
+                getOlderBySessionAndBranch(
+                    sessionId,
+                    branchId,
+                    requireNotNull(beforeCreatedAt),
+                    requireNotNull(beforeId),
+                    limit,
+                )
+            beforeCreatedAt == null ->
+                getRecentVisibleForBranch(sessionId, branchId, limit)
+            else ->
+                getOlderVisibleForBranch(
+                    sessionId,
+                    branchId,
+                    requireNotNull(beforeCreatedAt),
+                    requireNotNull(beforeId),
+                    limit,
+                )
+        }
+        if (branchId == "main" || rows.isEmpty()) return rows
+        return applyEventStatusOverrides(rows, getStatusOverrides(sessionId, branchId, rows.map { it.id }))
     }
+
+    @Query("SELECT * FROM branch_event_status WHERE sessionId = :sessionId AND branchId = :branchId AND eventId IN (:eventIds)")
+    suspend fun getStatusOverrides(sessionId: Long, branchId: String, eventIds: List<Long>): List<BranchEventStatusEntity>
+
+    @Query("SELECT * FROM branch_event_status WHERE sessionId = :sessionId AND branchId = :branchId")
+    suspend fun getAllStatusOverrides(sessionId: Long, branchId: String): List<BranchEventStatusEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertStatusOverride(entity: BranchEventStatusEntity)
 
     @Query("UPDATE session_event_nodes SET resolved = NOT resolved WHERE id = :id")
     suspend fun toggleResolved(id: Long)
@@ -131,4 +148,13 @@ interface SessionEventNodeDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entity: SessionEventNodeEntity): Long
+}
+
+internal fun applyEventStatusOverrides(
+    rows: List<SessionEventNodeEntity>, overrides: List<BranchEventStatusEntity>,
+): List<SessionEventNodeEntity> {
+    val byEventId = overrides.associateBy { it.eventId }
+    return rows.map { row ->
+        byEventId[row.id]?.let { row.copy(resolved = it.resolved) } ?: row
+    }
 }

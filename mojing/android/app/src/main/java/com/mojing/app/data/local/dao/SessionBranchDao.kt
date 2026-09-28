@@ -81,6 +81,40 @@ interface SessionBranchDao {
         branchId: String,
     )
 
+    @Query(
+        """
+        INSERT OR REPLACE INTO branch_event_status(sessionId, branchId, eventId, resolved)
+        SELECT parent.sessionId, :branchId, parent.eventId, parent.resolved
+        FROM branch_event_status AS parent
+        JOIN session_event_nodes AS event
+          ON event.id = parent.eventId AND event.sessionId = parent.sessionId
+        JOIN branch_visibility_segments AS visibility
+          ON visibility.sessionId = event.sessionId
+         AND visibility.targetBranchId = :branchId
+         AND visibility.sourceBranchId = event.branchId
+         AND event.messageId IS NOT NULL
+         AND event.messageId <= visibility.maxMessageId
+        WHERE parent.sessionId = :sessionId AND parent.branchId = :parentBranchId
+          AND NOT EXISTS (
+              SELECT 1
+              FROM messages AS replacement
+              JOIN branch_visibility_segments AS replacement_visibility
+                ON replacement_visibility.sessionId = replacement.sessionId
+               AND replacement_visibility.targetBranchId = :branchId
+               AND replacement_visibility.sourceBranchId = replacement.branchId
+               AND replacement.id <= replacement_visibility.maxMessageId
+              WHERE replacement.sessionId = parent.sessionId
+                AND replacement.regeneratedFromMessageId = event.messageId
+                AND replacement.branchId <> event.branchId
+          )
+        """,
+    )
+    suspend fun copyVisibleEventStatusOverrides(
+        sessionId: Long,
+        parentBranchId: String,
+        branchId: String,
+    )
+
     @Query("SELECT sessionId FROM messages WHERE id = :sourceId LIMIT 1")
     suspend fun sourceSessionId(sourceId: Long): Long?
 
@@ -90,6 +124,11 @@ interface SessionBranchDao {
         val id = insertRaw(entity)
         rebuildVisibilitySegments(entity.sessionId)
         copyVisibleSwipeSelectionOverrides(
+            sessionId = entity.sessionId,
+            parentBranchId = entity.parentBranchId,
+            branchId = entity.branchId,
+        )
+        copyVisibleEventStatusOverrides(
             sessionId = entity.sessionId,
             parentBranchId = entity.parentBranchId,
             branchId = entity.branchId,

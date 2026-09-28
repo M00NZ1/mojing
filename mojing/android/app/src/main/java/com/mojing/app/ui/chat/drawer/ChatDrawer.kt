@@ -1017,7 +1017,7 @@ fun TimelineTab(
                             Text("重要度 ${event.importance.coerceIn(1, 5)}", style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        if (inherited) Text("继承事件 · 在来源故事线中管理", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (inherited) Text("继承事件 · 本线可改状态，删除请回来源线", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
                         actionErrors[event.id]?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                         if (event.description.isNotBlank()) {
@@ -1041,7 +1041,7 @@ fun TimelineTab(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            TextButton(enabled = !busy && !inherited, onClick = { onToggleResolved(event.id) }) {
+                            TextButton(enabled = !busy, onClick = { onToggleResolved(event.id) }) {
                                 Text(if (event.resolved) "标为未解决" else "标为已解决")
                             }
                             Spacer(Modifier.weight(1f))

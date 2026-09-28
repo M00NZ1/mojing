@@ -24,6 +24,7 @@ import com.mojing.app.data.local.dao.SessionDao
 import com.mojing.app.data.local.dao.SessionEventNodeDao
 import com.mojing.app.domain.billing.CostRecorder
 import com.mojing.app.data.local.entity.MessageAttachmentEntity
+import com.mojing.app.data.local.entity.BranchEventStatusEntity
 import com.mojing.app.data.repository.ImageRepository
 import com.mojing.app.data.remote.ImageApiService
 import com.mojing.app.data.remote.LlmApiService
@@ -4016,14 +4017,16 @@ class ChatViewModel @Inject constructor(
         val branchId = currentBranchId()
         if (nodeId in _state.value.eventBusyIds) return
         val target = _state.value.eventNodes.firstOrNull { it.id == nodeId } ?: return
-        if (target.branchId != branchId) {
-            _state.update { it.copy(eventActionErrors = it.eventActionErrors + (nodeId to "请在来源故事线中修改这条继承事件")) }
-            return
-        }
         _state.update { it.copy(eventBusyIds = it.eventBusyIds + nodeId, eventActionErrors = it.eventActionErrors - nodeId) }
         viewModelScope.launch {
             try {
-                eventNodeDao.setResolved(nodeId, !target.resolved)
+                if (target.branchId == branchId) {
+                    eventNodeDao.setResolved(nodeId, !target.resolved)
+                } else {
+                    eventNodeDao.upsertStatusOverride(
+                        BranchEventStatusEntity(sessionId, branchId, nodeId, !target.resolved),
+                    )
+                }
                 _state.update { if (it.currentBranchId == branchId) it.copy(eventNodes = it.eventNodes.map { event -> if (event.id == nodeId) event.copy(resolved = !target.resolved) else event }) else it }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {

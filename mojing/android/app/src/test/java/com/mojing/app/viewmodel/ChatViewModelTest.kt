@@ -2867,18 +2867,26 @@ class ChatViewModelTest {
         assertEquals(null, vm.state.value.eventNodesLoadError)
     }
 
-    @Test fun inheritedEventsCannotModifyTheirSourceFromAnotherStoryline() = runTest(testDispatcher) {
+    @Test fun inheritedEventStatusStaysOnCurrentStorylineAndDeletionStaysOnSource() = runTest(testDispatcher) {
         val events = mockk<SessionEventNodeDao>(relaxed = true)
-        val source = SessionEventNodeEntity(id = 1, sessionId = 42, branchId = "source", title = "继承事件")
-        coEvery { events.getPageForBranch(42, "main", null, null, any()) } returns listOf(source)
-        val vm = createViewModel(eventNodeDao = events)
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        val source = SessionEventNodeEntity(id = 1, sessionId = 42, branchId = "main", title = "继承事件")
+        coEvery { events.getPageForBranch(42, "B", null, null, any()) } returns listOf(source.copy(resolved = true))
+        coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId = 42, branchId = "B", sourceMessageId = 8))
+        val vm = createViewModel(eventNodeDao = events, sessionBranchDao = branches)
         advanceUntilIdle()
+        vm.switchBranch("B")
+        advanceUntilIdle()
+        assertTrue(vm.state.value.eventNodes.single().resolved)
+        coEvery { events.getPageForBranch(42, "B", null, null, any()) } returns listOf(source)
         vm.toggleEventNodeResolved(1)
+        advanceUntilIdle()
+        assertFalse(vm.state.value.eventNodes.single().resolved)
+        coVerify(exactly = 1) { events.upsertStatusOverride(match { it.sessionId == 42L && it.branchId == "B" && it.eventId == 1L && !it.resolved }) }
+        coVerify(exactly = 0) { events.setResolved(any(), any()) }
         vm.deleteEventNode(1)
         advanceUntilIdle()
-        coVerify(exactly = 0) { events.setResolved(any(), any()) }
         coVerify(exactly = 0) { events.deleteById(any()) }
-        assertEquals(listOf(source), vm.state.value.eventNodes)
         assertTrue(vm.state.value.eventActionErrors[1].orEmpty().contains("来源故事线"))
     }
 

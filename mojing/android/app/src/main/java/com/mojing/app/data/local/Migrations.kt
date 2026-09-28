@@ -533,4 +533,18 @@ object Migrations {
         }
     }
 
+    val MIGRATION_26_27 = object : Migration(26, 27) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS `branch_event_status` (" +
+                    "`sessionId` INTEGER NOT NULL, `branchId` TEXT NOT NULL, " +
+                    "`eventId` INTEGER NOT NULL, `resolved` INTEGER NOT NULL, " +
+                    "PRIMARY KEY(`sessionId`, `branchId`, `eventId`), " +
+                    "FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE, " +
+                    "FOREIGN KEY(`eventId`) REFERENCES `session_event_nodes`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE)",
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_branch_event_status_eventId` ON `branch_event_status` (`eventId`)")
+        }
+    }
+
 }
