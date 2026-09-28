@@ -13,6 +13,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import com.mojing.app.data.local.entity.SessionWorldEntity
 import com.mojing.app.data.local.entity.SessionWorldCredentialDraft
+import com.mojing.app.data.local.entity.SessionEventNodeEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Rule
@@ -38,7 +39,7 @@ class ChatDrawerNavigationTest {
                     onWorldCredentialFieldsDirty = { dirty.value = it },
                     worldCredentialFieldsDirty = dirty.value,
                     onToggleEventResolved = {}, onDeleteEventNode = {},
-                    onJumpToMemorySource = {}, onAddMemoryCorrection = { _, _ -> },
+                    onJumpToMemorySource = { _, _ -> false }, onAddMemoryCorrection = { _, _ -> },
                     onEditMemoryCorrection = {}, onDeleteMemoryCorrection = {},
                     onRebuildContextMemory = {}, onClearContextMemory = {},
                     onContinueStorySummary = {}, onStopStorySummary = {},
@@ -62,6 +63,44 @@ class ChatDrawerNavigationTest {
         composeRule.onNodeWithText("专用线路").performScrollTo().performClick()
         composeRule.onAllNodesWithText("draft-test-key").assertCountEquals(0)
         composeRule.onNodeWithText("未保存").assertDoesNotExist()
+    }
+
+    @Test
+    fun eventSourceKeepsDrawerOpenUntilLoadedAndRetriesInPlace() {
+        var completeLocation: ((Boolean) -> Unit)? = null
+        var closes = 0
+        var attempts = 0
+        composeRule.setContent {
+            MaterialTheme {
+                ChatDrawer(
+                    participants = emptyList(),
+                    eventNodes = listOf(SessionEventNodeEntity(id = 1L, sessionId = 7L, messageId = 17L, title = "转折事件")),
+                    onJumpToBookmark = {}, onRemoveBookmark = {}, onLoadMoreBookmarks = {}, onToggleMute = {},
+                    onUpdateTalkativeness = { _, _, done -> done(true) },
+                    onRemoveParticipant = {}, onAddParticipant = {}, onSpeakerTurnModeChange = {},
+                    onClose = { closes++ }, onWorldSettingChanged = { _, _ -> },
+                    onSaveSessionWorldCredentials = {}, onWorldCredentialFieldsDirty = {},
+                    onToggleEventResolved = {}, onDeleteEventNode = {},
+                    onJumpToMemorySource = { id, done ->
+                        assertEquals(17L, id)
+                        attempts++
+                        completeLocation = done
+                        true
+                    },
+                    onAddMemoryCorrection = { _, _ -> }, onEditMemoryCorrection = {}, onDeleteMemoryCorrection = {},
+                    onRebuildContextMemory = {}, onClearContextMemory = {},
+                    onContinueStorySummary = {}, onStopStorySummary = {}, onSessionThinkMax = {},
+                )
+            }
+        }
+        composeRule.onNodeWithText("事件").performClick()
+        composeRule.onNodeWithText("原文消息 #17").performClick()
+        composeRule.onNodeWithText("正在定位原文…").assertIsDisplayed()
+        composeRule.runOnIdle { assertEquals(0, closes); completeLocation?.invoke(false) }
+        composeRule.onNodeWithText("原文不可用或加载失败").assertIsDisplayed()
+        composeRule.onNodeWithText("重试").performClick()
+        composeRule.runOnIdle { assertEquals(2, attempts); completeLocation?.invoke(true) }
+        composeRule.runOnIdle { assertEquals(1, closes) }
     }
 
     @Test

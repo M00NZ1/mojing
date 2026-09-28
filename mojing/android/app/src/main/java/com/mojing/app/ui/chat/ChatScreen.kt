@@ -622,6 +622,7 @@ fun ChatScreen(
                             memoryCorrections = state.memoryCorrections,
                             memoryCorrectionPromptTrace = state.lastMemoryCorrectionPromptTrace,
                             currentBranchId = state.currentBranchId,
+                            drawerOpen = drawerState.isOpen,
                             isGenerating = state.isGenerating,
                             eventNodes = state.eventNodes,
                             eventNodesHasMore = state.eventNodesHasMore,
@@ -678,12 +679,11 @@ fun ChatScreen(
                             eventBusyIds = state.eventBusyIds,
                             eventActionErrors = state.eventActionErrors,
                             onDeleteEventNode = { viewModel.deleteEventNode(it) },
-                            onJumpToMemorySource = { messageId ->
+                            onJumpToMemorySource = { messageId, onResult ->
                                 if (state.isGenerating) {
                                     showGenerationLockedMessage()
-                                } else if (viewModel.openMessageInHistory(messageId)) {
-                                    scope.launch { drawerState.close() }
-                                }
+                                    false
+                                } else viewModel.openMessageInHistoryWithResult(messageId, onResult)
                             },
                             onAddMemoryCorrection = { content, sourceId ->
                                 correctionEditing = null

@@ -48,6 +48,7 @@ fun ChatDrawer(
     memoryCorrections: List<SessionMemoryCorrectionEntity> = emptyList(),
     memoryCorrectionPromptTrace: MemoryCorrectionPromptTrace? = null,
     currentBranchId: String = "main",
+    drawerOpen: Boolean = true,
     isGenerating: Boolean = false,
     eventNodes: List<SessionEventNodeEntity> = emptyList(),
     eventNodesHasMore: Boolean = false,
@@ -80,7 +81,7 @@ fun ChatDrawer(
     worldCredentialFieldsDirty: Boolean = false,
     onToggleEventResolved: (Long) -> Unit,
     onDeleteEventNode: (Long) -> Unit,
-    onJumpToMemorySource: (Long) -> Unit,
+    onJumpToMemorySource: (Long, (Boolean) -> Unit) -> Boolean,
     onAddMemoryCorrection: (String, Long?) -> Unit,
     onEditMemoryCorrection: (SessionMemoryCorrectionEntity) -> Unit,
     onDeleteMemoryCorrection: (SessionMemoryCorrectionEntity) -> Unit,
@@ -99,6 +100,30 @@ fun ChatDrawer(
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     var pendingTab by remember { mutableStateOf<Int?>(null) }
+    var sourceOpeningId by remember(currentBranchId, drawerOpen) { mutableStateOf<Long?>(null) }
+    var sourceFailedId by remember(currentBranchId, drawerOpen) { mutableStateOf<Long?>(null) }
+    var sourceError by remember(currentBranchId, drawerOpen) { mutableStateOf<String?>(null) }
+    var sourceActive by remember(currentBranchId, drawerOpen) { mutableStateOf(drawerOpen) }
+    DisposableEffect(currentBranchId, drawerOpen) { onDispose { sourceActive = false } }
+    fun openSource(messageId: Long) {
+        if (sourceOpeningId != null) return
+        sourceOpeningId = messageId
+        sourceFailedId = null
+        sourceError = null
+        if (!onJumpToMemorySource(messageId, result@{ opened ->
+                if (!sourceActive || sourceOpeningId != messageId) return@result
+                if (opened) onClose()
+                else {
+                    sourceOpeningId = null
+                    sourceFailedId = messageId
+                    sourceError = "原文不可用或加载失败"
+                }
+            })) {
+            sourceOpeningId = null
+            sourceFailedId = messageId
+            sourceError = "当前正在生成或加载历史，请稍后重试"
+        }
+    }
     val tabs = listOf("角色", "世界", "记忆", "事件", "书签")
 
     Column(modifier = Modifier.widthIn(max = 400.dp).fillMaxWidth()) {
@@ -118,6 +143,20 @@ fun ChatDrawer(
                         else selectedTab = index
                     }
                 }, text = { Text(title, maxLines = 1) })
+            }
+        }
+        if (selectedTab == 2 || selectedTab == 3) {
+            if (sourceOpeningId != null) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text("正在定位原文…", Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            sourceFailedId?.let { messageId ->
+                Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(sourceError.orEmpty(), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                    TextButton(onClick = { openSource(messageId) }) { Text("重试") }
+                }
             }
         }
         when (selectedTab) {
@@ -152,7 +191,7 @@ fun ChatDrawer(
                 isGenerating,
                 onRebuildContextMemory,
                 onClearContextMemory,
-                onJumpToMemorySource,
+                ::openSource,
                 onAddMemoryCorrection,
                 onEditMemoryCorrection,
                 onDeleteMemoryCorrection,
@@ -167,12 +206,13 @@ fun ChatDrawer(
                 olderSummariesLoading = memorySegmentsLoadingMore,
                 olderSummariesError = memorySegmentsLoadError,
                 onLoadOlderSummaries = onLoadMoreMemorySummaries,
+                sourceNavigationBusy = sourceOpeningId != null,
             )
             3 -> TimelineTab(
                 eventNodes,
                 onToggleEventResolved,
                 onDeleteEventNode,
-                onJumpToMemorySource,
+                ::openSource,
                 busyIds = eventBusyIds,
                 actionErrors = eventActionErrors,
                 currentBranchId = currentBranchId,
@@ -180,6 +220,7 @@ fun ChatDrawer(
                 olderEventsLoading = eventNodesLoadingMore,
                 olderEventsError = eventNodesLoadError,
                 onLoadOlderEvents = onLoadMoreEventNodes,
+                sourceNavigationBusy = sourceOpeningId != null,
             )
             4 -> BookmarksTab(
                 bookmarks, bookmarkPreviews, onJumpToBookmark, onRemoveBookmark,
@@ -679,6 +720,7 @@ fun MemoryTab(
     olderSummariesLoading: Boolean = false,
     olderSummariesError: String? = null,
     onLoadOlderSummaries: () -> Unit = {},
+    sourceNavigationBusy: Boolean = false,
 ) {
     var section by remember(currentBranchId) { mutableIntStateOf(0) }
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -762,7 +804,7 @@ fun MemoryTab(
                                 ExpandableMemoryText(correction.content)
                                 correction.sourceMessageId?.let { sourceId ->
                                     TextButton(
-                                        enabled = !isGenerating,
+                                        enabled = !isGenerating && !sourceNavigationBusy,
                                         onClick = { onJumpToSource(sourceId) },
                                     ) { Text("查看来源") }
                                 }
@@ -912,7 +954,7 @@ fun MemoryTab(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.weight(1f),
                                         )
-                                        TextButton(enabled = !isGenerating, onClick = { onJumpToSource(source.messageId) }) {
+                                        TextButton(enabled = !isGenerating && !sourceNavigationBusy, onClick = { onJumpToSource(source.messageId) }) {
                                             Text("查看原文")
                                         }
                                     }
@@ -951,6 +993,7 @@ fun TimelineTab(
     olderEventsLoading: Boolean = false,
     olderEventsError: String? = null,
     onLoadOlderEvents: () -> Unit = {},
+    sourceNavigationBusy: Boolean = false,
 ) {
     var deleteTarget by remember(currentBranchId) { mutableStateOf<Long?>(null) }
     var selectedFilter by remember(currentBranchId) { mutableStateOf(0) }
@@ -1032,7 +1075,7 @@ fun TimelineTab(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         } else {
-                            TextButton(onClick = { onJumpToSource(source.messageId) }) {
+                            TextButton(enabled = !sourceNavigationBusy, onClick = { onJumpToSource(source.messageId) }) {
                                 Text(source.label)
                             }
                         }
