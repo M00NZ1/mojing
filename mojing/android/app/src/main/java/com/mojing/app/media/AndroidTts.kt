@@ -30,8 +30,8 @@ object AndroidTts {
     private var lastUtteranceId: String? = null
     private var previewCompletion: Pair<Long, kotlinx.coroutines.CompletableDeferred<Boolean>>? = null
 
-    /** Uses the same engine owner; cancellation stops only this preview request. */
-    suspend fun preview(context: Context, text: String, choice: VoiceChoice): Boolean =
+    /** Uses the same engine owner; cancellation stops only this speech request. */
+    suspend fun speakAwaitCompletion(context: Context, text: String, choice: VoiceChoice): Boolean =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
             if (TtsSpeakText.normalizeForSpeech(text).isBlank()) return@withContext false
             val completion = kotlinx.coroutines.CompletableDeferred<Boolean>()
@@ -46,6 +46,9 @@ object AndroidTts {
                 }
             }
         }
+
+    suspend fun preview(context: Context, text: String, choice: VoiceChoice): Boolean =
+        speakAwaitCompletion(context, text, choice)
 
     private fun finishPreview(success: Boolean) {
         previewCompletion?.second?.complete(success)

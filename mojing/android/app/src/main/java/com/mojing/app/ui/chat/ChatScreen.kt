@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.FormatListBulleted
@@ -139,6 +140,7 @@ fun ChatScreen(
     viewModel: ChatViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val speechActive by viewModel.speechActive.collectAsStateWithLifecycle()
     var voiceChoice by remember(sessionId) { mutableStateOf(viewModel.currentVoiceChoice()) }
     var showVoicePicker by remember { mutableStateOf(false) }
     if (showVoicePicker) com.mojing.app.ui.common.VoiceChoicePicker(
@@ -882,6 +884,25 @@ fun ChatScreen(
                             }
                         }
                     )
+                    if (speechActive) {
+                        Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                    .padding(start = 16.dp, end = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(Icons.Default.VolumeUp, contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                                Text(
+                                    "正在准备或播放朗读",
+                                    modifier = Modifier.weight(1f).padding(start = 10.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                )
+                                TextButton(onClick = viewModel::stopSpeaking) { Text("停止") }
+                            }
+                        }
+                    }
                     (state.speakerPlanSummary ?: state.pendingRoundSpeakers.takeIf { it.isNotEmpty() }?.let {
                         "待回复：${it.joinToString("、")}"
                     })?.takeIf { state.isGenerating && !readingMode }?.let { line ->

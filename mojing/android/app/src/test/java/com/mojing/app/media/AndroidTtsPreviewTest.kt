@@ -57,8 +57,8 @@ class AndroidTtsPreviewTest {
         Dispatchers.resetMain()
     }
 
-    @Test fun previewWaitsForFinalChunk() = runTest(dispatcher) {
-        val pending = async { AndroidTts.preview(context, "这是一段试听。".repeat(40), VoiceChoice()) }
+    @Test fun speechWaitsForFinalChunk() = runTest(dispatcher) {
+        val pending = async { AndroidTts.speakAwaitCompletion(context, "这是一段朗读。".repeat(40), VoiceChoice()) }
         runCurrent()
         assertTrue(utterances.size > 1)
         val listener = listener()

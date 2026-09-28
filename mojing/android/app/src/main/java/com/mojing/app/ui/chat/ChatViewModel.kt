@@ -1974,10 +1974,15 @@ class ChatViewModel @Inject constructor(
     }
 
     private var speechJob: Job? = null
+    private var speechRevision = 0L
+    private val _speechActive = MutableStateFlow(false)
+    val speechActive: StateFlow<Boolean> = _speechActive.asStateFlow()
 
     fun stopSpeaking() {
+        speechRevision++
         speechJob?.cancel()
         speechJob = null
+        _speechActive.value = false
         AndroidTts.stop()
         com.mojing.app.media.TtsPlayer.stop()
     }
@@ -2001,7 +2006,9 @@ class ChatViewModel @Inject constructor(
 
     fun speakMessage(text: String, characterId: Long? = null) {
         stopSpeaking()
-        speechJob = viewModelScope.launch {
+        val revision = ++speechRevision
+        _speechActive.value = true
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
                 val cleaned = TtsSpeakText.normalizeForSpeech(text)
                 if (cleaned.isBlank()) {
@@ -2016,8 +2023,16 @@ class ChatViewModel @Inject constructor(
                     val ok = com.mojing.app.media.AzureSpeech.speak(appContext, cleaned, region, key, choice.voiceId)
                     if (!ok) _state.update { it.copy(error = "语音播放未完成，请重新朗读") }
                 } else {
-                    withContext(Dispatchers.Main) {
-                        AndroidTts.speakWithVoice(appContext, cleaned, choice) { message -> _state.update { it.copy(error = message) } }
+                    var reportedFailure = false
+                    val ok = try {
+                        AndroidTts.speakAwaitCompletion(appContext, cleaned, choice)
+                    } catch (error: IllegalStateException) {
+                        reportedFailure = true
+                        _state.update { it.copy(error = error.message ?: "系统朗读失败，请重试") }
+                        false
+                    }
+                    if (!ok && !reportedFailure) {
+                        _state.update { it.copy(error = "系统朗读未完成，请重新朗读") }
                     }
                 }
             } catch (e: CancellationException) { throw e }
@@ -2025,7 +2040,15 @@ class ChatViewModel @Inject constructor(
                 _state.update { it.copy(error = com.mojing.app.media.AzureSpeech.failureMessage(e)) }
             }
             catch (e: Exception) { _state.update { it.copy(error = UserFacingStrings.remoteRequestFailed(e)) } }
+            finally {
+                if (speechRevision == revision) {
+                    speechJob = null
+                    _speechActive.value = false
+                }
+            }
         }
+        speechJob = job
+        job.start()
     }
 
     /** 朗读输入框当前文字（不发送消息） */
