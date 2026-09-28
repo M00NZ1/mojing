@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -398,10 +399,7 @@ fun SessionListScreen(
                 .fillMaxSize()
                 .imePadding()
         ) {
-            if (
-                isSessionHomeContentReady &&
-                (sessions.isNotEmpty() || searchQuery.isNotBlank())
-            ) {
+            if ((isSessionHomeContentReady && sessions.isNotEmpty()) || searchQuery.isNotBlank()) {
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { viewModel.updateSearch(it) },
@@ -530,7 +528,12 @@ fun SessionListScreen(
                         Text("重试")
                     }
                 }
-            } else if (sessions.isEmpty()) {
+            } else if (sessions.isEmpty() && searchQuery.isNotBlank()) {
+                Box(Modifier.weight(1f).fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                    Text(UserFacingStrings.sessionSearchNoMatch(), style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else if (sessions.isEmpty() && loadedLibrary?.pageIndex == 0) {
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -545,13 +548,6 @@ fun SessionListScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    if (searchQuery.isNotBlank()) {
-                        Text(
-                            UserFacingStrings.sessionSearchEmptyLibrary(),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
                     if (guideDismissed == false) {
                         com.mojing.app.ui.common.StoryFeatureCard(
                             eyebrow = "以墨为界，入境如梦。",
@@ -596,28 +592,13 @@ fun SessionListScreen(
                     }
                 }
             } else {
-                val filteredSessions = if (searchQuery.isBlank()) sessions else sessions.filter {
-                    it.session.title.contains(searchQuery, ignoreCase = true)
-                }
-                if (filteredSessions.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 24.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            UserFacingStrings.sessionSearchNoMatch(),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                } else {
+                val listState = rememberLazyListState()
+                LaunchedEffect(loadedLibrary?.pageIndex, loadedLibrary?.query) { listState.scrollToItem(0) }
                 LazyColumn(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
+                    state = listState,
                     contentPadding = PaddingValues(bottom = 96.dp),
                 ) {
                     item(key = "story-library-heading") {
@@ -639,12 +620,12 @@ fun SessionListScreen(
                                 shape = CircleShape,
                                 color = MaterialTheme.colorScheme.secondaryContainer,
                             ) {
-                                Text("${filteredSessions.size}", modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                                Text("本页 ${sessions.size} 条", modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
                                     style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
                             }
                         }
                     }
-                    itemsIndexed(filteredSessions, key = { _, r -> r.session.id }) { index, row ->
+                    itemsIndexed(sessions, key = { _, r -> r.session.id }) { _, row ->
                         val rememberedBranchId = lastChatBranches?.get(row.session.id) ?: if (lastChatBranches == null) null else "main"
                         val branchPreview = branchCardPreviews[row.session.id]?.takeIf {
                             it.branchId == rememberedBranchId && it.sessionUpdatedAt == row.session.updatedAt
@@ -691,7 +672,24 @@ fun SessionListScreen(
                             }
                         }
                     }
-                }
+                    item(key = "story-library-pagination") {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextButton(
+                                onClick = viewModel::previousSessionLibraryPage,
+                                enabled = loadedLibrary != null && loadedLibrary.pageIndex > 0 && !loadedLibrary.refreshing,
+                            ) { Text("上一页") }
+                            Text("第 ${(loadedLibrary?.pageIndex ?: 0) + 1} 页", style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            TextButton(
+                                onClick = viewModel::nextSessionLibraryPage,
+                                enabled = loadedLibrary?.hasMore == true && !loadedLibrary.refreshing,
+                            ) { Text("下一页") }
+                        }
+                    }
                 }
             }
         }

@@ -15,7 +15,7 @@ interface SessionDao {
     @Query("SELECT * FROM sessions ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, updatedAt DESC")
     fun observeAll(): Flow<List<SessionEntity>>
 
-    /** The card follows the same ID-based reading order as the chat window. */
+    /** Fetch one bounded page before calculating card metadata; IDs break timestamp ties. */
     @Query(
         """
         SELECT s.*,
@@ -23,11 +23,25 @@ interface SessionDao {
           (SELECT m.speakerType FROM messages m WHERE m.sessionId = s.id AND m.branchId = 'main' ORDER BY m.id DESC LIMIT 1) AS last_msg_speaker_type,
           (SELECT COUNT(*) FROM messages m2 WHERE m2.sessionId = s.id AND m2.branchId = 'main') AS msg_count,
           (SELECT COUNT(*) FROM session_participants sp WHERE sp.sessionId = s.id) AS participant_count
-        FROM sessions s
-        ORDER BY CASE WHEN s.pinnedAt > 0 THEN 0 ELSE 1 END, s.pinnedAt DESC, s.updatedAt DESC
+        FROM (
+          SELECT * FROM sessions
+          WHERE (:query = '' OR instr(lower(title), lower(:query)) > 0)
+            AND (:cursorId IS NULL OR pinnedAt < :cursorPinnedAt
+              OR (pinnedAt = :cursorPinnedAt AND updatedAt < :cursorUpdatedAt)
+              OR (pinnedAt = :cursorPinnedAt AND updatedAt = :cursorUpdatedAt AND id < :cursorId))
+          ORDER BY pinnedAt DESC, updatedAt DESC, id DESC
+          LIMIT :limit
+        ) s
+        ORDER BY s.pinnedAt DESC, s.updatedAt DESC, s.id DESC
         """,
     )
-    fun observeAllWithListMeta(): Flow<List<SessionWithListMeta>>
+    fun observeListPageWithMeta(
+        query: String,
+        cursorPinnedAt: Long?,
+        cursorUpdatedAt: Long?,
+        cursorId: Long?,
+        limit: Int,
+    ): Flow<List<SessionWithListMeta>>
 
     @Query("SELECT * FROM sessions WHERE id = :id")
     suspend fun getById(id: Long): SessionEntity?

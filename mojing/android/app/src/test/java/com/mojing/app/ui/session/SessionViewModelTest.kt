@@ -46,7 +46,7 @@ import org.junit.Test
 class SessionViewModelTest {
     private val dispatcher = StandardTestDispatcher()
     private val sessionDao = mockk<SessionDao>(relaxed = true) {
-        every { observeAllWithListMeta() } returns flowOf(emptyList())
+        every { observeListPageWithMeta(any(), any(), any(), any(), any()) } returns flowOf(emptyList())
     }
     private val sessionBranchDao = mockk<SessionBranchDao>(relaxed = true)
     private val messageDao = mockk<MessageDao>(relaxed = true)
@@ -85,7 +85,7 @@ class SessionViewModelTest {
     @Test
     fun sessionLibraryStaysLoadingUntilTheFirstDatabaseResult() = runTest(dispatcher) {
         val delayedSessions = MutableSharedFlow<List<SessionWithListMeta>>()
-        every { sessionDao.observeAllWithListMeta() } returns delayedSessions
+        every { sessionDao.observeListPageWithMeta(any(), any(), any(), any(), any()) } returns delayedSessions
         val viewModel = createViewModel()
         runCurrent()
 
@@ -100,7 +100,7 @@ class SessionViewModelTest {
     @Test
     fun sessionLibraryFailureCanRetryWithoutPretendingTheLibraryIsEmpty() = runTest(dispatcher) {
         var attempts = 0
-        every { sessionDao.observeAllWithListMeta() } answers {
+        every { sessionDao.observeListPageWithMeta(any(), any(), any(), any(), any()) } answers {
             attempts += 1
             if (attempts == 1) {
                 flow { throw IllegalStateException("database unavailable") }
@@ -130,7 +130,7 @@ class SessionViewModelTest {
         val recovered = previous.copy(lastMessagePreview = "新一幕", messageCount = 4)
         val nextRead = CompletableDeferred<List<SessionWithListMeta>>()
         var attempts = 0
-        every { sessionDao.observeAllWithListMeta() } answers {
+        every { sessionDao.observeListPageWithMeta(any(), any(), any(), any(), any()) } answers {
             attempts += 1
             if (attempts == 1) flow {
                 emit(listOf(previous))
@@ -156,6 +156,56 @@ class SessionViewModelTest {
         advanceUntilIdle()
         assertEquals(SessionLibraryUiState.Loaded(listOf(recovered)), viewModel.sessionLibraryState.value)
         assertEquals(2, attempts)
+    }
+
+    @Test
+    fun storyLibraryKeepsCurrentPageWhenNextPageFailsAndRetriesItsCursor() = runTest(dispatcher) {
+        val firstPage = (80L downTo 40L).map { id ->
+            SessionWithListMeta(SessionEntity(id = id, title = "故事$id", updatedAt = 100L), null, null, 0, 0)
+        }
+        val secondPage = (39L downTo 1L).map { id ->
+            SessionWithListMeta(SessionEntity(id = id, title = "故事$id", updatedAt = 100L), null, null, 0, 0)
+        }
+        var secondAttempts = 0
+        every { sessionDao.observeListPageWithMeta(any(), any(), any(), any(), any()) } answers {
+            if (arg<Long?>(3) == null) flowOf(firstPage)
+            else if (++secondAttempts == 1) flow { throw IllegalStateException("page unavailable") }
+            else flowOf(secondPage)
+        }
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+        assertEquals(40, (viewModel.sessionLibraryState.value as SessionLibraryUiState.Loaded).sessions.size)
+
+        viewModel.nextSessionLibraryPage()
+        advanceUntilIdle()
+        val failed = viewModel.sessionLibraryState.value as SessionLibraryUiState.Loaded
+        assertEquals(0, failed.pageIndex)
+        assertEquals(firstPage.take(40), failed.sessions)
+        assertTrue(failed.refreshError)
+
+        viewModel.retrySessionLibrary()
+        advanceUntilIdle()
+        val recovered = viewModel.sessionLibraryState.value as SessionLibraryUiState.Loaded
+        assertEquals(1, recovered.pageIndex)
+        assertEquals(secondPage, recovered.sessions)
+        assertEquals(2, secondAttempts)
+    }
+
+    @Test
+    fun storyTitleSearchQueriesDatabaseFromTheFirstPage() = runTest(dispatcher) {
+        val requested = mutableListOf<String>()
+        every { sessionDao.observeListPageWithMeta(any(), any(), any(), any(), any()) } answers {
+            requested += arg<String>(0)
+            flowOf(emptyList())
+        }
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.updateSearch("灯塔")
+        advanceUntilIdle()
+
+        assertEquals(listOf("", "灯塔"), requested)
+        assertEquals("灯塔", (viewModel.sessionLibraryState.value as SessionLibraryUiState.Loaded).query)
     }
 
     @Test

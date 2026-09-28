@@ -52,9 +52,37 @@ class MessageDaoTest {
         messageDao.insert(MessageEntity(sessionId = sessionId, content = "较早写入", createdAt = 500L))
         messageDao.insert(MessageEntity(sessionId = sessionId, content = "最新写入", createdAt = 100L))
 
-        val card = sessionDao.observeAllWithListMeta().first().single()
+        val card = sessionDao.observeListPageWithMeta("", null, null, null, 41).first().single()
         assertEquals("最新写入", card.lastMessagePreview)
         assertEquals(messageDao.getMainMessagesTail(sessionId, 1).single().content, card.lastMessagePreview)
+    }
+
+    @Test
+    fun storyLibraryPagesKeepPinnedOrderAndFindTitlesBeyondFirstPage() = runBlocking {
+        for (count in listOf(0, 1, 39, 40, 41)) {
+            db.clearAllTables()
+            repeat(count) { sessionDao.insert(SessionEntity(title = "边界$it", updatedAt = 100L)) }
+            val page = sessionDao.observeListPageWithMeta("", null, null, null, 41).first()
+            assertEquals(count.coerceAtMost(41), page.size)
+            assertEquals(count > 40, page.size > 40)
+        }
+        db.clearAllTables()
+        val ids = (1..85).map { n ->
+            sessionDao.insert(SessionEntity(title = if (n == 4) "遥远的灯塔" else "故事$n", updatedAt = 100L))
+        }
+        val pinned = sessionDao.getById(ids[0])!!
+        sessionDao.update(pinned.copy(pinnedAt = 200L))
+
+        val first = sessionDao.observeListPageWithMeta("", null, null, null, 41).first()
+        assertEquals(41, first.size)
+        assertEquals(ids[0], first.first().session.id)
+        val cursor = first[39].session
+        val second = sessionDao.observeListPageWithMeta(
+            "", cursor.pinnedAt, cursor.updatedAt, cursor.id, 41,
+        ).first()
+        assertEquals(41, second.size)
+        assertTrue(first.take(40).map { it.session.id }.intersect(second.map { it.session.id }.toSet()).isEmpty())
+        assertEquals(ids[3], sessionDao.observeListPageWithMeta("灯塔", null, null, null, 41).first().single().session.id)
     }
 
     @Test fun characterSnapshotCursorUsesVisibleUserIdsAndBranchState() = runBlocking {

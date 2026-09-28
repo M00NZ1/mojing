@@ -38,9 +38,16 @@ internal sealed interface SessionLibraryUiState {
         val sessions: List<SessionWithListMeta>,
         val refreshing: Boolean = false,
         val refreshError: Boolean = false,
+        val pageIndex: Int = 0,
+        val hasMore: Boolean = false,
+        val query: String = "",
     ) : SessionLibraryUiState
     data object Failed : SessionLibraryUiState
 }
+
+private data class SessionPageCursor(val pinnedAt: Long, val updatedAt: Long, val id: Long)
+
+private const val SESSION_LIBRARY_PAGE_SIZE = 40
 
 data class BranchCardPreviewState(
     val branchId: String,
@@ -100,7 +107,11 @@ class SessionViewModel @Inject constructor(
 
     private val _sessionLibraryState = MutableStateFlow<SessionLibraryUiState>(SessionLibraryUiState.Loading)
     internal val sessionLibraryState: StateFlow<SessionLibraryUiState> = _sessionLibraryState.asStateFlow()
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
     private var sessionLibraryJob: Job? = null
+    private val sessionPageCursors = mutableListOf<SessionPageCursor?>(null)
+    private var pendingSessionPage: Pair<Int, SessionPageCursor?>? = null
     internal val lastChatBranches: StateFlow<Map<Long, String>?> = uiPreferencesRepository.lastChatBranches
         .catch { emit(emptyMap()) }
         .map<Map<Long, String>, Map<Long, String>?> { it }
@@ -118,7 +129,23 @@ class SessionViewModel @Inject constructor(
     }
 
     internal fun retrySessionLibrary() {
-        observeSessionLibrary()
+        val loaded = _sessionLibraryState.value as? SessionLibraryUiState.Loaded
+        val target = pendingSessionPage ?: loaded?.let { it.pageIndex to sessionPageCursors[it.pageIndex] }
+        observeSessionLibrary(target?.first ?: 0, target?.second, _searchQuery.value)
+    }
+
+    internal fun nextSessionLibraryPage() {
+        val loaded = _sessionLibraryState.value as? SessionLibraryUiState.Loaded ?: return
+        if (loaded.refreshing || !loaded.hasMore || loaded.sessions.isEmpty()) return
+        val last = loaded.sessions.last().session
+        observeSessionLibrary(loaded.pageIndex + 1, SessionPageCursor(last.pinnedAt, last.updatedAt, last.id), loaded.query)
+    }
+
+    internal fun previousSessionLibraryPage() {
+        val loaded = _sessionLibraryState.value as? SessionLibraryUiState.Loaded ?: return
+        if (loaded.refreshing || loaded.pageIndex == 0) return
+        val index = loaded.pageIndex - 1
+        observeSessionLibrary(index, sessionPageCursors[index], loaded.query)
     }
 
     internal fun refreshBranchCardPreviews() {
@@ -185,15 +212,30 @@ class SessionViewModel @Inject constructor(
         _branchCardPreviews.value = next
     }
 
-    private fun observeSessionLibrary() {
+    private fun observeSessionLibrary(
+        pageIndex: Int = 0,
+        cursor: SessionPageCursor? = null,
+        query: String = _searchQuery.value,
+    ) {
         sessionLibraryJob?.cancel()
+        pendingSessionPage = pageIndex to cursor
+        val previous = (_sessionLibraryState.value as? SessionLibraryUiState.Loaded)?.takeIf { it.query == query }
+        _sessionLibraryState.value = previous?.copy(refreshing = true, refreshError = false)
+            ?: SessionLibraryUiState.Loading
         sessionLibraryJob = viewModelScope.launch {
-            val previous = _sessionLibraryState.value as? SessionLibraryUiState.Loaded
-            _sessionLibraryState.value = previous?.copy(refreshing = true, refreshError = false)
-                ?: SessionLibraryUiState.Loading
             try {
-                sessionDao.observeAllWithListMeta().collect { sessions ->
-                    _sessionLibraryState.value = SessionLibraryUiState.Loaded(sessions)
+                sessionDao.observeListPageWithMeta(
+                    query, cursor?.pinnedAt, cursor?.updatedAt, cursor?.id, SESSION_LIBRARY_PAGE_SIZE + 1,
+                ).collect { rows ->
+                    val sessions = rows.take(SESSION_LIBRARY_PAGE_SIZE)
+                    if (pageIndex == sessionPageCursors.size) sessionPageCursors.add(cursor)
+                    else if (pageIndex < sessionPageCursors.size) sessionPageCursors[pageIndex] = cursor
+                    while (sessionPageCursors.size > pageIndex + 1) sessionPageCursors.removeAt(sessionPageCursors.lastIndex)
+                    pendingSessionPage = null
+                    _sessionLibraryState.value = SessionLibraryUiState.Loaded(
+                        sessions = sessions, pageIndex = pageIndex, hasMore = rows.size > SESSION_LIBRARY_PAGE_SIZE,
+                        query = query,
+                    )
                 }
                 val current = _sessionLibraryState.value
                 if (current is SessionLibraryUiState.Loading ||
@@ -218,13 +260,23 @@ class SessionViewModel @Inject constructor(
     val pendingGenerationTaskCount = generationTaskDao.observeActiveCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
-    private val _searchQuery = MutableStateFlow("")
-    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
-
     private val _isCreatingSession = MutableStateFlow(false)
     val isCreatingSession: StateFlow<Boolean> = _isCreatingSession.asStateFlow()
 
-    fun updateSearch(query: String) { _searchQuery.value = query }
+    fun updateSearch(query: String) {
+        if (_searchQuery.value == query) return
+        _searchQuery.value = query
+        sessionPageCursors.clear()
+        sessionPageCursors.add(null)
+        observeSessionLibrary(query = query)
+    }
+
+    private fun resetLibraryPageAfterReorder() {
+        if ((_sessionLibraryState.value as? SessionLibraryUiState.Loaded)?.pageIndex == 0) return
+        sessionPageCursors.clear()
+        sessionPageCursors.add(null)
+        observeSessionLibrary(query = _searchQuery.value)
+    }
 
     fun createNewSession(
         onCreated: (Long) -> Unit = {},
@@ -372,6 +424,7 @@ class SessionViewModel @Inject constructor(
             try {
                 check(sessionDao.getById(id) != null) { "对话已不存在" }
                 sessionDao.updateTitle(id, nextTitle)
+                resetLibraryPageAfterReorder()
                 _renameState.value = SessionRenameState(id, completed = true)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -395,6 +448,7 @@ class SessionViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 sessionDao.delete(id)
+                resetLibraryPageAfterReorder()
                 branchPreviewJobs.remove(id)?.cancel()
                 _branchCardPreviews.value = _branchCardPreviews.value - id
                 _deletionState.value = SessionDeletionState(id, completed = true)
@@ -413,6 +467,7 @@ class SessionViewModel @Inject constructor(
             sessionDao.update(
                 s.copy(pinnedAt = if (pinned) System.currentTimeMillis() else 0L),
             )
+            resetLibraryPageAfterReorder()
         }
     }
 
