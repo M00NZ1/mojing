@@ -11,6 +11,8 @@ import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.MessageDao
 import com.mojing.app.data.local.dao.SessionDao
 import com.mojing.app.data.local.dao.WorldTemplateDao
+import com.mojing.app.data.local.dao.NewSessionWorldOption
+import com.mojing.app.data.local.dao.NewSessionCharacterOption
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.EncyclopediaEntity
 import com.mojing.app.data.local.entity.MessageEntity
@@ -22,6 +24,7 @@ import com.mojing.app.domain.story.StoryWritingUseCase
 import com.mojing.app.domain.story.StoryOpeningDraft
 import com.mojing.app.domain.story.StoryOpeningRecord
 import com.mojing.app.domain.usecase.CreateSessionUseCase
+import com.mojing.app.ui.session.NewSessionWorldSelection
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.coVerifyOrder
@@ -59,112 +62,94 @@ class StorySimulationViewModelTest {
     }
 
     @Test
-    fun oneOptionFailureDoesNotBlockOthersAndRetryKeepsDraft() = runTest(dispatcher) {
-        val templateDao = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
-        val encyclopediaDao = mockk<EncyclopediaDao>()
+    fun pickerFailureDoesNotLoseDraftAndRetryLoadsPage() = runTest(dispatcher) {
+        val templateDao = mockk<WorldTemplateDao>()
         val characterDao = mockk<CharacterDao>()
-        var failTemplates = true
-        coEvery { templateDao.getAll() } answers {
-            if (failTemplates) throw IllegalStateException("database unavailable")
-            listOf(WorldTemplateEntity(id = 3, templateId = "court", label = "宫廷"))
+        val option = NewSessionWorldOption(0, 7, "王都", 3, 0, 10)
+        var fail = true
+        coEvery { templateDao.getNewSessionWorldPage(any(), any(), any(), any(), any(), any()) } answers {
+            if (fail) throw IllegalStateException("database unavailable")
+            listOf(option)
         }
-        coEvery { encyclopediaDao.getAll() } returns listOf(EncyclopediaEntity(id = 7, name = "王都"))
-        coEvery { characterDao.getAll() } returns listOf(
-            CharacterEntity(id = 9, name = "林岚", boundEncyclopediaId = 7),
-        )
-
-        val viewModel = createViewModel(templateDao, encyclopediaDao, characterDao)
+        val viewModel = createViewModel(templateDao, mockk(relaxed = true), characterDao)
         runCurrent()
-
-        assertTrue(viewModel.state.value.templates.error?.contains("世界模板加载失败") == true)
-        assertEquals(1, viewModel.state.value.encyclopedias.items.size)
-        assertEquals(1, viewModel.state.value.characters.items.size)
         viewModel.updatePremise("加冕前夜，证人失踪")
-        viewModel.updateDirection("偏政治博弈")
-        viewModel.updateTone("克制、缓慢")
-
-        failTemplates = false
-        viewModel.retryTemplates()
-        runCurrent()
-
-        assertNull(viewModel.state.value.templates.error)
-        assertEquals("宫廷", viewModel.state.value.templates.items.single().label)
+        try {
+            viewModel.loadWorldPage("王都", null)
+            org.junit.Assert.fail("Expected picker read failure")
+        } catch (_: IllegalStateException) { }
+        fail = false
+        assertEquals(listOf(option), viewModel.loadWorldPage("王都", null).rows)
         assertEquals("加冕前夜，证人失踪", viewModel.state.value.premise)
-        assertEquals("偏政治博弈", viewModel.state.value.direction)
-        assertEquals("克制、缓慢", viewModel.state.value.tone)
-        coVerify(exactly = 2) { templateDao.getAll() }
-        coVerify(exactly = 1) { encyclopediaDao.getAll() }
-        coVerify(exactly = 1) { characterDao.getAll() }
+        coVerify(exactly = 0) { templateDao.getAll() }
+        coVerify(exactly = 0) { characterDao.getAll() }
     }
 
     @Test
-    fun loadedEmptyIsNotReportedAsFailure() = runTest(dispatcher) {
-        val templateDao = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
-        val encyclopediaDao = mockk<EncyclopediaDao>()
+    fun emptyPickerPagesAreSuccessfulAndDoNotPreloadLibrary() = runTest(dispatcher) {
+        val templateDao = mockk<WorldTemplateDao>()
         val characterDao = mockk<CharacterDao>()
-        coEvery { templateDao.getAll() } returns emptyList()
-        coEvery { encyclopediaDao.getAll() } returns emptyList()
-        coEvery { characterDao.getAll() } returns emptyList()
-
-        val viewModel = createViewModel(templateDao, encyclopediaDao, characterDao)
+        coEvery { templateDao.getNewSessionWorldPage(any(), any(), any(), any(), any(), any()) } returns emptyList()
+        coEvery { characterDao.getNewSessionPickerPage(any(), any(), any(), any(), any(), any(), any()) } returns emptyList()
+        val viewModel = createViewModel(templateDao, mockk(relaxed = true), characterDao)
         runCurrent()
+        assertTrue(viewModel.loadWorldPage("", null).rows.isEmpty())
+        assertFalse(viewModel.loadWorldPage("", null).hasMore)
+        assertTrue(viewModel.loadCharacterPage(null, "", null).rows.isEmpty())
+        coVerify(exactly = 0) { templateDao.getAll() }
+        coVerify(exactly = 0) { characterDao.getAll() }
+    }
 
-        listOf(
-            viewModel.state.value.templates,
-            viewModel.state.value.encyclopedias,
-            viewModel.state.value.characters,
-        ).forEach { optionState ->
-            assertFalse(optionState.isLoading)
-            assertNull(optionState.error)
-            assertTrue(optionState.items.isEmpty())
+    @Test
+    fun changingWorldDropsOnlyIncompatibleCharacters() = runTest(dispatcher) {
+        val worlds = mockk<EncyclopediaDao>()
+        val characters = mockk<CharacterDao>()
+        val world = EncyclopediaEntity(id = 7, name = "王都")
+        coEvery { worlds.getById(7) } returns world
+        coEvery { characters.existingIdsForNewSession(any(), any()) } answers {
+            if (secondArg<Long?>() == 7L) listOf(10L) else listOf(9L, 10L)
         }
+        val viewModel = createViewModel(mockk(relaxed = true), worlds, characters)
+        runCurrent()
+        viewModel.setCharacterSelection(setOf(9L, 10L))
+        viewModel.selectWorld(NewSessionWorldSelection(encyclopedia = world))
+        runCurrent()
+        assertEquals(setOf(10L), viewModel.state.value.selectedCharacterIds)
+        assertEquals(setOf(10L), viewModel.state.value.selectedCharacterIdsAvailable)
     }
 
     @Test
-    fun characterRetryDropsSelectionsThatAreNoLongerAvailable() = runTest(dispatcher) {
-        val templateDao = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
-        val encyclopediaDao = mockk<EncyclopediaDao>()
-        val characterDao = mockk<CharacterDao>()
-        var characters = listOf(CharacterEntity(id = 9, name = "林岚", boundEncyclopediaId = 7))
-        coEvery { templateDao.getAll() } returns emptyList()
-        coEvery { encyclopediaDao.getAll() } returns listOf(EncyclopediaEntity(id = 7, name = "王都"))
-        coEvery { characterDao.getAll() } answers { characters }
-
-        val viewModel = createViewModel(templateDao, encyclopediaDao, characterDao)
+    fun worldPickerReturnsFortyRowsAndUsesCursor() = runTest(dispatcher) {
+        val templateDao = mockk<WorldTemplateDao>()
+        val rows = (1L..41L).map { NewSessionWorldOption(0, it, "世界 $it", 0, 0, 42 - it) }
+        coEvery { templateDao.getNewSessionWorldPage(any(), any(), any(), any(), any(), any()) } returns rows
+        val viewModel = createViewModel(templateDao, mockk(relaxed = true), mockk(relaxed = true))
         runCurrent()
-        viewModel.selectEncyclopedia(7)
-        viewModel.toggleCharacter(9)
-        assertEquals(setOf(9L), viewModel.state.value.selectedCharacterIds)
-
-        characters = emptyList()
-        viewModel.retryCharacters()
-        runCurrent()
-
-        assertTrue(viewModel.state.value.selectedCharacterIds.isEmpty())
-        assertTrue(viewModel.state.value.characters.items.isEmpty())
+        val first = viewModel.loadWorldPage(" 世界 ", null)
+        assertEquals(40, first.rows.size)
+        assertTrue(first.hasMore)
+        viewModel.loadWorldPage("", first.rows.last())
+        coVerify { templateDao.getNewSessionWorldPage("世界", null, null, null, null, 41) }
+        coVerify { templateDao.getNewSessionWorldPage("", 0, 0, 2, 40, 41) }
     }
 
     @Test
-    fun repeatedRetryWhileLoadingKeepsOneDaoRequest() = runTest(dispatcher) {
-        val templateDao = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
-        val encyclopediaDao = mockk<EncyclopediaDao>()
-        val characterDao = mockk<CharacterDao>()
-        val releaseLoad = CompletableDeferred<Unit>()
-        coEvery { templateDao.getAll() } coAnswers {
-            releaseLoad.await()
-            emptyList()
-        }
-        coEvery { encyclopediaDao.getAll() } returns emptyList()
-        coEvery { characterDao.getAll() } returns emptyList()
-
-        val viewModel = createViewModel(templateDao, encyclopediaDao, characterDao)
-        viewModel.retryTemplates()
-        viewModel.retryTemplates()
-        releaseLoad.complete(Unit)
+    fun characterPickerKeepsSelectionAcrossPagesAndSearchesDatabase() = runTest(dispatcher) {
+        val characters = mockk<CharacterDao>()
+        val rows = (1L..41L).map { NewSessionCharacterOption(it, "角色 $it", 0, false, 42 - it) }
+        coEvery { characters.getNewSessionPickerPage(any(), any(), any(), any(), any(), any(), any()) } returns rows
+        coEvery { characters.existingIdsForNewSession(listOf(41L), null) } returns listOf(41L)
+        val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), characters)
         runCurrent()
-
-        coVerify(exactly = 1) { templateDao.getAll() }
-        assertFalse(viewModel.state.value.templates.isLoading)
+        vm.setCharacterSelection(setOf(41L))
+        assertEquals(setOf(41L), vm.state.value.selectedCharacterIds)
+        val first = vm.loadCharacterPage(null, " 角色 41 ", null)
+        assertEquals(40, first.rows.size)
+        assertTrue(first.hasMore)
+        vm.loadCharacterPage(null, "", first.rows.last())
+        assertEquals(setOf(41L), vm.state.value.selectedCharacterIds)
+        coVerify { characters.getNewSessionPickerPage(null, "角色 41", null, null, null, null, 41) }
+        coVerify { characters.getNewSessionPickerPage(null, "", 0, false, 2, 40, 41) }
     }
 
     @Test
@@ -633,9 +618,11 @@ class StorySimulationViewModelTest {
     fun inputDraftRestoresBeforeEditingAndKeepsSelections() = runTest(dispatcher) {
         val input = StoryOpeningInputDraft("雾港灯塔", "先调查失踪者", "克制", 3, null, 7L, setOf(9L))
         val drafts = mockk<StoryOpeningInputDraftStore>(relaxed = true) { coEvery { load() } returns input }
-        val worlds = mockk<EncyclopediaDao> { coEvery { getAll() } returns listOf(EncyclopediaEntity(id = 7, name = "雾港")) }
-        var availableCharacters = listOf(CharacterEntity(id = 9, name = "守塔人", boundEncyclopediaId = 7))
-        val characters = mockk<CharacterDao> { coEvery { getAll() } answers { availableCharacters } }
+        val worlds = mockk<EncyclopediaDao> { coEvery { getById(7) } returns EncyclopediaEntity(id = 7, name = "雾港") }
+        var availableCharacters = listOf(9L)
+        val characters = mockk<CharacterDao> {
+            coEvery { existingIdsForNewSession(listOf(9L), 7) } answers { availableCharacters }
+        }
         val vm = createViewModel(mockk(relaxed = true), worlds, characters, inputDraftStore = drafts)
         runCurrent()
         assertTrue(vm.state.value.recoveredInputDraft)
@@ -649,7 +636,7 @@ class StorySimulationViewModelTest {
         assertTrue(vm.flushInputDraftBeforeLeaving())
         coVerify(exactly = 1) { drafts.commit(match { it.direction == "先去码头" && it.encyclopediaId == 7L && it.characterIds == setOf(9L) }) }
         availableCharacters = emptyList()
-        vm.retryCharacters(); runCurrent()
+        vm.retrySelections(); runCurrent()
         assertEquals(setOf(9L), vm.state.value.selectedCharacterIds)
         assertTrue(vm.state.value.hasUnavailableSelections())
         vm.clearUnavailableSelections()
@@ -753,8 +740,9 @@ class StorySimulationViewModelTest {
         val characters = mockk<CharacterDao>()
         var template = WorldTemplateEntity(id = 7, templateId = "harbor", label = "旧世界", worldPrompt = "旧规则")
         var character = CharacterEntity(id = 8, name = "守塔人", personaPrompt = "旧人物设定")
-        coEvery { templates.getAll() } answers { listOf(template) }
-        coEvery { characters.getAll() } answers { listOf(character) }
+        coEvery { templates.getById(7) } answers { template }
+        coEvery { characters.getById(8) } answers { character }
+        coEvery { characters.existingIdsForNewSession(listOf(8L), null) } returns listOf(8L)
         val gate = CompletableDeferred<StoryWritingResult>()
         val writing = mockk<StoryWritingUseCase>(relaxed = true)
         coEvery { writing.write(any(), any(), any(), any(), any()) } coAnswers { gate.await() }
@@ -769,13 +757,14 @@ class StorySimulationViewModelTest {
             coEvery { persist(capture(stored)) } returns Unit
         }
         val vm = createViewModel(templates, mockk(relaxed = true), characters, writing, storage, create, draftStore = drafts)
-        runCurrent(); vm.updatePremise("灯塔来信"); vm.selectTemplate(7); vm.toggleCharacter(8)
+        runCurrent(); vm.updatePremise("灯塔来信")
+        vm.selectWorld(NewSessionWorldSelection(template = template)); vm.setCharacterSelection(setOf(8L))
         val revision = vm.state.value.inputRevision
         var opened: Long? = null
         vm.createStory { opened = it }; runCurrent()
         template = template.copy(label = "新世界", worldPrompt = "新规则")
         character = character.copy(personaPrompt = "新人物设定")
-        vm.retryTemplates(); vm.retryCharacters(); runCurrent()
+        vm.retrySelections(); runCurrent()
         vm.updatePremise("灯塔来信") // A no-op input callback is not an edit.
         assertEquals(revision, vm.state.value.inputRevision)
         gate.complete(StoryWritingResult("来信", listOf(StoryChapter(1, "第一章", "完整正文")), listOf("继续")))
@@ -792,7 +781,7 @@ class StorySimulationViewModelTest {
     fun referenceRefreshDoesNotHideRequestFailure() = runTest(dispatcher) {
         val templates = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
         var rows = listOf(WorldTemplateEntity(id = 7, templateId = "harbor", label = "世界"))
-        coEvery { templates.getAll() } answers { rows }
+        coEvery { templates.getById(7) } answers { rows.firstOrNull() }
         val gate = CompletableDeferred<StoryWritingResult>()
         val writing = mockk<StoryWritingUseCase>()
         coEvery { writing.write(any(), any(), any(), any(), any()) } coAnswers { gate.await() }
@@ -800,9 +789,11 @@ class StorySimulationViewModelTest {
             every { publicApiKey } returns "key"; every { publicBaseUrl } returns "https://example.com"; every { publicModel } returns "model"
         }
         val vm = createViewModel(templates, mockk(relaxed = true), mockk(relaxed = true), writing, storage)
-        runCurrent(); vm.updatePremise("灯塔"); vm.selectTemplate(7); vm.createStory {}; runCurrent()
-        rows = emptyList(); vm.retryTemplates(); runCurrent()
-        assertNull(vm.state.value.selectedTemplateId)
+        runCurrent(); vm.updatePremise("灯塔")
+        vm.selectWorld(NewSessionWorldSelection(template = rows.first())); vm.createStory {}; runCurrent()
+        rows = emptyList(); vm.retrySelections(); runCurrent()
+        assertEquals(7L, vm.state.value.selectedTemplateId)
+        assertTrue(vm.state.value.hasUnavailableSelections())
         gate.completeExceptionally(IllegalStateException("request failed")); runCurrent()
         assertFalse(vm.state.value.isGenerating)
         assertEquals("失败", vm.state.value.generationStage)

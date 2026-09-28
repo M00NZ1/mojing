@@ -30,13 +30,9 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -66,6 +62,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import com.mojing.app.ui.navigation.MainAppBottomNavigation
 import com.mojing.app.ui.navigation.returnToCreationHub
+import com.mojing.app.ui.session.NewSessionWorldPicker
+import com.mojing.app.ui.session.NewSessionCharacterPicker
 
 private val storyTonePresets = listOf(
     "温暖日常",
@@ -88,9 +86,8 @@ fun StorySimulationScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     val clipboardManager = LocalClipboardManager.current
     val isImeOpen = com.mojing.app.ui.common.isImeKeyboardOpen()
-    var templateExpanded by remember { mutableStateOf(false) }
-    var encyclopediaExpanded by remember { mutableStateOf(false) }
-    var charactersExpanded by remember { mutableStateOf(false) }
+    var worldPickerOpen by remember { mutableStateOf(false) }
+    var characterPickerOpen by remember { mutableStateOf(false) }
     var showStopAndLeaveDialog by remember { mutableStateOf(false) }
     var showSavingDialog by remember { mutableStateOf(false) }
     var pendingNavigation by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -242,8 +239,7 @@ fun StorySimulationScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     TextButton(onClick = { showClearInputDialog = true }, enabled = !isBusy) { Text("清空草稿") }
                 }
-                if (!state.templates.isLoading && !state.encyclopedias.isLoading && !state.characters.isLoading &&
-                    state.hasUnavailableSelections()) {
+                if (!state.selectionsLoading && state.hasUnavailableSelections()) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("草稿选择的世界或角色当前不可用，请重新选择或重试加载。",
@@ -301,31 +297,22 @@ fun StorySimulationScreen(
                 }
             }
 
-            ExposedDropdownMenuBox(expanded = templateExpanded, onExpandedChange = { if (!isBusy) templateExpanded = it }) {
-                val selectedTemplate = state.templates.items.firstOrNull { it.id == state.selectedTemplateId }
-                val selectedWorld = state.encyclopedias.items.firstOrNull { it.id == state.selectedEncyclopediaId }
-                OutlinedTextField(
-                    value = listOfNotNull(selectedTemplate?.label, selectedWorld?.name).joinToString(" + ").ifBlank { "不绑定世界" },
-                    onValueChange = {}, readOnly = true, singleLine = true, enabled = !isBusy,
-                    label = { Text("世界") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(templateExpanded) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(),
-                )
-                ExposedDropdownMenu(expanded = templateExpanded, onDismissRequest = { templateExpanded = false }) {
-                    DropdownMenuItem(text = { Text("不绑定世界") }, onClick = { viewModel.selectWorld(null, null); templateExpanded = false })
-                    state.encyclopedias.items.forEach { world ->
-                        DropdownMenuItem(text = { Text(world.name) }, onClick = { viewModel.selectWorld(null, world.id); templateExpanded = false })
-                    }
-                    state.templates.items.filter { it.id !in state.worldMappings && it.templateId != "custom" }.forEach { template ->
-                        DropdownMenuItem(text = { Text("${template.label} · 旧资料") }, onClick = { viewModel.selectWorld(template.id, null); templateExpanded = false })
-                    }
+            val selectedTemplate = state.selectedTemplate
+            val selectedEncyclopedia = state.selectedEncyclopedia
+            OutlinedButton(onClick = { worldPickerOpen = true }, enabled = !isBusy,
+                modifier = Modifier.fillMaxWidth()) {
+                Text("世界 · " + (selectedEncyclopedia?.name ?: selectedTemplate?.label
+                    ?: if (state.selectedTemplateId != null || state.selectedEncyclopediaId != null) "已选资料待确认" else "不绑定世界"))
+            }
+            if (state.selectionsLoading) Text("正在核对已选资料…", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            state.selectionsError?.let { message ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(message, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                    TextButton(onClick = viewModel::retrySelections, enabled = !isBusy) { Text("重试") }
                 }
             }
-            StoryOptionLoadStatus(state.templates, "正在加载旧资料…", "", viewModel::retryTemplates)
-            StoryOptionLoadStatus(state.encyclopedias, "正在加载世界…", "暂无世界，可直接开始创作", viewModel::retryEncyclopedias)
-
-            val selectedTemplate = state.templates.items.firstOrNull { it.id == state.selectedTemplateId }
-            val selectedEncyclopedia = state.encyclopedias.items.firstOrNull { it.id == state.selectedEncyclopediaId }
             if (selectedTemplate != null || selectedEncyclopedia != null) {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -342,49 +329,11 @@ fun StorySimulationScreen(
                 }
             }
 
-            val availableCharacters = state.characters.items.filter { character ->
-                state.selectedEncyclopediaId == null || character.boundEncyclopediaId <= 0L || character.boundEncyclopediaId == state.selectedEncyclopediaId
+            OutlinedButton(onClick = { characterPickerOpen = true }, enabled = !isBusy,
+                modifier = Modifier.fillMaxWidth()) {
+                Text(if (state.selectedCharacterIds.isEmpty()) "参与角色 · 不指定"
+                    else "参与角色 · 已选择 ${state.selectedCharacterIds.size} 人")
             }
-            ExposedDropdownMenuBox(
-                expanded = charactersExpanded,
-                onExpandedChange = { if (!isBusy) charactersExpanded = it },
-            ) {
-                OutlinedTextField(
-                    value = if (state.selectedCharacterIds.isEmpty()) "不指定角色" else "已选择 ${state.selectedCharacterIds.size} 个角色",
-                    onValueChange = {}, readOnly = true, singleLine = true,
-                    label = { Text("参与角色（可选）") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(charactersExpanded) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(),
-                    enabled = !isBusy,
-                )
-                ExposedDropdownMenu(expanded = charactersExpanded, onDismissRequest = { charactersExpanded = false }) {
-                    if (availableCharacters.isEmpty()) {
-                        val hint = when {
-                            state.characters.isLoading -> "正在加载角色…"
-                            state.characters.error != null -> "角色加载失败，请在下方重试"
-                            else -> "当前没有可选角色"
-                        }
-                        DropdownMenuItem(text = { Text(hint) }, onClick = { charactersExpanded = false })
-                    }
-                    availableCharacters.forEach { character ->
-                        DropdownMenuItem(
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Checkbox(checked = character.id in state.selectedCharacterIds, onCheckedChange = null)
-                                    Text(character.name.ifBlank { "未命名角色" })
-                                }
-                            },
-                            onClick = { viewModel.toggleCharacter(character.id) },
-                        )
-                    }
-                }
-            }
-            StoryOptionLoadStatus(
-                state = state.characters,
-                loadingText = "正在加载角色…",
-                emptyText = "暂无已绑定角色，可先不指定角色推演",
-                onRetry = viewModel::retryCharacters,
-            )
 
             Text("首次连续生成", style = MaterialTheme.typography.labelLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -472,46 +421,25 @@ fun StorySimulationScreen(
             },
         )
     }
-}
 
-@Composable
-private fun StoryOptionLoadStatus(
-    state: StoryOptionLoadState<*>,
-    loadingText: String,
-    emptyText: String,
-    onRetry: () -> Unit,
-) {
-    when {
-        state.isLoading -> Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            CircularProgressIndicator(modifier = Modifier.width(16.dp).height(16.dp), strokeWidth = 2.dp)
-            Text(loadingText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        state.error != null -> Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-        ) {
-            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                Text(
-                    state.error,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                )
-                TextButton(onClick = onRetry, modifier = Modifier.align(Alignment.End)) {
-                    Text("重试")
-                }
-            }
-        }
-        state.items.isEmpty() -> Text(
-            emptyText,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-
+    if (worldPickerOpen) NewSessionWorldPicker(
+        loadPage = viewModel::loadWorldPage,
+        loadSelection = viewModel::loadWorldSelection,
+        selectedEncyclopediaId = state.selectedEncyclopediaId,
+        selectedTemplateId = state.selectedTemplateId,
+        onSelect = { selection ->
+            viewModel.selectWorld(selection)
+            worldPickerOpen = false
+        },
+        onDismiss = { worldPickerOpen = false },
+    )
+    if (characterPickerOpen) NewSessionCharacterPicker(
+        encyclopediaId = state.selectedEncyclopediaId,
+        loadPage = viewModel::loadCharacterPage,
+        selectedIds = state.selectedCharacterIds,
+        onSelectionChange = viewModel::setCharacterSelection,
+        onDismiss = { characterPickerOpen = false },
+    )
 }
 
 @Composable

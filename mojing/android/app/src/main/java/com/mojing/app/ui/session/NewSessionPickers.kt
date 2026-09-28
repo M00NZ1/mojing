@@ -25,13 +25,21 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+internal data class NewSessionWorldSelection(
+    val template: com.mojing.app.data.local.entity.WorldTemplateEntity? = null,
+    val encyclopedia: com.mojing.app.data.local.entity.EncyclopediaEntity? = null,
+)
+
+internal data class NewSessionWorldPage(val rows: List<NewSessionWorldOption>, val hasMore: Boolean)
+internal data class NewSessionCharacterPage(val rows: List<NewSessionCharacterOption>, val hasMore: Boolean)
+
 @Composable
 internal fun NewSessionWorldPicker(
-    loadPage: suspend (String, NewSessionWorldOption?) -> SessionViewModel.NewSessionWorldPage,
-    loadSelection: suspend (NewSessionWorldOption) -> SessionViewModel.NewSessionWorldSelection,
+    loadPage: suspend (String, NewSessionWorldOption?) -> NewSessionWorldPage,
+    loadSelection: suspend (NewSessionWorldOption) -> NewSessionWorldSelection,
     selectedEncyclopediaId: Long?,
     selectedTemplateId: Long?,
-    onSelect: (SessionViewModel.NewSessionWorldSelection) -> Unit,
+    onSelect: (NewSessionWorldSelection) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
@@ -89,7 +97,7 @@ internal fun NewSessionWorldPicker(
                     WorldOptionRow("不绑定世界", "从角色开始，自由展开故事",
                         selectedEncyclopediaId == null && selectedTemplateId == null,
                         enabled = selectingId == null && !loading && !readError) {
-                        onSelect(SessionViewModel.NewSessionWorldSelection())
+                        onSelect(NewSessionWorldSelection())
                     }
                 }
                 items(rows, key = { "${it.kind}-${it.id}" }) { world ->
@@ -144,7 +152,7 @@ internal fun NewSessionWorldPicker(
 @Composable
 internal fun NewSessionCharacterPicker(
     encyclopediaId: Long?,
-    loadPage: suspend (Long?, String, NewSessionCharacterOption?) -> SessionViewModel.NewSessionCharacterPage,
+    loadPage: suspend (Long?, String, NewSessionCharacterOption?) -> NewSessionCharacterPage,
     selectedIds: Set<Long>,
     onSelectionChange: (Set<Long>) -> Unit,
     onDismiss: () -> Unit,

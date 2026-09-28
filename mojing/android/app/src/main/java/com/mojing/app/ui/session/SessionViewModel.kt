@@ -371,13 +371,6 @@ class SessionViewModel @Inject constructor(
         )
     }
 
-    internal data class NewSessionWorldSelection(
-        val template: WorldTemplateEntity? = null,
-        val encyclopedia: EncyclopediaEntity? = null,
-    )
-
-    internal data class NewSessionWorldPage(val rows: List<NewSessionWorldOption>, val hasMore: Boolean)
-
     internal suspend fun loadNewSessionWorldPage(query: String, cursor: NewSessionWorldOption?): NewSessionWorldPage {
         val rows = worldTemplateDao.getNewSessionWorldPage(
             query.trim(), cursor?.kind, cursor?.pinnedAt, cursor?.updatedAt, cursor?.id,
@@ -421,8 +414,6 @@ class SessionViewModel @Inject constructor(
             existing, newlyAvailable, characterDao.maxId(),
         )
     }
-
-    internal data class NewSessionCharacterPage(val rows: List<NewSessionCharacterOption>, val hasMore: Boolean)
 
     internal suspend fun loadNewSessionCharacterPage(
         encyclopediaId: Long?, query: String, cursor: NewSessionCharacterOption?,
