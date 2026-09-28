@@ -2683,6 +2683,46 @@ class ChatViewModelTest {
         assertEquals(null, vm.state.value.eventNodesLoadError)
     }
 
+    @Test fun eventTimelineKeepsLoadedWindowOnRefreshAndResetsAfterBranchSwitch() = runTest(testDispatcher) {
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        val first = (100L downTo 76L).map { id ->
+            SessionEventNodeEntity(id = id, sessionId = 42L, title = "事件$id", createdAt = id)
+        }
+        val older = (76L downTo 52L).map { id ->
+            SessionEventNodeEntity(id = id, sessionId = 42L, title = "事件$id", createdAt = id)
+        }
+        val branchEvent = SessionEventNodeEntity(id = 200L, sessionId = 42L, branchId = "B", title = "分支事件")
+        coEvery { events.getPageForBranch(42L, "main", null, null, 25) } returns first
+        coEvery { events.getPageForBranch(42L, "main", 77L, 77L, 25) } returns older
+        coEvery { events.getPageForBranch(42L, "main", null, null, 49) } returns
+            (100L downTo 52L).map { id ->
+                SessionEventNodeEntity(id = id, sessionId = 42L, title = "事件$id", createdAt = id)
+            }
+        coEvery { events.getPageForBranch(42L, "B", null, null, 25) } returns listOf(branchEvent)
+        coEvery { branches.getBySession(42L) } returns listOf(
+            SessionBranchEntity(sessionId = 42L, branchId = "B", sourceMessageId = 8L),
+        )
+
+        val vm = createViewModel(eventNodeDao = events, sessionBranchDao = branches)
+        advanceUntilIdle()
+        vm.loadMoreEventNodes()
+        advanceUntilIdle()
+        assertEquals(48, vm.state.value.eventNodes.size)
+
+        vm.switchBranch("main")
+        advanceUntilIdle()
+        assertEquals((100L downTo 53L).toList(), vm.state.value.eventNodes.map { it.id })
+        coVerify(exactly = 1) { events.getPageForBranch(42L, "main", null, null, 49) }
+
+        vm.switchBranch("B")
+        advanceUntilIdle()
+        assertEquals(listOf(branchEvent), vm.state.value.eventNodes)
+        vm.switchBranch("main")
+        advanceUntilIdle()
+        assertEquals((100L downTo 77L).toList(), vm.state.value.eventNodes.map { it.id })
+    }
+
     @Test fun eventTimelineKeepsLoadedPageWhenOlderReadFailsAndCanRetry() = runTest(testDispatcher) {
         val events = mockk<SessionEventNodeDao>(relaxed = true)
         val first = (30L downTo 6L).map { id ->
@@ -3079,6 +3119,7 @@ class ChatViewModelTest {
         val anchor = MessageEntity(id = 7L, sessionId = 42L, speakerType = "user", content = "从这里分叉")
         val messageDao = mockk<MessageDao>(relaxed = true)
         val branchDao = mockk<SessionBranchDao>(relaxed = true)
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
         val preferences = uiPreferences()
         val branches = mutableListOf<SessionBranchEntity>()
         coEvery { messageDao.getMainMessagesTail(42L, any()) } returns listOf(anchor)
@@ -3089,17 +3130,31 @@ class ChatViewModelTest {
             branches += args.first() as SessionBranchEntity
             1L
         }
+        coEvery { events.getPageForBranch(42L, "main", null, null, 25) } returns
+            (25L downTo 1L).map { id -> SessionEventNodeEntity(id = id, sessionId = 42L, createdAt = id) }
+        coEvery { events.getPageForBranch(42L, "main", 2L, 2L, 25) } returns listOf(
+            SessionEventNodeEntity(id = 1L, sessionId = 42L, createdAt = 1L),
+        )
         val vm = createViewModel(
             messageDao = messageDao,
             sessionBranchDao = branchDao,
+            eventNodeDao = events,
             uiPreferencesRepository = preferences,
         )
         advanceUntilIdle()
+
+        vm.loadMoreEventNodes()
+        advanceUntilIdle()
+        assertEquals(25, vm.state.value.eventNodes.size)
 
         vm.createBranch(7L)
         advanceUntilIdle()
 
         assertTrue(vm.state.value.currentBranchId.startsWith("branch_"))
+        assertTrue(vm.state.value.eventNodes.isEmpty())
+        coVerify(exactly = 1) {
+            events.getPageForBranch(42L, match { it.startsWith("branch_") }, null, null, 25)
+        }
         coVerify(exactly = 1) {
             preferences.setLastChatBranch(42L, match { it.startsWith("branch_") })
         }

@@ -1510,7 +1510,11 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private suspend fun refreshMessagesUi(requestedBranchId: String = currentBranchId(), anchorMessageId: Long? = null) {
+    private suspend fun refreshMessagesUi(
+        requestedBranchId: String = currentBranchId(),
+        anchorMessageId: Long? = null,
+        resetEventWindow: Boolean = false,
+    ) {
         val eventRevision = eventRefreshRevision.incrementAndGet()
         val correctionRevision = correctionRefreshRevision.incrementAndGet()
         val branches = sessionBranchDao.getBySession(sessionId)
@@ -1551,10 +1555,12 @@ class ChatViewModel @Inject constructor(
         val encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world)
         val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, branchId)
         val roundChoices = buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
+        val eventWindowSize = _state.value.takeIf { !resetEventWindow && it.currentBranchId == branchId }
+            ?.eventNodes?.size?.coerceAtLeast(EVENT_NODE_PAGE_SIZE) ?: EVENT_NODE_PAGE_SIZE
         val eventPage = eventNodeDao.getPageForBranch(
             sessionId = sessionId,
             branchId = branchId,
-            limit = EVENT_NODE_PAGE_SIZE + 1,
+            limit = eventWindowSize + 1,
         )
         bookmarkMutex.withLock {
             val bookmarkIds = bookmarkedIdsForWindow(msgs)
@@ -1590,9 +1596,9 @@ class ChatViewModel @Inject constructor(
                     roundChoiceMessageId = roundChoices.sourceMessageId,
                     branchAnchorsByMessageId = anchors,
                     eventNodes = if (applyEventPage)
-                        eventPage.take(EVENT_NODE_PAGE_SIZE) else current.eventNodes,
+                        eventPage.take(eventWindowSize) else current.eventNodes,
                     eventNodesHasMore = if (applyEventPage)
-                        eventPage.size > EVENT_NODE_PAGE_SIZE else current.eventNodesHasMore,
+                        eventPage.size > eventWindowSize else current.eventNodesHasMore,
                     eventNodesLoadingMore = if (applyEventPage) false else current.eventNodesLoadingMore,
                     eventNodesLoadError = if (applyEventPage) null else current.eventNodesLoadError,
                     allowSessionThinkMax = secureStorage.allowSessionThinkMax,
@@ -3126,9 +3132,14 @@ class ChatViewModel @Inject constructor(
                 _state.value = _state.value.copy(
                     branches = updatedBranches,
                     currentBranchId = newBranchId,
+                    eventNodes = emptyList(),
+                    eventNodesHasMore = false,
+                    eventNodesLoadingMore = false,
+                    eventNodesLoadError = null,
+                    eventActionErrors = emptyMap(),
                     error = null,
                 )
-                refreshMessagesUi()
+                refreshMessagesUi(resetEventWindow = true)
                 persistCurrentBranchSelection()
             } catch (e: CancellationException) {
                 throw e
