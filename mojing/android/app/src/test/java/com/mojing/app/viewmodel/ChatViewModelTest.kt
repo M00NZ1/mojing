@@ -3161,6 +3161,56 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun creatingBranchReadFailureKeepsOriginalConversationUntilRetryOpensNewBranch() = runTest(testDispatcher) {
+        val anchor = MessageEntity(id = 7L, sessionId = 42L, speakerType = "user", content = "分叉来源")
+        val later = MessageEntity(id = 8L, sessionId = 42L, speakerType = "character", content = "后续剧情")
+        val originalEvent = SessionEventNodeEntity(id = 10L, sessionId = 42L, title = "原线事件")
+        val messageDao = mockk<MessageDao>(relaxed = true)
+        val branchDao = mockk<SessionBranchDao>(relaxed = true)
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        val preferences = uiPreferences()
+        val branches = mutableListOf<SessionBranchEntity>()
+        coEvery { messageDao.getMainMessagesTail(42L, any()) } returns listOf(later, anchor)
+        coEvery { messageDao.getMainMessageById(42L, 7L) } returns anchor
+        coEvery { messageDao.getVisibleMessagesTail(42L, match { it.startsWith("branch_") }, any()) } returns listOf(anchor)
+        coEvery { branchDao.getBySession(42L) } answers { branches.toList() }
+        coEvery { branchDao.insert(any()) } answers {
+            branches += args.first() as SessionBranchEntity
+            1L
+        }
+        coEvery { events.getPageForBranch(42L, "main", null, null, 25) } returns listOf(originalEvent)
+        coEvery { events.getPageForBranch(42L, match { it.startsWith("branch_") }, null, null, 25) } throws
+            IllegalStateException("read failed")
+        val vm = createViewModel(
+            messageDao = messageDao,
+            sessionBranchDao = branchDao,
+            eventNodeDao = events,
+            uiPreferencesRepository = preferences,
+        )
+        advanceUntilIdle()
+
+        vm.createBranch(7L)
+        advanceUntilIdle()
+
+        val newBranchId = branches.single().branchId
+        assertEquals("main", vm.state.value.currentBranchId)
+        assertEquals(setOf(7L, 8L), vm.state.value.messages.map { it.id }.toSet())
+        assertEquals(listOf(originalEvent), vm.state.value.eventNodes)
+        assertTrue(vm.state.value.branches.any { it.branchId == newBranchId })
+        assertEquals("故事线已创建，但打开失败，请从故事线列表重试", vm.state.value.error)
+        coVerify(exactly = 0) { preferences.setLastChatBranch(42L, newBranchId) }
+
+        coEvery { events.getPageForBranch(42L, newBranchId, null, null, 25) } returns emptyList()
+        vm.switchBranch(newBranchId)
+        advanceUntilIdle()
+
+        assertEquals(newBranchId, vm.state.value.currentBranchId)
+        assertEquals(listOf(7L), vm.state.value.messages.map { it.id })
+        assertTrue(vm.state.value.eventNodes.isEmpty())
+        coVerify(exactly = 1) { preferences.setLastChatBranch(42L, newBranchId) }
+    }
+
+    @Test
     fun creatingBranchRejectsAStaleMessageOutsideTheCurrentStoryline() = runTest(testDispatcher) {
         val messageDao = mockk<MessageDao>(relaxed = true)
         val branchDao = mockk<SessionBranchDao>(relaxed = true)

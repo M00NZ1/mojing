@@ -1513,7 +1513,6 @@ class ChatViewModel @Inject constructor(
     private suspend fun refreshMessagesUi(
         requestedBranchId: String = currentBranchId(),
         anchorMessageId: Long? = null,
-        resetEventWindow: Boolean = false,
     ) {
         val eventRevision = eventRefreshRevision.incrementAndGet()
         val correctionRevision = correctionRefreshRevision.incrementAndGet()
@@ -1555,7 +1554,7 @@ class ChatViewModel @Inject constructor(
         val encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world)
         val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, branchId)
         val roundChoices = buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
-        val eventWindowSize = _state.value.takeIf { !resetEventWindow && it.currentBranchId == branchId }
+        val eventWindowSize = _state.value.takeIf { it.currentBranchId == branchId }
             ?.eventNodes?.size?.coerceAtLeast(EVENT_NODE_PAGE_SIZE) ?: EVENT_NODE_PAGE_SIZE
         val eventPage = eventNodeDao.getPageForBranch(
             sessionId = sessionId,
@@ -3106,6 +3105,7 @@ class ChatViewModel @Inject constructor(
         val launched = launchBranchTransition branchTransition@{
             val parentBranch = currentBranchId()
             var branchCommitted = false
+            var branchAvailableInList = false
             try {
                 val anchor = getVisibleMessage(parentBranch, fromMessageId)
                 if (anchor == null) {
@@ -3129,24 +3129,19 @@ class ChatViewModel @Inject constructor(
                 sessionBranchDao.insert(branch)
                 branchCommitted = true
                 val updatedBranches = sessionBranchDao.getBySession(sessionId)
-                _state.value = _state.value.copy(
-                    branches = updatedBranches,
-                    currentBranchId = newBranchId,
-                    eventNodes = emptyList(),
-                    eventNodesHasMore = false,
-                    eventNodesLoadingMore = false,
-                    eventNodesLoadError = null,
-                    eventActionErrors = emptyMap(),
-                    error = null,
-                )
-                refreshMessagesUi(resetEventWindow = true)
+                branchAvailableInList = updatedBranches.any { it.branchId == newBranchId }
+                _state.update { it.copy(branches = updatedBranches) }
+                refreshMessagesUi(newBranchId)
+                check(currentBranchId() == newBranchId) { "新故事线尚未加载" }
                 persistCurrentBranchSelection()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 _state.update {
                     it.copy(
-                        error = if (branchCommitted) {
+                        error = if (branchAvailableInList) {
+                            "故事线已创建，但打开失败，请从故事线列表重试"
+                        } else if (branchCommitted) {
                             "故事线已创建，但列表刷新失败，请重新进入对话"
                         } else {
                             "故事线创建失败，请重试"
