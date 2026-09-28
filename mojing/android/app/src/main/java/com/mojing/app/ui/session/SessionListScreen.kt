@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -134,28 +135,32 @@ fun SessionListScreen(
             viewModel.clearRenameResult()
         }
     }
-    var showCreateDialog by remember { mutableStateOf(false) }
+    var showCreateDialog by rememberSaveable { mutableStateOf(false) }
     var pendingTemplateId by rememberSaveable { mutableStateOf<Long?>(null) }
     var dialogLoadRequestVersion by rememberSaveable { mutableIntStateOf(0) }
     var resetDialogFormOnNextLoad by rememberSaveable { mutableStateOf(true) }
     var isLoadingDialogData by remember { mutableStateOf(false) }
     var dialogLoadError by remember { mutableStateOf<String?>(null) }
+    var dialogDataReady by remember { mutableStateOf(false) }
     var worldMappings by remember { mutableStateOf<Map<Long, Long>>(emptyMap()) }
     var templates by remember { mutableStateOf<List<WorldTemplateEntity>>(emptyList()) }
     var encyclopedias by remember { mutableStateOf<List<EncyclopediaEntity>>(emptyList()) }
     var allBoundCharacters by remember { mutableStateOf<List<CharacterEntity>>(emptyList()) }
-    var selectedCharacterIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
-    var initializeCharacterSelection by remember { mutableStateOf(true) }
-    var newSessionTitle by remember { mutableStateOf("") }
-    var selectedTemplate by remember { mutableStateOf<WorldTemplateEntity?>(null) }
-    var selectedEncId by remember { mutableStateOf<Long?>(null) }
-    var narratorOn by remember { mutableStateOf(false) }
-    var narratorName by remember { mutableStateOf("旁白") }
-    var choiceOn by remember { mutableStateOf(true) }
-    var maxChoicesStr by remember { mutableStateOf("3") }
-    var antiCheatOn by remember { mutableStateOf(true) }
+    var selectedCharacterIds by rememberSaveable(stateSaver = Saver<Set<Long>, ArrayList<Long>>(
+        save = { ArrayList(it) }, restore = { it.toSet() },
+    )) { mutableStateOf<Set<Long>>(emptySet()) }
+    var initializeCharacterSelection by rememberSaveable { mutableStateOf(true) }
+    var newSessionTitle by rememberSaveable { mutableStateOf("") }
+    var selectedTemplateId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var selectedEncId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var worldSelectionInitialized by rememberSaveable { mutableStateOf(false) }
+    var narratorOn by rememberSaveable { mutableStateOf(false) }
+    var narratorName by rememberSaveable { mutableStateOf("旁白") }
+    var choiceOn by rememberSaveable { mutableStateOf(true) }
+    var maxChoicesStr by rememberSaveable { mutableStateOf("3") }
+    var antiCheatOn by rememberSaveable { mutableStateOf(true) }
     /** 新建对话：展示用上下文 token 上限（仅统计条），默认 100 万 */
-    var displayContextLimitStr by remember { mutableStateOf("1000000") }
+    var displayContextLimitStr by rememberSaveable { mutableStateOf("1000000") }
     var showConversationOptions by rememberSaveable { mutableStateOf(false) }
     var showQuickStartReplay by remember { mutableStateOf(false) }
     val guideDismissed by viewModel.quickStartGuideDismissed.collectAsStateWithLifecycle()
@@ -165,6 +170,8 @@ fun SessionListScreen(
     fun openNewSessionDialog(templateId: Long? = null) {
         pendingTemplateId = templateId
         resetDialogFormOnNextLoad = true
+        worldSelectionInitialized = false
+        dialogDataReady = false
         showConversationOptions = false
         dialogLoadRequestVersion += 1
         showCreateDialog = true
@@ -175,6 +182,7 @@ fun SessionListScreen(
         resetDialogFormOnNextLoad = true
         isLoadingDialogData = false
         dialogLoadError = null
+        dialogDataReady = false
         showConversationOptions = false
         focusManager.clearFocus()
         showCreateDialog = false
@@ -200,7 +208,7 @@ fun SessionListScreen(
             val d = viewModel.newSessionDialogDefaults()
             if (resetDialogFormOnNextLoad) {
                 newSessionTitle = ""
-                selectedTemplate = null
+                selectedTemplateId = null
                 selectedEncId = null
                 templates = emptyList()
                 encyclopedias = emptyList()
@@ -215,6 +223,7 @@ fun SessionListScreen(
                 displayContextLimitStr = "1000000"
             }
             resetDialogFormOnNextLoad = false
+            dialogDataReady = false
             isLoadingDialogData = true
             dialogLoadError = null
             try {
@@ -227,26 +236,31 @@ fun SessionListScreen(
                     selectedCharacterIds = openingCharacterSelection(data.boundCharacters.map { it.id }.toSet(), null)
                     initializeCharacterSelection = false
                 }
-                selectedTemplate = findRequestedWorldTemplate(data.templates, requestedTemplateId)
-                    ?: if (requestedTemplateId == null) {
-                        findDefaultWorldTemplate(data.templates, d.defaultWorldTemplateId)
-                    } else {
-                        null
+                if (!worldSelectionInitialized) {
+                    val initialTemplate = findRequestedWorldTemplate(data.templates, requestedTemplateId)
+                        ?: if (requestedTemplateId == null) {
+                            findDefaultWorldTemplate(data.templates, d.defaultWorldTemplateId)
+                        } else {
+                            null
+                        }
+                    selectedTemplateId = initialTemplate?.id
+                    if (requestedTemplateId != null && initialTemplate == null) {
+                        Toast.makeText(context, "世界模板已不存在，已打开普通新对话", Toast.LENGTH_SHORT).show()
+                    } else if (
+                        requestedTemplateId == null &&
+                        d.defaultWorldTemplateId.isNotBlank() &&
+                        d.defaultWorldTemplateId != "custom" &&
+                        initialTemplate == null
+                    ) {
+                        Toast.makeText(context, "默认世界模板已不存在，本次不使用模板", Toast.LENGTH_SHORT).show()
                     }
-                if (requestedTemplateId != null && selectedTemplate == null) {
-                    Toast.makeText(context, "世界模板已不存在，已打开普通新对话", Toast.LENGTH_SHORT).show()
-                } else if (
-                    requestedTemplateId == null &&
-                    d.defaultWorldTemplateId.isNotBlank() &&
-                    d.defaultWorldTemplateId != "custom" &&
-                    selectedTemplate == null
-                ) {
-                    Toast.makeText(context, "默认世界模板已不存在，本次不使用模板", Toast.LENGTH_SHORT).show()
-                }
-                selectedTemplate?.let { template ->
-                    data.worldMappings[template.id]?.let { selectedEncId = it; selectedTemplate = null }
+                    initialTemplate?.let { template ->
+                        data.worldMappings[template.id]?.let { selectedEncId = it; selectedTemplateId = null }
+                    }
+                    worldSelectionInitialized = true
                 }
                 pendingTemplateId = null
+                dialogDataReady = true
                 isLoadingDialogData = false
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -558,14 +572,21 @@ fun SessionListScreen(
     if (showCreateDialog) {
         var worldPickerOpen by remember { mutableStateOf(false) }
         var characterPickerOpen by remember { mutableStateOf(false) }
+        val selectedTemplate = templates.firstOrNull { it.id == selectedTemplateId }
+        val selectedWorldMissing = dialogDataReady && (
+            selectedTemplateId != null && selectedTemplate == null ||
+                selectedEncId != null && encyclopedias.none { it.id == selectedEncId }
+            )
         val selectableCharacters = remember(selectedEncId, allBoundCharacters) {
             when (val id = selectedEncId) {
                 null -> allBoundCharacters
                 else -> allBoundCharacters.filter { it.boundEncyclopediaId <= 0L || it.boundEncyclopediaId == id }
             }
         }
-        LaunchedEffect(selectedEncId, allBoundCharacters) {
-            selectedCharacterIds = openingCharacterSelection(selectableCharacters.map { it.id }.toSet(), selectedCharacterIds)
+        LaunchedEffect(dialogDataReady, selectedWorldMissing, selectedEncId, allBoundCharacters) {
+            if (dialogDataReady && !selectedWorldMissing) {
+                selectedCharacterIds = openingCharacterSelection(selectableCharacters.map { it.id }.toSet(), selectedCharacterIds)
+            }
         }
         ModalBottomSheet(
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -662,16 +683,21 @@ fun SessionListScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedButton(onClick = { worldPickerOpen = true },
-                    enabled = !isCreatingSession && !isLoadingDialogData && dialogLoadError == null,
+                    enabled = !isCreatingSession && dialogDataReady,
                     modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text("世界", style = MaterialTheme.typography.labelSmall)
                         Text(encyclopedias.firstOrNull { it.id == selectedEncId }?.name
-                            ?: selectedTemplate?.label ?: "不绑定世界",
+                            ?: selectedTemplate?.label ?: if (selectedWorldMissing) "原选世界已不存在" else "不绑定世界",
                             maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
                     Icon(Icons.Default.ExpandMore, contentDescription = "选择世界")
                 }
+                if (selectedWorldMissing) Text(
+                    "原选世界已不存在，请重新选择后创建",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
 
                 Text("参与角色", style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary)
@@ -842,7 +868,7 @@ fun SessionListScreen(
                         )
                     },
                     modifier = Modifier.weight(1f),
-                    enabled = !isCreatingSession && !isLoadingDialogData && dialogLoadError == null &&
+                    enabled = !isCreatingSession && dialogDataReady && !selectedWorldMissing &&
                         selectableCharacters.isNotEmpty() && selectedCharacterIds.isNotEmpty(),
                 ) { Text(if (isCreatingSession) "创建中…" else "创建并开始") }
                 OutlinedButton(
@@ -868,10 +894,11 @@ fun SessionListScreen(
             encyclopedias = encyclopedias,
             legacyTemplates = templates.filter { it.id !in worldMappings && it.templateId != "custom" },
             selectedEncyclopediaId = selectedEncId,
-            selectedTemplateId = selectedTemplate?.id,
+            selectedTemplateId = selectedTemplateId,
             onSelect = { encyclopediaId, template ->
                 selectedEncId = encyclopediaId
-                selectedTemplate = template
+                selectedTemplateId = template?.id
+                worldSelectionInitialized = true
                 worldPickerOpen = false
             },
             onDismiss = { worldPickerOpen = false },
