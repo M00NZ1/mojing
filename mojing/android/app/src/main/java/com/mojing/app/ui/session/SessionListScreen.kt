@@ -68,6 +68,7 @@ import android.widget.Toast
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 
 internal fun findRequestedWorldTemplate(
@@ -136,6 +137,7 @@ fun SessionListScreen(
         }
     }
     var showCreateDialog by rememberSaveable { mutableStateOf(false) }
+    var creationRequestId by rememberSaveable { mutableStateOf("") }
     var pendingTemplateId by rememberSaveable { mutableStateOf<Long?>(null) }
     var dialogLoadRequestVersion by rememberSaveable { mutableIntStateOf(0) }
     var resetDialogFormOnNextLoad by rememberSaveable { mutableStateOf(true) }
@@ -169,6 +171,7 @@ fun SessionListScreen(
 
     fun openNewSessionDialog(templateId: Long? = null) {
         pendingTemplateId = templateId
+        creationRequestId = UUID.randomUUID().toString()
         resetDialogFormOnNextLoad = true
         worldSelectionInitialized = false
         dialogDataReady = false
@@ -179,6 +182,7 @@ fun SessionListScreen(
 
     fun closeNewSessionDialog() {
         pendingTemplateId = null
+        creationRequestId = ""
         resetDialogFormOnNextLoad = true
         isLoadingDialogData = false
         dialogLoadError = null
@@ -857,6 +861,7 @@ fun SessionListScreen(
                             antiCheatEnabled = antiCheatOn,
                             displayContextTokenLimit = displayCap,
                             participantCharacterIds = selectedCharacterIds.toList(),
+                            creationRequestId = creationRequestId.ifBlank { UUID.randomUUID().toString().also { creationRequestId = it } },
                             onCreated = { id ->
                                 Toast.makeText(context, UserFacingStrings.sessionCreated(), Toast.LENGTH_SHORT).show()
                                 closeNewSessionDialog()
@@ -878,6 +883,7 @@ fun SessionListScreen(
                 OutlinedButton(
                     onClick = {
                         viewModel.createNewSession(
+                            creationRequestId = creationRequestId.ifBlank { UUID.randomUUID().toString().also { creationRequestId = it } },
                             onCreated = { id ->
                                 Toast.makeText(context, UserFacingStrings.blankSessionCreated(), Toast.LENGTH_SHORT).show()
                                 closeNewSessionDialog()

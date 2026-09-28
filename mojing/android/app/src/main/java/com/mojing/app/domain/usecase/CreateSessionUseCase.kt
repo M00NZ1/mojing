@@ -34,11 +34,12 @@ class CreateSessionUseCase @Inject constructor(
         encyclopediaId: Long? = null,
         narratorEnabled: Boolean = secureStorage.defaultNarratorEnabled,
         narratorName: String = "旁白",
+        creationRequestId: String? = null,
     ): Result {
         val (effectiveTemplate, effectiveEncyclopediaId) = resolveWorld(template ?: if (encyclopediaId == null) loadDefaultTemplate() else null, encyclopediaId)
         val antiCheatEnabled = secureStorage.defaultAntiCheatEnabled
         val sessionId = transaction(
-            SessionEntity(title = title, summary = summary),
+            SessionEntity(title = title, summary = summary, creationRequestId = creationRequestId),
             SessionWorldEntity(
                 sessionId = 0L,
                 encyclopediaId = effectiveEncyclopediaId,
@@ -87,6 +88,7 @@ class CreateSessionUseCase @Inject constructor(
         worldPromptOverride: String? = null,
         initialMessages: List<MessageEntity> = emptyList(),
         storyDraftId: String? = null,
+        creationRequestId: String? = null,
     ): Result {
         val (effectiveTemplate, effectiveEncyclopediaId) = resolveWorld(template, encyclopediaId)
         val validIds = characterIds.distinct()
@@ -101,6 +103,7 @@ class CreateSessionUseCase @Inject constructor(
             title = title.trim().ifBlank { "新对话" },
             summary = summary.trim(),
             displayContextTokenLimit = displayContextTokenLimit.coerceIn(1_000, 10_000_000),
+            creationRequestId = creationRequestId,
         )
         val templateId = effectiveTemplate?.templateId?.trim().orEmpty().ifBlank { "custom" }
         val world = SessionWorldEntity(

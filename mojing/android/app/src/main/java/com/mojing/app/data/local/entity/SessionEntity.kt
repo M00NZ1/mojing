@@ -4,7 +4,7 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "sessions", indices = [Index("updatedAt")])
+@Entity(tableName = "sessions", indices = [Index("updatedAt"), Index(value = ["creationRequestId"], unique = true)])
 data class SessionEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val title: String = "新对话",
@@ -19,4 +19,6 @@ data class SessionEntity(
      * 默认 100 万；新建对话时可在表单中填写。
      */
     val displayContextTokenLimit: Int = 1_000_000,
+    /** 一次创建表单的稳定编号；旧会话为 null。 */
+    val creationRequestId: String? = null,
 )

@@ -31,13 +31,17 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE id = :id")
     suspend fun getById(id: Long): SessionEntity?
 
+    @Query("SELECT * FROM sessions WHERE creationRequestId = :requestId LIMIT 1")
+    suspend fun getByCreationRequestId(requestId: String): SessionEntity?
+
     @Query("SELECT * FROM sessions WHERE title LIKE '%' || :query || '%' ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, updatedAt DESC")
     suspend fun search(query: String): List<SessionEntity>
 
     @Update
     suspend fun update(entity: SessionEntity)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    /** 会话插入不得 REPLACE 已有行，否则会级联删除原故事数据。 */
+    @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(entity: SessionEntity): Long
 
     @Query("UPDATE sessions SET title = :title, updatedAt = :updatedAt WHERE id = :id")

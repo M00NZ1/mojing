@@ -116,6 +116,7 @@ class SessionViewModel @Inject constructor(
         onCreated: (Long) -> Unit = {},
         onFailed: (String) -> Unit = {},
         onCreatedButNotOpened: (Long) -> Unit = { onFailed("对话已创建，但未能打开，请从故事库进入") },
+        creationRequestId: String? = null,
     ) {
         if (!_isCreatingSession.compareAndSet(expect = false, update = true)) {
             onFailed(SESSION_CREATION_BUSY_MESSAGE)
@@ -124,7 +125,7 @@ class SessionViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val result = try {
-                    createSessionUseCase.createBlank()
+                    createSessionUseCase.createBlank(creationRequestId = creationRequestId)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
@@ -190,6 +191,7 @@ class SessionViewModel @Inject constructor(
         /** 校验失败（参与者与百科不一致等） */
         onBlocked: (String) -> Unit = {},
         onCreatedButNotOpened: (Long) -> Unit = { onBlocked("对话已创建，但未能打开，请从故事库进入") },
+        creationRequestId: String? = null,
     ) {
         if (!_isCreatingSession.compareAndSet(expect = false, update = true)) {
             onBlocked(SESSION_CREATION_BUSY_MESSAGE)
@@ -209,6 +211,7 @@ class SessionViewModel @Inject constructor(
                         antiCheatEnabled = antiCheatEnabled,
                         displayContextTokenLimit = displayContextTokenLimit,
                         characterIds = participantCharacterIds,
+                        creationRequestId = creationRequestId,
                     )
                 } catch (cancelled: CancellationException) {
                     throw cancelled

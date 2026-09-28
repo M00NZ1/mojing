@@ -66,6 +66,22 @@ class CreateSessionUseCaseTest {
     }
 
     @Test
+    fun creationRequestIdsReachBothSessionTransactions() = runTest {
+        coEvery { transaction(any(), any(), any()) } returns 7L
+        coEvery { characterDao.getById(1L) } returns CharacterEntity(id = 1L)
+
+        useCase.createBlank(creationRequestId = "blank-request")
+        useCase.create(characterIds = listOf(1L), creationRequestId = "configured-request")
+
+        coVerify(exactly = 1) {
+            transaction(match { it.creationRequestId == "blank-request" }, any(), any())
+        }
+        coVerify(exactly = 1) {
+            transaction(match { it.creationRequestId == "configured-request" }, any(), any())
+        }
+    }
+
+    @Test
     fun optionsRejectMissingCharacterWithoutWritingSession() = runTest {
         coEvery { characterDao.getById(42L) } returns null
 

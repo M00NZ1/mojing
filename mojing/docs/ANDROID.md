@@ -176,6 +176,8 @@ JVM 测试位于 `app/src/test/`，Room 与 Compose 测试位于 `app/src/androi
 
 `CreateSessionUseCase.create(initialMessages)` 通过 `SessionCreationTransaction` 在同一 Room 事务中写入会话、世界配置、角色与开篇消息。任一写入失败均回滚；消息继续使用现有 DAO 更新检索字段。
 
+普通新建对话使用随表单恢复的创建编号。事务内先按编号核对既有会话，再写入新会话；重复提交返回原 ID，不覆盖其标题、世界或角色。Room 25 为旧会话默认空的编号增加唯一索引，24→25 升级不改写原会话；插入冲突中止而非替换，避免旧故事级联删除。升级失败由 Room 事务回滚，回退到旧应用版本须恢复升级前的数据库备份。
+
 `StoryOpeningDraftStore` 在现有 `app_config` 中使用独立键 `story_opening_draft_v1` 保存版本化开篇快照，包含正文、玩法、选定角色 ID 与完整 UUID。Room schema 保持 19；旧版本无此记录时正常进入创作表单。草稿随现有数据库备份恢复，不改变 Web 交换格式。
 
 `SessionCreationTransaction` 核对 UUID，在会话与全部章节提交时将 pending 草稿更新为 saved 回执。重复保存复用会话 ID；待保存正文和完成回执分别按状态清除，旧页面不能重新写入已交接的草稿。`StorySimulationViewModel` 重进后读取草稿或回执，提供复制全文、继续保存、打开会话和开始新作。数据库读写与恢复解析在后台执行。

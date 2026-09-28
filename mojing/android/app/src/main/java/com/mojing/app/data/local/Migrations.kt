@@ -514,4 +514,14 @@ object Migrations {
         }
     }
 
+    val MIGRATION_24_25 = object : Migration(24, 25) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE sessions ADD COLUMN creationRequestId TEXT")
+            db.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS index_sessions_creationRequestId " +
+                    "ON sessions (creationRequestId)",
+            )
+        }
+    }
+
 }

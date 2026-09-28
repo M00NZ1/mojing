@@ -92,6 +92,30 @@ class SessionCreationTransactionInstrumentedTest {
         )
     }
 
+    @Test
+    fun retryingCreationRequestReturnsOriginalSessionWithoutReplacingItsContents() = runBlocking {
+        val token = "create-request-42"
+        val firstId = createPackage(
+            SessionEntity(title = "原故事", creationRequestId = token),
+            SessionWorldEntity(sessionId = 0L, worldPrompt = "原世界"),
+            emptyList(),
+        )
+        val retryId = createPackage(
+            SessionEntity(title = "重试时改过的标题", creationRequestId = token),
+            SessionWorldEntity(sessionId = 0L, worldPrompt = "重试世界"),
+            emptyList(),
+        )
+
+        assertEquals(firstId, retryId)
+        assertEquals(1, countRows("sessions"))
+        assertEquals("原故事", database.sessionDao().getById(firstId)?.title)
+        assertEquals("原世界", database.sessionWorldDao().getBySession(firstId)?.worldPrompt)
+        assertNotNull(runCatching {
+            database.sessionDao().insert(SessionEntity(id = firstId, title = "不能覆盖"))
+        }.exceptionOrNull())
+        assertEquals("原世界", database.sessionWorldDao().getBySession(firstId)?.worldPrompt)
+    }
+
     private fun countRows(table: String): Int {
         return database.openHelper.readableDatabase
             .query("SELECT COUNT(*) FROM $table")

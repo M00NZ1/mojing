@@ -34,7 +34,11 @@ class SessionCreationTransaction @Inject constructor(
                 return@withTransaction record.sessionId
             }
         }
-        val sessionId = database.sessionDao().insert(session)
+        val requestId = session.creationRequestId?.trim()?.takeIf(String::isNotEmpty)
+        if (requestId != null) {
+            database.sessionDao().getByCreationRequestId(requestId)?.let { return@withTransaction it.id }
+        }
+        val sessionId = database.sessionDao().insert(session.copy(creationRequestId = requestId))
         check(sessionId > 0L) { "会话创建失败" }
         database.sessionWorldDao().upsert(world.copy(id = 0L, sessionId = sessionId))
         participants.forEach { participant ->
