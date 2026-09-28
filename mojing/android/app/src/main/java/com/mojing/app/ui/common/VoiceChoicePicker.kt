@@ -53,6 +53,7 @@ import com.mojing.app.data.VoiceChoice
 import com.mojing.app.data.VoicePreferences
 import com.mojing.app.media.AzureSpeech
 import com.mojing.app.media.VoiceEngineCatalog
+import com.mojing.app.media.VoiceCatalogException
 import com.mojing.app.media.VoiceEngineOption
 import com.mojing.app.media.VoiceOption
 import kotlinx.coroutines.CancellationException
@@ -189,7 +190,8 @@ fun VoiceChoicePicker(
             } catch (failure: Exception) {
                 if (generation == loadGeneration && selectedEngine == engineId) {
                     error = if (engineId == "azure") AzureSpeech.failureMessage(failure)
-                    else "音色列表加载失败，请检查引擎和语音包后重试"
+                    else (failure as? VoiceCatalogException)?.message
+                        ?: "音色列表加载失败，请检查引擎和语音包后重试"
                 }
             } finally {
                 if (generation == loadGeneration && selectedEngine == engineId) loading = false
