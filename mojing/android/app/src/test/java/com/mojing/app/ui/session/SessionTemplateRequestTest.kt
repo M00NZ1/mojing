@@ -1,36 +1,27 @@
 package com.mojing.app.ui.session
 
-import com.mojing.app.data.local.entity.WorldTemplateEntity
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 class SessionTemplateRequestTest {
-    private val templates = listOf(
-        WorldTemplateEntity(id = 1L, templateId = "old-city", label = "旧城"),
-        WorldTemplateEntity(id = 2L, templateId = "star-sea", label = "星海"),
-    )
-
     @Test
-    fun requestedTemplateSelectsExactDatabaseRow() {
-        assertEquals("星海", findRequestedWorldTemplate(templates, 2L)?.label)
+    fun requestedTemplateUsesExactDatabaseRowEvenWhenDefaultExists() {
+        assertEquals(InitialWorldTemplateRequest(2L, null), initialWorldTemplateRequest(2L, "star-sea"))
     }
 
     @Test
-    fun missingOrEmptyRequestDoesNotSelectAnotherTemplate() {
-        assertNull(findRequestedWorldTemplate(templates, 9L))
-        assertNull(findRequestedWorldTemplate(templates, null))
+    fun missingRequestedRowDoesNotFallBackToTheSavedDefault() {
+        assertEquals(InitialWorldTemplateRequest(9L, null), initialWorldTemplateRequest(9L, "star-sea"))
     }
 
     @Test
-    fun savedDefaultSelectsTemplateByStableTemplateId() {
-        assertEquals("星海", findDefaultWorldTemplate(templates, " star-sea ")?.label)
+    fun savedDefaultUsesStableTemplateId() {
+        assertEquals(InitialWorldTemplateRequest(null, "star-sea"), initialWorldTemplateRequest(null, " star-sea "))
     }
 
     @Test
-    fun customOrMissingDefaultDoesNotPretendAnotherTemplateWasSelected() {
-        assertNull(findDefaultWorldTemplate(templates, "custom"))
-        assertNull(findDefaultWorldTemplate(templates, "deleted-world"))
-        assertNull(findDefaultWorldTemplate(templates, ""))
+    fun customOrEmptyDefaultDoesNotRequestAWorld() {
+        assertEquals(InitialWorldTemplateRequest(null, null), initialWorldTemplateRequest(null, "custom"))
+        assertEquals(InitialWorldTemplateRequest(null, null), initialWorldTemplateRequest(null, ""))
     }
 }

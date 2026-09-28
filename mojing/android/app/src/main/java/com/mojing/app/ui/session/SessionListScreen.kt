@@ -71,18 +71,6 @@ import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 
-internal fun findRequestedWorldTemplate(
-    templates: List<WorldTemplateEntity>,
-    templateId: Long?,
-): WorldTemplateEntity? = templateId?.let { id -> templates.firstOrNull { it.id == id } }
-
-internal fun findDefaultWorldTemplate(
-    templates: List<WorldTemplateEntity>,
-    templateId: String,
-): WorldTemplateEntity? = templateId.trim()
-    .takeUnless { it.isEmpty() || it == "custom" }
-    ?.let { id -> templates.firstOrNull { it.templateId == id } }
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SessionListScreen(
@@ -157,9 +145,8 @@ fun SessionListScreen(
     var isLoadingDialogData by remember { mutableStateOf(false) }
     var dialogLoadError by remember { mutableStateOf<String?>(null) }
     var dialogDataReady by remember { mutableStateOf(false) }
-    var worldMappings by remember { mutableStateOf<Map<Long, Long>>(emptyMap()) }
-    var templates by remember { mutableStateOf<List<WorldTemplateEntity>>(emptyList()) }
-    var encyclopedias by remember { mutableStateOf<List<EncyclopediaEntity>>(emptyList()) }
+    var selectedTemplate by remember { mutableStateOf<WorldTemplateEntity?>(null) }
+    var selectedEncyclopedia by remember { mutableStateOf<EncyclopediaEntity?>(null) }
     var compatibleCharacterCount by remember { mutableIntStateOf(0) }
     var characterSummaryReady by remember { mutableStateOf(false) }
     var characterSummaryLoading by remember { mutableStateOf(false) }
@@ -271,8 +258,8 @@ fun SessionListScreen(
                 newSessionTitle = ""
                 selectedTemplateId = null
                 selectedEncId = null
-                templates = emptyList()
-                encyclopedias = emptyList()
+                selectedTemplate = null
+                selectedEncyclopedia = null
                 compatibleCharacterCount = 0
                 characterSummaryReady = false
                 selectedCharacterIds = emptySet()
@@ -290,30 +277,27 @@ fun SessionListScreen(
             isLoadingDialogData = true
             dialogLoadError = null
             try {
-                val data = viewModel.loadNewSessionDialogData()
-                templates = data.templates
-                worldMappings = data.worldMappings
-                encyclopedias = data.encyclopedias
+                val data = viewModel.loadNewSessionDialogData(
+                    initializeWorld = !worldSelectionInitialized,
+                    selectedTemplateId = selectedTemplateId,
+                    selectedEncyclopediaId = selectedEncId,
+                    requestedTemplateId = requestedTemplateId,
+                    defaultTemplateId = d.defaultWorldTemplateId,
+                )
+                selectedTemplate = data.template
+                selectedEncyclopedia = data.encyclopedia
+                selectedTemplateId = data.templateId
+                selectedEncId = data.encyclopediaId
                 if (!worldSelectionInitialized) {
-                    val initialTemplate = findRequestedWorldTemplate(data.templates, requestedTemplateId)
-                        ?: if (requestedTemplateId == null) {
-                            findDefaultWorldTemplate(data.templates, d.defaultWorldTemplateId)
-                        } else {
-                            null
-                        }
-                    selectedTemplateId = initialTemplate?.id
-                    if (requestedTemplateId != null && initialTemplate == null) {
+                    if (requestedTemplateId != null && !data.initialTemplateFound) {
                         Toast.makeText(context, "世界模板已不存在，已打开普通新对话", Toast.LENGTH_SHORT).show()
                     } else if (
                         requestedTemplateId == null &&
                         d.defaultWorldTemplateId.isNotBlank() &&
                         d.defaultWorldTemplateId != "custom" &&
-                        initialTemplate == null
+                        !data.initialTemplateFound
                     ) {
                         Toast.makeText(context, "默认世界模板已不存在，本次不使用模板", Toast.LENGTH_SHORT).show()
-                    }
-                    initialTemplate?.let { template ->
-                        data.worldMappings[template.id]?.let { selectedEncId = it; selectedTemplateId = null }
                     }
                     worldSelectionInitialized = true
                 }
@@ -738,10 +722,9 @@ fun SessionListScreen(
     if (showCreateDialog) {
         var worldPickerOpen by remember { mutableStateOf(false) }
         var characterPickerOpen by remember { mutableStateOf(false) }
-        val selectedTemplate = templates.firstOrNull { it.id == selectedTemplateId }
         val selectedWorldMissing = dialogDataReady && (
-            selectedTemplateId != null && selectedTemplate == null ||
-                selectedEncId != null && encyclopedias.none { it.id == selectedEncId }
+            selectedTemplateId != null && selectedTemplate?.id != selectedTemplateId ||
+                selectedEncId != null && selectedEncyclopedia?.id != selectedEncId
             )
         val currentCreating by rememberUpdatedState(isCreatingSession)
         val currentFormEdited by rememberUpdatedState(newSessionFormEdited)
@@ -848,7 +831,7 @@ fun SessionListScreen(
                     modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text("世界", style = MaterialTheme.typography.labelSmall)
-                        Text(encyclopedias.firstOrNull { it.id == selectedEncId }?.name
+                        Text(selectedEncyclopedia?.name
                             ?: selectedTemplate?.label ?: if (selectedWorldMissing) "原选世界已不存在" else "不绑定世界",
                             maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
@@ -1058,17 +1041,20 @@ fun SessionListScreen(
             }
         }
         if (worldPickerOpen) NewSessionWorldPicker(
-            encyclopedias = encyclopedias,
-            legacyTemplates = templates.filter { it.id !in worldMappings && it.templateId != "custom" },
+            loadPage = viewModel::loadNewSessionWorldPage,
+            loadSelection = viewModel::loadNewSessionWorldSelection,
             selectedEncyclopediaId = selectedEncId,
             selectedTemplateId = selectedTemplateId,
-            onSelect = { encyclopediaId, template ->
+            onSelect = { selection ->
+                val encyclopediaId = selection.encyclopedia?.id
                 if (encyclopediaId != selectedEncId) {
                     characterSummaryReady = false
                     characterSummaryError = null
                 }
                 selectedEncId = encyclopediaId
-                selectedTemplateId = template?.id
+                selectedTemplateId = selection.template?.id
+                selectedTemplate = selection.template
+                selectedEncyclopedia = selection.encyclopedia
                 worldSelectionInitialized = true
                 newSessionFormEdited = true
                 worldPickerOpen = false

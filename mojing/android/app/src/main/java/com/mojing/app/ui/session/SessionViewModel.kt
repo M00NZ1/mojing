@@ -5,8 +5,10 @@ import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.GenerationTaskDao
+import com.mojing.app.data.local.dao.LegacyWorldMappingDao
 import com.mojing.app.data.local.dao.MessageDao
 import com.mojing.app.data.local.dao.NewSessionCharacterOption
+import com.mojing.app.data.local.dao.NewSessionWorldOption
 import com.mojing.app.data.local.dao.SessionDao
 import com.mojing.app.data.local.dao.SessionBranchDao
 import com.mojing.app.data.local.dao.WorldTemplateDao
@@ -49,6 +51,12 @@ private data class SessionPageCursor(val pinnedAt: Long, val updatedAt: Long, va
 
 private const val SESSION_LIBRARY_PAGE_SIZE = 40
 
+internal data class InitialWorldTemplateRequest(val rowId: Long?, val templateId: String?)
+
+internal fun initialWorldTemplateRequest(requestedRowId: Long?, savedDefaultId: String): InitialWorldTemplateRequest =
+    if (requestedRowId != null) InitialWorldTemplateRequest(requestedRowId, null)
+    else InitialWorldTemplateRequest(null, savedDefaultId.trim().takeUnless { it.isEmpty() || it == "custom" })
+
 data class BranchCardPreviewState(
     val branchId: String,
     val sessionUpdatedAt: Long,
@@ -82,6 +90,7 @@ class SessionViewModel @Inject constructor(
     private val messageDao: MessageDao,
     private val branchVisibilityIndexManager: BranchVisibilityIndexManager,
     private val worldTemplateDao: WorldTemplateDao,
+    private val legacyWorldMappingDao: LegacyWorldMappingDao,
     private val encyclopediaDao: EncyclopediaDao,
     private val characterDao: CharacterDao,
     private val createSessionUseCase: CreateSessionUseCase,
@@ -327,16 +336,66 @@ class SessionViewModel @Inject constructor(
     )
 
     data class NewSessionDialogData(
-        val templates: List<WorldTemplateEntity>,
-        val encyclopedias: List<EncyclopediaEntity>,
-        val worldMappings: Map<Long, Long> = emptyMap(),
+        val template: WorldTemplateEntity?,
+        val encyclopedia: EncyclopediaEntity?,
+        val templateId: Long?,
+        val encyclopediaId: Long?,
+        val initialTemplateFound: Boolean,
     )
 
-    suspend fun loadNewSessionDialogData(): NewSessionDialogData = NewSessionDialogData(
-        templates = worldTemplateDao.getAll(),
-        encyclopedias = encyclopediaDao.getAll(),
-        worldMappings = worldTemplateDao.getWorldMappings().associate { it.worldTemplateId to it.encyclopediaId },
+    suspend fun loadNewSessionDialogData(
+        initializeWorld: Boolean,
+        selectedTemplateId: Long?,
+        selectedEncyclopediaId: Long?,
+        requestedTemplateId: Long?,
+        defaultTemplateId: String,
+    ): NewSessionDialogData {
+        val lookup = initialWorldTemplateRequest(requestedTemplateId, defaultTemplateId)
+        val initialTemplate = if (!initializeWorld) null else when {
+            lookup.rowId != null -> worldTemplateDao.getById(lookup.rowId)
+            lookup.templateId != null -> worldTemplateDao.getByTemplateId(lookup.templateId)
+            else -> null
+        }
+        val initialTemplateFound = !initializeWorld || lookup.rowId == null && lookup.templateId == null || initialTemplate != null
+        val mappedEncyclopediaId = initialTemplate?.let { legacyWorldMappingDao.getByTemplateId(it.id)?.encyclopediaId }
+        val templateId = if (initializeWorld) initialTemplate?.id.takeIf { mappedEncyclopediaId == null }
+            else selectedTemplateId
+        val encyclopediaId = if (initializeWorld) mappedEncyclopediaId else selectedEncyclopediaId
+        return NewSessionDialogData(
+            template = if (initializeWorld) initialTemplate.takeIf { mappedEncyclopediaId == null }
+                else templateId?.let { worldTemplateDao.getById(it) },
+            encyclopedia = encyclopediaId?.let { encyclopediaDao.getById(it) },
+            templateId = templateId,
+            encyclopediaId = encyclopediaId,
+            initialTemplateFound = initialTemplateFound,
+        )
+    }
+
+    internal data class NewSessionWorldSelection(
+        val template: WorldTemplateEntity? = null,
+        val encyclopedia: EncyclopediaEntity? = null,
     )
+
+    internal data class NewSessionWorldPage(val rows: List<NewSessionWorldOption>, val hasMore: Boolean)
+
+    internal suspend fun loadNewSessionWorldPage(query: String, cursor: NewSessionWorldOption?): NewSessionWorldPage {
+        val rows = worldTemplateDao.getNewSessionWorldPage(
+            query.trim(), cursor?.kind, cursor?.pinnedAt, cursor?.updatedAt, cursor?.id,
+            WORLD_PICKER_PAGE_SIZE + 1,
+        )
+        return NewSessionWorldPage(rows.take(WORLD_PICKER_PAGE_SIZE), rows.size > WORLD_PICKER_PAGE_SIZE)
+    }
+
+    internal suspend fun loadNewSessionWorldSelection(option: NewSessionWorldOption): NewSessionWorldSelection =
+        when (option.kind) {
+            0 -> NewSessionWorldSelection(
+                encyclopedia = requireNotNull(encyclopediaDao.getById(option.id)) { "World no longer exists" },
+            )
+            1 -> NewSessionWorldSelection(
+                template = requireNotNull(worldTemplateDao.getById(option.id)) { "World no longer exists" },
+            )
+            else -> error("Unknown world option")
+        }
 
     internal data class NewSessionCharacterSummary(
         val count: Int,
@@ -509,5 +568,6 @@ class SessionViewModel @Inject constructor(
     private companion object {
         const val SESSION_CREATION_BUSY_MESSAGE = "正在创建对话，请稍候"
         const val CHARACTER_PICKER_PAGE_SIZE = 40
+        const val WORLD_PICKER_PAGE_SIZE = 40
     }
 }

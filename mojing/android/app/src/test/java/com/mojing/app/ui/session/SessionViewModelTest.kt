@@ -4,14 +4,17 @@ import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.GenerationTaskDao
+import com.mojing.app.data.local.dao.LegacyWorldMappingDao
 import com.mojing.app.data.local.dao.MessageDao
 import com.mojing.app.data.local.dao.NewSessionCharacterOption
+import com.mojing.app.data.local.dao.NewSessionWorldOption
 import com.mojing.app.data.local.dao.SessionBranchDao
 import com.mojing.app.data.local.dao.SessionDao
 import com.mojing.app.data.local.dao.StoryBranchPreviewSource
 import com.mojing.app.data.local.dao.WorldTemplateDao
 import com.mojing.app.data.local.branch.BranchVisibilityIndexManager
 import com.mojing.app.data.local.entity.CharacterEntity
+import com.mojing.app.data.local.entity.LegacyWorldMappingEntity
 import com.mojing.app.data.local.entity.EncyclopediaEntity
 import com.mojing.app.data.local.entity.SessionEntity
 import com.mojing.app.data.local.entity.SessionWithListMeta
@@ -62,6 +65,7 @@ class SessionViewModelTest {
     private val secureStorage = mockk<SecureStorage>(relaxed = true)
     private val transaction = mockk<SessionCreationTransaction>(relaxed = true)
     private val worldTemplateDao = mockk<WorldTemplateDao>(relaxed = true)
+    private val legacyWorldMappingDao = mockk<LegacyWorldMappingDao>(relaxed = true)
     private val encyclopediaDao = mockk<EncyclopediaDao>(relaxed = true)
     private val characterDao = mockk<CharacterDao>(relaxed = true)
     private val createSession = CreateSessionUseCase(
@@ -327,28 +331,56 @@ class SessionViewModelTest {
     }
 
     @Test
-    fun dialogDataDoesNotLoadFullCharacterRecords() = runTest(dispatcher) {
+    fun dialogDataResolvesMappedDefaultWithoutLoadingTheWorldCatalog() = runTest(dispatcher) {
         val template = WorldTemplateEntity(id = 2L, templateId = "star-sea")
         val encyclopedia = EncyclopediaEntity(id = 3L, name = "星海百科")
-        coEvery { worldTemplateDao.getAll() } returns listOf(template)
-        coEvery { encyclopediaDao.getAll() } returns listOf(encyclopedia)
+        coEvery { worldTemplateDao.getByTemplateId("star-sea") } returns template
+        coEvery { legacyWorldMappingDao.getByTemplateId(2L) } returns LegacyWorldMappingEntity(2L, 3L, "test")
+        coEvery { encyclopediaDao.getById(3L) } returns encyclopedia
 
-        val data = createViewModel().loadNewSessionDialogData()
+        val data = createViewModel().loadNewSessionDialogData(
+            initializeWorld = true, selectedTemplateId = null, selectedEncyclopediaId = null,
+            requestedTemplateId = null, defaultTemplateId = "star-sea",
+        )
 
-        assertEquals(listOf(template), data.templates)
-        assertEquals(listOf(encyclopedia), data.encyclopedias)
+        assertEquals(null, data.template)
+        assertEquals(encyclopedia, data.encyclopedia)
+        assertEquals(3L, data.encyclopediaId)
+        assertTrue(data.initialTemplateFound)
+        coVerify(exactly = 0) { worldTemplateDao.getAll() }
+        coVerify(exactly = 0) { encyclopediaDao.getAll() }
         coVerify(exactly = 0) { characterDao.getAll() }
     }
 
     @Test
     fun dialogDataFailurePropagatesToUiOwner() = runTest(dispatcher) {
-        coEvery { worldTemplateDao.getAll() } throws IllegalStateException("database unavailable")
+        coEvery { worldTemplateDao.getById(2L) } throws IllegalStateException("database unavailable")
 
-        val result = runCatching { createViewModel().loadNewSessionDialogData() }
+        val result = runCatching { createViewModel().loadNewSessionDialogData(
+            initializeWorld = true, selectedTemplateId = null, selectedEncyclopediaId = null,
+            requestedTemplateId = 2L, defaultTemplateId = "",
+        ) }
 
         assertTrue(result.isFailure)
-        coVerify(exactly = 0) { encyclopediaDao.getAll() }
+        coVerify(exactly = 0) { encyclopediaDao.getById(any()) }
         coVerify(exactly = 0) { characterDao.getAll() }
+    }
+
+    @Test
+    fun worldPickerLoadsOnlyOnePageAndResolvesTheSelectedRow() = runTest(dispatcher) {
+        val options = (41L downTo 1L).map { id -> NewSessionWorldOption(0, id, "世界$id", 1, 0L, 100L) }
+        coEvery { worldTemplateDao.getNewSessionWorldPage("世界", null, null, null, null, 41) } returns options
+        val selected = EncyclopediaEntity(id = 41L, name = "世界41")
+        coEvery { encyclopediaDao.getById(41L) } returns selected
+
+        val viewModel = createViewModel()
+        val page = viewModel.loadNewSessionWorldPage(" 世界 ", null)
+        val selection = viewModel.loadNewSessionWorldSelection(page.rows.first())
+
+        assertEquals(40, page.rows.size)
+        assertTrue(page.hasMore)
+        assertEquals(selected, selection.encyclopedia)
+        coVerify(exactly = 0) { worldTemplateDao.getAll() }
     }
 
     @Test
@@ -574,6 +606,7 @@ class SessionViewModelTest {
         messageDao = messageDao,
         branchVisibilityIndexManager = branchVisibilityIndexManager,
         worldTemplateDao = worldTemplateDao,
+        legacyWorldMappingDao = legacyWorldMappingDao,
         encyclopediaDao = encyclopediaDao,
         characterDao = characterDao,
         createSessionUseCase = createSession,

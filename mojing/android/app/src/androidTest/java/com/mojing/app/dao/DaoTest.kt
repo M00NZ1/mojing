@@ -108,6 +108,42 @@ class MessageDaoTest {
         assertEquals(listOf(ids[0]), dao.existingIdsForNewSession(listOf(ids[0], ids[1]), 3L))
     }
 
+    @Test
+    fun newSessionWorldPickerPagesAcrossEncyclopediasAndUnmappedTemplates() = runBlocking {
+        val encyclopediaDao = db.encyclopediaDao()
+        val templateDao = db.worldTemplateDao()
+        val encyclopediaIds = (1..42).map { n ->
+            encyclopediaDao.upsert(EncyclopediaEntity(name = if (n == 1) "远方百科" else "世界$n", updatedAt = 100L))
+        }
+        val legacyIds = (1..3).map { n ->
+            templateDao.upsert(WorldTemplateEntity(label = if (n == 1) "远方旧世界" else "旧世界$n", updatedAt = 100L))
+        }
+        val mappedId = templateDao.upsert(WorldTemplateEntity(label = "已迁移旧世界", updatedAt = 100L))
+        templateDao.upsert(WorldTemplateEntity(templateId = "custom", label = "自定义占位"))
+        db.legacyWorldMappingDao().insert(LegacyWorldMappingEntity(mappedId, encyclopediaIds[0], "test"))
+
+        val first = templateDao.getNewSessionWorldPage("", null, null, null, null, 41)
+        assertEquals(41, first.size)
+        assertTrue(first.all { it.kind == 0 })
+        val cursor = first[39]
+        val later = templateDao.getNewSessionWorldPage(
+            "", cursor.kind, cursor.pinnedAt, cursor.updatedAt, cursor.id, 41,
+        )
+        assertEquals(5, later.size)
+        assertEquals(2, later.count { it.kind == 0 })
+        assertEquals(3, later.count { it.kind == 1 })
+        assertTrue(first.take(40).map { it.kind to it.id }.intersect(later.map { it.kind to it.id }.toSet()).isEmpty())
+        assertEquals(listOf(0, 1), templateDao.getNewSessionWorldPage("远方", null, null, null, null, 41).map { it.kind })
+        assertEquals(encyclopediaIds[0], db.legacyWorldMappingDao().getByTemplateId(mappedId)?.encyclopediaId)
+        assertTrue(legacyIds.contains(later.last().id))
+
+        templateDao.upsert(WorldTemplateEntity(templateId = "duplicate-default", label = "旧默认", updatedAt = 200L))
+        val pinnedDefault = templateDao.upsert(WorldTemplateEntity(
+            templateId = "duplicate-default", label = "置顶默认", pinnedAt = 500L, updatedAt = 100L,
+        ))
+        assertEquals(pinnedDefault, templateDao.getByTemplateId("duplicate-default")?.id)
+    }
+
     @Test fun characterSnapshotCursorUsesVisibleUserIdsAndBranchState() = runBlocking {
         val sid = sessionDao.insert(SessionEntity(title = "角色状态分支"))
         val main = (1..20).map { messageDao.insert(MessageEntity(sessionId = sid, speakerType = "user", content = "主线 $it")) }

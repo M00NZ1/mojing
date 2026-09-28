@@ -18,51 +18,124 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.mojing.app.data.local.dao.NewSessionCharacterOption
-import com.mojing.app.data.local.entity.EncyclopediaEntity
-import com.mojing.app.data.local.entity.WorldTemplateEntity
+import com.mojing.app.data.local.dao.NewSessionWorldOption
 import com.mojing.app.ui.common.ModelPickerHeader
 import com.mojing.app.ui.common.MoJingButton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 internal fun NewSessionWorldPicker(
-    encyclopedias: List<EncyclopediaEntity>,
-    legacyTemplates: List<WorldTemplateEntity>,
+    loadPage: suspend (String, NewSessionWorldOption?) -> SessionViewModel.NewSessionWorldPage,
+    loadSelection: suspend (NewSessionWorldOption) -> SessionViewModel.NewSessionWorldSelection,
     selectedEncyclopediaId: Long?,
     selectedTemplateId: Long?,
-    onSelect: (Long?, WorldTemplateEntity?) -> Unit,
+    onSelect: (SessionViewModel.NewSessionWorldSelection) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
-    val matches = remember(encyclopedias, legacyTemplates, query) {
-        val term = query.trim()
-        Pair(encyclopedias.filter { it.name.contains(term, ignoreCase = true) },
-            legacyTemplates.filter { it.label.contains(term, ignoreCase = true) })
+    var requestedPage by remember { mutableIntStateOf(0) }
+    var displayedPage by remember { mutableIntStateOf(0) }
+    var cursors by remember { mutableStateOf<List<NewSessionWorldOption?>>(listOf(null)) }
+    var rows by remember { mutableStateOf<List<NewSessionWorldOption>>(emptyList()) }
+    var hasMore by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(true) }
+    var readError by remember { mutableStateOf(false) }
+    var selectionError by remember { mutableStateOf(false) }
+    var selectingId by remember { mutableStateOf<Long?>(null) }
+    var retryVersion by remember { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
+    val listState = rememberLazyListState()
+    LaunchedEffect(query, requestedPage, retryVersion) {
+        val cursor = cursors.getOrNull(requestedPage)
+        loading = true
+        readError = false
+        selectionError = false
+        try {
+            if (query.isNotBlank()) delay(200)
+            val result = loadPage(query, cursor)
+            rows = result.rows
+            hasMore = result.hasMore
+            displayedPage = requestedPage
+            listState.scrollToItem(0)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            readError = true
+        } finally {
+            loading = false
+        }
     }
-    val showUnbound = "不绑定世界".contains(query.trim(), ignoreCase = true)
-    PickerDialogFrame("选择世界", query, { query = it }, "世界", onDismiss) {
-        if (!showUnbound && matches.first.isEmpty() && matches.second.isEmpty()) {
+    val showUnbound = displayedPage == 0 && "不绑定世界".contains(query.trim(), ignoreCase = true)
+    PickerDialogFrame("选择世界", query, {
+        query = it
+        requestedPage = 0
+        displayedPage = 0
+        cursors = listOf(null)
+        rows = emptyList()
+        hasMore = false
+    }, "世界", onDismiss) {
+        if (loading && rows.isEmpty()) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+            Text("正在查找世界…", Modifier.fillMaxWidth().padding(20.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else if (!showUnbound && rows.isEmpty() && !readError) {
             Text("没有匹配的世界", Modifier.fillMaxWidth().padding(20.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
-            LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false)) {
+            LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false), state = listState) {
                 if (showUnbound) item(key = "unbound") {
                     WorldOptionRow("不绑定世界", "从角色开始，自由展开故事",
-                        selectedEncyclopediaId == null && selectedTemplateId == null) {
-                        onSelect(null, null)
+                        selectedEncyclopediaId == null && selectedTemplateId == null,
+                        enabled = selectingId == null && !loading && !readError) {
+                        onSelect(SessionViewModel.NewSessionWorldSelection())
                     }
                 }
-                items(matches.first, key = { "encyclopedia-${it.id}" }) { world ->
-                    WorldOptionRow(world.name, "世界百科 · ${world.entryCount} 条资料",
-                        selectedEncyclopediaId == world.id) { onSelect(world.id, null) }
-                }
-                items(matches.second, key = { "template-${it.id}" }) { template ->
-                    WorldOptionRow(template.label, "旧世界资料", selectedTemplateId == template.id) {
-                        onSelect(null, template)
+                items(rows, key = { "${it.kind}-${it.id}" }) { world ->
+                    WorldOptionRow(
+                        world.name,
+                        if (world.kind == 0) "世界百科 · ${world.entryCount} 条资料" else "旧世界资料",
+                        if (world.kind == 0) selectedEncyclopediaId == world.id else selectedTemplateId == world.id,
+                        enabled = selectingId == null && !loading && !readError,
+                    ) {
+                        selectingId = world.id
+                        selectionError = false
+                        scope.launch {
+                            try {
+                                onSelect(loadSelection(world))
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                selectionError = true
+                            } finally {
+                                selectingId = null
+                            }
+                        }
                     }
                 }
             }
+        }
+        if (readError || selectionError) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text(if (readError) "世界读取失败，当前选择仍保留" else "世界已变化，请重新查询",
+                Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error)
+            TextButton(onClick = { retryVersion += 1 }) { Text("重试") }
+        }
+        if (selectingId != null) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (rows.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            TextButton(onClick = { requestedPage = displayedPage - 1 },
+                enabled = displayedPage > 0 && !loading && !readError && selectingId == null) { Text("上一页") }
+            Text("第 ${displayedPage + 1} 页 · 本页 ${rows.size} 个",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = {
+                cursors = cursors.take(displayedPage + 1) + rows.last()
+                requestedPage = displayedPage + 1
+            }, enabled = hasMore && !loading && !readError && selectingId == null) { Text("下一页") }
         }
     }
 }
@@ -212,10 +285,10 @@ private fun PickerDialogFrame(
 }
 
 @Composable
-private fun WorldOptionRow(title: String, detail: String, selected: Boolean, onClick: () -> Unit) {
+private fun WorldOptionRow(title: String, detail: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
     ListItem(
         modifier = Modifier.fillMaxWidth().selectable(selected = selected,
-            role = Role.RadioButton, onClick = onClick),
+            enabled = enabled, role = Role.RadioButton, onClick = onClick),
         headlineContent = { Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         supportingContent = { Text(detail, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         trailingContent = { RadioButton(selected = selected, onClick = null) },
