@@ -99,7 +99,8 @@ fun SessionListScreen(
     viewModel: SessionViewModel = hiltViewModel()
 ) {
     val sessionLibraryState by viewModel.sessionLibraryState.collectAsStateWithLifecycle()
-    val sessions = (sessionLibraryState as? SessionLibraryUiState.Loaded)?.sessions.orEmpty()
+    val loadedLibrary = sessionLibraryState as? SessionLibraryUiState.Loaded
+    val sessions = loadedLibrary?.sessions.orEmpty()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val generatingSessions by com.mojing.app.ui.chat.RetainedChatSessions.running.collectAsStateWithLifecycle()
     val backgroundFailures by com.mojing.app.ui.chat.RetainedChatSessions.stores.failures.collectAsStateWithLifecycle()
@@ -447,10 +448,38 @@ fun SessionListScreen(
                     }
                 }
             }
+            loadedLibrary?.takeIf { it.refreshError || it.refreshing }?.let { library ->
+                val readFailed = library.refreshError
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                    shape = MaterialTheme.shapes.medium,
+                    color = if (readFailed) MaterialTheme.colorScheme.errorContainer
+                        else MaterialTheme.colorScheme.secondaryContainer,
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        if (!readFailed) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                if (readFailed) "故事列表刷新失败" else "正在刷新故事…",
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                            if (readFailed && sessions.isNotEmpty()) Text(
+                                "下方保留上次读取的故事。",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        if (readFailed) TextButton(onClick = viewModel::retrySessionLibrary) { Text("重试") }
+                    }
+                }
+            }
 
             if (
                 sessionLibraryState is SessionLibraryUiState.Loading ||
-                sessionLibraryState is SessionLibraryUiState.Loaded && sessions.isEmpty() && guideDismissed == null
+                loadedLibrary != null && sessions.isEmpty() && guideDismissed == null && !loadedLibrary.refreshError
             ) {
                 Box(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -505,6 +534,11 @@ fun SessionListScreen(
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
+                    if (loadedLibrary?.refreshError == true) Text(
+                        "上次读取时没有故事，刷新失败后无法确认最新列表。请重试。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     if (searchQuery.isNotBlank()) {
                         Text(
                             UserFacingStrings.sessionSearchEmptyLibrary(),

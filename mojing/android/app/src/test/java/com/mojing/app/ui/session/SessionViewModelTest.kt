@@ -8,6 +8,7 @@ import com.mojing.app.data.local.dao.SessionDao
 import com.mojing.app.data.local.dao.WorldTemplateDao
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.EncyclopediaEntity
+import com.mojing.app.data.local.entity.SessionEntity
 import com.mojing.app.data.local.entity.SessionWithListMeta
 import com.mojing.app.data.local.entity.WorldTemplateEntity
 import com.mojing.app.data.prefs.UiPreferencesRepository
@@ -108,6 +109,44 @@ class SessionViewModelTest {
 
         assertEquals(2, attempts)
         assertEquals(SessionLibraryUiState.Loaded(emptyList()), viewModel.sessionLibraryState.value)
+    }
+
+    @Test
+    fun failedLibraryRefreshKeepsReadStoriesAvailableUntilRetrySucceeds() = runTest(dispatcher) {
+        val previous = SessionWithListMeta(
+            session = SessionEntity(id = 7L, title = "雨夜故事"),
+            lastMessagePreview = "上一幕", lastMessageSpeakerType = "narrator",
+            messageCount = 3, participantCount = 1,
+        )
+        val recovered = previous.copy(lastMessagePreview = "新一幕", messageCount = 4)
+        val nextRead = CompletableDeferred<List<SessionWithListMeta>>()
+        var attempts = 0
+        every { sessionDao.observeAllWithListMeta() } answers {
+            attempts += 1
+            if (attempts == 1) flow {
+                emit(listOf(previous))
+                throw IllegalStateException("temporary read failure")
+            } else flow { emit(nextRead.await()) }
+        }
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+
+        assertEquals(
+            SessionLibraryUiState.Loaded(listOf(previous), refreshError = true),
+            viewModel.sessionLibraryState.value,
+        )
+
+        viewModel.retrySessionLibrary()
+        runCurrent()
+        assertEquals(
+            SessionLibraryUiState.Loaded(listOf(previous), refreshing = true),
+            viewModel.sessionLibraryState.value,
+        )
+
+        nextRead.complete(listOf(recovered))
+        advanceUntilIdle()
+        assertEquals(SessionLibraryUiState.Loaded(listOf(recovered)), viewModel.sessionLibraryState.value)
+        assertEquals(2, attempts)
     }
 
     @Test

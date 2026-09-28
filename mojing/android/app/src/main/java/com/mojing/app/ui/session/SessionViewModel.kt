@@ -28,7 +28,11 @@ import javax.inject.Inject
 
 internal sealed interface SessionLibraryUiState {
     data object Loading : SessionLibraryUiState
-    data class Loaded(val sessions: List<SessionWithListMeta>) : SessionLibraryUiState
+    data class Loaded(
+        val sessions: List<SessionWithListMeta>,
+        val refreshing: Boolean = false,
+        val refreshError: Boolean = false,
+    ) : SessionLibraryUiState
     data object Failed : SessionLibraryUiState
 }
 
@@ -88,16 +92,30 @@ class SessionViewModel @Inject constructor(
     private fun observeSessionLibrary() {
         sessionLibraryJob?.cancel()
         sessionLibraryJob = viewModelScope.launch {
-            _sessionLibraryState.value = SessionLibraryUiState.Loading
+            val previous = _sessionLibraryState.value as? SessionLibraryUiState.Loaded
+            _sessionLibraryState.value = previous?.copy(refreshing = true, refreshError = false)
+                ?: SessionLibraryUiState.Loading
             try {
                 sessionDao.observeAllWithListMeta().collect { sessions ->
                     _sessionLibraryState.value = SessionLibraryUiState.Loaded(sessions)
                 }
+                val current = _sessionLibraryState.value
+                if (current is SessionLibraryUiState.Loading ||
+                    current is SessionLibraryUiState.Loaded && current.refreshing) {
+                    showSessionLibraryReadFailure()
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                _sessionLibraryState.value = SessionLibraryUiState.Failed
+                showSessionLibraryReadFailure()
             }
+        }
+    }
+
+    private fun showSessionLibraryReadFailure() {
+        _sessionLibraryState.value = when (val current = _sessionLibraryState.value) {
+            is SessionLibraryUiState.Loaded -> current.copy(refreshing = false, refreshError = true)
+            else -> SessionLibraryUiState.Failed
         }
     }
 
