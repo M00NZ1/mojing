@@ -1,5 +1,7 @@
 package com.mojing.app.domain.chat
 
+import java.io.StringReader
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -66,5 +68,32 @@ class TavernChatImportParserTest {
             TavernChatImportParser.stableBatchId(compact) !=
                 TavernChatImportParser.stableBatchId(changed),
         )
+    }
+
+    @Test
+    fun streamsLargeArrayWithoutChangingRowOrderOrBatchId() = runBlocking {
+        val json = """{"messages":[${(1..270).joinToString(",") { index ->
+            """{"speakerType":"${if (index % 2 == 0) "character" else "user"}","content":"第${index}句"}"""
+        }}]}"""
+        val streamed = mutableListOf<TavernChatImportParser.Row>()
+        TavernChatImportParser.forEachRow(StringReader(json)) { streamed += it }
+        val fingerprint = TavernChatImportParser.Fingerprint()
+        streamed.forEach(fingerprint::add)
+
+        assertEquals(270, fingerprint.count)
+        assertEquals("第1句", streamed.first().content)
+        assertEquals("第270句", streamed.last().content)
+        assertEquals(TavernChatImportParser.stableBatchId(TavernChatImportParser.parse(json)), fingerprint.batchId())
+    }
+
+    @Test
+    fun streamsJsonLinesWithComments() = runBlocking {
+        val rows = mutableListOf<TavernChatImportParser.Row>()
+        TavernChatImportParser.forEachRow(StringReader("# export\n" +
+            """{"speakerType":"user","content":"你好"}""" + "\n" +
+            """{"role":"assistant","content":"欢迎"}""")) { rows += it }
+
+        assertEquals(listOf("user", "character"), rows.map { it.speaker })
+        assertEquals(listOf("你好", "欢迎"), rows.map { it.content })
     }
 }

@@ -3859,7 +3859,7 @@ class ChatViewModelTest {
             SessionParticipantEntity(sessionId = 42L, characterId = 3L),
         )
         coEvery {
-            messageDao.insertImportBatchIfAbsent(42L, "main", any(), any())
+            messageDao.insertImportStreamIfAbsent(42L, "main", any(), 2, 3L, any(), any())
         } returnsMany listOf(2, 0)
         val vm = createViewModel(messageDao = messageDao, participantDao = participantDao)
         advanceUntilIdle()
@@ -3870,24 +3870,16 @@ class ChatViewModelTest {
             ]}
         """.trimIndent()
 
-        val first = vm.importTavernChatText(json)
-        val retry = vm.importTavernChatText(json)
+        val first = vm.importTavernChatStream({ java.io.StringReader(json) })
+        val retry = vm.importTavernChatStream({ java.io.StringReader(json) })
 
         assertEquals(2, first.importedCount)
         assertFalse(first.duplicate)
         assertEquals(0, retry.importedCount)
         assertTrue(retry.duplicate)
         coVerify(exactly = 2) {
-            messageDao.insertImportBatchIfAbsent(
-                42L,
-                "main",
-                match { it.startsWith("\"st_import_batch\":\"") },
-                match { rows ->
-                    rows.size == 2 &&
-                        rows[0].speakerType == "user" && rows[0].characterId == null &&
-                        rows[1].speakerType == "character" && rows[1].characterId == 3L &&
-                        rows.all { it.structuredContentJson.contains("st_import_batch") }
-                },
+            messageDao.insertImportStreamIfAbsent(
+                42L, "main", any(), 2, 3L, any(), any(),
             )
         }
     }

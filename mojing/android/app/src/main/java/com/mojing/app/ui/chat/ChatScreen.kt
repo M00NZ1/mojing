@@ -81,6 +81,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -123,7 +124,9 @@ import com.mojing.app.util.UsbSessionLog
 import com.mojing.app.ui.util.UserFacingStrings
 import kotlin.text.Charsets
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -216,6 +219,10 @@ fun ChatScreen(
     var showRenameSession by rememberSaveable(sessionId) { mutableStateOf(false) }
     var showSearchDialog by remember { mutableStateOf(false) }
     var isImportingChat by remember(sessionId) { mutableStateOf(false) }
+    var importStage by remember(sessionId) { mutableStateOf("") }
+    var importCount by remember(sessionId) { mutableIntStateOf(0) }
+    var importStopping by remember(sessionId) { mutableStateOf(false) }
+    var importJob by remember(sessionId) { mutableStateOf<Job?>(null) }
     var isAddingAttachment by remember(sessionId) { mutableStateOf(false) }
     var isExportingChat by rememberSaveable(sessionId) { mutableStateOf(false) }
     var savingGalleryMessageId by remember(sessionId) { mutableStateOf<Long?>(null) }
@@ -386,26 +393,34 @@ fun ChatScreen(
         if (uri == null) return@rememberLauncherForActivityResult
         if (isImportingChat) return@rememberLauncherForActivityResult
         isImportingChat = true
-        scope.launch {
-            try {
-                val text = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        input.bufferedReader(Charsets.UTF_8).readText()
-                    } ?: throw IllegalStateException("无法读取文件")
-                }
-                val result = viewModel.importTavernChatText(text)
-                snackbarHostState.showSnackbar(
-                    if (result.duplicate) "该聊天记录已导入当前故事线，未重复写入"
-                    else "已导入聊天记录 ${result.importedCount} 条",
+        importStage = "正在检查文件"
+        importCount = 0
+        importStopping = false
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            val notice = try {
+                val result = viewModel.importTavernChatStream(
+                    openReader = {
+                        context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)
+                            ?: throw IllegalStateException("无法读取文件，请重新选择")
+                    },
+                    onProgress = { stage, count -> importStage = stage; importCount = count },
                 )
+                if (result.duplicate) "该聊天记录已导入当前故事线，未重复写入"
+                else if (result.refreshFailed) "已导入 ${result.importedCount} 条，列表刷新未完成，请重新打开对话"
+                else "已导入聊天记录 ${result.importedCount} 条"
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
-                snackbarHostState.showSnackbar(e.message ?: "导入失败")
+                e.message ?: "导入失败"
             } finally {
                 isImportingChat = false
+                importStage = ""
+                importJob = null
             }
+            snackbarHostState.showSnackbar(notice)
         }
+        importJob = job
+        job.start()
     }
     val exportNovelLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         if (uri != null) scope.launch {
@@ -772,7 +787,9 @@ fun ChatScreen(
                                     currentBranch = state.currentBranchId,
                                     onSelect = { branchId ->
                                         branchMenuExpanded = false
-                                        if (state.isGenerating) {
+                                        if (isImportingChat) {
+                                            scope.launch { snackbarHostState.showSnackbar("请先完成或停止聊天记录导入") }
+                                        } else if (state.isGenerating) {
                                             showGenerationLockedMessage()
                                         } else if (branchId == "CREATE_NEW") {
                                             viewModel.createBranch(state.messages.lastOrNull()?.id ?: 0L)
@@ -781,7 +798,8 @@ fun ChatScreen(
                                         }
                                     },
                                     onShowBranchOverview = {
-                                        if (state.isGenerating) showGenerationLockedMessage()
+                                        if (isImportingChat) scope.launch { snackbarHostState.showSnackbar("请先完成或停止聊天记录导入") }
+                                        else if (state.isGenerating) showGenerationLockedMessage()
                                         else showBranchOverview = true
                                     },
                                 )
@@ -819,7 +837,7 @@ fun ChatScreen(
                                     DropdownMenuItem(
                                         text = { Text(state.branchNavigationLabel ?: "故事线") },
                                         leadingIcon = { Icon(Icons.Default.AccountTree, null) },
-                                        enabled = state.branchNavigationLabel == null,
+                                        enabled = state.branchNavigationLabel == null && !isImportingChat,
                                         onClick = {
                                             topActionsMenuExpanded = false
                                             if (state.isGenerating) showGenerationLockedMessage()
@@ -900,6 +918,27 @@ fun ChatScreen(
                                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 )
                                 TextButton(onClick = viewModel::stopSpeaking) { Text("停止") }
+                            }
+                        }
+                    }
+                    if (isImportingChat) {
+                        Surface(color = MaterialTheme.colorScheme.tertiaryContainer) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                    .padding(start = 16.dp, end = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    if (importStopping) "正在停止导入…" else "$importStage · $importCount 条",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                )
+                                TextButton(enabled = !importStopping, onClick = {
+                                    importStopping = true
+                                    importJob?.cancel()
+                                    scope.launch { snackbarHostState.showSnackbar("导入已停止；如恰好完成提交，请在当前故事线核对结果") }
+                                }) { Text("停止") }
                             }
                         }
                     }
@@ -1011,7 +1050,10 @@ fun ChatScreen(
                                 pendingInputText = value.text
                                 viewModel.updateInput(value.text)
                             },
-                            onSend = { viewModel.sendMessage() },
+                            onSend = {
+                                if (isImportingChat) scope.launch { snackbarHostState.showSnackbar("请先完成或停止聊天记录导入") }
+                                else viewModel.sendMessage()
+                            },
                             onStop = { viewModel.stopGeneration() },
                             isGenerating = state.isGenerating,
                             isAddingAttachment = isAddingAttachment,
@@ -1022,7 +1064,8 @@ fun ChatScreen(
                                 else -> null
                             },
                             onRequestNarrator = { guidance ->
-                                if (state.isGenerating) showGenerationLockedMessage()
+                                if (isImportingChat) scope.launch { snackbarHostState.showSnackbar("请先完成或停止聊天记录导入") }
+                                else if (state.isGenerating) showGenerationLockedMessage()
                                 else viewModel.submitNarratorGuidance(guidance)
                             },
                             onInsertMacro = { macro ->
@@ -1054,7 +1097,8 @@ fun ChatScreen(
                                 }
                             },
                             onImageGenClick = {
-                                if (state.isGenerating) showGenerationLockedMessage()
+                                if (isImportingChat) scope.launch { snackbarHostState.showSnackbar("请先完成或停止聊天记录导入") }
+                                else if (state.isGenerating) showGenerationLockedMessage()
                                 else showImageGenDialog = true
                             },
                             onAttachImageClick = {

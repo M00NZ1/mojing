@@ -129,6 +129,7 @@ private class GenerationContext(
 data class TavernChatImportResult(
     val importedCount: Int,
     val duplicate: Boolean,
+    val refreshFailed: Boolean = false,
 )
 
 data class GalleryImageSaveResult(
@@ -1344,51 +1345,63 @@ class ChatViewModel @Inject constructor(
      * 单向导入常见导出的聊天记录（JSON 含消息数组或 JSONL），写入本机；非用户发言归为**首位参与者**角色。
      * 相同内容再次导入当前故事线时返回 duplicate，不重复写入。
      */
-    suspend fun importTavernChatText(rawText: String): TavernChatImportResult {
+    suspend fun importTavernChatStream(
+        openReader: () -> java.io.Reader,
+        onProgress: (String, Int) -> Unit = { _, _ -> },
+    ): TavernChatImportResult {
         if (activeGeneration != null || branchTransitionJob?.isActive == true) {
             throw IllegalStateException("请等待当前生成或故事线切换完成后再导入")
         }
         val firstCharId = participantDao.getBySession(sessionId).firstOrNull()?.characterId
             ?: throw IllegalStateException("请先在本会话添加至少一名角色参与者")
         val branchId = currentBranchId()
-        val (batchMarker, messages) = withContext(Dispatchers.Default) {
-            val rows = TavernChatImportParser.parse(rawText)
-            if (rows.isEmpty()) {
-                throw IllegalStateException("未解析出任何消息（支持 JSON 根级 mes[] 或 JSONL）")
-            }
-            val batchId = TavernChatImportParser.stableBatchId(rows)
-            val marker = "\"st_import_batch\":\"$batchId\""
-            val entities = rows.mapIndexed { index, row ->
-                val st = if (row.speaker == "user") "user" else "character"
-                val structured = JsonObject().apply {
-                    addProperty("st_import_batch", batchId)
-                    addProperty("st_import_index", index)
-                    add("st_import", row.raw)
+        suspend fun report(stage: String, count: Int) = withContext(Dispatchers.Main.immediate) {
+            onProgress(stage, count)
+        }
+        val fingerprint = withContext(Dispatchers.IO) {
+            TavernChatImportParser.Fingerprint().also { scan ->
+                openReader().use { reader ->
+                    TavernChatImportParser.forEachRow(reader) { row ->
+                        scan.add(row)
+                        if (scan.count % 128 == 0) report("正在检查文件", scan.count)
+                    }
                 }
-                MessageEntity(
+            }
+        }
+        if (fingerprint.count == 0) {
+            throw IllegalStateException("未解析出任何消息（支持 JSON 根级 mes[]、messages[] 或 JSONL）")
+        }
+        report("正在检查文件", fingerprint.count)
+        if (currentBranchId() != branchId || activeGeneration != null || branchTransitionJob?.isActive == true) {
+            throw IllegalStateException("故事线或生成状态已变化，请重新选择文件导入")
+        }
+        val insertedCount = withContext(Dispatchers.IO) {
+            openReader().use { reader ->
+                messageDao.insertImportStreamIfAbsent(
                     sessionId = sessionId,
-                    speakerType = st,
-                    characterId = if (st == "user") null else firstCharId,
                     branchId = branchId,
-                    content = row.content,
-                    structuredContentJson = structured.toString(),
+                    batchId = fingerprint.batchId(),
+                    expectedCount = fingerprint.count,
+                    characterId = firstCharId,
+                    reader = reader,
+                    onProgress = { count -> report("正在写入记录", count) },
                 )
             }
-            marker to entities
         }
-        val insertedCount = messageDao.insertImportBatchIfAbsent(
-            sessionId = sessionId,
-            branchId = branchId,
-            batchMarker = batchMarker,
-            entities = messages,
-        )
+        var refreshFailed = false
         if (insertedCount > 0) {
-            sessionDao.bumpUpdatedAt(sessionId)
-            refreshMessagesUi()
+            refreshFailed = withContext(NonCancellable) {
+                runCatching { sessionDao.bumpUpdatedAt(sessionId) }.isFailure
+            }
+            try {
+                refreshMessagesUi(branchId)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { refreshFailed = true }
         }
         return TavernChatImportResult(
             importedCount = insertedCount,
             duplicate = insertedCount == 0,
+            refreshFailed = refreshFailed,
         )
     }
 

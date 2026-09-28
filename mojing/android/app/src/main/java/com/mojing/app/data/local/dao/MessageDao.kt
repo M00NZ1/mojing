@@ -20,6 +20,8 @@ import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.mojing.app.data.local.search.MessageSearchTokenizer
+import com.mojing.app.domain.chat.TavernChatImportParser
+import java.io.Reader
 
 private const val SESSION_SEARCH_INDEX_STATE_KEY_PREFIX = "message_search_session_state_v2:"
 
@@ -993,6 +995,58 @@ interface MessageDao {
         val insertedIds = insertAll(entities)
         check(insertedIds.size == entities.size)
         return insertedIds.size
+    }
+
+    /** Two-pass import: the caller hashes first, then this transaction writes bounded pages or rolls all back. */
+    @Transaction
+    suspend fun insertImportStreamIfAbsent(
+        sessionId: Long,
+        branchId: String,
+        batchId: String,
+        expectedCount: Int,
+        characterId: Long,
+        reader: Reader,
+        onProgress: suspend (Int) -> Unit,
+    ): Int {
+        require(expectedCount > 0 && characterId > 0L)
+        val marker = "\"st_import_batch\":\"$batchId\""
+        val existingCount = countImportBatch(sessionId, branchId, marker)
+        if (existingCount == expectedCount) return 0
+        check(existingCount == 0) { "导入批次状态不完整，请先检查当前故事线" }
+
+        val fingerprint = TavernChatImportParser.Fingerprint()
+        val page = ArrayList<MessageEntity>(128)
+        var inserted = 0
+        suspend fun flush() {
+            if (page.isEmpty()) return
+            val ids = insertAll(page)
+            check(ids.size == page.size)
+            inserted += page.size
+            page.clear()
+            onProgress(inserted)
+        }
+        TavernChatImportParser.forEachRow(reader) { row ->
+            fingerprint.add(row)
+            val structured = JsonObject().apply {
+                addProperty("st_import_batch", batchId)
+                addProperty("st_import_index", fingerprint.count - 1)
+                add("st_import", row.raw)
+            }
+            page.add(MessageEntity(
+                sessionId = sessionId,
+                speakerType = row.speaker,
+                characterId = if (row.speaker == "user") null else characterId,
+                branchId = branchId,
+                content = row.content,
+                structuredContentJson = structured.toString(),
+            ))
+            if (page.size == 128) flush()
+        }
+        flush()
+        check(inserted == expectedCount && fingerprint.batchId() == batchId) {
+            "导入文件在读取期间发生变化，请重新选择文件"
+        }
+        return inserted
     }
 
     /** 组绑定、新版本写入与当前故事线采用必须原子完成；远程失败前数据库保持不变。 */

@@ -1467,6 +1467,33 @@ class MessageDaoTest {
         assertNotNull(failure)
         assertTrue(messageDao.getMainBranchMessages(sessionId).isEmpty())
     }
+
+    @Test
+    fun streamingImportRollsBackEarlierPagesWhenLaterPageFails() = runBlocking {
+        val sessionId = sessionDao.insert(SessionEntity(title = "流式导入回滚"))
+        val jsonl = (1..130).joinToString("\n") { index ->
+            """{"speakerType":"user","content":"第${index}句"}"""
+        }
+        val fingerprint = com.mojing.app.domain.chat.TavernChatImportParser.Fingerprint()
+        com.mojing.app.domain.chat.TavernChatImportParser.forEachRow(java.io.StringReader(jsonl)) {
+            fingerprint.add(it)
+        }
+        db.openHelper.writableDatabase.execSQL(
+            """CREATE TRIGGER fail_late_import BEFORE INSERT ON messages
+               WHEN NEW.content = '第129句'
+               BEGIN SELECT RAISE(ABORT, 'forced late import failure'); END""",
+        )
+
+        val failure = runCatching {
+            messageDao.insertImportStreamIfAbsent(
+                sessionId, "main", fingerprint.batchId(), fingerprint.count, 3L,
+                java.io.StringReader(jsonl), { _ -> },
+            )
+        }.exceptionOrNull()
+
+        assertNotNull(failure)
+        assertTrue(messageDao.getMainBranchMessages(sessionId).isEmpty())
+    }
 }
 
 @RunWith(AndroidJUnit4::class)
