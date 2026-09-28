@@ -49,7 +49,6 @@ import com.mojing.app.ui.common.MoJingListTokens
 import com.mojing.app.ui.common.SwipeRevealListRow
 import com.mojing.app.ui.common.avatarImageModel
 import com.mojing.app.ui.util.UserFacingStrings
-import com.mojing.app.util.ContentDocumentReader
 import com.mojing.app.util.ContentDocumentWriter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -74,6 +73,8 @@ fun EncyclopediaScreen(
     val hasPublicLlmKey by viewModel.hasPublicLlmKey.collectAsStateWithLifecycle()
     val pendingGenTasks by viewModel.pendingGenerationTaskCount.collectAsStateWithLifecycle()
     val coverGeneratingEncyclopediaIds by viewModel.coverGeneratingEncyclopediaIds.collectAsStateWithLifecycle()
+    val documentImport by viewModel.documentImport.collectAsStateWithLifecycle()
+    val isImportingDocument = documentImport.running
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -89,7 +90,6 @@ fun EncyclopediaScreen(
     var renaming by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<EncyclopediaLibraryItem?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
-    var isImportingDocument by remember { mutableStateOf(false) }
     var isExportingDocument by rememberSaveable { mutableStateOf(false) }
     var coverPickTarget by remember { mutableStateOf<EncyclopediaLibraryItem?>(null) }
     var coverCropBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -184,23 +184,7 @@ fun EncyclopediaScreen(
     }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null && !isImportingDocument && !isExportingDocument) {
-            isImportingDocument = true
-            scope.launch {
-                try {
-                    val msg = ContentDocumentReader.readStream(context, uri, viewModel::importDocument)
-                    Toast.makeText(context, UserFacingStrings.appendAndroidIfNeeded(msg), Toast.LENGTH_SHORT).show()
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (e: Exception) {
-                    Toast.makeText(
-                        context,
-                        e.message ?: UserFacingStrings.importReadFailed(),
-                        Toast.LENGTH_LONG,
-                    ).show()
-                } finally {
-                    isImportingDocument = false
-                }
-            }
+            viewModel.startDocumentImport(context, uri)
         }
     }
 
@@ -220,6 +204,50 @@ fun EncyclopediaScreen(
                 snackbarHostState.showSnackbar(message)
             }
         }
+    }
+
+    if (documentImport.running) {
+        AlertDialog(
+            onDismissRequest = viewModel::cancelDocumentImport,
+            title = { Text(if (documentImport.cancelling) "正在取消导入" else "正在导入百科") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Text(
+                        when {
+                            documentImport.cancelling -> "正在撤销本次导入，请稍候。"
+                            documentImport.worlds == 0 && documentImport.entries == 0 -> "正在读取和解析文件…"
+                            else -> "已处理 ${documentImport.worlds} 个百科、${documentImport.entries} 条词条"
+                        },
+                    )
+                    Text(
+                        "提交前取消会撤销本次导入。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = viewModel::cancelDocumentImport, enabled = !documentImport.cancelling) {
+                    Text("取消导入")
+                }
+            },
+        )
+    } else if (documentImport.result != null) {
+        AlertDialog(
+            onDismissRequest = viewModel::dismissDocumentImportResult,
+            title = {
+                Text(when (documentImport.outcome) {
+                    EncyclopediaImportOutcome.SUCCESS -> "导入完成"
+                    EncyclopediaImportOutcome.CANCELLED -> "已取消导入"
+                    else -> "导入未完成"
+                })
+            },
+            text = { Text(documentImport.result.orEmpty()) },
+            confirmButton = {
+                TextButton(onClick = viewModel::dismissDocumentImportResult) { Text("关闭") }
+            },
+        )
     }
 
     Scaffold(

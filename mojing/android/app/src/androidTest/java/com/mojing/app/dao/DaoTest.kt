@@ -17,6 +17,7 @@ import com.mojing.app.data.local.dao.WorldLoreEntryDao
 import com.mojing.app.data.local.dao.WorldTemplateDao
 import com.mojing.app.data.local.entity.*
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import org.junit.After
 import org.junit.Assert.*
@@ -1573,8 +1574,10 @@ class EncyclopediaDaoTest {
             "name":"山海","worldPrompt":"群山与海"
         }]}"""
 
-        val result = importer.import(json.byteInputStream())
+        var reportedCommitted = false
+        val result = importer.import(json.byteInputStream(), onCommitted = { reportedCommitted = true })
 
+        assertTrue(reportedCommitted)
         assertEquals(1, result.worlds)
         assertEquals(1, result.entries)
         val world = encyclopediaDao.getAll().single()
@@ -1595,6 +1598,31 @@ class EncyclopediaDaoTest {
         val failure = runCatching { importer.import(broken.byteInputStream()) }.exceptionOrNull()
 
         assertNotNull(failure)
+        assertTrue(encyclopediaDao.getAll().isEmpty())
+        assertTrue(db.characterDao().getAll().isEmpty())
+    }
+
+    @Test
+    fun cancellationBeforeCommitRollsBackAndDoesNotReportSaved() = runBlocking {
+        val importer = com.mojing.app.domain.usecase.ImportEncyclopediaJsonUseCase(
+            db, com.mojing.app.domain.usecase.SaveCharacterEntryUseCase(db),
+        )
+        val json = """{"data":[
+            {"name":"山海","entries":[{"title":"阿青","entryType":"character"}]},
+            {"name":"星河","entries":[]}
+        ]}"""
+        var committed = false
+
+        val failure = runCatching {
+            importer.import(
+                json.byteInputStream(),
+                onProgress = { if (it.worlds == 1) throw CancellationException("用户取消") },
+                onCommitted = { committed = true },
+            )
+        }.exceptionOrNull()
+
+        assertTrue(failure is CancellationException)
+        assertFalse(committed)
         assertTrue(encyclopediaDao.getAll().isEmpty())
         assertTrue(db.characterDao().getAll().isEmpty())
     }

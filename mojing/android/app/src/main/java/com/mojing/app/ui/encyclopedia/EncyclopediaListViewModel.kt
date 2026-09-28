@@ -1,5 +1,7 @@
 package com.mojing.app.ui.encyclopedia
 
+import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.SecureStorage
@@ -18,6 +20,7 @@ import com.mojing.app.util.ApiRootLines
 import com.mojing.app.data.prefs.UiPreferencesRepository
 import com.mojing.app.domain.usecase.SmartImportUseCase
 import com.mojing.app.domain.usecase.ImportEncyclopediaJsonUseCase
+import com.mojing.app.domain.usecase.EncyclopediaImportResult
 import com.mojing.app.ui.util.UserFacingStrings
 import com.mojing.app.ui.util.KeyedOperationOwner
 import com.mojing.app.util.ContentDocumentReader
@@ -25,6 +28,7 @@ import com.google.gson.stream.JsonWriter
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -45,6 +49,7 @@ import java.io.StringWriter
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.io.PushbackInputStream
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 
 // World prompts and entry bodies are large; export reads only one small page of each at a time.
@@ -58,6 +63,17 @@ data class EncyclopediaLibraryState(
     val loading: Boolean = false,
     val loaded: Boolean = false,
     val error: String? = null,
+)
+
+enum class EncyclopediaImportOutcome { SUCCESS, FAILURE, CANCELLED }
+
+data class EncyclopediaDocumentImportState(
+    val running: Boolean = false,
+    val cancelling: Boolean = false,
+    val worlds: Int = 0,
+    val entries: Int = 0,
+    val result: String? = null,
+    val outcome: EncyclopediaImportOutcome? = null,
 )
 
 internal object EncyclopediaExportCodec {
@@ -144,6 +160,9 @@ class EncyclopediaListViewModel @Inject constructor(
     private val libraryPageSize = 24 // Image-heavy world cards use the project list standard.
     private val _library = MutableStateFlow(EncyclopediaLibraryState())
     val library: StateFlow<EncyclopediaLibraryState> = _library.asStateFlow()
+    private val _documentImport = MutableStateFlow(EncyclopediaDocumentImportState())
+    val documentImport: StateFlow<EncyclopediaDocumentImportState> = _documentImport.asStateFlow()
+    private var documentImportJob: Job? = null
     private val pageCursors = mutableListOf<EncyclopediaLibraryItem?>(null)
     private var loadJob: Job? = null
     private var loadRevision = 0
@@ -480,39 +499,114 @@ class EncyclopediaListViewModel @Inject constructor(
         writer.flush()
     }
 
-    suspend fun importDocument(input: InputStream): String = try {
+    fun startDocumentImport(context: Context, uri: Uri) {
+        if (_documentImport.value.running) return
+        _documentImport.value = EncyclopediaDocumentImportState(running = true)
+        val applicationContext = context.applicationContext
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            val committedResult = AtomicReference<EncyclopediaImportResult?>()
+            try {
+                val result = ContentDocumentReader.readStream(applicationContext, uri) { input ->
+                    importDocument(
+                        input,
+                        onProgress = { progress ->
+                            _documentImport.value = _documentImport.value.copy(
+                                worlds = progress.worlds,
+                                entries = progress.entries,
+                            )
+                        },
+                        onCommitted = committedResult::set,
+                    )
+                }
+                _documentImport.value = EncyclopediaDocumentImportState(
+                    result = importResultMessage(result),
+                    outcome = EncyclopediaImportOutcome.SUCCESS,
+                )
+            } catch (cancelled: CancellationException) {
+                val saved = committedResult.get()
+                _documentImport.value = if (saved != null) {
+                    EncyclopediaDocumentImportState(
+                        result = "取消时导入已完成。${importResultMessage(saved)}",
+                        outcome = EncyclopediaImportOutcome.SUCCESS,
+                    )
+                } else {
+                    EncyclopediaDocumentImportState(
+                        result = "已取消导入。若文件刚好完成提交，请先核对世界列表再重试。",
+                        outcome = EncyclopediaImportOutcome.CANCELLED,
+                    )
+                }
+                throw cancelled
+            } catch (error: Exception) {
+                val saved = committedResult.get()
+                _documentImport.value = if (saved != null) {
+                    EncyclopediaDocumentImportState(
+                        result = "${importResultMessage(saved)} 已保存；结束文件读取时出现异常，请核对世界列表。",
+                        outcome = EncyclopediaImportOutcome.SUCCESS,
+                    )
+                } else {
+                    EncyclopediaDocumentImportState(
+                        result = "导入失败：${error.message ?: "无法读取或保存文件"}",
+                        outcome = EncyclopediaImportOutcome.FAILURE,
+                    )
+                }
+            } finally {
+                documentImportJob = null
+            }
+        }
+        documentImportJob = job
+        job.start()
+    }
+
+    fun cancelDocumentImport() {
+        if (!_documentImport.value.running || _documentImport.value.cancelling) return
+        _documentImport.value = _documentImport.value.copy(cancelling = true)
+        documentImportJob?.cancel()
+    }
+
+    fun dismissDocumentImportResult() {
+        if (!_documentImport.value.running) _documentImport.value = EncyclopediaDocumentImportState()
+    }
+
+    suspend fun importDocument(
+        input: InputStream,
+        onProgress: (EncyclopediaImportResult) -> Unit = {},
+        onCommitted: (EncyclopediaImportResult) -> Unit = {},
+    ): EncyclopediaImportResult {
         val source = PushbackInputStream(input, 3)
         val first = firstContentByte(source)
         if (first < 0) throw IllegalArgumentException("导入文件为空")
         source.unread(first)
-        if (first == '{'.code || first == '['.code) {
-            importStructuredJson(source)
+        return if (first == '{'.code || first == '['.code) {
+            importStructuredJson(source, onProgress, onCommitted)
         } else {
             val text = ContentDocumentReader.readBytes(
                 source, ContentDocumentReader.STRUCTURED_TEXT_IMPORT_MAX_BYTES,
             ).toString(Charsets.UTF_8)
-            importJson(text)
+            importJson(text, onProgress, onCommitted)
         }
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (e: Exception) {
-        "导入异常: ${e.message}"
     }
 
-    suspend fun importJson(text: String): String = try {
+    private suspend fun importJson(
+        text: String,
+        onProgress: (EncyclopediaImportResult) -> Unit,
+        onCommitted: (EncyclopediaImportResult) -> Unit,
+    ): EncyclopediaImportResult {
         val json = smartImportUseCase.parseToStructuredJson(text, "encyclopedia")
-        importStructuredJson(ByteArrayInputStream(json.toByteArray(Charsets.UTF_8)))
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (e: Exception) {
-        "导入异常: ${e.message}"
+        return importStructuredJson(ByteArrayInputStream(json.toByteArray(Charsets.UTF_8)), onProgress, onCommitted)
     }
 
-    private suspend fun importStructuredJson(input: InputStream): String {
-        val result = importEncyclopediaJson.import(input)
+    private suspend fun importStructuredJson(
+        input: InputStream,
+        onProgress: (EncyclopediaImportResult) -> Unit,
+        onCommitted: (EncyclopediaImportResult) -> Unit,
+    ): EncyclopediaImportResult {
+        val result = importEncyclopediaJson.import(input, onProgress, onCommitted)
         refresh()
-        return "导入 ${result.worlds} 个百科，共 ${result.entries} 个词条"
+        return result
     }
+
+    private fun importResultMessage(result: EncyclopediaImportResult): String =
+        "导入 ${result.worlds} 个百科，共 ${result.entries} 个词条"
 
     private fun firstContentByte(source: PushbackInputStream): Int {
         var value = source.read()

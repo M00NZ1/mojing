@@ -47,7 +47,11 @@ internal object EncyclopediaJsonStreamParser {
         suspend fun finishWorld(worldId: Long, world: ImportedWorldFields)
     }
 
-    suspend fun parse(reader: JsonReader, sink: Sink): EncyclopediaImportResult {
+    suspend fun parse(
+        reader: JsonReader,
+        sink: Sink,
+        onProgress: (EncyclopediaImportResult) -> Unit = {},
+    ): EncyclopediaImportResult {
         var dataFound = false
         var worlds = 0
         var entries = 0
@@ -85,6 +89,7 @@ internal object EncyclopediaJsonStreamParser {
                                 if (reader.peek() == JsonToken.BEGIN_OBJECT) {
                                     sink.addEntry(worldId, readEntry(reader))
                                     entries++
+                                    if (entries % 32 == 0) onProgress(EncyclopediaImportResult(worlds, entries))
                                 } else reader.skipValue()
                             }
                             reader.endArray()
@@ -96,6 +101,7 @@ internal object EncyclopediaJsonStreamParser {
                 require(world.name.trim().isNotEmpty()) { "百科名称为空，导入未保存" }
                 sink.finishWorld(worldId, world)
                 worlds++
+                onProgress(EncyclopediaImportResult(worlds, entries))
             }
             reader.endArray()
         }
@@ -157,9 +163,13 @@ class ImportEncyclopediaJsonUseCase @Inject constructor(
     private val database: AppDatabase,
     private val saveCharacterEntry: SaveCharacterEntryUseCase,
 ) {
-    suspend fun import(input: InputStream): EncyclopediaImportResult = withContext(Dispatchers.IO) {
+    suspend fun import(
+        input: InputStream,
+        onProgress: (EncyclopediaImportResult) -> Unit = {},
+        onCommitted: (EncyclopediaImportResult) -> Unit = {},
+    ): EncyclopediaImportResult = withContext(Dispatchers.IO) {
         val reader = JsonReader(InputStreamReader(input, Charsets.UTF_8))
-        database.withTransaction {
+        val result = database.withTransaction {
             EncyclopediaJsonStreamParser.parse(reader, object : EncyclopediaJsonStreamParser.Sink {
                 override suspend fun beginWorld(): Long = database.encyclopediaDao().upsert(
                     EncyclopediaEntity(name = "导入中"),
@@ -196,7 +206,9 @@ class ImportEncyclopediaJsonUseCase @Inject constructor(
                         narratorConfigJson = world.narratorConfigJson,
                     ))
                 }
-            })
+            }, onProgress)
         }
+        onCommitted(result)
+        result
     }
 }

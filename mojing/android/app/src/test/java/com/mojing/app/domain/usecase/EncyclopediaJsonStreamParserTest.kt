@@ -17,6 +17,7 @@ class EncyclopediaJsonStreamParserTest {
         ]}"""
         val saved = mutableListOf<Pair<ImportedWorldFields, List<ImportedEntryFields>>>()
         val entries = mutableMapOf<Long, MutableList<ImportedEntryFields>>()
+        val progress = mutableListOf<EncyclopediaImportResult>()
         val result = EncyclopediaJsonStreamParser.parse(JsonReader(StringReader(json)),
             object : EncyclopediaJsonStreamParser.Sink {
                 override suspend fun beginWorld(): Long = (saved.size + entries.size + 1).toLong().also {
@@ -28,7 +29,7 @@ class EncyclopediaJsonStreamParserTest {
                 override suspend fun finishWorld(worldId: Long, world: ImportedWorldFields) {
                     saved += world to entries.getValue(worldId)
                 }
-            })
+            }, progress::add)
 
         assertEquals(EncyclopediaImportResult(2, 1), result)
         assertEquals("九州", saved[0].first.name)
@@ -37,6 +38,7 @@ class EncyclopediaJsonStreamParserTest {
         assertEquals("云海", saved[0].second.single().content)
         assertEquals(true, saved[0].second.single().isFeatured)
         assertEquals("空世界", saved[1].first.name)
+        assertEquals(listOf(EncyclopediaImportResult(1, 1), EncyclopediaImportResult(2, 1)), progress)
     }
 
     @Test
