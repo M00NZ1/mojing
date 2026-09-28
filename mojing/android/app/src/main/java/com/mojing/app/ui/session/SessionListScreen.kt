@@ -623,6 +623,11 @@ fun SessionListScreen(
                         ) {
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(if (searchQuery.isBlank()) "故事列表" else "搜索结果", style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    "此处预览主线；打开后接续上次阅读的故事线",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                             Surface(
                                 shape = CircleShape,
@@ -1126,7 +1131,7 @@ fun SessionListRowInner(row: SessionWithListMeta, isGenerating: Boolean = false,
         speakerType = row.lastMessageSpeakerType,
         maxChars = 72,
     )
-    val meta = "${row.messageCount} 条 · ${row.participantCount} 角色"
+    val meta = "主线 ${row.messageCount} 条 · ${row.participantCount} 角色"
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 15.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
         Surface(Modifier.size(50.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(17.dp),
@@ -1166,7 +1171,7 @@ fun SessionListRowInner(row: SessionWithListMeta, isGenerating: Boolean = false,
             }
             if (!isGenerating && backgroundFailure != null) Text("生成未完成 · $backgroundFailure",
                 maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-            if (!isGenerating && backgroundFailure == null && preview.isNotEmpty()) Text(preview, style = MaterialTheme.typography.bodyMedium,
+            if (!isGenerating && backgroundFailure == null && preview.isNotEmpty()) Text("主线 · $preview", style = MaterialTheme.typography.bodyMedium,
                 maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(meta, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
