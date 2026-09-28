@@ -86,6 +86,8 @@ data class EncyclopediaDetailState(
     val relationsLoadError: String? = null,
     val relationRetryIndex: Int? = null,
     val relationRetryCursor: Long = Long.MAX_VALUE,
+    val relationDeletingId: Long? = null,
+    val relationDeleteError: String? = null,
     val entryTitles: Map<Long, String> = emptyMap(),
     val entryCount: Int = 0,
     val sedimentEntries: List<EncyclopediaEntryEntity> = emptyList(),
@@ -953,10 +955,43 @@ class EncyclopediaDetailViewModel @Inject constructor(
         }
     }
 
-    fun deleteRelation(id: Long) {
+    fun clearRelationDeleteError() {
+        _state.value = _state.value.copy(relationDeleteError = null)
+    }
+
+    fun deleteRelation(id: Long, onResult: (Boolean) -> Unit = {}) {
+        if (_state.value.relationDeletingId != null) return
+        val targetId = encId
+        val targetPage = pageRevision
+        val targetLoad = loadRevision
+        _state.value = _state.value.copy(relationDeletingId = id, relationDeleteError = null)
         viewModelScope.launch {
-            entryRelationDao.delete(id)
-            refreshTimelineAndRelations()
+            var committed = false
+            try {
+                entryRelationDao.delete(id)
+                committed = true
+                if (targetId != encId || targetPage != pageRevision || targetLoad != loadRevision) return@launch
+                _state.value = _state.value.copy(relations = _state.value.relations.filterNot { it.id == id })
+                onResult(true)
+                if (_state.value.mainTab == EncyclopediaMainTab.GRAPH) {
+                    val state = _state.value
+                    loadRelationPage(state.relationPageIndex, state.relationCursors[state.relationPageIndex])
+                    if (_state.value.relationsLoadError != null) showSnackbar("关系已删除，列表刷新失败，请重试读取")
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (targetId == encId && targetPage == pageRevision && targetLoad == loadRevision) {
+                    if (committed) showSnackbar("关系已删除，列表刷新失败，请重试读取")
+                    else {
+                        _state.value = _state.value.copy(relationDeleteError = "删除失败，请重试")
+                        onResult(false)
+                    }
+                }
+            } finally {
+                if (targetId == encId && targetPage == pageRevision && targetLoad == loadRevision) {
+                    _state.value = _state.value.copy(relationDeletingId = null)
+                }
+            }
         }
     }
 

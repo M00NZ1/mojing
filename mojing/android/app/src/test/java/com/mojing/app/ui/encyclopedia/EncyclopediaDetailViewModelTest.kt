@@ -143,6 +143,55 @@ class EncyclopediaDetailViewModelTest {
     }
 
     @Test
+    fun relationDeleteFailureKeepsDialogResultPendingAndAllowsRetry() = runTest(dispatcher) {
+        val encyclopediaDao = mockk<EncyclopediaDao>(relaxed = true)
+        val relationDao = mockk<EntryRelationDao>(relaxed = true)
+        coEvery { encyclopediaDao.getById(3L) } returns EncyclopediaEntity(id = 3L, name = "世界")
+        val relation = EntryRelationEntity(id = 7L, encyclopediaId = 3L, fromEntryId = 1L, toEntryId = 2L)
+        var deleted = false
+        coEvery { relationDao.getPage(3L, Long.MAX_VALUE, 25) } coAnswers {
+            if (deleted) emptyList() else listOf(relation)
+        }
+        coEvery { relationDao.delete(7L) } throws IllegalStateException("disk unavailable")
+        val vm = createViewModel(encyclopediaDao, relationDao = relationDao)
+        vm.load(3L)
+        vm.setMainTab(EncyclopediaMainTab.GRAPH)
+        val results = mutableListOf<Boolean>()
+
+        vm.deleteRelation(7L) { results += it }
+        assertEquals(listOf(false), results)
+        assertEquals("删除失败，请重试", vm.state.value.relationDeleteError)
+        assertEquals(listOf(7L), vm.state.value.relations.map { it.id })
+        coEvery { relationDao.delete(7L) } coAnswers { deleted = true }
+        vm.deleteRelation(7L) { results += it }
+        assertEquals(listOf(false, true), results)
+        assertEquals(emptyList<Long>(), vm.state.value.relations.map { it.id })
+        assertEquals(null, vm.state.value.relationDeleteError)
+        assertEquals(null, vm.state.value.relationDeletingId)
+    }
+
+    @Test
+    fun pendingRelationDeleteDoesNotConfirmAnOlderWorld() = runTest(dispatcher) {
+        val encyclopediaDao = mockk<EncyclopediaDao>(relaxed = true)
+        val relationDao = mockk<EntryRelationDao>(relaxed = true)
+        coEvery { encyclopediaDao.getById(any()) } answers { EncyclopediaEntity(id = firstArg(), name = "世界") }
+        val pending = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery { relationDao.delete(7L) } coAnswers { pending.await() }
+        val vm = createViewModel(encyclopediaDao, relationDao = relationDao)
+        vm.load(3L)
+        var confirmations = 0
+
+        vm.deleteRelation(7L) { confirmations++ }
+        vm.deleteRelation(7L) { confirmations++ }
+        assertEquals(7L, vm.state.value.relationDeletingId)
+        vm.load(4L)
+        pending.complete(Unit)
+        assertEquals(0, confirmations)
+        assertEquals(null, vm.state.value.relationDeletingId)
+        coVerify(exactly = 1) { relationDao.delete(7L) }
+    }
+
+    @Test
     fun createEntryReturnsPersistedIdAndRefreshesTheCurrentEncyclopedia() = runTest(dispatcher) {
         val dao = mockk<EncyclopediaDao>(relaxed = true)
         val entries = mockk<EncyclopediaEntryDao>(relaxed = true)

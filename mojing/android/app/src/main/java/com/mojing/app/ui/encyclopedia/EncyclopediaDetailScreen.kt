@@ -182,6 +182,7 @@ fun EncyclopediaDetailScreen(
     var deleteEntryTarget by remember { mutableStateOf<EncyclopediaEntryEntity?>(null) }
     var timelineDetailTarget by remember { mutableStateOf<TimelineEventEntity?>(null) }
     var timelineDeleteTarget by remember { mutableStateOf<TimelineEventEntity?>(null) }
+    var relationDeleteTarget by remember(encyclopediaId) { mutableStateOf<com.mojing.app.data.local.entity.EntryRelationEntity?>(null) }
     var pinnedTimelineIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
 
     val context = LocalContext.current
@@ -752,7 +753,10 @@ fun EncyclopediaDetailScreen(
                                         style = MaterialTheme.typography.bodySmall,
                                         modifier = Modifier.weight(1f)
                                     )
-                                    IconButton(onClick = { viewModel.deleteRelation(r.id) }) {
+                                    IconButton(onClick = {
+                                        viewModel.clearRelationDeleteError()
+                                        relationDeleteTarget = r
+                                    }, enabled = state.relationDeletingId == null) {
                                         Icon(Icons.Default.Close, "删除关系", tint = MaterialTheme.colorScheme.error)
                                     }
                                 }
@@ -1140,6 +1144,35 @@ fun EncyclopediaDetailScreen(
             },
             dismissButton = { TextButton(onClick = { timelineDeleteTarget = null },
                 enabled = state.timelineDeletingId != event.id) { Text("取消") } },
+        )
+    }
+
+    relationDeleteTarget?.let { relation ->
+        val deleting = state.relationDeletingId == relation.id
+        AlertDialog(
+            onDismissRequest = { if (!deleting) relationDeleteTarget = null },
+            title = { Text("确认删除关系") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("确定删除「${state.entryTitles[relation.fromEntryId] ?: "资料不可用"} —[${relation.relationType}]→ ${state.entryTitles[relation.toEntryId] ?: "资料不可用"}」吗？")
+                    state.relationDeleteError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteRelation(relation.id) { deleted ->
+                        if (deleted) {
+                            relationDeleteTarget = null
+                            scope.launch { snackbarHostState.showSnackbar("关系已删除") }
+                        }
+                    }
+                }, enabled = !deleting) {
+                    Text(if (deleting) "正在删除…" else "删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { relationDeleteTarget = null }, enabled = !deleting) { Text("取消") }
+            },
         )
     }
 
