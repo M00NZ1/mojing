@@ -152,6 +152,8 @@ def disable_message_search_triggers_for_downgrade(db):
 def _snippet(content, query):
     folded = normalize_search(content)
     offset = folded.find(query)
+    if offset < 0:
+        return content[:60].strip() + ('…' if len(content) > 60 else '')
     if len(folded) != len(content):
         position = 0
         for index, char in enumerate(content):
@@ -176,23 +178,35 @@ def search_message_page(db, session_id, keyword, branch_id='main', before_id=Non
     expression = f's{session_id} AND ' + ' AND '.join(dict.fromkeys(terms))
     fts = table('mojing_message_search_fts', column('rowid'))
     message = MessageModel
-    stmt = select(message.id, message.session_id, message.speaker_type, message.character_id,
+    projection = select(message.id, message.session_id, message.speaker_type, message.character_id,
         CharacterModel.name.label('character_name'), message.branch_id, message.content, message.created_at)
-    stmt = stmt.select_from(fts.join(message, message.id == fts.c.rowid).outerjoin(CharacterModel, CharacterModel.id == message.character_id))
-    stmt = stmt.where(text('mojing_message_search_fts MATCH :expression'), message.session_id == session_id,
-        _visibility_clause(context, message), func.instr(func.mojing_search_normalize(message.content), query) > 0)
+    visibility = _visibility_clause(context, message)
+    body_conditions = (text('mojing_message_search_fts MATCH :expression'), message.session_id == session_id,
+        visibility, func.instr(func.mojing_search_normalize(message.content), query) > 0)
+    matching_characters = select(CharacterModel.id).where(
+        func.instr(func.mojing_search_normalize(CharacterModel.name), query) > 0).correlate(None)
+    has_speaker_match = db.scalar(matching_characters.limit(1)) is not None
+    speaker_conditions = (message.session_id == session_id, visibility, message.speaker_type == 'character',
+        message.character_id.in_(matching_characters))
+    body_from = fts.join(message, message.id == fts.c.rowid)
+    body_stmt = projection.select_from(body_from.outerjoin(CharacterModel, CharacterModel.id == message.character_id)).where(*body_conditions)
+    speaker_stmt = projection.select_from(message).outerjoin(CharacterModel, CharacterModel.id == message.character_id).where(*speaker_conditions)
     total_count = None
     if progress['ready'] and include_total:
-        count_stmt = select(func.count()).select_from(
-            fts.join(message, message.id == fts.c.rowid)
-        ).where(
-            text('mojing_message_search_fts MATCH :expression'), message.session_id == session_id,
-            _visibility_clause(context, message), func.instr(func.mojing_search_normalize(message.content), query) > 0,
-        )
-        total_count = db.scalar(count_stmt, {'expression': expression})
+        body_count = db.scalar(select(func.count()).select_from(body_from).where(*body_conditions), {'expression': expression})
+        total_count = body_count
+        if has_speaker_match:
+            speaker_count = db.scalar(select(func.count()).select_from(message).where(*speaker_conditions))
+            overlap_count = db.scalar(select(func.count()).select_from(body_from).where(*body_conditions,
+                message.speaker_type == 'character', message.character_id.in_(matching_characters)), {'expression': expression})
+            total_count += speaker_count - overlap_count
     if before_id is not None:
-        stmt = stmt.where(fts.c.rowid < before_id)
+        body_stmt = body_stmt.where(message.id < before_id)
+        speaker_stmt = speaker_stmt.where(message.id < before_id)
     limit = min(max(limit, 1), 100)
-    rows = list(db.execute(stmt.order_by(fts.c.rowid.desc()).limit(limit + 1), {'expression': expression}).mappings())
+    body_rows = db.execute(body_stmt.order_by(message.id.desc()).limit(limit + 1), {'expression': expression}).mappings()
+    speaker_rows = db.execute(speaker_stmt.order_by(message.id.desc()).limit(limit + 1)).mappings() if has_speaker_match else ()
+    rows = sorted({row['id']: row for row in chain(body_rows, speaker_rows)}.values(),
+        key=lambda row: row['id'], reverse=True)[:limit + 1]
     return {'items': [{**{key: value for key, value in row.items() if key != 'content'}, 'snippet': _snippet(row['content'], query)} for row in rows[:limit]],
         'next_cursor': rows[limit - 1]['id'] if len(rows) > limit else None, 'total_count': total_count, 'index': progress}

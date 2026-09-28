@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
 
 from backend.app.database import Base, get_db
-from backend.app.models import ChatSessionModel, MessageModel, SessionBranchModel
+from backend.app.models import CharacterModel, ChatSessionModel, MessageModel, SessionBranchModel
 from backend.app.services import message_search_service as search
 from backend.app.services.chat_service import search_session_messages
 
@@ -64,6 +64,37 @@ def test_candidates_are_verified_as_contiguous_phrases(store):
         expected = add(db, '真正的甲乙丙丁')
         db.commit()
         assert ids(complete(db, '甲乙丙丁')) == [expected]
+
+
+def test_speaker_name_search_merges_body_hits_without_leaking_branches(store):
+    factory, _ = store
+    with factory() as db:
+        character = CharacterModel(name='阿沅')
+        db.add(character)
+        db.flush()
+        inherited = add(db, '走进图书馆', speaker_type='character', character_id=character.id)
+        body = add(db, '阿沅留下了信')
+        both = add(db, '阿沅收到回信', speaker_type='character', character_id=character.id)
+        add(db, '其他会话的发言', session_id=2, speaker_type='character', character_id=character.id)
+        db.add(SessionBranchModel(session_id=1, branch_id='A', source_message_id=inherited, parent_branch_id='main'))
+        branch = add(db, '沿另一条路出发', branch_id='A', speaker_type='character', character_id=character.id)
+        db.commit()
+
+        main = complete(db, '阿沅', limit=2)
+        assert ids(main) == [both, body]
+        assert main['total_count'] == 3
+        assert main['next_cursor'] == body
+        older = search.search_message_page(db, 1, '阿沅', before_id=body, limit=2)
+        assert ids(older) == [inherited]
+        assert older['next_cursor'] is None
+        assert older['items'][0]['snippet'] == '走进图书馆'
+        visible = complete(db, '阿沅', branch_id='A')
+        assert ids(visible) == [branch, inherited]
+        assert visible['total_count'] == 2
+        character.name = '暮川'
+        db.commit()
+        assert ids(complete(db, '阿沅')) == [both, body]
+        assert ids(complete(db, '暮川')) == [both, inherited]
 
 
 def test_bounded_backfill_resume_and_cursor_pagination(store):

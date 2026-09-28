@@ -106,7 +106,7 @@ export default function MessageSearchPanel({ sessionId, branchId, value, onChang
   return <section className={`message-search-panel${open ? ' is-open' : ''}${reading ? ' is-reading' : ''}`} aria-label="故事线搜索">
     <div className="message-search-input-row">
       {open && !reading && <button type="button" className="message-search-back" onClick={closeSearch} aria-label="关闭搜索" title="返回对话">←</button>}
-      <input ref={inputRef} type="search" className="chat-message-search" placeholder="搜索当前故事线的消息" aria-label="搜索当前故事线的消息"
+      <input ref={inputRef} type="search" className="chat-message-search" placeholder="搜索消息或角色名" aria-label="搜索当前故事线的消息或角色名"
         onFocus={() => onOpen?.()}
         onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) rememberQuery(value); }}
         onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)}
@@ -131,7 +131,7 @@ export default function MessageSearchPanel({ sessionId, branchId, value, onChang
       {!stale && search.isSuccess && !search.data.items.length && <p>{progress?.ready ? '无匹配消息' : '已索引部分暂无匹配消息'}</p>}
       {locateFailure && !search.data?.items.some((hit) => hit.id === locateFailure.hit.id) && <InlineQueryError message="原文定位失败" error={locateFailure.message} retrying={locating} onRetry={() => onRetryLocate?.()} />}
       <ul ref={listRef}>{search.data?.items.map((hit) => <li key={hit.id}><button type="button" disabled={locating || stale} onClick={() => { rememberQuery(value); onSelect(hit); }}>
-        <span className="message-search-result-meta"><strong>{locatingId === hit.id ? '正在定位…' : hit.character_name || ({ user: '玩家', narrator: '旁白' }[hit.speaker_type] || '角色')}{hit.branch_id !== 'main' ? ` · ${branchLabel(hit.branch_id)}` : ''}</strong><time dateTime={hit.created_at}>{searchResultDate(hit.created_at)}</time></span>
+        <span className="message-search-result-meta"><strong>{locatingId === hit.id ? '正在定位…' : <SearchSnippet text={hit.character_name || ({ user: '玩家', narrator: '旁白' }[hit.speaker_type] || '角色')} query={query} />}{hit.branch_id !== 'main' ? ` · ${branchLabel(hit.branch_id)}` : ''}</strong><time dateTime={hit.created_at}>{searchResultDate(hit.created_at)}</time></span>
         <span className="message-search-result-snippet"><SearchSnippet text={hit.snippet} query={query} /></span></button>
         {locateFailure?.hit.id === hit.id && <div className="message-search-locate-error"><InlineQueryError message="原文定位失败" error={locateFailure.message} retrying={locating} onRetry={() => onRetryLocate?.()} /></div>}
       </li>)}</ul>
