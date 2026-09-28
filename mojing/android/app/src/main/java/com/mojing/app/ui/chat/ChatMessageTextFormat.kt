@@ -7,6 +7,10 @@ import com.mojing.app.domain.engine.StructuredParser
 object ChatMessageTextFormat {
     data class QuotedBody(val quote: String?, val body: String)
 
+    private val sessionPreviewHiddenTail = Regex("<(?:CHOICES|OPTION|GEN_IMAGE|GEN_SPEECH)\\b", RegexOption.IGNORE_CASE)
+    private val sessionPreviewDisplayTag = Regex("</?(?:NARRATION|THOUGHT|SPEECH)\\b[^>]*>", RegexOption.IGNORE_CASE)
+    private val sessionPreviewDanglingTag = Regex("</?[A-Za-z_]+(?:\\s[^>]*)?$", RegexOption.IGNORE_CASE)
+
     fun splitQuote(raw: String): QuotedBody {
         val normalized = raw.replace("\r\n", "\n")
         val end = normalized.indexOf("\n\n")
@@ -84,4 +88,18 @@ object ChatMessageTextFormat {
         .trim()
         .take(maxChars.coerceAtLeast(0))
         .ifBlank { emptyText }
+
+    /** Story-library DAO supplies only a prefix; remove incomplete protocol tags before showing it. */
+    fun sessionListPreview(rawPrefix: String, speakerType: String?, maxChars: Int): String {
+        if (speakerType == "user") return preview(rawPrefix, speakerType, maxChars)
+        val visible = ConversationMessageText.forUserVisibleText(rawPrefix, speakerType)
+        val beforeHiddenTail = sessionPreviewHiddenTail.find(visible)?.let { visible.substring(0, it.range.first) }
+            ?: visible
+        return beforeHiddenTail
+            .replace(sessionPreviewDisplayTag, "")
+            .replace(sessionPreviewDanglingTag, "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(maxChars.coerceAtLeast(0))
+    }
 }

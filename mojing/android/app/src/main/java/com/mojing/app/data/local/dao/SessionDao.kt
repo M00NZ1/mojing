@@ -18,7 +18,7 @@ interface SessionDao {
     @Query(
         """
         SELECT s.*,
-          (SELECT m.content FROM messages m WHERE m.sessionId = s.id AND m.branchId = 'main' ORDER BY m.createdAt DESC, m.id DESC LIMIT 1) AS last_msg_preview,
+          (SELECT substr(m.content, 1, 1024) FROM messages m WHERE m.sessionId = s.id AND m.branchId = 'main' ORDER BY m.createdAt DESC, m.id DESC LIMIT 1) AS last_msg_preview,
           (SELECT m.speakerType FROM messages m WHERE m.sessionId = s.id AND m.branchId = 'main' ORDER BY m.createdAt DESC, m.id DESC LIMIT 1) AS last_msg_speaker_type,
           (SELECT COUNT(*) FROM messages m2 WHERE m2.sessionId = s.id AND m2.branchId = 'main') AS msg_count,
           (SELECT COUNT(*) FROM session_participants sp WHERE sp.sessionId = s.id) AS participant_count

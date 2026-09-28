@@ -129,6 +129,28 @@ class ChatMessageTextFormatTest {
     }
 
     @Test
+    fun `story library preview handles a truncated structured chapter`() {
+        val rawPrefix = ("<NARRATION>" + "雨夜里的渡口。".repeat(300)).take(1024)
+
+        assertEquals("雨夜里的渡口。雨夜里的渡口。", ChatMessageTextFormat.sessionListPreview(
+            rawPrefix, speakerType = "narrator", maxChars = 14,
+        ))
+        assertEquals("门开了。", ChatMessageTextFormat.sessionListPreview(
+            "<SPEECH name=\"林汐\">门开了。</SPEECH><CHOICES><OPTION>进去</OPTION>",
+            speakerType = "character", maxChars = 72,
+        ))
+        assertEquals("", ChatMessageTextFormat.sessionListPreview(
+            "<CHOICES><OPTION>进去</OPTION></CHOICES>", speakerType = "character", maxChars = 72,
+        ))
+    }
+
+    @Test
+    fun `story library preview keeps user supplied protocol text literal`() {
+        val raw = "我输入 <CHOICES><OPTION>原样保留</OPTION></CHOICES>"
+        assertEquals(raw, ChatMessageTextFormat.sessionListPreview(raw, speakerType = "user", maxChars = 72))
+    }
+
+    @Test
     fun `user preview preserves literal structured text`() {
         val raw = "我输入 <CHOICES><OPTION>原样保留</OPTION></CHOICES>"
 

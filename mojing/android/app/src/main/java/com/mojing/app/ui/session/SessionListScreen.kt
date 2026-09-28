@@ -1087,8 +1087,8 @@ private fun QuickStartGuideSteps(onCharacters: () -> Unit, onCreateSession: () -
 fun SessionListRowInner(row: SessionWithListMeta, isGenerating: Boolean = false, onStop: (() -> Unit)? = null, backgroundFailure: String? = null, onRename: (() -> Unit)? = null) {
     val session = row.session
     val dateTimeFormat = remember { SimpleDateFormat("MM/dd HH:mm", Locale.getDefault()) }
-    val preview = ChatMessageTextFormat.preview(
-        raw = row.lastMessagePreview.orEmpty(),
+    val preview = ChatMessageTextFormat.sessionListPreview(
+        rawPrefix = row.lastMessagePreview.orEmpty(),
         speakerType = row.lastMessageSpeakerType,
         maxChars = 72,
     )
