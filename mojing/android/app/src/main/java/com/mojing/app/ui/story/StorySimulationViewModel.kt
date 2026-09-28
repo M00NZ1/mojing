@@ -107,6 +107,12 @@ private data class StoryCreationContext(
     val characters: List<CharacterEntity>,
 )
 
+private data class StoryGenerationProgressSnapshot(
+    val token: Long,
+    val requestId: String,
+    val progress: StoryWritingProgress,
+)
+
 @HiltViewModel
 class StorySimulationViewModel @Inject constructor(
     private val storyWriting: StoryWritingUseCase,
@@ -135,7 +141,7 @@ class StorySimulationViewModel @Inject constructor(
     private var lastPersistedPreviewLength = 0
     private var lastPersistedPreviewElapsedMs = 0L
     private val generationPersistMutex = Mutex()
-    private val latestGenerationProgress = AtomicReference<StoryWritingProgress?>(null)
+    private val latestGenerationProgress = AtomicReference<StoryGenerationProgressSnapshot?>(null)
 
     init {
         retryRecovery()
@@ -385,14 +391,15 @@ class StorySimulationViewModel @Inject constructor(
                 }
                 val token = ++generationToken
                 val generationId = UUID.randomUUID().toString()
+                val generationInput = snapshot.inputDraft()
                 activeGenerationId = generationId
-                activeGenerationInput = snapshot.inputDraft()
+                activeGenerationInput = generationInput
                 latestGenerationProgress.set(null)
                 lastPersistedPreviewLength = 0
                 lastPersistedPreviewElapsedMs = 0L
                 generationStartedAtNanos = System.nanoTime()
                 _state.update { it.copy(isGenerating = true, isSaving = false, error = null, generationStage = "等待模型响应", generationModel = model, generationElapsedMs = 0L, firstContentDelayMs = null, receivedChars = 0, requestToken = token) }
-                try { inputDraftStore.commit(snapshot.inputDraft()) }
+                try { inputDraftStore.commit(generationInput) }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) {
                     _state.update { it.copy(error = "创作设定暂存失败，请重试后再生成。", generationStage = "暂存失败") }
@@ -400,7 +407,7 @@ class StorySimulationViewModel @Inject constructor(
                 }
                 try {
                     inputDraftStore.beginGeneration(StoryOpeningGenerationState(
-                        requestId = generationId, input = snapshot.inputDraft(), preview = "", model = model,
+                        requestId = generationId, input = generationInput, preview = "", model = model,
                         stage = "等待模型响应", receivedChars = 0, elapsedMs = 0L,
                     ))
                 } catch (_: Exception) {
@@ -444,7 +451,7 @@ class StorySimulationViewModel @Inject constructor(
                             personaName = secureStorage.userName,
                             userDescription = secureStorage.userDescription,
                         ),
-                        onProgress = { progress -> updateGenerationProgress(progress, token) },
+                        onProgress = { progress -> updateGenerationProgress(progress, token, generationId, generationInput) },
                     )
                 } catch (e: CancellationException) {
                     throw e
@@ -677,7 +684,10 @@ class StorySimulationViewModel @Inject constructor(
         return true
     }
 
-    private fun updateGenerationProgress(progress: StoryWritingProgress, token: Long) {
+    private fun updateGenerationProgress(
+        progress: StoryWritingProgress, token: Long, generationId: String, input: StoryOpeningInputDraft,
+    ) {
+        if (_state.value.requestToken != token || !_state.value.isGenerating) return
         _state.update {
             if (it.requestToken != token || !it.isGenerating) it else it.copy(
                 generationStage = progress.stage,
@@ -688,16 +698,22 @@ class StorySimulationViewModel @Inject constructor(
                 preview = progress.preview.takeLast(MAX_PREVIEW_CHARS),
             )
         }
-        latestGenerationProgress.set(progress)
-        val generationId = activeGenerationId ?: return
+        if (_state.value.requestToken != token || !_state.value.isGenerating) return
+        latestGenerationProgress.updateAndGet { previous ->
+            if (previous == null || previous.token < token ||
+                (previous.token == token && progress.receivedChars >= previous.progress.receivedChars)
+            ) StoryGenerationProgressSnapshot(token, generationId, progress) else previous
+        }
         val preview = progress.preview.takeLast(MAX_PREVIEW_CHARS)
         if (preview.isBlank() || (preview.length - lastPersistedPreviewLength < PREVIEW_PERSIST_CHARS &&
                 progress.elapsedMs - lastPersistedPreviewElapsedMs < PREVIEW_PERSIST_INTERVAL_MS)) return
-        persistGenerationPreview(generationId, preview, progress)
+        persistGenerationPreview(token, generationId, input, preview, progress)
     }
 
-    private fun persistGenerationPreview(generationId: String, preview: String, progress: StoryWritingProgress) {
-        val input = activeGenerationInput ?: return
+    private fun persistGenerationPreview(
+        token: Long, generationId: String, input: StoryOpeningInputDraft,
+        preview: String, progress: StoryWritingProgress,
+    ) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 generationPersistMutex.withLock {
@@ -706,8 +722,10 @@ class StorySimulationViewModel @Inject constructor(
                         model = progress.model, stage = progress.stage, receivedChars = progress.receivedChars,
                         elapsedMs = progress.elapsedMs,
                     ))
-                    lastPersistedPreviewLength = preview.length
-                    lastPersistedPreviewElapsedMs = progress.elapsedMs
+                    if (_state.value.requestToken == token && activeGenerationId == generationId) {
+                        lastPersistedPreviewLength = preview.length
+                        lastPersistedPreviewElapsedMs = progress.elapsedMs
+                    }
                 }
             } catch (_: Exception) {
                 _state.update { it.copy(error = "生成预览暂存失败，正文仍会继续生成。") }
@@ -718,7 +736,10 @@ class StorySimulationViewModel @Inject constructor(
     private suspend fun flushGenerationPreview() = withContext(NonCancellable) {
         val generationId = activeGenerationId ?: return@withContext
         val input = activeGenerationInput ?: return@withContext
-        val progress = latestGenerationProgress.get() ?: return@withContext
+        val latest = latestGenerationProgress.get()?.takeIf {
+            it.token == _state.value.requestToken && it.requestId == generationId
+        } ?: return@withContext
+        val progress = latest.progress
         val preview = progress.preview.takeLast(MAX_PREVIEW_CHARS)
         if (preview.isBlank()) return@withContext
         try {

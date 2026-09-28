@@ -443,6 +443,41 @@ class StorySimulationViewModelTest {
     }
 
     @Test
+    fun lateCallbackFromStoppedOpeningCannotReplaceRetryRecoveryPreview() = runTest(dispatcher) {
+        val callbacks = mutableListOf<(StoryWritingProgress) -> Unit>()
+        val writing = mockk<StoryWritingUseCase>()
+        coEvery { writing.write(any(), any(), any(), any(), any()) } coAnswers {
+            callbacks += arg<(StoryWritingProgress) -> Unit>(4)
+            CompletableDeferred<StoryWritingResult>().await()
+        }
+        val saved = mutableListOf<StoryOpeningGenerationState>()
+        val drafts = mockk<StoryOpeningInputDraftStore>(relaxed = true) {
+            coEvery { load() } returns null
+            coEvery { persistGenerationPreview(capture(saved)) } returns Unit
+        }
+        val storage = mockk<SecureStorage>(relaxed = true) {
+            every { publicApiKey } returns "key"; every { publicBaseUrl } returns "https://example.com"; every { publicModel } returns "model"
+        }
+        val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true),
+            storyWriting = writing, secureStorage = storage, inputDraftStore = drafts)
+        runCurrent(); vm.updatePremise("雾港来信")
+
+        vm.createStory {}; runCurrent()
+        callbacks[0](StoryWritingProgress("接收正文", "model", 100, 20, 4, "旧预览"))
+        assertTrue(vm.stopGeneration()); runCurrent()
+        assertEquals("旧预览", saved.last().preview)
+        val firstRequestId = saved.last().requestId
+
+        vm.createStory {}; runCurrent()
+        callbacks[1](StoryWritingProgress("接收正文", "model", 100, 20, 4, "新预览"))
+        callbacks[0](StoryWritingProgress("接收正文", "model", 200, 20, 999, "迟到的旧正文"))
+        assertEquals("新预览", vm.state.value.preview)
+        assertTrue(vm.stopGeneration()); runCurrent()
+        assertEquals("新预览", saved.last().preview)
+        assertTrue(saved.last().requestId != firstRequestId)
+    }
+
+    @Test
     fun completeResultOnlyThenPersistsAndFailureDoesNotPersist() = runTest(dispatcher) {
         val writing = mockk<StoryWritingUseCase>()
         val storage = mockk<SecureStorage>(relaxed = true) {
