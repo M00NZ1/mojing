@@ -15,6 +15,7 @@ interface SessionDao {
     @Query("SELECT * FROM sessions ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, updatedAt DESC")
     fun observeAll(): Flow<List<SessionEntity>>
 
+    /** Latest-message lookups rely on the (sessionId, branchId, createdAt, id) index. */
     @Query(
         """
         SELECT s.*,

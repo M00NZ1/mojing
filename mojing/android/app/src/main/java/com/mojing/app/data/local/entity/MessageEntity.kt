@@ -18,6 +18,7 @@ import androidx.room.PrimaryKey
         Index("swipeGroupId"),
         Index("createdAt"),
         Index(value = ["sessionId", "branchId", "id"]),
+        Index(value = ["sessionId", "branchId", "createdAt", "id"]),
     ]
 )
 data class MessageEntity(
