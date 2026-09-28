@@ -28,6 +28,7 @@ import com.mojing.app.domain.usecase.CreateSessionUseCase
 import com.mojing.app.ui.session.NewSessionCharacterPage
 import com.mojing.app.ui.session.NewSessionWorldPage
 import com.mojing.app.ui.session.NewSessionWorldSelection
+import com.mojing.app.ui.session.NEW_SESSION_PICKER_PAGE_SIZE
 import com.mojing.app.ui.util.UserFacingStrings
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -199,9 +200,9 @@ class StorySimulationViewModel @Inject constructor(
 
     internal suspend fun loadWorldPage(query: String, cursor: NewSessionWorldOption?): NewSessionWorldPage {
         val rows = templateDao.getNewSessionWorldPage(
-            query.trim(), cursor?.kind, cursor?.pinnedAt, cursor?.updatedAt, cursor?.id, 41,
+            query.trim(), cursor?.kind, cursor?.pinnedAt, cursor?.updatedAt, cursor?.id, NEW_SESSION_PICKER_PAGE_SIZE + 1,
         )
-        return NewSessionWorldPage(rows.take(40), rows.size > 40)
+        return NewSessionWorldPage(rows.take(NEW_SESSION_PICKER_PAGE_SIZE), rows.size > NEW_SESSION_PICKER_PAGE_SIZE)
     }
 
     internal suspend fun loadWorldSelection(option: NewSessionWorldOption): NewSessionWorldSelection = when (option.kind) {
@@ -219,9 +220,9 @@ class StorySimulationViewModel @Inject constructor(
     ): NewSessionCharacterPage {
         val rows = characterDao.getNewSessionPickerPage(
             encyclopediaId, query.trim(), cursor?.pinnedAt, cursor?.favorite,
-            cursor?.createdAt, cursor?.id, 41,
+            cursor?.createdAt, cursor?.id, NEW_SESSION_PICKER_PAGE_SIZE + 1,
         )
-        return NewSessionCharacterPage(rows.take(40), rows.size > 40)
+        return NewSessionCharacterPage(rows.take(NEW_SESSION_PICKER_PAGE_SIZE), rows.size > NEW_SESSION_PICKER_PAGE_SIZE)
     }
 
     fun retrySelections() = refreshSelections(removeIncompatible = false)

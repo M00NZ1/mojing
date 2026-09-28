@@ -374,9 +374,9 @@ class SessionViewModel @Inject constructor(
     internal suspend fun loadNewSessionWorldPage(query: String, cursor: NewSessionWorldOption?): NewSessionWorldPage {
         val rows = worldTemplateDao.getNewSessionWorldPage(
             query.trim(), cursor?.kind, cursor?.pinnedAt, cursor?.updatedAt, cursor?.id,
-            WORLD_PICKER_PAGE_SIZE + 1,
+            NEW_SESSION_PICKER_PAGE_SIZE + 1,
         )
-        return NewSessionWorldPage(rows.take(WORLD_PICKER_PAGE_SIZE), rows.size > WORLD_PICKER_PAGE_SIZE)
+        return NewSessionWorldPage(rows.take(NEW_SESSION_PICKER_PAGE_SIZE), rows.size > NEW_SESSION_PICKER_PAGE_SIZE)
     }
 
     internal suspend fun loadNewSessionWorldSelection(option: NewSessionWorldOption): NewSessionWorldSelection =
@@ -420,9 +420,9 @@ class SessionViewModel @Inject constructor(
     ): NewSessionCharacterPage {
         val rows = characterDao.getNewSessionPickerPage(
             encyclopediaId, query.trim(), cursor?.pinnedAt, cursor?.favorite,
-            cursor?.createdAt, cursor?.id, CHARACTER_PICKER_PAGE_SIZE + 1,
+            cursor?.createdAt, cursor?.id, NEW_SESSION_PICKER_PAGE_SIZE + 1,
         )
-        return NewSessionCharacterPage(rows.take(CHARACTER_PICKER_PAGE_SIZE), rows.size > CHARACTER_PICKER_PAGE_SIZE)
+        return NewSessionCharacterPage(rows.take(NEW_SESSION_PICKER_PAGE_SIZE), rows.size > NEW_SESSION_PICKER_PAGE_SIZE)
     }
 
     fun createSessionWithOptions(
@@ -558,7 +558,5 @@ class SessionViewModel @Inject constructor(
 
     private companion object {
         const val SESSION_CREATION_BUSY_MESSAGE = "正在创建对话，请稍候"
-        const val CHARACTER_PICKER_PAGE_SIZE = 40
-        const val WORLD_PICKER_PAGE_SIZE = 40
     }
 }

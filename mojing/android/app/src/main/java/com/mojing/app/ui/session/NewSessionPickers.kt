@@ -33,6 +33,9 @@ internal data class NewSessionWorldSelection(
 internal data class NewSessionWorldPage(val rows: List<NewSessionWorldOption>, val hasMore: Boolean)
 internal data class NewSessionCharacterPage(val rows: List<NewSessionCharacterOption>, val hasMore: Boolean)
 
+// Shared by conversation and novel creation; keep the picker query limit at page size + 1.
+internal const val NEW_SESSION_PICKER_PAGE_SIZE = 40
+
 @Composable
 internal fun NewSessionWorldPicker(
     loadPage: suspend (String, NewSessionWorldOption?) -> NewSessionWorldPage,
