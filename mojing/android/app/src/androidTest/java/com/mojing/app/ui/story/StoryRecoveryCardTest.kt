@@ -40,6 +40,7 @@ class StoryRecoveryCardTest {
                             onDiscard = { actions += "discard" },
                             onNewStory = {}, onRetryRecovery = {},
                             onCopyRecovery = {}, onDiscardUnreadable = {},
+                            onRetryInterrupted = {}, onDiscardInterrupted = {},
                         )
                     }
                 }
@@ -63,6 +64,7 @@ class StoryRecoveryCardTest {
                         onSaveOrOpen = { actions += "open" }, onCopy = {}, onDiscard = {},
                         onNewStory = { actions += "new" }, onRetryRecovery = {},
                         onCopyRecovery = {}, onDiscardUnreadable = {},
+                        onRetryInterrupted = {}, onDiscardInterrupted = {},
                     )
                 }
             }
@@ -89,6 +91,7 @@ class StoryRecoveryCardTest {
                         onRetryRecovery = { actions += "retry" },
                         onCopyRecovery = { actions += "copy-recovery" },
                         onDiscardUnreadable = { actions += "discard-unreadable" },
+                        onRetryInterrupted = {}, onDiscardInterrupted = {},
                     )
                 }
             }
@@ -113,6 +116,7 @@ class StoryRecoveryCardTest {
                             ),
                             onSaveOrOpen = {}, onCopy = {}, onDiscard = {}, onNewStory = {},
                             onRetryRecovery = {}, onCopyRecovery = {}, onDiscardUnreadable = {},
+                            onRetryInterrupted = {}, onDiscardInterrupted = {},
                         )
                     }
                 }
