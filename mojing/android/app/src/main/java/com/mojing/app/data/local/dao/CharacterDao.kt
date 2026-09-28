@@ -6,6 +6,14 @@ import androidx.room.Upsert
 import com.mojing.app.data.local.entity.CharacterEntity
 import kotlinx.coroutines.flow.Flow
 
+data class NewSessionCharacterOption(
+    val id: Long,
+    val name: String,
+    val pinnedAt: Long,
+    val favorite: Boolean,
+    val createdAt: Long,
+)
+
 @Dao
 interface CharacterDao {
     @Query("SELECT * FROM characters ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, favorite DESC, createdAt DESC, id DESC")
@@ -28,6 +36,41 @@ interface CharacterDao {
         """,
     )
     suspend fun getAllBound(): List<CharacterEntity>
+
+    @Query("SELECT COUNT(*) FROM characters WHERE (:encyclopediaId IS NULL OR boundEncyclopediaId <= 0 OR boundEncyclopediaId = :encyclopediaId)")
+    suspend fun countForNewSession(encyclopediaId: Long?): Int
+
+    @Query("SELECT id FROM characters WHERE (:encyclopediaId IS NULL OR boundEncyclopediaId <= 0 OR boundEncyclopediaId = :encyclopediaId) ORDER BY id DESC LIMIT 2")
+    suspend fun firstIdsForNewSession(encyclopediaId: Long?): List<Long>
+
+    @Query("SELECT id FROM characters WHERE id IN (:ids) AND (:encyclopediaId IS NULL OR boundEncyclopediaId <= 0 OR boundEncyclopediaId = :encyclopediaId)")
+    suspend fun existingIdsForNewSession(ids: List<Long>, encyclopediaId: Long?): List<Long>
+
+    @Query("SELECT COALESCE(MAX(id), 0) FROM characters")
+    suspend fun maxId(): Long
+
+    @Query("SELECT id FROM characters WHERE id > :afterId AND (:encyclopediaId IS NULL OR boundEncyclopediaId <= 0 OR boundEncyclopediaId = :encyclopediaId) ORDER BY id DESC LIMIT 2")
+    suspend fun newIdsForNewSession(afterId: Long, encyclopediaId: Long?): List<Long>
+
+    /** Only the visible picker page leaves Room; prompts and provider credentials stay in the database. */
+    @Query(
+        """
+        SELECT id, name, pinnedAt, favorite, createdAt FROM characters
+        WHERE (:encyclopediaId IS NULL OR boundEncyclopediaId <= 0 OR boundEncyclopediaId = :encyclopediaId)
+          AND (:query = '' OR instr(lower(name), lower(:query)) > 0)
+          AND (:cursorId IS NULL OR pinnedAt < :cursorPinnedAt
+            OR (pinnedAt = :cursorPinnedAt AND favorite < :cursorFavorite)
+            OR (pinnedAt = :cursorPinnedAt AND favorite = :cursorFavorite AND createdAt < :cursorCreatedAt)
+            OR (pinnedAt = :cursorPinnedAt AND favorite = :cursorFavorite AND createdAt = :cursorCreatedAt AND id < :cursorId))
+        ORDER BY pinnedAt DESC, favorite DESC, createdAt DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getNewSessionPickerPage(
+        encyclopediaId: Long?, query: String,
+        cursorPinnedAt: Long?, cursorFavorite: Boolean?, cursorCreatedAt: Long?, cursorId: Long?,
+        limit: Int,
+    ): List<NewSessionCharacterOption>
 
     @Query("SELECT * FROM characters ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, favorite DESC, createdAt DESC, id DESC")
     suspend fun getAll(): List<CharacterEntity>

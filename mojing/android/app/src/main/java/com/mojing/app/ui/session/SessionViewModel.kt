@@ -6,12 +6,12 @@ import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.GenerationTaskDao
 import com.mojing.app.data.local.dao.MessageDao
+import com.mojing.app.data.local.dao.NewSessionCharacterOption
 import com.mojing.app.data.local.dao.SessionDao
 import com.mojing.app.data.local.dao.SessionBranchDao
 import com.mojing.app.data.local.dao.WorldTemplateDao
 import com.mojing.app.data.local.branch.BranchVisibilityIndexManager
 import com.mojing.app.data.local.entity.EncyclopediaEntity
-import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.SessionWithListMeta
 import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.prefs.UiPreferencesRepository
@@ -329,16 +329,51 @@ class SessionViewModel @Inject constructor(
     data class NewSessionDialogData(
         val templates: List<WorldTemplateEntity>,
         val encyclopedias: List<EncyclopediaEntity>,
-        val boundCharacters: List<CharacterEntity>,
         val worldMappings: Map<Long, Long> = emptyMap(),
     )
 
     suspend fun loadNewSessionDialogData(): NewSessionDialogData = NewSessionDialogData(
         templates = worldTemplateDao.getAll(),
         encyclopedias = encyclopediaDao.getAll(),
-        boundCharacters = characterDao.getAll(),
         worldMappings = worldTemplateDao.getWorldMappings().associate { it.worldTemplateId to it.encyclopediaId },
     )
+
+    internal data class NewSessionCharacterSummary(
+        val count: Int,
+        val onlyId: Long?,
+        val existingSelectedIds: Set<Long>,
+        val newlyAvailableIds: List<Long>,
+        val maxId: Long,
+    )
+
+    internal suspend fun loadNewSessionCharacterSummary(
+        encyclopediaId: Long?, selectedIds: Set<Long>, newSinceId: Long?,
+    ): NewSessionCharacterSummary {
+        val count = characterDao.countForNewSession(encyclopediaId)
+        val firstIds = characterDao.firstIdsForNewSession(encyclopediaId)
+        val existing = if (selectedIds.isEmpty()) emptySet()
+            else selectedIds.toList().chunked(400).flatMap {
+                characterDao.existingIdsForNewSession(it, encyclopediaId)
+            }.toSet()
+        val newlyAvailable = if (newSinceId == null) emptyList()
+            else characterDao.newIdsForNewSession(newSinceId, encyclopediaId)
+        return NewSessionCharacterSummary(
+            count, if (count == 1) firstIds.singleOrNull() else null,
+            existing, newlyAvailable, characterDao.maxId(),
+        )
+    }
+
+    internal data class NewSessionCharacterPage(val rows: List<NewSessionCharacterOption>, val hasMore: Boolean)
+
+    internal suspend fun loadNewSessionCharacterPage(
+        encyclopediaId: Long?, query: String, cursor: NewSessionCharacterOption?,
+    ): NewSessionCharacterPage {
+        val rows = characterDao.getNewSessionPickerPage(
+            encyclopediaId, query.trim(), cursor?.pinnedAt, cursor?.favorite,
+            cursor?.createdAt, cursor?.id, CHARACTER_PICKER_PAGE_SIZE + 1,
+        )
+        return NewSessionCharacterPage(rows.take(CHARACTER_PICKER_PAGE_SIZE), rows.size > CHARACTER_PICKER_PAGE_SIZE)
+    }
 
     fun createSessionWithOptions(
         title: String,
@@ -473,5 +508,6 @@ class SessionViewModel @Inject constructor(
 
     private companion object {
         const val SESSION_CREATION_BUSY_MESSAGE = "正在创建对话，请稍候"
+        const val CHARACTER_PICKER_PAGE_SIZE = 40
     }
 }

@@ -54,7 +54,6 @@ import com.mojing.app.R
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mojing.app.data.local.entity.EncyclopediaEntity
-import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.SessionWithListMeta
 import com.mojing.app.data.local.entity.WorldTemplateEntity
 import com.mojing.app.ui.chat.ChatMessageTextFormat
@@ -150,9 +149,7 @@ fun SessionListScreen(
     var suspendedNewSessionDraft by rememberSaveable { mutableStateOf(false) }
     var confirmDiscardNewSession by rememberSaveable { mutableStateOf(false) }
     var replacementTemplateId by rememberSaveable { mutableStateOf<Long?>(null) }
-    var characterIdsBeforeCreation by rememberSaveable(stateSaver = Saver<Set<Long>, ArrayList<Long>>(
-        save = { ArrayList(it) }, restore = { it.toSet() },
-    )) { mutableStateOf<Set<Long>>(emptySet()) }
+    var maxCharacterIdBeforeCreation by rememberSaveable { mutableStateOf<Long?>(null) }
     var selectNewCharacterOnNextLoad by rememberSaveable { mutableStateOf(false) }
     var pendingTemplateId by rememberSaveable { mutableStateOf<Long?>(null) }
     var dialogLoadRequestVersion by rememberSaveable { mutableIntStateOf(0) }
@@ -163,7 +160,12 @@ fun SessionListScreen(
     var worldMappings by remember { mutableStateOf<Map<Long, Long>>(emptyMap()) }
     var templates by remember { mutableStateOf<List<WorldTemplateEntity>>(emptyList()) }
     var encyclopedias by remember { mutableStateOf<List<EncyclopediaEntity>>(emptyList()) }
-    var allBoundCharacters by remember { mutableStateOf<List<CharacterEntity>>(emptyList()) }
+    var compatibleCharacterCount by remember { mutableIntStateOf(0) }
+    var characterSummaryReady by remember { mutableStateOf(false) }
+    var characterSummaryLoading by remember { mutableStateOf(false) }
+    var characterSummaryError by remember { mutableStateOf<String?>(null) }
+    var characterSummaryRetry by remember { mutableIntStateOf(0) }
+    var latestCharacterId by remember { mutableLongStateOf(0L) }
     var selectedCharacterIds by rememberSaveable(stateSaver = Saver<Set<Long>, ArrayList<Long>>(
         save = { ArrayList(it) }, restore = { it.toSet() },
     )) { mutableStateOf<Set<Long>>(emptySet()) }
@@ -199,7 +201,7 @@ fun SessionListScreen(
         suspendedNewSessionDraft = false
         confirmDiscardNewSession = false
         replacementTemplateId = null
-        characterIdsBeforeCreation = emptySet()
+        maxCharacterIdBeforeCreation = null
         selectNewCharacterOnNextLoad = false
         resetDialogFormOnNextLoad = true
         worldSelectionInitialized = false
@@ -216,7 +218,7 @@ fun SessionListScreen(
         suspendedNewSessionDraft = false
         confirmDiscardNewSession = false
         replacementTemplateId = null
-        characterIdsBeforeCreation = emptySet()
+        maxCharacterIdBeforeCreation = null
         selectNewCharacterOnNextLoad = false
         resetDialogFormOnNextLoad = true
         isLoadingDialogData = false
@@ -237,7 +239,7 @@ fun SessionListScreen(
 
     fun suspendNewSessionForCharacters() {
         if (isCreatingSession) return
-        characterIdsBeforeCreation = allBoundCharacters.map { it.id }.toSet()
+        maxCharacterIdBeforeCreation = latestCharacterId
         selectNewCharacterOnNextLoad = true
         suspendedNewSessionDraft = true
         dialogDataReady = false
@@ -271,7 +273,8 @@ fun SessionListScreen(
                 selectedEncId = null
                 templates = emptyList()
                 encyclopedias = emptyList()
-                allBoundCharacters = emptyList()
+                compatibleCharacterCount = 0
+                characterSummaryReady = false
                 selectedCharacterIds = emptySet()
                 initializeCharacterSelection = true
                 narratorOn = d.narratorEnabled
@@ -283,6 +286,7 @@ fun SessionListScreen(
             }
             resetDialogFormOnNextLoad = false
             dialogDataReady = false
+            characterSummaryReady = false
             isLoadingDialogData = true
             dialogLoadError = null
             try {
@@ -290,23 +294,6 @@ fun SessionListScreen(
                 templates = data.templates
                 worldMappings = data.worldMappings
                 encyclopedias = data.encyclopedias
-                allBoundCharacters = data.boundCharacters
-                if (initializeCharacterSelection) {
-                    selectedCharacterIds = openingCharacterSelection(data.boundCharacters.map { it.id }.toSet(), null)
-                    initializeCharacterSelection = false
-                }
-                if (selectNewCharacterOnNextLoad) {
-                    val available = data.boundCharacters.filter { character ->
-                        selectedEncId == null || character.boundEncyclopediaId <= 0L ||
-                            character.boundEncyclopediaId == selectedEncId
-                    }.map { it.id }.toSet()
-                    val newlyAvailable = available - characterIdsBeforeCreation
-                    if (selectedCharacterIds.isEmpty() && newlyAvailable.size == 1) {
-                        selectedCharacterIds = newlyAvailable
-                    }
-                    selectNewCharacterOnNextLoad = false
-                    characterIdsBeforeCreation = emptySet()
-                }
                 if (!worldSelectionInitialized) {
                     val initialTemplate = findRequestedWorldTemplate(data.templates, requestedTemplateId)
                         ?: if (requestedTemplateId == null) {
@@ -339,6 +326,39 @@ fun SessionListScreen(
                 isLoadingDialogData = false
                 dialogLoadError = "新建对话资料读取失败，请重试"
             }
+        }
+    }
+
+    LaunchedEffect(showCreateDialog, dialogDataReady, selectedEncId, characterSummaryRetry) {
+        if (!showCreateDialog || !dialogDataReady) return@LaunchedEffect
+        characterSummaryReady = false
+        characterSummaryLoading = true
+        characterSummaryError = null
+        try {
+            val summary = viewModel.loadNewSessionCharacterSummary(
+                selectedEncId, selectedCharacterIds,
+                maxCharacterIdBeforeCreation.takeIf { selectNewCharacterOnNextLoad },
+            )
+            compatibleCharacterCount = summary.count
+            latestCharacterId = summary.maxId
+            selectedCharacterIds = if (initializeCharacterSelection) {
+                initializeCharacterSelection = false
+                openingCharacterSelection(summary.onlyId?.let { setOf(it) } ?: emptySet(), null)
+            } else summary.existingSelectedIds
+            if (selectNewCharacterOnNextLoad) {
+                if (selectedCharacterIds.isEmpty() && summary.newlyAvailableIds.size == 1) {
+                    selectedCharacterIds = summary.newlyAvailableIds.toSet()
+                }
+                selectNewCharacterOnNextLoad = false
+                maxCharacterIdBeforeCreation = null
+            }
+            characterSummaryReady = true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            characterSummaryError = "角色读取失败，请重试"
+        } finally {
+            characterSummaryLoading = false
         }
     }
 
@@ -723,17 +743,6 @@ fun SessionListScreen(
             selectedTemplateId != null && selectedTemplate == null ||
                 selectedEncId != null && encyclopedias.none { it.id == selectedEncId }
             )
-        val selectableCharacters = remember(selectedEncId, allBoundCharacters) {
-            when (val id = selectedEncId) {
-                null -> allBoundCharacters
-                else -> allBoundCharacters.filter { it.boundEncyclopediaId <= 0L || it.boundEncyclopediaId == id }
-            }
-        }
-        LaunchedEffect(dialogDataReady, selectedWorldMissing, selectedEncId, allBoundCharacters) {
-            if (dialogDataReady && !selectedWorldMissing) {
-                selectedCharacterIds = openingCharacterSelection(selectableCharacters.map { it.id }.toSet(), selectedCharacterIds)
-            }
-        }
         val currentCreating by rememberUpdatedState(isCreatingSession)
         val currentFormEdited by rememberUpdatedState(newSessionFormEdited)
         ModalBottomSheet(
@@ -853,9 +862,21 @@ fun SessionListScreen(
 
                 Text("参与角色", style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary)
-                if (allBoundCharacters.isEmpty()) {
+                if (characterSummaryLoading) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Text("正在读取可用角色…", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                characterSummaryError?.let { message ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(message, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error)
+                        TextButton(onClick = { characterSummaryRetry += 1 }) { Text("重试") }
+                    }
+                }
+                if (characterSummaryReady && compatibleCharacterCount == 0) {
                     Text(
-                        "选择角色开始故事，也可以先进入空白对话，稍后再添加。",
+                        "当前世界没有可用角色。可以更换世界、去创建角色，或先进入空白对话。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -867,21 +888,7 @@ fun SessionListScreen(
                         Spacer(Modifier.width(6.dp))
                         Text("去创建角色")
                     }
-                } else if (selectableCharacters.isEmpty()) {
-                    Text(
-                        "当前百科没有可用角色。可以更换百科、去创建角色，或先进入空白对话。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    TextButton(
-                        onClick = { suspendNewSessionForCharacters() },
-                        enabled = !isCreatingSession && !isLoadingDialogData,
-                    ) {
-                        Icon(Icons.Default.PersonAdd, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("去创建角色")
-                    }
-                } else {
+                } else if (characterSummaryReady) {
                     Text(
                         "百科提供世界设定；未绑定百科的角色也可参与。",
                         style = MaterialTheme.typography.bodySmall,
@@ -891,7 +898,7 @@ fun SessionListScreen(
                         enabled = !isCreatingSession && !isLoadingDialogData,
                         modifier = Modifier.fillMaxWidth()) {
                         Text(if (selectedCharacterIds.isEmpty()) "选择参与角色"
-                            else "${selectedCharacterIds.size}/${selectableCharacters.size} 人参与",
+                            else "${selectedCharacterIds.size}/$compatibleCharacterCount 人参与",
                             Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Icon(Icons.Default.ExpandMore, contentDescription = "选择参与角色")
                     }
@@ -1023,8 +1030,8 @@ fun SessionListScreen(
                         )
                     },
                     modifier = Modifier.weight(1f),
-                    enabled = !isCreatingSession && dialogDataReady && !selectedWorldMissing &&
-                        selectableCharacters.isNotEmpty() && selectedCharacterIds.isNotEmpty(),
+                    enabled = !isCreatingSession && dialogDataReady && characterSummaryReady && !selectedWorldMissing &&
+                        compatibleCharacterCount > 0 && selectedCharacterIds.isNotEmpty(),
                 ) { Text(if (isCreatingSession) "创建中…" else "创建并开始") }
                 OutlinedButton(
                     onClick = {
@@ -1056,6 +1063,10 @@ fun SessionListScreen(
             selectedEncyclopediaId = selectedEncId,
             selectedTemplateId = selectedTemplateId,
             onSelect = { encyclopediaId, template ->
+                if (encyclopediaId != selectedEncId) {
+                    characterSummaryReady = false
+                    characterSummaryError = null
+                }
                 selectedEncId = encyclopediaId
                 selectedTemplateId = template?.id
                 worldSelectionInitialized = true
@@ -1065,7 +1076,8 @@ fun SessionListScreen(
             onDismiss = { worldPickerOpen = false },
         )
         if (characterPickerOpen) NewSessionCharacterPicker(
-            characters = selectableCharacters,
+            encyclopediaId = selectedEncId,
+            loadPage = viewModel::loadNewSessionCharacterPage,
             selectedIds = selectedCharacterIds,
             onSelectionChange = { selectedCharacterIds = it; newSessionFormEdited = true },
             onDismiss = { characterPickerOpen = false },

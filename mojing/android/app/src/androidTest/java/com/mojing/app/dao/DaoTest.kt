@@ -85,6 +85,29 @@ class MessageDaoTest {
         assertEquals(ids[3], sessionDao.observeListPageWithMeta("灯塔", null, null, null, 41).first().single().session.id)
     }
 
+    @Test
+    fun newSessionCharacterPickerSearchesBeyondFirstPageWithoutReadingFullCards() = runBlocking {
+        val dao = db.characterDao()
+        val ids = (1..85).map { n ->
+            dao.upsert(CharacterEntity(
+                name = if (n == 1) "远方灯塔" else "角色$n",
+                boundEncyclopediaId = if (n % 2 == 1) 3L else 4L,
+                personaPrompt = "长人格内容".repeat(100), apiKey = "private-$n", createdAt = 100L,
+            ))
+        }
+        assertEquals(43, dao.countForNewSession(3L))
+        val first = dao.getNewSessionPickerPage(3L, "", null, null, null, null, 41)
+        assertEquals(41, first.size)
+        val cursor = first[39]
+        val older = dao.getNewSessionPickerPage(
+            3L, "", cursor.pinnedAt, cursor.favorite, cursor.createdAt, cursor.id, 41,
+        )
+        assertEquals(3, older.size)
+        assertTrue(first.take(40).map { it.id }.intersect(older.map { it.id }.toSet()).isEmpty())
+        assertEquals(ids[0], dao.getNewSessionPickerPage(3L, "灯塔", null, null, null, null, 41).single().id)
+        assertEquals(listOf(ids[0]), dao.existingIdsForNewSession(listOf(ids[0], ids[1]), 3L))
+    }
+
     @Test fun characterSnapshotCursorUsesVisibleUserIdsAndBranchState() = runBlocking {
         val sid = sessionDao.insert(SessionEntity(title = "角色状态分支"))
         val main = (1..20).map { messageDao.insert(MessageEntity(sessionId = sid, speakerType = "user", content = "主线 $it")) }

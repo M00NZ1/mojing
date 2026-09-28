@@ -5,6 +5,7 @@ import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.GenerationTaskDao
 import com.mojing.app.data.local.dao.MessageDao
+import com.mojing.app.data.local.dao.NewSessionCharacterOption
 import com.mojing.app.data.local.dao.SessionBranchDao
 import com.mojing.app.data.local.dao.SessionDao
 import com.mojing.app.data.local.dao.StoryBranchPreviewSource
@@ -326,19 +327,17 @@ class SessionViewModelTest {
     }
 
     @Test
-    fun dialogDataLoadsAllRequiredSources() = runTest(dispatcher) {
+    fun dialogDataDoesNotLoadFullCharacterRecords() = runTest(dispatcher) {
         val template = WorldTemplateEntity(id = 2L, templateId = "star-sea")
         val encyclopedia = EncyclopediaEntity(id = 3L, name = "星海百科")
-        val character = CharacterEntity(id = 4L, boundEncyclopediaId = 3L)
         coEvery { worldTemplateDao.getAll() } returns listOf(template)
         coEvery { encyclopediaDao.getAll() } returns listOf(encyclopedia)
-        coEvery { characterDao.getAll() } returns listOf(character)
 
         val data = createViewModel().loadNewSessionDialogData()
 
         assertEquals(listOf(template), data.templates)
         assertEquals(listOf(encyclopedia), data.encyclopedias)
-        assertEquals(listOf(character), data.boundCharacters)
+        coVerify(exactly = 0) { characterDao.getAll() }
     }
 
     @Test
@@ -349,6 +348,38 @@ class SessionViewModelTest {
 
         assertTrue(result.isFailure)
         coVerify(exactly = 0) { encyclopediaDao.getAll() }
+        coVerify(exactly = 0) { characterDao.getAll() }
+    }
+
+    @Test
+    fun newSessionCharacterSummaryKeepsOnlyCompatibleSelectionsAndFindsOneNewCharacter() = runTest(dispatcher) {
+        coEvery { characterDao.countForNewSession(3L) } returns 3
+        coEvery { characterDao.firstIdsForNewSession(3L) } returns listOf(9L, 8L)
+        coEvery { characterDao.existingIdsForNewSession(listOf(8L, 7L), 3L) } returns listOf(8L)
+        coEvery { characterDao.newIdsForNewSession(7L, 3L) } returns listOf(9L)
+        coEvery { characterDao.maxId() } returns 9L
+
+        val summary = createViewModel().loadNewSessionCharacterSummary(3L, setOf(8L, 7L), 7L)
+
+        assertEquals(3, summary.count)
+        assertEquals(null, summary.onlyId)
+        assertEquals(setOf(8L), summary.existingSelectedIds)
+        assertEquals(listOf(9L), summary.newlyAvailableIds)
+        assertEquals(9L, summary.maxId)
+        coVerify(exactly = 0) { characterDao.getAll() }
+    }
+
+    @Test
+    fun newSessionCharacterPickerLimitsRowsWithoutLoadingPrompts() = runTest(dispatcher) {
+        val rows = (41L downTo 1L).map { id ->
+            NewSessionCharacterOption(id, "角色$id", 0L, false, 100L)
+        }
+        coEvery { characterDao.getNewSessionPickerPage(3L, "角色", null, null, null, null, 41) } returns rows
+
+        val page = createViewModel().loadNewSessionCharacterPage(3L, " 角色 ", null)
+
+        assertEquals(40, page.rows.size)
+        assertTrue(page.hasMore)
         coVerify(exactly = 0) { characterDao.getAll() }
     }
 
