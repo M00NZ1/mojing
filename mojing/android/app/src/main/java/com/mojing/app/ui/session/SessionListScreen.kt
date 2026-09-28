@@ -865,6 +865,10 @@ fun SessionListScreen(
                             onBlocked = { msg ->
                                 Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                             },
+                            onCreatedButNotOpened = {
+                                closeNewSessionDialog()
+                                Toast.makeText(context, "对话已创建，请从故事库打开", Toast.LENGTH_LONG).show()
+                            },
                         )
                     },
                     modifier = Modifier.weight(1f),
@@ -881,6 +885,10 @@ fun SessionListScreen(
                             },
                             onFailed = { message ->
                                 Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                            },
+                            onCreatedButNotOpened = {
+                                closeNewSessionDialog()
+                                Toast.makeText(context, "对话已创建，请从故事库打开", Toast.LENGTH_LONG).show()
                             },
                         )
                     },

@@ -115,6 +115,7 @@ class SessionViewModel @Inject constructor(
     fun createNewSession(
         onCreated: (Long) -> Unit = {},
         onFailed: (String) -> Unit = {},
+        onCreatedButNotOpened: (Long) -> Unit = { onFailed("对话已创建，但未能打开，请从故事库进入") },
     ) {
         if (!_isCreatingSession.compareAndSet(expect = false, update = true)) {
             onFailed(SESSION_CREATION_BUSY_MESSAGE)
@@ -122,14 +123,21 @@ class SessionViewModel @Inject constructor(
         }
         viewModelScope.launch {
             try {
-                when (val result = createSessionUseCase.createBlank()) {
-                    is CreateSessionUseCase.Result.Created -> onCreated(result.sessionId)
-                    else -> onFailed("创建对话失败，请重试")
+                val result = try {
+                    createSessionUseCase.createBlank()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    onFailed("创建对话失败，请重试")
+                    return@launch
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                onFailed("创建对话失败，请重试")
+                if (result is CreateSessionUseCase.Result.Created) {
+                    try { onCreated(result.sessionId) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { onCreatedButNotOpened(result.sessionId) }
+                } else {
+                    onFailed("创建对话失败，请重试")
+                }
             } finally {
                 _isCreatingSession.value = false
             }
@@ -181,6 +189,7 @@ class SessionViewModel @Inject constructor(
         onCreated: (Long) -> Unit = {},
         /** 校验失败（参与者与百科不一致等） */
         onBlocked: (String) -> Unit = {},
+        onCreatedButNotOpened: (Long) -> Unit = { onBlocked("对话已创建，但未能打开，请从故事库进入") },
     ) {
         if (!_isCreatingSession.compareAndSet(expect = false, update = true)) {
             onBlocked(SESSION_CREATION_BUSY_MESSAGE)
@@ -188,28 +197,36 @@ class SessionViewModel @Inject constructor(
         }
         viewModelScope.launch {
             try {
-                when (val result = createSessionUseCase.create(
-                    title = title,
-                    template = template,
-                    encyclopediaId = encyclopediaId,
-                    narratorEnabled = narratorEnabled,
-                    narratorName = narratorName,
-                    choiceEnabled = choiceEnabled,
-                    maxChoices = maxChoices,
-                    antiCheatEnabled = antiCheatEnabled,
-                    displayContextTokenLimit = displayContextTokenLimit,
-                    characterIds = participantCharacterIds,
-                )) {
-                    is CreateSessionUseCase.Result.Created -> onCreated(result.sessionId)
+                val result = try {
+                    createSessionUseCase.create(
+                        title = title,
+                        template = template,
+                        encyclopediaId = encyclopediaId,
+                        narratorEnabled = narratorEnabled,
+                        narratorName = narratorName,
+                        choiceEnabled = choiceEnabled,
+                        maxChoices = maxChoices,
+                        antiCheatEnabled = antiCheatEnabled,
+                        displayContextTokenLimit = displayContextTokenLimit,
+                        characterIds = participantCharacterIds,
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    onBlocked("创建对话失败，请重试")
+                    return@launch
+                }
+                when (result) {
+                    is CreateSessionUseCase.Result.Created -> {
+                        try { onCreated(result.sessionId) }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { onCreatedButNotOpened(result.sessionId) }
+                    }
                     CreateSessionUseCase.Result.CharacterNotFound -> onBlocked("找不到所选角色")
                     CreateSessionUseCase.Result.UnboundCharacter -> onBlocked("参与角色须已绑定百科")
                     CreateSessionUseCase.Result.EncyclopediaMismatch -> onBlocked("参与角色须全部属于所选百科")
                     CreateSessionUseCase.Result.EmptyParticipants -> onBlocked("请至少选择一名参与角色")
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                onBlocked("创建对话失败，请重试")
             } finally {
                 _isCreatingSession.value = false
             }

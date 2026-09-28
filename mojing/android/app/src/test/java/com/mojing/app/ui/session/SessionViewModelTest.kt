@@ -203,6 +203,62 @@ class SessionViewModelTest {
     }
 
     @Test
+    fun blankCreationIsNotReportedAsFailedWhenOpeningCallbackThrows() = runTest(dispatcher) {
+        coEvery { transaction(any(), any(), any()) } returns 42L
+        val viewModel = createViewModel()
+        var failure: String? = null
+        var createdButNotOpened: Long? = null
+
+        viewModel.createNewSession(
+            onCreated = { throw IllegalStateException("navigation unavailable") },
+            onFailed = { failure = it },
+            onCreatedButNotOpened = {
+                assertTrue(viewModel.isCreatingSession.value)
+                createdButNotOpened = it
+            },
+        )
+        advanceUntilIdle()
+
+        assertEquals(null, failure)
+        assertEquals(42L, createdButNotOpened)
+        assertFalse(viewModel.isCreatingSession.value)
+        coVerify(exactly = 1) { transaction(any(), any(), any()) }
+    }
+
+    @Test
+    fun configuredCreationIsNotReportedAsFailedWhenOpeningCallbackThrows() = runTest(dispatcher) {
+        coEvery { characterDao.getById(1L) } returns CharacterEntity(id = 1L)
+        coEvery { transaction(any(), any(), any()) } returns 43L
+        val viewModel = createViewModel()
+        var blocked: String? = null
+        var createdButNotOpened: Long? = null
+
+        viewModel.createSessionWithOptions(
+            title = "新故事",
+            template = null,
+            encyclopediaId = null,
+            narratorEnabled = true,
+            narratorName = "旁白",
+            choiceEnabled = true,
+            maxChoices = 3,
+            antiCheatEnabled = true,
+            participantCharacterIds = listOf(1L),
+            onCreated = { throw IllegalStateException("navigation unavailable") },
+            onBlocked = { blocked = it },
+            onCreatedButNotOpened = {
+                assertTrue(viewModel.isCreatingSession.value)
+                createdButNotOpened = it
+            },
+        )
+        advanceUntilIdle()
+
+        assertEquals(null, blocked)
+        assertEquals(43L, createdButNotOpened)
+        assertFalse(viewModel.isCreatingSession.value)
+        coVerify(exactly = 1) { transaction(any(), any(), any()) }
+    }
+
+    @Test
     fun allCreationEntrypointsShareOneInFlightOwner() = runTest(dispatcher) {
         val transactionStarted = CompletableDeferred<Unit>()
         val transactionResult = CompletableDeferred<Long>()
