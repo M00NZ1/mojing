@@ -1778,7 +1778,7 @@ class ChatViewModel @Inject constructor(
             }
         }
 
-    fun openSearchMessageInHistory(messageId: Long, onResult: (Boolean) -> Unit): Boolean =
+    fun openMessageInHistoryWithResult(messageId: Long, onResult: (Boolean) -> Unit): Boolean =
         launchHistoryLoad { branchId ->
             var opened = false
             try {
@@ -1787,7 +1787,7 @@ class ChatViewModel @Inject constructor(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                // Search keeps its context and offers an inline retry for failed reads.
+                // The caller keeps its source list open and offers an inline retry for failed reads.
             } finally {
                 onResult(opened)
             }

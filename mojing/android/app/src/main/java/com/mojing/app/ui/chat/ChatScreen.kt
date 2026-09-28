@@ -543,7 +543,7 @@ fun ChatScreen(
         visible = showContents,
         sessionId = sessionId,
         branchId = state.currentBranchId,
-        onOpenMessage = { messageId -> viewModel.openMessageInHistory(messageId) },
+        onOpenMessage = viewModel::openMessageInHistoryWithResult,
         onDismiss = { showContents = false },
     )
 
@@ -1410,7 +1410,7 @@ fun ChatScreen(
         com.mojing.app.ui.chat.search.SearchScreen(
             sessionId = sessionId, branchId = state.currentBranchId,
             onBack = { showSearchDialog = false },
-            onOpenInChat = viewModel::openSearchMessageInHistory,
+            onOpenInChat = viewModel::openMessageInHistoryWithResult,
         )
     }
 

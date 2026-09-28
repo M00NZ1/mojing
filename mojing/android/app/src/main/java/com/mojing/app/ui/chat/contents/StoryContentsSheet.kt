@@ -26,7 +26,7 @@ fun StoryContentsSheet(
     visible: Boolean,
     sessionId: Long,
     branchId: String,
-    onOpenMessage: (Long) -> Boolean,
+    onOpenMessage: (Long, (Boolean) -> Unit) -> Boolean,
     onDismiss: () -> Unit,
     novelTitle: String = "", busy: Boolean = false,
     saving: Boolean = false, saveError: String? = null,
@@ -45,7 +45,32 @@ fun StoryContentsSheet(
     var editingChapter by remember { mutableStateOf<StoryContentsEntry?>(null) }
     var title by remember { mutableStateOf("") }
     var direction by remember { mutableStateOf("") }
-    val controlsBusy = busy || saving || state.isLoading || state.refreshingId != null
+    var locatingMessageId by remember(sessionId, branchId) { mutableStateOf<Long?>(null) }
+    var failedOpenMessageId by remember(sessionId, branchId) { mutableStateOf<Long?>(null) }
+    var openMessageError by remember(sessionId, branchId) { mutableStateOf<String?>(null) }
+    // A late history result must not close a reopened sheet or another story line.
+    var active by remember(sessionId, branchId) { mutableStateOf(true) }
+    DisposableEffect(sessionId, branchId) { onDispose { active = false } }
+    fun openChapter(messageId: Long) {
+        if (locatingMessageId != null) return
+        locatingMessageId = messageId
+        failedOpenMessageId = null
+        openMessageError = null
+        if (!onOpenMessage(messageId, result@{ opened ->
+                if (!active || locatingMessageId != messageId) return@result
+                locatingMessageId = null
+                if (opened) onDismiss()
+                else {
+                    failedOpenMessageId = messageId
+                    openMessageError = "章节原文不可用或加载失败"
+                }
+            })) {
+            locatingMessageId = null
+            failedOpenMessageId = messageId
+            openMessageError = "当前正在生成或加载历史，请稍后重试"
+        }
+    }
+    val controlsBusy = busy || saving || state.isLoading || state.refreshingId != null || locatingMessageId != null
     val currentSaving by rememberUpdatedState(saving)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true,
         confirmValueChange = { it != SheetValue.Hidden || !currentSaving })
@@ -111,6 +136,18 @@ fun StoryContentsSheet(
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 if (state.refreshingId != null) LinearProgressIndicator(Modifier.fillMaxWidth())
+                if (locatingMessageId != null) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Text("正在打开章节…", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                failedOpenMessageId?.let { messageId ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(openMessageError.orEmpty(), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error)
+                        TextButton(onClick = { openChapter(messageId) }) { Text("重试") }
+                    }
+                }
                 state.refreshFailedId?.let { messageId ->
                     TextButton(onClick = { viewModel.refreshEntry(messageId) }) {
                         Text("名称已保存，点击重试刷新目录", color = MaterialTheme.colorScheme.error)
@@ -141,8 +178,8 @@ fun StoryContentsSheet(
                 else -> {
                     items(state.entries, key = { it.messageId }) { entry ->
                         ListItem(
-                            modifier = Modifier.fillMaxWidth().clickable(enabled = !saving) {
-                                if (onOpenMessage(entry.messageId)) onDismiss()
+                            modifier = Modifier.fillMaxWidth().clickable(enabled = !saving && locatingMessageId == null) {
+                                openChapter(entry.messageId)
                             },
                             trailingContent = { IconButton(enabled = !controlsBusy, onClick = { onEditStart(); title = entry.title; editingChapter = entry }) { Icon(Icons.Outlined.Edit, "修改章节名称：${entry.title}") } },
                             colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
