@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Android checks and optional APK build
 
 on:
   push:
@@ -34,23 +34,24 @@ jobs:
         run: ./gradlew testDebugUnitTest --no-daemon '-Dorg.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8' -Pkotlin.compiler.execution.strategy=in-process --max-workers=2
 
       - name: Build debug APK
+        if: github.event_name == 'workflow_dispatch'
         run: ./gradlew assembleDebug --no-daemon '-Dorg.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8' -Pkotlin.compiler.execution.strategy=in-process --max-workers=2
 
       - name: Build optimized CI test APK
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch'
         run: |
           free -h
           ./gradlew assembleRelease --no-daemon '-Dorg.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8' -Pkotlin.compiler.execution.strategy=in-process --max-workers=1
 
       - name: Upload debug APK
-        if: ${{ !cancelled() && hashFiles('mojing/android/app/build/outputs/apk/debug/*.apk') != '' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && hashFiles('mojing/android/app/build/outputs/apk/debug/*.apk') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: mojing-debug
           path: mojing/android/app/build/outputs/apk/debug/*.apk
 
       - name: Upload optimized CI test APK
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: mojing-ci-test-not-for-upgrade

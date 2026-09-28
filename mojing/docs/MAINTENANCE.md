@@ -196,7 +196,7 @@ node mojing/frontend/scripts/generate-brand-assets.mjs
 
 `tests/test_android_unified_world_schema.py` 使用独立 SQLite 检查 Room 19→20 的新增表、重复执行、原表结构、外键与完整性。`PromoteWorldTemplateUseCaseInstrumentedTest` 覆盖本地归入、条目复制与重复操作；设备运行应使用隔离应用数据。
 
-GitHub Actions 的优化测试包命名为 `mojing-ci-test-not-for-upgrade`。正式交付 APK 使用本机签名配置构建，构建完成后检查包内版本和签名。
+GitHub Actions 在 Android 源码的日常 push 和 PR 上只运行 JVM 单元测试；需要测试包时手动运行 `Android checks and optional APK build` 工作流，才会构建并上传 Debug 与优化测试 APK。优化测试包命名为 `mojing-ci-test-not-for-upgrade`。正式交付 APK 使用本机签名配置构建，构建完成后检查包内版本和签名。
 
 ### 小说章节与搜索阅读
 
