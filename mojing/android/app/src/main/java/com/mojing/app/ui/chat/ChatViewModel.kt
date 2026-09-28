@@ -192,6 +192,7 @@ class ChatViewModel @Inject constructor(
         const val MESSAGE_PAGE_SIZE = 40
         const val BOOKMARK_PAGE_SIZE = 40
         const val MEMORY_SEGMENT_PAGE_SIZE = 16
+        const val EVENT_NODE_PAGE_SIZE = 24
         const val MAX_MESSAGE_WINDOW_SIZE = 200
         const val SEARCH_RESULT_LIMIT = 100
         const val MODEL_CONTEXT_MESSAGE_LIMIT = 400
@@ -885,7 +886,11 @@ class ChatViewModel @Inject constructor(
         }
         val memoryPage = memorySegmentDao.getRecentForBranch(sessionId, initialBranchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
         val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, initialBranchId)
-        val eventNodes = eventNodeDao.getForBranch(sessionId, initialBranchId)
+        val eventPage = eventNodeDao.getPageForBranch(
+            sessionId = sessionId,
+            branchId = initialBranchId,
+            limit = EVENT_NODE_PAGE_SIZE + 1,
+        )
         val initialRows = getMessageTailForBranch(initialBranchId, INITIAL_MESSAGE_WINDOW_SIZE + 1)
         val hasOlderMessages = initialRows.size > INITIAL_MESSAGE_WINDOW_SIZE
         val msgs = initialRows.take(INITIAL_MESSAGE_WINDOW_SIZE).asReversed()
@@ -920,7 +925,11 @@ class ChatViewModel @Inject constructor(
             memorySegmentsHasMore = memoryPage.size > MEMORY_SEGMENT_PAGE_SIZE,
             memorySegmentsLoadingMore = false,
             memorySegmentsLoadError = null,
-            eventNodes = eventNodes, branches = branches,
+            eventNodes = eventPage.take(EVENT_NODE_PAGE_SIZE),
+            eventNodesHasMore = eventPage.size > EVENT_NODE_PAGE_SIZE,
+            eventNodesLoadingMore = false,
+            eventNodesLoadError = null,
+            branches = branches,
             memoryCorrections = memoryCorrections,
             currentBranchId = initialBranchId,
             roundChoiceOptions = roundChoices.options,
@@ -1542,44 +1551,57 @@ class ChatViewModel @Inject constructor(
         val encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world)
         val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, branchId)
         val roundChoices = buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
-        val events = eventNodeDao.getForBranch(sessionId, branchId)
+        val eventPage = eventNodeDao.getPageForBranch(
+            sessionId = sessionId,
+            branchId = branchId,
+            limit = EVENT_NODE_PAGE_SIZE + 1,
+        )
         bookmarkMutex.withLock {
             val bookmarkIds = bookmarkedIdsForWindow(msgs)
             memorySummaryListRevision.incrementAndGet()
-            _state.update { current -> current.copy(
-            messages = msgs,
-            excludedContextKeys = excludedKeys,
-            displayLines = msgs.toChatDisplayLines(),
-            hasOlderMessages = hasOlderMessages,
-            hasNewerMessages = anchor != null && afterRows.size > radius,
-            isLoadingHistory = false,
-            focusedMessageId = anchor?.id,
-            searchResults = emptyList(),
-            isSearchingMessages = false,
-            messageAttachments = map,
-            bookmarkedMessageIds = bookmarkIds,
-            branches = branches,
-            branchSourcePreviews = sourcePreviews,
-            currentBranchId = branchId,
-            contextMemoryText = contextMemoryText,
-            contextMemoryStatus = if (current.currentBranchId == branchId) current.contextMemoryStatus else ContextMemoryStatus.IDLE,
-            encyclopediaFoundation = encyclopediaFoundation,
-            memorySegments = memoryPage.take(MEMORY_SEGMENT_PAGE_SIZE),
-            memorySegmentsHasMore = memoryPage.size > MEMORY_SEGMENT_PAGE_SIZE,
-            memorySegmentsLoadingMore = false,
-            memorySegmentsLoadError = null,
-            memoryCorrections = if (current.currentBranchId != branchId || correctionRefreshRevision.get() == correctionRevision)
-                memoryCorrections else current.memoryCorrections,
-            roundChoiceOptions = roundChoices.options,
-            roundChoiceMessageId = roundChoices.sourceMessageId,
-            branchAnchorsByMessageId = anchors,
-            eventNodes = if (current.currentBranchId != branchId || eventRefreshRevision.get() == eventRevision) events else current.eventNodes,
-            allowSessionThinkMax = secureStorage.allowSessionThinkMax,
-            sessionThinkMaxEnabled = sess?.thinkMaxEnabled == true,
-            characterForcesThinkMax = firstChar?.thinkMaxEnabled == true,
-            displayContextTokenLimit = displayCap,
-            conversationTokenEstimate = convEst,
-            ) }
+            _state.update { current ->
+                val applyEventPage = current.currentBranchId != branchId ||
+                    eventRefreshRevision.get() == eventRevision
+                current.copy(
+                    messages = msgs,
+                    excludedContextKeys = excludedKeys,
+                    displayLines = msgs.toChatDisplayLines(),
+                    hasOlderMessages = hasOlderMessages,
+                    hasNewerMessages = anchor != null && afterRows.size > radius,
+                    isLoadingHistory = false,
+                    focusedMessageId = anchor?.id,
+                    searchResults = emptyList(),
+                    isSearchingMessages = false,
+                    messageAttachments = map,
+                    bookmarkedMessageIds = bookmarkIds,
+                    branches = branches,
+                    branchSourcePreviews = sourcePreviews,
+                    currentBranchId = branchId,
+                    contextMemoryText = contextMemoryText,
+                    contextMemoryStatus = if (current.currentBranchId == branchId) current.contextMemoryStatus else ContextMemoryStatus.IDLE,
+                    encyclopediaFoundation = encyclopediaFoundation,
+                    memorySegments = memoryPage.take(MEMORY_SEGMENT_PAGE_SIZE),
+                    memorySegmentsHasMore = memoryPage.size > MEMORY_SEGMENT_PAGE_SIZE,
+                    memorySegmentsLoadingMore = false,
+                    memorySegmentsLoadError = null,
+                    memoryCorrections = if (current.currentBranchId != branchId || correctionRefreshRevision.get() == correctionRevision)
+                        memoryCorrections else current.memoryCorrections,
+                    roundChoiceOptions = roundChoices.options,
+                    roundChoiceMessageId = roundChoices.sourceMessageId,
+                    branchAnchorsByMessageId = anchors,
+                    eventNodes = if (applyEventPage)
+                        eventPage.take(EVENT_NODE_PAGE_SIZE) else current.eventNodes,
+                    eventNodesHasMore = if (applyEventPage)
+                        eventPage.size > EVENT_NODE_PAGE_SIZE else current.eventNodesHasMore,
+                    eventNodesLoadingMore = if (applyEventPage) false else current.eventNodesLoadingMore,
+                    eventNodesLoadError = if (applyEventPage) null else current.eventNodesLoadError,
+                    allowSessionThinkMax = secureStorage.allowSessionThinkMax,
+                    sessionThinkMaxEnabled = sess?.thinkMaxEnabled == true,
+                    characterForcesThinkMax = firstChar?.thinkMaxEnabled == true,
+                    displayContextTokenLimit = displayCap,
+                    conversationTokenEstimate = convEst,
+                )
+            }
         }
     }
 
@@ -3985,11 +4007,68 @@ class ChatViewModel @Inject constructor(
     private suspend fun refreshEventNodesForBranch(branchId: String, reportFailure: Boolean = false) {
         val revision = eventRefreshRevision.incrementAndGet()
         try {
-            val events = eventNodeDao.getForBranch(sessionId, branchId)
-            _state.update { if (it.currentBranchId == branchId && eventRefreshRevision.get() == revision) it.copy(eventNodes = events) else it }
+            val requestedSize = _state.value.takeIf { it.currentBranchId == branchId }
+                ?.eventNodes?.size?.coerceAtLeast(EVENT_NODE_PAGE_SIZE) ?: EVENT_NODE_PAGE_SIZE
+            val page = eventNodeDao.getPageForBranch(
+                sessionId = sessionId,
+                branchId = branchId,
+                limit = requestedSize + 1,
+            )
+            _state.update {
+                if (it.currentBranchId == branchId && eventRefreshRevision.get() == revision) it.copy(
+                    eventNodes = page.take(requestedSize),
+                    eventNodesHasMore = page.size > requestedSize,
+                    eventNodesLoadingMore = false,
+                    eventNodesLoadError = null,
+                ) else it
+            }
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) {
-            if (reportFailure) _state.update { if (it.currentBranchId == branchId && eventRefreshRevision.get() == revision) it.copy(error = "修改已保存，事件列表刷新失败，可重新进入当前故事线") else it }
+            _state.update {
+                if (it.currentBranchId == branchId && eventRefreshRevision.get() == revision) it.copy(
+                    eventNodesLoadingMore = false,
+                    error = if (reportFailure) "修改已保存，事件列表刷新失败，可重新进入当前故事线" else it.error,
+                ) else it
+            }
+        }
+    }
+
+    fun loadMoreEventNodes() {
+        val current = _state.value
+        if (!current.isReady || !current.eventNodesHasMore || current.eventNodesLoadingMore) return
+        val branchId = current.currentBranchId
+        val tail = current.eventNodes.lastOrNull() ?: return
+        val revision = eventRefreshRevision.get()
+        _state.update { it.copy(eventNodesLoadingMore = true, eventNodesLoadError = null) }
+        viewModelScope.launch {
+            try {
+                val page = eventNodeDao.getPageForBranch(
+                    sessionId = sessionId,
+                    branchId = branchId,
+                    beforeCreatedAt = tail.createdAt,
+                    beforeId = tail.id,
+                    limit = EVENT_NODE_PAGE_SIZE + 1,
+                )
+                _state.update { state ->
+                    if (eventRefreshRevision.get() != revision || state.currentBranchId != branchId ||
+                        state.eventNodes.lastOrNull()?.id != tail.id) state
+                    else state.copy(
+                        eventNodes = (state.eventNodes + page.take(EVENT_NODE_PAGE_SIZE)).distinctBy { it.id },
+                        eventNodesHasMore = page.size > EVENT_NODE_PAGE_SIZE,
+                    )
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                _state.update { state ->
+                    if (eventRefreshRevision.get() == revision && state.currentBranchId == branchId)
+                        state.copy(eventNodesLoadError = "较早事件读取失败，请重试") else state
+                }
+            } finally {
+                _state.update { state ->
+                    if (eventRefreshRevision.get() == revision && state.currentBranchId == branchId)
+                        state.copy(eventNodesLoadingMore = false) else state
+                }
+            }
         }
     }
 

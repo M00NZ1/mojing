@@ -477,7 +477,7 @@ class ChatViewModelTest {
         val vm = createViewModel(memoryCorrectionDao = dao, eventNodeDao = events)
         advanceUntilIdle()
         val release = CompletableDeferred<List<SessionEventNodeEntity>>()
-        coEvery { events.getForBranch(42L, "main") } coAnswers { release.await() }
+        coEvery { events.getPageForBranch(42L, "main", null, null, any()) } coAnswers { release.await() }
         vm.switchBranch("main")
         runCurrent()
         corrections = listOf(SessionMemoryCorrectionEntity(sessionId = 42, content = "已保存的新纠正"))
@@ -813,7 +813,7 @@ class ChatViewModelTest {
             assertEquals(null, vm.state.value.initialLoadError)
             coVerify(exactly = 0) { messages.getVisibleMessagesTail(42L, "branch-1", any()) }
             coVerify(exactly = 0) { memorySegments.getRecentForBranch(42L, "branch-1", any()) }
-            coVerify(exactly = 0) { eventNodes.getForBranch(42L, "branch-1") }
+            coVerify(exactly = 0) { eventNodes.getPageForBranch(42L, "branch-1", null, null, any()) }
 
             repairFinished.complete(Unit)
             advanceUntilIdle()
@@ -821,7 +821,7 @@ class ChatViewModelTest {
             assertTrue(vm.state.value.isReady)
             coVerify(exactly = 1) { messages.getVisibleMessagesTail(42L, "branch-1", any()) }
             coVerify(exactly = 1) { memorySegments.getRecentForBranch(42L, "branch-1", any()) }
-            coVerify(exactly = 1) { eventNodes.getForBranch(42L, "branch-1") }
+            coVerify(exactly = 1) { eventNodes.getPageForBranch(42L, "branch-1", null, null, any()) }
         }
 
     @Test
@@ -2633,7 +2633,7 @@ class ChatViewModelTest {
     @Test fun eventWriteBlocksDuplicateActionsAndRetainsFailureForRetry() = runTest(testDispatcher) {
         val events = mockk<SessionEventNodeDao>(relaxed = true)
         val source = SessionEventNodeEntity(id = 1, sessionId = 42, title = "事件")
-        coEvery { events.getForBranch(42, "main") } returns listOf(source)
+        coEvery { events.getPageForBranch(42, "main", null, null, any()) } returns listOf(source)
         val gate = CompletableDeferred<Unit>()
         coEvery { events.deleteById(1) } coAnswers { gate.await(); throw IllegalStateException("write failed") }
         val vm = createViewModel(eventNodeDao = events)
@@ -2651,17 +2651,69 @@ class ChatViewModelTest {
         assertNotNull(vm.state.value.eventActionErrors[1])
         assertEquals(listOf(source), vm.state.value.eventNodes)
         coEvery { events.deleteById(1) } returns Unit
-        coEvery { events.getForBranch(42, "main") } returns emptyList()
+        coEvery { events.getPageForBranch(42, "main", null, null, any()) } returns emptyList()
         vm.deleteEventNode(1)
         advanceUntilIdle()
         assertTrue(vm.state.value.eventActionErrors.isEmpty())
         assertTrue(vm.state.value.eventNodes.isEmpty())
     }
 
+    @Test fun eventTimelineLoadsBoundedPagesWithStableCursor() = runTest(testDispatcher) {
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        val first = (100L downTo 76L).map { id ->
+            SessionEventNodeEntity(id = id, sessionId = 42L, title = "事件$id", createdAt = id)
+        }
+        val older = (76L downTo 52L).map { id ->
+            SessionEventNodeEntity(id = id, sessionId = 42L, title = "事件$id", createdAt = id)
+        }
+        coEvery { events.getPageForBranch(42L, "main", null, null, 25) } returns first
+        coEvery { events.getPageForBranch(42L, "main", 77L, 77L, 25) } returns older
+
+        val vm = createViewModel(eventNodeDao = events)
+        advanceUntilIdle()
+
+        assertEquals((100L downTo 77L).toList(), vm.state.value.eventNodes.map { it.id })
+        assertTrue(vm.state.value.eventNodesHasMore)
+        vm.loadMoreEventNodes()
+        advanceUntilIdle()
+
+        assertEquals((100L downTo 53L).toList(), vm.state.value.eventNodes.map { it.id })
+        assertTrue(vm.state.value.eventNodesHasMore)
+        assertFalse(vm.state.value.eventNodesLoadingMore)
+        assertEquals(null, vm.state.value.eventNodesLoadError)
+    }
+
+    @Test fun eventTimelineKeepsLoadedPageWhenOlderReadFailsAndCanRetry() = runTest(testDispatcher) {
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        val first = (30L downTo 6L).map { id ->
+            SessionEventNodeEntity(id = id, sessionId = 42L, title = "事件$id", createdAt = id)
+        }
+        coEvery { events.getPageForBranch(42L, "main", null, null, 25) } returns first
+        coEvery { events.getPageForBranch(42L, "main", 7L, 7L, 25) } throws
+            IllegalStateException("read failed") andThen listOf(
+                SessionEventNodeEntity(id = 6L, sessionId = 42L, title = "事件6", createdAt = 6L),
+            )
+        val vm = createViewModel(eventNodeDao = events)
+        advanceUntilIdle()
+        val loaded = vm.state.value.eventNodes
+
+        vm.loadMoreEventNodes()
+        advanceUntilIdle()
+        assertEquals(loaded, vm.state.value.eventNodes)
+        assertTrue(vm.state.value.eventNodesHasMore)
+        assertEquals("较早事件读取失败，请重试", vm.state.value.eventNodesLoadError)
+
+        vm.loadMoreEventNodes()
+        advanceUntilIdle()
+        assertEquals((30L downTo 6L).toList(), vm.state.value.eventNodes.map { it.id })
+        assertFalse(vm.state.value.eventNodesHasMore)
+        assertEquals(null, vm.state.value.eventNodesLoadError)
+    }
+
     @Test fun inheritedEventsCannotModifyTheirSourceFromAnotherStoryline() = runTest(testDispatcher) {
         val events = mockk<SessionEventNodeDao>(relaxed = true)
         val source = SessionEventNodeEntity(id = 1, sessionId = 42, branchId = "source", title = "继承事件")
-        coEvery { events.getForBranch(42, "main") } returns listOf(source)
+        coEvery { events.getPageForBranch(42, "main", null, null, any()) } returns listOf(source)
         val vm = createViewModel(eventNodeDao = events)
         advanceUntilIdle()
         vm.toggleEventNodeResolved(1)
@@ -2676,10 +2728,10 @@ class ChatViewModelTest {
     @Test fun eventStatusUsesCurrentStorylineAndKeepsSavedStateIfReadbackFails() = runTest(testDispatcher) {
         val events = mockk<SessionEventNodeDao>(relaxed = true)
         val source = SessionEventNodeEntity(id = 1, sessionId = 42, title = "当前线事件")
-        coEvery { events.getForBranch(42, "main") } returns listOf(source)
+        coEvery { events.getPageForBranch(42, "main", null, null, any()) } returns listOf(source)
         val vm = createViewModel(eventNodeDao = events)
         advanceUntilIdle()
-        coEvery { events.getForBranch(42, "main") } throws IllegalStateException("read failed")
+        coEvery { events.getPageForBranch(42, "main", null, null, any()) } throws IllegalStateException("read failed")
         vm.toggleEventNodeResolved(1)
         advanceUntilIdle()
         assertTrue(vm.state.value.eventNodes.single().resolved)
@@ -2694,13 +2746,13 @@ class ChatViewModelTest {
         val branches = mockk<SessionBranchDao>(relaxed = true)
         val source = SessionEventNodeEntity(id = 1, sessionId = 42, title = "主线事件")
         val other = source.copy(id = 2, branchId = "B", title = "分支事件")
-        coEvery { events.getForBranch(42, "main") } returns listOf(source)
-        coEvery { events.getForBranch(42, "B") } returns listOf(other)
+        coEvery { events.getPageForBranch(42, "main", null, null, any()) } returns listOf(source)
+        coEvery { events.getPageForBranch(42, "B", null, null, any()) } returns listOf(other)
         coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId = 42, branchId = "B", sourceMessageId = 8))
         val vm = createViewModel(eventNodeDao = events, sessionBranchDao = branches)
         advanceUntilIdle()
         val reply = CompletableDeferred<List<SessionEventNodeEntity>>()
-        coEvery { events.getForBranch(42, "main") } coAnswers { reply.await() }
+        coEvery { events.getPageForBranch(42, "main", null, null, any()) } coAnswers { reply.await() }
         vm.toggleEventNodeResolved(1)
         runCurrent()
         vm.switchBranch("B")
@@ -2715,10 +2767,10 @@ class ChatViewModelTest {
     @Test fun deletingAnEventDoesNotLoadOtherStorylines() = runTest(testDispatcher) {
         val events = mockk<SessionEventNodeDao>(relaxed = true)
         val source = SessionEventNodeEntity(id = 1, sessionId = 42, title = "当前线事件")
-        coEvery { events.getForBranch(42, "main") } returns listOf(source)
+        coEvery { events.getPageForBranch(42, "main", null, null, any()) } returns listOf(source)
         val vm = createViewModel(eventNodeDao = events)
         advanceUntilIdle()
-        coEvery { events.getForBranch(42, "main") } returns emptyList()
+        coEvery { events.getPageForBranch(42, "main", null, null, any()) } returns emptyList()
         vm.deleteEventNode(1)
         advanceUntilIdle()
         assertTrue(vm.state.value.eventNodes.isEmpty())
@@ -2729,12 +2781,12 @@ class ChatViewModelTest {
     @Test fun lateEventRefreshCannotUndoANewerStatusChange() = runTest(testDispatcher) {
         val events = mockk<SessionEventNodeDao>(relaxed = true)
         val source = SessionEventNodeEntity(id = 1, sessionId = 42, title = "事件")
-        coEvery { events.getForBranch(42, "main") } returns listOf(source)
+        coEvery { events.getPageForBranch(42, "main", null, null, any()) } returns listOf(source)
         val vm = createViewModel(eventNodeDao = events)
         advanceUntilIdle()
         val older = CompletableDeferred<List<SessionEventNodeEntity>>()
         var reads = 0
-        coEvery { events.getForBranch(42, "main") } coAnswers { if (++reads == 1) older.await() else listOf(source) }
+        coEvery { events.getPageForBranch(42, "main", null, null, any()) } coAnswers { if (++reads == 1) older.await() else listOf(source) }
         vm.toggleEventNodeResolved(1)
         runCurrent()
         assertTrue(vm.state.value.eventNodes.single().resolved)

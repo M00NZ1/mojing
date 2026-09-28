@@ -40,4 +40,28 @@ class TimelineTabTest {
         rule.onNodeWithText("删除事件").performClick()
         rule.runOnIdle { assertEquals(listOf(7L), deleted) }
     }
+
+    @Test fun olderEventFailureKeepsLoadedRowsAndOffersRetry() {
+        var retries = 0
+        rule.setContent {
+            MaterialTheme {
+                Box(Modifier.width(300.dp)) {
+                    TimelineTab(
+                        events = listOf(SessionEventNodeEntity(id = 7L, sessionId = 1L, title = "已加载事件")),
+                        onToggleResolved = {},
+                        onDelete = {},
+                        onJumpToSource = {},
+                        hasOlderEvents = true,
+                        olderEventsError = "较早事件读取失败，请重试",
+                        onLoadOlderEvents = { retries++ },
+                    )
+                }
+            }
+        }
+
+        rule.onNodeWithText("已加载事件").assertIsDisplayed()
+        rule.onNodeWithText("较早事件读取失败，请重试").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithText("重试加载较早事件").performScrollTo().performClick()
+        rule.runOnIdle { assertEquals(1, retries) }
+    }
 }

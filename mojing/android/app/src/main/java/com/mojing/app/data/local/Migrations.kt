@@ -505,4 +505,13 @@ object Migrations {
         }
     }
 
+    val MIGRATION_23_24 = object : Migration(23, 24) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_session_event_nodes_sessionId_branchId_createdAt_id " +
+                    "ON session_event_nodes (sessionId, branchId, createdAt, id)",
+            )
+        }
+    }
+
 }

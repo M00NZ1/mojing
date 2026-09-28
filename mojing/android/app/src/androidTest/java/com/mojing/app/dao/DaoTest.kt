@@ -145,6 +145,34 @@ class MessageDaoTest {
         assertTrue(messageDao.commitDerivedEvents(sid, "main", listOf(source), listOf(valid.copy(title = "旧模型结果"))).isEmpty())
     }
 
+    @Test fun eventNodesUseStableCreatedAtAndIdCursorPages() = runBlocking {
+        val sessionId = sessionDao.insert(SessionEntity(title = "事件分页"))
+        val dao = db.sessionEventNodeDao()
+        val inserted = listOf(300L, 300L, 200L, 100L, 100L).mapIndexed { index, createdAt ->
+            dao.insert(
+                SessionEventNodeEntity(
+                    sessionId = sessionId,
+                    title = "事件$index",
+                    createdAt = createdAt,
+                ),
+            )
+        }
+
+        val first = dao.getPageForBranch(sessionId, "main", limit = 3)
+        val cursor = first.last()
+        val second = dao.getPageForBranch(
+            sessionId = sessionId,
+            branchId = "main",
+            beforeCreatedAt = cursor.createdAt,
+            beforeId = cursor.id,
+            limit = 3,
+        )
+
+        assertEquals(listOf(inserted[1], inserted[0], inserted[2]), first.map { it.id })
+        assertEquals(listOf(inserted[4], inserted[3]), second.map { it.id })
+        assertEquals(inserted.toSet(), (first + second).map { it.id }.toSet())
+    }
+
     @Test
     fun recallRejectsReferencedMediaBeforeAnyOriginalOrAttachmentIsRemoved() = runBlocking {
         val sessionId = sessionDao.insert(SessionEntity(title = "来源保护"))

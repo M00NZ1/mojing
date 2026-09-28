@@ -8,7 +8,12 @@ import androidx.room.PrimaryKey
 @Entity(
     tableName = "session_event_nodes",
     foreignKeys = [ForeignKey(SessionEntity::class, ["id"], ["sessionId"], ForeignKey.CASCADE)],
-    indices = [Index("sessionId"), Index("branchId"), Index("characterId")]
+    indices = [
+        Index("sessionId"),
+        Index("branchId"),
+        Index("characterId"),
+        Index(value = ["sessionId", "branchId", "createdAt", "id"]),
+    ]
 )
 data class SessionEventNodeEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

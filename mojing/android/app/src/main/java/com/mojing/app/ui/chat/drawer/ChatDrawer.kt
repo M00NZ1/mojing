@@ -50,6 +50,10 @@ fun ChatDrawer(
     currentBranchId: String = "main",
     isGenerating: Boolean = false,
     eventNodes: List<SessionEventNodeEntity> = emptyList(),
+    eventNodesHasMore: Boolean = false,
+    eventNodesLoadingMore: Boolean = false,
+    eventNodesLoadError: String? = null,
+    onLoadMoreEventNodes: () -> Unit = {},
     eventBusyIds: Set<Long> = emptySet(),
     eventActionErrors: Map<Long, String> = emptyMap(),
     characterNames: Map<Long, String> = emptyMap(),
@@ -172,6 +176,10 @@ fun ChatDrawer(
                 busyIds = eventBusyIds,
                 actionErrors = eventActionErrors,
                 currentBranchId = currentBranchId,
+                hasOlderEvents = eventNodesHasMore,
+                olderEventsLoading = eventNodesLoadingMore,
+                olderEventsError = eventNodesLoadError,
+                onLoadOlderEvents = onLoadMoreEventNodes,
             )
             4 -> BookmarksTab(
                 bookmarks, bookmarkPreviews, onJumpToBookmark, onRemoveBookmark,
@@ -939,6 +947,10 @@ fun TimelineTab(
     busyIds: Set<Long> = emptySet(),
     actionErrors: Map<Long, String> = emptyMap(),
     currentBranchId: String = "main",
+    hasOlderEvents: Boolean = false,
+    olderEventsLoading: Boolean = false,
+    olderEventsError: String? = null,
+    onLoadOlderEvents: () -> Unit = {},
 ) {
     var deleteTarget by remember(currentBranchId) { mutableStateOf<Long?>(null) }
     var selectedFilter by remember(currentBranchId) { mutableStateOf(0) }
@@ -966,15 +978,22 @@ fun TimelineTab(
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)
             .horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("全部 ${events.size}", "待跟进 ${events.count { !it.resolved }}", "已解决 ${events.count { it.resolved }}").forEachIndexed { index, label ->
+            val moreMark = if (hasOlderEvents) "+" else ""
+            listOf("全部 ${events.size}$moreMark", "待跟进 ${events.count { !it.resolved }}$moreMark", "已解决 ${events.count { it.resolved }}$moreMark").forEachIndexed { index, label ->
                 FilterChip(selected = selectedFilter == index, onClick = { selectedFilter = index }, label = { Text(label) })
             }
         }
         HorizontalDivider()
     if (visibleEvents.isEmpty()) {
-        Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-            Text(if (events.isEmpty()) "当前故事线暂无事件。对话推进后会自动整理，可从事件返回原文。" else "当前分类暂无事件，可切换分类查看。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+            Text(
+                if (events.isEmpty()) "当前故事线暂无事件。对话推进后会自动整理，可从事件返回原文。"
+                else if (hasOlderEvents) "当前已加载范围暂无此类事件，可继续加载较早事件。"
+                else "当前分类暂无事件，可切换分类查看。",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
+        EventPaginationFooter(hasOlderEvents, olderEventsLoading, olderEventsError, onLoadOlderEvents)
     } else {
         androidx.compose.runtime.key(currentBranchId, selectedFilter) {
         LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -1034,9 +1053,42 @@ fun TimelineTab(
                     HorizontalDivider(Modifier.padding(horizontal = 16.dp))
                 }
             }
+            item(key = "event-pagination") {
+                EventPaginationFooter(hasOlderEvents, olderEventsLoading, olderEventsError, onLoadOlderEvents)
+            }
         }
         }
     }
+    }
+}
+
+@Composable
+private fun EventPaginationFooter(
+    hasOlderEvents: Boolean,
+    loading: Boolean,
+    error: String?,
+    onLoadOlderEvents: () -> Unit,
+) {
+    if (!hasOlderEvents && !loading && error == null) return
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (loading) {
+            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+            Text("正在加载较早事件…", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            error?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            if (hasOlderEvents) {
+                TextButton(onClick = onLoadOlderEvents, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(if (error == null) "继续加载较早事件" else "重试加载较早事件")
+                }
+            }
+        }
     }
 }
 

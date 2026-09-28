@@ -47,6 +47,79 @@ interface SessionEventNodeDao {
         if (branchId == "main") getBySessionAndBranch(sessionId, branchId)
         else getVisibleForBranch(sessionId, branchId)
 
+    @Query("SELECT * FROM session_event_nodes WHERE sessionId = :sessionId AND branchId = :branchId ORDER BY createdAt DESC, id DESC LIMIT :limit")
+    suspend fun getRecentBySessionAndBranch(
+        sessionId: Long,
+        branchId: String,
+        limit: Int,
+    ): List<SessionEventNodeEntity>
+
+    @Query("""
+        SELECT * FROM session_event_nodes
+        WHERE sessionId = :sessionId
+          AND branchId = :branchId
+          AND (createdAt < :beforeCreatedAt OR (createdAt = :beforeCreatedAt AND id < :beforeId))
+        ORDER BY createdAt DESC, id DESC
+        LIMIT :limit
+    """)
+    suspend fun getOlderBySessionAndBranch(
+        sessionId: Long,
+        branchId: String,
+        beforeCreatedAt: Long,
+        beforeId: Long,
+        limit: Int,
+    ): List<SessionEventNodeEntity>
+
+    @Query("$VISIBLE_EVENT_NODES_QUERY ORDER BY event.createdAt DESC, event.id DESC LIMIT :limit")
+    suspend fun getRecentVisibleForBranch(
+        sessionId: Long,
+        branchId: String,
+        limit: Int,
+    ): List<SessionEventNodeEntity>
+
+    @Query("""
+        $VISIBLE_EVENT_NODES_QUERY
+          AND (event.createdAt < :beforeCreatedAt OR (event.createdAt = :beforeCreatedAt AND event.id < :beforeId))
+        ORDER BY event.createdAt DESC, event.id DESC
+        LIMIT :limit
+    """)
+    suspend fun getOlderVisibleForBranch(
+        sessionId: Long,
+        branchId: String,
+        beforeCreatedAt: Long,
+        beforeId: Long,
+        limit: Int,
+    ): List<SessionEventNodeEntity>
+
+    suspend fun getPageForBranch(
+        sessionId: Long,
+        branchId: String,
+        beforeCreatedAt: Long? = null,
+        beforeId: Long? = null,
+        limit: Int,
+    ): List<SessionEventNodeEntity> = when {
+        branchId == "main" && beforeCreatedAt == null ->
+            getRecentBySessionAndBranch(sessionId, branchId, limit)
+        branchId == "main" ->
+            getOlderBySessionAndBranch(
+                sessionId,
+                branchId,
+                requireNotNull(beforeCreatedAt),
+                requireNotNull(beforeId),
+                limit,
+            )
+        beforeCreatedAt == null ->
+            getRecentVisibleForBranch(sessionId, branchId, limit)
+        else ->
+            getOlderVisibleForBranch(
+                sessionId,
+                branchId,
+                requireNotNull(beforeCreatedAt),
+                requireNotNull(beforeId),
+                limit,
+            )
+    }
+
     @Query("UPDATE session_event_nodes SET resolved = NOT resolved WHERE id = :id")
     suspend fun toggleResolved(id: Long)
 
