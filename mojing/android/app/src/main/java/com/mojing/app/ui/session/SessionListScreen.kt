@@ -139,8 +139,13 @@ fun SessionListScreen(
     var showCreateDialog by rememberSaveable { mutableStateOf(false) }
     var creationRequestId by rememberSaveable { mutableStateOf("") }
     var newSessionFormEdited by rememberSaveable { mutableStateOf(false) }
+    var suspendedNewSessionDraft by rememberSaveable { mutableStateOf(false) }
     var confirmDiscardNewSession by rememberSaveable { mutableStateOf(false) }
-    var discardThenOpenCharacters by rememberSaveable { mutableStateOf(false) }
+    var replacementTemplateId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var characterIdsBeforeCreation by rememberSaveable(stateSaver = Saver<Set<Long>, ArrayList<Long>>(
+        save = { ArrayList(it) }, restore = { it.toSet() },
+    )) { mutableStateOf<Set<Long>>(emptySet()) }
+    var selectNewCharacterOnNextLoad by rememberSaveable { mutableStateOf(false) }
     var pendingTemplateId by rememberSaveable { mutableStateOf<Long?>(null) }
     var dialogLoadRequestVersion by rememberSaveable { mutableIntStateOf(0) }
     var resetDialogFormOnNextLoad by rememberSaveable { mutableStateOf(true) }
@@ -173,11 +178,21 @@ fun SessionListScreen(
         (sessions.isNotEmpty() || guideDismissed != null)
 
     fun openNewSessionDialog(templateId: Long? = null) {
+        if (suspendedNewSessionDraft && templateId == null) {
+            suspendedNewSessionDraft = false
+            dialogDataReady = false
+            dialogLoadRequestVersion += 1
+            showCreateDialog = true
+            return
+        }
         pendingTemplateId = templateId
         creationRequestId = UUID.randomUUID().toString()
         newSessionFormEdited = false
+        suspendedNewSessionDraft = false
         confirmDiscardNewSession = false
-        discardThenOpenCharacters = false
+        replacementTemplateId = null
+        characterIdsBeforeCreation = emptySet()
+        selectNewCharacterOnNextLoad = false
         resetDialogFormOnNextLoad = true
         worldSelectionInitialized = false
         dialogDataReady = false
@@ -190,8 +205,11 @@ fun SessionListScreen(
         pendingTemplateId = null
         creationRequestId = ""
         newSessionFormEdited = false
+        suspendedNewSessionDraft = false
         confirmDiscardNewSession = false
-        discardThenOpenCharacters = false
+        replacementTemplateId = null
+        characterIdsBeforeCreation = emptySet()
+        selectNewCharacterOnNextLoad = false
         resetDialogFormOnNextLoad = true
         isLoadingDialogData = false
         dialogLoadError = null
@@ -201,18 +219,23 @@ fun SessionListScreen(
         showCreateDialog = false
     }
 
-    fun requestCloseNewSessionDialog(openCharacters: Boolean = false) {
+    fun requestCloseNewSessionDialog() {
         when {
             isCreatingSession -> Toast.makeText(context, "正在创建对话，请稍候", Toast.LENGTH_SHORT).show()
-            newSessionFormEdited -> {
-                discardThenOpenCharacters = openCharacters
-                confirmDiscardNewSession = true
-            }
-            else -> {
-                closeNewSessionDialog()
-                if (openCharacters) onCharactersClick()
-            }
+            newSessionFormEdited -> confirmDiscardNewSession = true
+            else -> closeNewSessionDialog()
         }
+    }
+
+    fun suspendNewSessionForCharacters() {
+        if (isCreatingSession) return
+        characterIdsBeforeCreation = allBoundCharacters.map { it.id }.toSet()
+        selectNewCharacterOnNextLoad = true
+        suspendedNewSessionDraft = true
+        dialogDataReady = false
+        focusManager.clearFocus()
+        showCreateDialog = false
+        onCharactersClick()
     }
 
     LaunchedEffect(newSessionRequestId) {
@@ -224,7 +247,8 @@ fun SessionListScreen(
 
     LaunchedEffect(newSessionTemplateId) {
         newSessionTemplateId?.let { templateId ->
-            openNewSessionDialog(templateId)
+            if (suspendedNewSessionDraft) replacementTemplateId = templateId
+            else openNewSessionDialog(templateId)
             onNewSessionTemplateConsumed()
         }
     }
@@ -262,6 +286,18 @@ fun SessionListScreen(
                 if (initializeCharacterSelection) {
                     selectedCharacterIds = openingCharacterSelection(data.boundCharacters.map { it.id }.toSet(), null)
                     initializeCharacterSelection = false
+                }
+                if (selectNewCharacterOnNextLoad) {
+                    val available = data.boundCharacters.filter { character ->
+                        selectedEncId == null || character.boundEncyclopediaId <= 0L ||
+                            character.boundEncyclopediaId == selectedEncId
+                    }.map { it.id }.toSet()
+                    val newlyAvailable = available - characterIdsBeforeCreation
+                    if (selectedCharacterIds.isEmpty() && newlyAvailable.size == 1) {
+                        selectedCharacterIds = newlyAvailable
+                    }
+                    selectNewCharacterOnNextLoad = false
+                    characterIdsBeforeCreation = emptySet()
                 }
                 if (!worldSelectionInitialized) {
                     val initialTemplate = findRequestedWorldTemplate(data.templates, requestedTemplateId)
@@ -387,6 +423,29 @@ fun SessionListScreen(
                     onOpenSettings = onSettingsClick,
                     modifier = Modifier.padding(horizontal = MoJingListTokens.rowStart, vertical = 4.dp),
                 )
+            }
+            if (suspendedNewSessionDraft) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                ) {
+                    Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                        Text("新对话设定已保留", style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer)
+                        Text("角色准备好后，继续完成这次开局。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            TextButton(onClick = {
+                                if (newSessionFormEdited) confirmDiscardNewSession = true
+                                else closeNewSessionDialog()
+                            }) { Text("放弃设定") }
+                            TextButton(onClick = { openNewSessionDialog() }) { Text("继续设定") }
+                        }
+                    }
+                }
             }
 
             if (
@@ -741,7 +800,7 @@ fun SessionListScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     TextButton(
-                        onClick = { requestCloseNewSessionDialog(openCharacters = true) },
+                        onClick = { suspendNewSessionForCharacters() },
                         enabled = !isCreatingSession && !isLoadingDialogData,
                     ) {
                         Icon(Icons.Default.PersonAdd, contentDescription = null)
@@ -755,7 +814,7 @@ fun SessionListScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     TextButton(
-                        onClick = { requestCloseNewSessionDialog(openCharacters = true) },
+                        onClick = { suspendNewSessionForCharacters() },
                         enabled = !isCreatingSession && !isLoadingDialogData,
                     ) {
                         Icon(Icons.Default.PersonAdd, contentDescription = null)
@@ -951,21 +1010,34 @@ fun SessionListScreen(
             onSelectionChange = { selectedCharacterIds = it; newSessionFormEdited = true },
             onDismiss = { characterPickerOpen = false },
         )
-        if (confirmDiscardNewSession) AlertDialog(
-            onDismissRequest = { confirmDiscardNewSession = false },
-            title = { Text("放弃本次对话设定？") },
-            text = { Text("尚未创建对话，当前填写的标题和开局设定将被放弃。") },
+    }
+
+    if (confirmDiscardNewSession) AlertDialog(
+        onDismissRequest = { confirmDiscardNewSession = false },
+        title = { Text("放弃本次对话设定？") },
+        text = { Text("尚未创建对话，当前填写的标题和开局设定将被放弃。") },
+        confirmButton = {
+            TextButton(onClick = { closeNewSessionDialog() }) {
+                Text("放弃设定", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = { confirmDiscardNewSession = false }) { Text("继续编辑") } },
+    )
+
+    replacementTemplateId?.let { templateId ->
+        AlertDialog(
+            onDismissRequest = { replacementTemplateId = null },
+            title = { Text("改用所选世界开始新对话？") },
+            text = { Text("当前保留的开局设定将被放弃。也可以继续原设定，稍后在表单里选择世界。") },
             confirmButton = {
                 TextButton(onClick = {
-                    val openCharacters = discardThenOpenCharacters
                     closeNewSessionDialog()
-                    if (openCharacters) onCharactersClick()
-                }) {
-                    Text(if (discardThenOpenCharacters) "放弃并去创建角色" else "放弃设定",
-                        color = MaterialTheme.colorScheme.error)
-                }
+                    openNewSessionDialog(templateId)
+                }) { Text("重新开始", color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = { confirmDiscardNewSession = false }) { Text("继续编辑") } },
+            dismissButton = {
+                TextButton(onClick = { replacementTemplateId = null }) { Text("继续原设定") }
+            },
         )
     }
 
