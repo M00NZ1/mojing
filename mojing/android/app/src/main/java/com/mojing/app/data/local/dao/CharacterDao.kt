@@ -14,8 +14,82 @@ data class NewSessionCharacterOption(
     val createdAt: Long,
 )
 
+/** Only fields rendered by the character library; credentials and full prompts stay in Room. */
+data class CharacterListItem(
+    val id: Long,
+    val name: String,
+    val personaPreview: String,
+    val avatarColor: String,
+    val avatarImagePath: String,
+    val cardImagePath: String,
+    val boundEncyclopediaId: Long,
+    val pinnedAt: Long,
+    val favorite: Boolean,
+    val createdAt: Long,
+)
+
 @Dao
 interface CharacterDao {
+    @Query(
+        """
+        SELECT id, name, substr(personaPrompt, 1, 72) AS personaPreview,
+               avatarColor, avatarImagePath, cardImagePath, boundEncyclopediaId,
+               pinnedAt, favorite, createdAt
+        FROM characters
+        WHERE (:encyclopediaId IS NULL OR boundEncyclopediaId = :encyclopediaId)
+          AND (:cursorId IS NULL OR
+               (CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) < :cursorPinned OR
+               ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND pinnedAt < :cursorPinnedAt) OR
+               ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND pinnedAt = :cursorPinnedAt AND favorite < :cursorFavorite) OR
+               ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND pinnedAt = :cursorPinnedAt AND favorite = :cursorFavorite AND createdAt < :cursorCreatedAt) OR
+               ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND pinnedAt = :cursorPinnedAt AND favorite = :cursorFavorite AND createdAt = :cursorCreatedAt AND id < :cursorId))
+        ORDER BY CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END DESC, pinnedAt DESC, favorite DESC, createdAt DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getLibraryRecommendedPage(
+        encyclopediaId: Long?, cursorPinned: Int?, cursorPinnedAt: Long?, cursorFavorite: Boolean?,
+        cursorCreatedAt: Long?, cursorId: Long?, limit: Int,
+    ): List<CharacterListItem>
+
+    @Query(
+        """
+        SELECT id, name, substr(personaPrompt, 1, 72) AS personaPreview,
+               avatarColor, avatarImagePath, cardImagePath, boundEncyclopediaId,
+               pinnedAt, favorite, createdAt
+        FROM characters
+        WHERE (:encyclopediaId IS NULL OR boundEncyclopediaId = :encyclopediaId)
+          AND (:cursorId IS NULL OR
+               (CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) < :cursorPinned OR
+               ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND createdAt < :cursorCreatedAt) OR
+               ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND createdAt = :cursorCreatedAt AND id < :cursorId))
+        ORDER BY CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END DESC, createdAt DESC, id DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getLibraryRecentPage(
+        encyclopediaId: Long?, cursorPinned: Int?, cursorCreatedAt: Long?, cursorId: Long?, limit: Int,
+    ): List<CharacterListItem>
+
+    @Query(
+        """
+        SELECT id, name, substr(personaPrompt, 1, 72) AS personaPreview,
+               avatarColor, avatarImagePath, cardImagePath, boundEncyclopediaId,
+               pinnedAt, favorite, createdAt
+        FROM characters
+        WHERE (:encyclopediaId IS NULL OR boundEncyclopediaId = :encyclopediaId)
+          AND (:cursorId IS NULL OR
+               (CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) < :cursorPinned OR
+               ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND trim(name) COLLATE LOCALIZED > trim(:cursorName) COLLATE LOCALIZED) OR
+               ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND trim(name) COLLATE LOCALIZED = trim(:cursorName) COLLATE LOCALIZED AND id > :cursorId))
+        ORDER BY CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END DESC, trim(name) COLLATE LOCALIZED ASC, id ASC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getLibraryNamePage(
+        encyclopediaId: Long?, cursorPinned: Int?, cursorName: String?, cursorId: Long?, limit: Int,
+    ): List<CharacterListItem>
+
     @Query("SELECT * FROM characters ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, favorite DESC, createdAt DESC, id DESC")
     fun observeAll(): Flow<List<CharacterEntity>>
 

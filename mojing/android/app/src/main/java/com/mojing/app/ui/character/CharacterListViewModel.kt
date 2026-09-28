@@ -3,8 +3,10 @@ package com.mojing.app.ui.character
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.local.dao.CharacterDao
+import com.mojing.app.data.local.dao.CharacterListItem
 import com.mojing.app.data.local.dao.CharacterProfileDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
+import com.mojing.app.data.local.dao.EncyclopediaNameOption
 import com.mojing.app.data.local.dao.EncyclopediaEntryDao
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.CharacterProfileEntity
@@ -23,21 +25,28 @@ import com.google.gson.JsonParser
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import kotlin.text.Charsets
 
-internal fun CharacterDao.observeForCharacterFilter(filterEncyclopediaId: Long?): Flow<List<CharacterEntity>> =
-    if (filterEncyclopediaId == null) observeAll() else observeByEncyclopedia(filterEncyclopediaId)
+enum class CharacterLibrarySort { RECOMMENDED, RECENT, NAME }
+
+data class CharacterLibraryPage(
+    val items: List<CharacterListItem> = emptyList(),
+    val pageIndex: Int = 0,
+    val hasNext: Boolean = false,
+    val loading: Boolean = true,
+    val error: String? = null,
+)
+
+private const val CHARACTER_LIBRARY_PAGE_SIZE = 40
 
 internal fun newCharacterDraft(encyclopediaId: Long = 0L): CharacterEntity =
     CharacterEntity(name = "新角色", boundEncyclopediaId = encyclopediaId)
@@ -199,7 +208,6 @@ internal object CharacterExportCodec {
     private fun JsonObject.boolean(name: String): Boolean =
         get(name)?.takeIf { it.isJsonPrimitive && !it.isJsonNull }?.asBoolean == true
 }
-@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class CharacterListViewModel @Inject constructor(
     private val characterDao: CharacterDao,
@@ -217,8 +225,10 @@ class CharacterListViewModel @Inject constructor(
     private val _filterEncyclopediaId = MutableStateFlow<Long?>(null)
     val filterEncyclopediaId: StateFlow<Long?> = _filterEncyclopediaId.asStateFlow()
 
-    private val _encyclopedias = MutableStateFlow<List<EncyclopediaEntity>>(emptyList())
-    val encyclopedias: StateFlow<List<EncyclopediaEntity>> = _encyclopedias.asStateFlow()
+    private val _encyclopedias = MutableStateFlow<List<EncyclopediaNameOption>>(emptyList())
+    val encyclopedias: StateFlow<List<EncyclopediaNameOption>> = _encyclopedias.asStateFlow()
+    private val _encyclopediaFilterError = MutableStateFlow(false)
+    val encyclopediaFilterError: StateFlow<Boolean> = _encyclopediaFilterError.asStateFlow()
 
     private val _startingCharacterId = MutableStateFlow<Long?>(null)
     val startingCharacterId: StateFlow<Long?> = _startingCharacterId.asStateFlow()
@@ -229,28 +239,113 @@ class CharacterListViewModel @Inject constructor(
     private val _deletingCharacterId = MutableStateFlow<Long?>(null)
     val deletingCharacterId: StateFlow<Long?> = _deletingCharacterId.asStateFlow()
 
-    val characters = _filterEncyclopediaId
-        .flatMapLatest { encId ->
-            characterDao.observeForCharacterFilter(encId)
+    private val _page = MutableStateFlow(CharacterLibraryPage())
+    val page: StateFlow<CharacterLibraryPage> = _page.asStateFlow()
+    private var sort = CharacterLibrarySort.RECOMMENDED
+    private val pageCursors = mutableListOf<CharacterListItem?>(null)
+    private var pageJob: Job? = null
+    private var pageRevision = 0L
+    private var retryPageIndex: Int? = null
+
+    fun refreshList(keepVisible: Boolean = true) {
+        pageCursors.clear()
+        pageCursors += null
+        retryPageIndex = null
+        if (!keepVisible) _page.value = CharacterLibraryPage()
+        loadPage(0)
+    }
+
+    fun nextPage() {
+        val current = _page.value
+        if (current.loading || current.error != null || !current.hasNext) return
+        val cursor = current.items.lastOrNull() ?: return
+        val next = current.pageIndex + 1
+        if (pageCursors.size <= next) pageCursors += cursor else pageCursors[next] = cursor
+        loadPage(next)
+    }
+
+    fun previousPage() {
+        val current = _page.value
+        if (!current.loading && current.error == null && current.pageIndex > 0 && current.pageIndex < pageCursors.size) {
+            loadPage(current.pageIndex - 1)
         }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    }
+
+    fun retryPage() = loadPage(retryPageIndex ?: _page.value.pageIndex)
+
+    private fun loadPage(index: Int) {
+        pageJob?.cancel()
+        val revision = ++pageRevision
+        val cursor = pageCursors[index]
+        val filter = _filterEncyclopediaId.value
+        val requestedSort = sort
+        _page.value = _page.value.copy(loading = true, error = null)
+        pageJob = viewModelScope.launch {
+            try {
+                val rows = when (requestedSort) {
+                    CharacterLibrarySort.RECOMMENDED -> characterDao.getLibraryRecommendedPage(
+                        filter, cursor?.pinnedAt?.let { if (it > 0) 1 else 0 }, cursor?.pinnedAt,
+                        cursor?.favorite, cursor?.createdAt, cursor?.id, CHARACTER_LIBRARY_PAGE_SIZE + 1,
+                    )
+                    CharacterLibrarySort.RECENT -> characterDao.getLibraryRecentPage(
+                        filter, cursor?.pinnedAt?.let { if (it > 0) 1 else 0 },
+                        cursor?.createdAt, cursor?.id, CHARACTER_LIBRARY_PAGE_SIZE + 1,
+                    )
+                    CharacterLibrarySort.NAME -> characterDao.getLibraryNamePage(
+                        filter, cursor?.pinnedAt?.let { if (it > 0) 1 else 0 },
+                        cursor?.name, cursor?.id, CHARACTER_LIBRARY_PAGE_SIZE + 1,
+                    )
+                }
+                if (revision == pageRevision) {
+                    retryPageIndex = null
+                    _page.value = CharacterLibraryPage(
+                        items = rows.take(CHARACTER_LIBRARY_PAGE_SIZE),
+                        pageIndex = index,
+                        hasNext = rows.size > CHARACTER_LIBRARY_PAGE_SIZE,
+                        loading = false,
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (revision == pageRevision) {
+                    retryPageIndex = index
+                    _page.value = _page.value.copy(loading = false, error = "角色加载失败，请重试")
+                }
+            }
+        }
+    }
 
     /** `"list"` 或 `"grid"`，持久化在 DataStore，离开页面后保持 */
     val characterListLayout = uiPreferencesRepository.characterListLayout
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "list")
 
-    init {
+    fun refreshEncyclopediaFilterOptions() {
         viewModelScope.launch {
-            _encyclopedias.value = encyclopediaDao.getAll()
+            try {
+                _encyclopedias.value = encyclopediaDao.getNameOptions()
+                _encyclopediaFilterError.value = false
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _encyclopediaFilterError.value = true
+            }
         }
     }
 
-    fun refreshEncyclopediaFilterOptions() {
-        viewModelScope.launch { _encyclopedias.value = encyclopediaDao.getAll() }
+    fun setEncyclopediaFilter(encyclopediaId: Long?) {
+        val next = encyclopediaId?.takeIf { it > 0L }
+        if (_filterEncyclopediaId.value != next) {
+            _filterEncyclopediaId.value = next
+            refreshList(keepVisible = false)
+        }
     }
 
-    fun setEncyclopediaFilter(encyclopediaId: Long?) {
-        _filterEncyclopediaId.value = encyclopediaId?.takeIf { it > 0L }
+    fun setSortOrder(next: CharacterLibrarySort) {
+        if (sort != next) {
+            sort = next
+            refreshList(keepVisible = false)
+        }
     }
 
     fun toggleCharacterListLayout() {
@@ -299,19 +394,38 @@ class CharacterListViewModel @Inject constructor(
             } finally {
                 _deletingCharacterId.value = null
             }
-            if (deleted) onDeleted()
+            if (deleted) {
+                onDeleted()
+                refreshList()
+            }
         }
     }
 
-    fun setCharacterPinned(id: Long, pinned: Boolean) {
+    fun setCharacterPinned(id: Long, pinned: Boolean, onFailed: (String) -> Unit = {}) {
         viewModelScope.launch {
-            val c = characterDao.getById(id) ?: return@launch
-            characterDao.upsert(c.copy(pinnedAt = if (pinned) System.currentTimeMillis() else 0L))
+            try {
+                val c = characterDao.getById(id) ?: return@launch
+                characterDao.upsert(c.copy(pinnedAt = if (pinned) System.currentTimeMillis() else 0L))
+                refreshList()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                onFailed("置顶操作失败，请重试")
+            }
         }
     }
 
-    fun toggleFavorite(id: Long) {
-        viewModelScope.launch { characterDao.toggleFavorite(id) }
+    fun toggleFavorite(id: Long, onFailed: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                characterDao.toggleFavorite(id)
+                refreshList()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                onFailed("收藏操作失败，请重试")
+            }
+        }
     }
 
     fun startChat(

@@ -24,7 +24,6 @@ import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,13 +38,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import java.text.Collator
-import java.util.Locale
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavHostController
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
-import com.mojing.app.data.local.entity.CharacterEntity
+import com.mojing.app.data.local.dao.CharacterListItem
 import com.mojing.app.ui.common.EmptyState
 import com.mojing.app.ui.navigation.MainAppBottomNavigation
 import com.mojing.app.ui.navigation.returnToCreationHub
@@ -58,8 +55,6 @@ import com.mojing.app.util.ContentDocumentWriter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
-private enum class CharacterSortOrder { RECOMMENDED, RECENT, NAME }
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CharacterListScreen(
@@ -69,37 +64,17 @@ fun CharacterListScreen(
     onSettingsClick: () -> Unit,
     viewModel: CharacterListViewModel = hiltViewModel()
 ) {
-    val characters by viewModel.characters.collectAsStateWithLifecycle()
+    val page by viewModel.page.collectAsStateWithLifecycle()
+    val characters = page.items
     val listLayout by viewModel.characterListLayout.collectAsStateWithLifecycle()
     val filterEnc by viewModel.filterEncyclopediaId.collectAsStateWithLifecycle()
     val encOptions by viewModel.encyclopedias.collectAsStateWithLifecycle()
+    val filterOptionsFailed by viewModel.encyclopediaFilterError.collectAsStateWithLifecycle()
     val startingCharacterId by viewModel.startingCharacterId.collectAsStateWithLifecycle()
     val creatingCharacter by viewModel.creatingCharacter.collectAsStateWithLifecycle()
     val deletingCharacterId by viewModel.deletingCharacterId.collectAsStateWithLifecycle()
-    var sortOrder by rememberSaveable { mutableStateOf(CharacterSortOrder.RECOMMENDED) }
-    val visibleCharacters by remember {
-        derivedStateOf {
-            when (sortOrder) {
-                CharacterSortOrder.RECOMMENDED -> characters
-                CharacterSortOrder.RECENT -> characters.sortedWith(
-                    compareByDescending<CharacterEntity> { it.pinnedAt > 0 }
-                        .thenByDescending { it.createdAt }
-                        .thenByDescending { it.id },
-                )
-                CharacterSortOrder.NAME -> {
-                    val collator = Collator.getInstance(Locale.getDefault())
-                    characters.sortedWith { left, right ->
-                        when {
-                            (left.pinnedAt > 0) != (right.pinnedAt > 0) -> if (left.pinnedAt > 0) -1 else 1
-                            else -> collator.compare(left.name.trim(), right.name.trim()).takeIf { it != 0 }
-                                ?: left.id.compareTo(right.id)
-                        }
-                    }
-                }
-            }
-        }
-    }
-    var deleteTarget by remember { mutableStateOf<CharacterEntity?>(null) }
+    var sortOrder by rememberSaveable { mutableStateOf(CharacterLibrarySort.RECOMMENDED) }
+    var deleteTarget by remember { mutableStateOf<CharacterListItem?>(null) }
     var deleteError by remember { mutableStateOf<String?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var filterMenuExpanded by remember { mutableStateOf(false) }
@@ -110,7 +85,11 @@ fun CharacterListScreen(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    LaunchedEffect(Unit) { viewModel.refreshEncyclopediaFilterOptions() }
+    LaunchedEffect(Unit) {
+        viewModel.refreshEncyclopediaFilterOptions()
+        viewModel.setSortOrder(sortOrder)
+        viewModel.refreshList(keepVisible = false)
+    }
 
     val encNameById = remember(encOptions) {
         encOptions.associate { it.id to it.name.ifBlank { "百科 ${it.id}" } }
@@ -131,7 +110,7 @@ fun CharacterListScreen(
         )
     }
 
-    fun startChat(character: CharacterEntity) {
+    fun startChat(character: CharacterListItem) {
         viewModel.startChat(
             characterId = character.id,
             onCreated = onChat,
@@ -182,7 +161,10 @@ fun CharacterListScreen(
                     importResult = result
                     if (result.importedIds.isNotEmpty()) {
                         viewModel.setEncyclopediaFilter(null)
-                        sortOrder = CharacterSortOrder.RECENT
+                        sortOrder = CharacterLibrarySort.RECENT
+                        viewModel.setSortOrder(sortOrder)
+                        viewModel.refreshList(keepVisible = false)
+                        viewModel.refreshEncyclopediaFilterOptions()
                     }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -258,7 +240,7 @@ fun CharacterListScreen(
             MainAppBottomNavigation(navController)
         },
         floatingActionButton = {
-            if (characters.isNotEmpty() || filterEnc != null) {
+            if (characters.isNotEmpty() || filterEnc != null || page.loading || page.error != null) {
                 FloatingActionButton(onClick = { launchCreateCharacter() }) {
                     if (creatingCharacter) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     else Icon(Icons.Default.Add, "新建角色")
@@ -316,6 +298,12 @@ fun CharacterListScreen(
                                 },
                             )
                         }
+                        if (filterOptionsFailed) {
+                            DropdownMenuItem(
+                                text = { Text("百科列表加载失败，重试") },
+                                onClick = { viewModel.refreshEncyclopediaFilterOptions() },
+                            )
+                        }
                     }
                 }
             }
@@ -326,10 +314,10 @@ fun CharacterListScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 item { Text("排序", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                item { FilterChip(sortOrder == CharacterSortOrder.RECOMMENDED, { sortOrder = CharacterSortOrder.RECOMMENDED }, label = { Text("推荐") }) }
-                item { FilterChip(sortOrder == CharacterSortOrder.RECENT, { sortOrder = CharacterSortOrder.RECENT }, label = { Text("最近添加") }) }
-                item { FilterChip(sortOrder == CharacterSortOrder.NAME, { sortOrder = CharacterSortOrder.NAME }, label = { Text("名称") }) }
-                item { Text("${characters.size} 个角色", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                item { FilterChip(sortOrder == CharacterLibrarySort.RECOMMENDED, { sortOrder = CharacterLibrarySort.RECOMMENDED; viewModel.setSortOrder(sortOrder) }, label = { Text("推荐") }) }
+                item { FilterChip(sortOrder == CharacterLibrarySort.RECENT, { sortOrder = CharacterLibrarySort.RECENT; viewModel.setSortOrder(sortOrder) }, label = { Text("最近添加") }) }
+                item { FilterChip(sortOrder == CharacterLibrarySort.NAME, { sortOrder = CharacterLibrarySort.NAME; viewModel.setSortOrder(sortOrder) }, label = { Text("名称") }) }
+                item { Text("本页 ${characters.size} 条${if (page.hasNext) " · 后面还有" else ""}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
             importResult?.let { result ->
                 Surface(
@@ -369,7 +357,12 @@ fun CharacterListScreen(
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
             )
             Box(modifier = Modifier.weight(1f)) {
-                if (visibleCharacters.isEmpty()) {
+                if (characters.isEmpty() && page.loading) {
+                    CircularProgressIndicator(Modifier.align(Alignment.Center))
+                } else if (characters.isEmpty() && page.error != null) {
+                    EmptyState(icon = Icons.Default.ErrorOutline, title = "角色加载失败", message = page.error.orEmpty(),
+                        actionLabel = "重试", onAction = viewModel::retryPage, modifier = Modifier.fillMaxSize())
+                } else if (characters.isEmpty()) {
                     val selectedEncyclopedia = filterEnc?.let(encNameById::get)
                     EmptyState(
                         icon = Icons.Default.PersonAdd,
@@ -395,17 +388,17 @@ fun CharacterListScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        items(visibleCharacters, key = { it.id }) { character ->
+                        items(characters, key = { it.id }) { character ->
                             SwipeRevealListRow(
                                 swipeEnabled = true,
                                 isPinned = character.pinnedAt > 0,
-                                onPinToggle = { viewModel.setCharacterPinned(character.id, character.pinnedAt == 0L) },
+                                onPinToggle = { viewModel.setCharacterPinned(character.id, character.pinnedAt == 0L) { message -> scope.launch { snackbarHostState.showSnackbar(message) } } },
                                 onDelete = { deleteError = null; deleteTarget = character },
                                 onClick = { onEdit(character.id) },
                                 menuExtras = {
                                     DropdownMenuItem(
                                         text = { Text(if (character.favorite) "取消收藏" else "收藏") },
-                                        onClick = { viewModel.toggleFavorite(character.id) },
+                                        onClick = { viewModel.toggleFavorite(character.id) { message -> scope.launch { snackbarHostState.showSnackbar(message) } } },
                                     )
                                 },
                             ) {
@@ -424,18 +417,18 @@ fun CharacterListScreen(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(vertical = 0.dp),
                     ) {
-                        itemsIndexed(visibleCharacters, key = { _, c -> c.id }) { index, character ->
+                        itemsIndexed(characters, key = { _, c -> c.id }) { index, character ->
                             Column(Modifier.fillMaxWidth()) {
                                 SwipeRevealListRow(
                                     swipeEnabled = true,
                                     isPinned = character.pinnedAt > 0,
-                                    onPinToggle = { viewModel.setCharacterPinned(character.id, character.pinnedAt == 0L) },
+                                    onPinToggle = { viewModel.setCharacterPinned(character.id, character.pinnedAt == 0L) { message -> scope.launch { snackbarHostState.showSnackbar(message) } } },
                                     onDelete = { deleteError = null; deleteTarget = character },
                                     onClick = { onEdit(character.id) },
                                     menuExtras = {
                                         DropdownMenuItem(
                                             text = { Text(if (character.favorite) "取消收藏" else "收藏") },
-                                            onClick = { viewModel.toggleFavorite(character.id) },
+                                            onClick = { viewModel.toggleFavorite(character.id) { message -> scope.launch { snackbarHostState.showSnackbar(message) } } },
                                         )
                                     },
                                 ) {
@@ -447,7 +440,7 @@ fun CharacterListScreen(
                                         onStartChat = { startChat(character) },
                                     )
                                 }
-                                if (index < visibleCharacters.lastIndex) {
+                                if (index < characters.lastIndex) {
                                     HorizontalDivider(
                                         modifier = Modifier.padding(start = MoJingListTokens.dividerInset),
                                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
@@ -456,6 +449,19 @@ fun CharacterListScreen(
                             }
                         }
                     }
+                }
+            }
+            if (characters.isNotEmpty()) {
+                page.error?.let { message ->
+                    TextButton(onClick = viewModel::retryPage, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                        Text("$message · 重试")
+                    }
+                }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    TextButton(onClick = viewModel::previousPage, enabled = !page.loading && page.error == null && page.pageIndex > 0) { Text("上一页") }
+                    Text("${page.pageIndex + 1}", style = MaterialTheme.typography.labelMedium)
+                    TextButton(onClick = viewModel::nextPage, enabled = !page.loading && page.error == null && page.hasNext) { Text("下一页") }
                 }
             }
         }
@@ -498,7 +504,7 @@ fun CharacterListScreen(
 
 @Composable
 private fun CharacterListRowInner(
-    character: CharacterEntity,
+    character: CharacterListItem,
     encyclopediaLabel: String? = null,
     startEnabled: Boolean,
     isStarting: Boolean,
@@ -570,7 +576,7 @@ private fun CharacterListRowInner(
                     )
                 }
                 Text(
-                    character.personaPrompt.take(72).ifEmpty { "未设定人设" },
+                    character.personaPreview.ifEmpty { "未设定人设" },
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -595,7 +601,7 @@ private fun CharacterListRowInner(
 
 @Composable
 private fun CharacterGridCard(
-    character: CharacterEntity,
+    character: CharacterListItem,
     encyclopediaLabel: String? = null,
     startEnabled: Boolean,
     isStarting: Boolean,
@@ -687,7 +693,7 @@ private fun CharacterGridCard(
                     )
                 }
                 Text(
-                    character.personaPrompt.take(42).ifEmpty { "未设定人设" },
+                    character.personaPreview.take(42).ifEmpty { "未设定人设" },
                     style = MaterialTheme.typography.labelSmall,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,

@@ -5,8 +5,12 @@ import androidx.room.Query
 import androidx.room.Upsert
 import com.mojing.app.data.local.entity.EncyclopediaEntity
 
+data class EncyclopediaNameOption(val id: Long, val name: String)
+
 @Dao
 interface EncyclopediaDao {
+    @Query("SELECT id, name FROM world_encyclopedias ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, updatedAt DESC, id DESC")
+    suspend fun getNameOptions(): List<EncyclopediaNameOption>
     @Query("SELECT * FROM world_encyclopedias ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, updatedAt DESC")
     suspend fun getAll(): List<EncyclopediaEntity>
 
