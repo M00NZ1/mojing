@@ -698,7 +698,7 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 
 ## 本地状态与交付
 
-当前分支为 `main`。Android 已升至 1.2.0 / 10200，Room schema 仍为 22。本轮 Release 构建成功；通用、ARM64 与 ARMv7 包位于 `outputs/android/20260929-1.2.0/`，包名、版本码和与 1.1.0 相同的正式签名均已逐包核对，复制后的 SHA-256 与构建输出一致。最近一次已完成的 GitHub 全量 JVM 检查为 [36491365015](https://github.com/M00NZ1/mojing/actions/runs/36491365015)，结果成功；1.2.0 版本提交后的检查需另行确认。未连接设备，覆盖安装和音色页面等真机流程尚未复测。
+当前分支为 `main`。Android 已升至 1.2.0 / 10200，Room schema 仍为 22。本轮 Release 构建成功；通用、ARM64 与 ARMv7 包位于 `outputs/android/20260929-1.2.0/`，包名、版本码和与 1.1.0 相同的正式签名均已逐包核对，复制后的 SHA-256 与构建输出一致。1.2.0 版本提交对应的 [GitHub 全量 JVM 检查](https://github.com/M00NZ1/mojing/actions/runs/36492445144)已成功；GitHub Release 的四个资产与本地大小及 SHA-256 一致。未连接设备，覆盖安装和音色页面等真机流程尚未复测。
 
 本轮发布为 [墨境 1.2.0](https://github.com/M00NZ1/mojing/releases/tag/v1.2.0)，提供通用版、ARM64 与 ARMv7。更新内容见[更新日志](CHANGELOG.md)。
 
