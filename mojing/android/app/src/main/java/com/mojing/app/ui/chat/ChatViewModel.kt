@@ -2251,15 +2251,16 @@ class ChatViewModel @Inject constructor(
             val launched = requestNarrator(
                 guidance = outboundText,
                 draftSubmissionId = draftSubmissionId,
-            ) {
-                _state.update { state ->
-                    state.copy(
-                        inputText = if (activeDraftSubmissionId == draftSubmissionId) "" else state.inputText,
-                        quotingMessage = if (quoteDraftRevision == submittedQuoteRevision) null else state.quotingMessage,
-                    )
-                }
-                finishDraftSubmission(draftSubmissionId)
-            }
+                onGuidanceCommitted = {
+                    _state.update { state ->
+                        state.copy(
+                            inputText = if (activeDraftSubmissionId == draftSubmissionId) "" else state.inputText,
+                            quotingMessage = if (quoteDraftRevision == submittedQuoteRevision) null else state.quotingMessage,
+                        )
+                    }
+                    finishDraftSubmission(draftSubmissionId)
+                },
+            )
             if (!launched) finishDraftSubmission(draftSubmissionId)
             return
         }
