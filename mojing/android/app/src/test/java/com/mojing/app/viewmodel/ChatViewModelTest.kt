@@ -556,6 +556,7 @@ class ChatViewModelTest {
 
         assertEquals("branch-1", vm.state.value.currentBranchId)
         assertEquals(listOf(correction), vm.state.value.memoryCorrections)
+        assertEquals(null, vm.state.value.branchNavigationLabel)
         coVerify(exactly = 1) { preferences.setLastChatBranch(42L, "branch-1") }
     }
 
@@ -607,9 +608,9 @@ class ChatViewModelTest {
         val branch = SessionBranchEntity(sessionId = 42L, branchId = "branch-1", sourceMessageId = 1L)
         val branchDao = mockk<SessionBranchDao>(relaxed = true)
         val messageDao = mockk<MessageDao>(relaxed = true)
+        val branchRead = CompletableDeferred<List<MessageEntity>>()
         coEvery { branchDao.getBySession(42L) } returns listOf(branch)
-        coEvery { messageDao.getVisibleMessagesTail(42L, "branch-1", any()) } throws
-            IllegalStateException("database unavailable")
+        coEvery { messageDao.getVisibleMessagesTail(42L, "branch-1", any()) } coAnswers { branchRead.await() }
         val preferences = uiPreferences()
         val vm = createViewModel(
             messageDao = messageDao,
@@ -619,10 +620,14 @@ class ChatViewModelTest {
         advanceUntilIdle()
 
         vm.switchBranch("branch-1")
+        runCurrent()
+        assertEquals("正在打开故事线…", vm.state.value.branchNavigationLabel)
+        branchRead.completeExceptionally(IllegalStateException("database unavailable"))
         advanceUntilIdle()
 
         assertEquals("main", vm.state.value.currentBranchId)
         assertEquals("故事线切换失败，请重试", vm.state.value.error)
+        assertEquals(null, vm.state.value.branchNavigationLabel)
         coVerify(exactly = 0) { preferences.setLastChatBranch(any(), any()) }
     }
 
@@ -3152,6 +3157,7 @@ class ChatViewModelTest {
 
         assertTrue(vm.state.value.currentBranchId.startsWith("branch_"))
         assertTrue(vm.state.value.eventNodes.isEmpty())
+        assertEquals(null, vm.state.value.branchNavigationLabel)
         coVerify(exactly = 1) {
             events.getPageForBranch(42L, match { it.startsWith("branch_") }, null, null, 25)
         }
@@ -3170,6 +3176,7 @@ class ChatViewModelTest {
         val events = mockk<SessionEventNodeDao>(relaxed = true)
         val preferences = uiPreferences()
         val branches = mutableListOf<SessionBranchEntity>()
+        val branchRead = CompletableDeferred<List<SessionEventNodeEntity>>()
         coEvery { messageDao.getMainMessagesTail(42L, any()) } returns listOf(later, anchor)
         coEvery { messageDao.getMainMessageById(42L, 7L) } returns anchor
         coEvery { messageDao.getVisibleMessagesTail(42L, match { it.startsWith("branch_") }, any()) } returns listOf(anchor)
@@ -3179,8 +3186,9 @@ class ChatViewModelTest {
             1L
         }
         coEvery { events.getPageForBranch(42L, "main", null, null, 25) } returns listOf(originalEvent)
-        coEvery { events.getPageForBranch(42L, match { it.startsWith("branch_") }, null, null, 25) } throws
-            IllegalStateException("read failed")
+        coEvery { events.getPageForBranch(42L, match { it.startsWith("branch_") }, null, null, 25) } coAnswers {
+            branchRead.await()
+        }
         val vm = createViewModel(
             messageDao = messageDao,
             sessionBranchDao = branchDao,
@@ -3190,6 +3198,10 @@ class ChatViewModelTest {
         advanceUntilIdle()
 
         vm.createBranch(7L)
+        runCurrent()
+        assertEquals("正在创建并打开故事线…", vm.state.value.branchNavigationLabel)
+        assertEquals("main", vm.state.value.currentBranchId)
+        branchRead.completeExceptionally(IllegalStateException("read failed"))
         advanceUntilIdle()
 
         val newBranchId = branches.single().branchId
@@ -3198,6 +3210,7 @@ class ChatViewModelTest {
         assertEquals(listOf(originalEvent), vm.state.value.eventNodes)
         assertTrue(vm.state.value.branches.any { it.branchId == newBranchId })
         assertEquals("故事线已创建，但打开失败，请从故事线列表重试", vm.state.value.error)
+        assertEquals(null, vm.state.value.branchNavigationLabel)
         coVerify(exactly = 0) { preferences.setLastChatBranch(42L, newBranchId) }
 
         coEvery { events.getPageForBranch(42L, newBranchId, null, null, 25) } returns emptyList()

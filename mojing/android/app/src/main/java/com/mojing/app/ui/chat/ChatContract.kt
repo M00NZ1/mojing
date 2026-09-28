@@ -96,6 +96,7 @@ object ChatContract {
         /** 本对话纳入上下文的消息正文 token 估算之和（仅展示） */
         val conversationTokenEstimate: Int = 0,
         val currentBranchId: String = "main",
+        val branchNavigationLabel: String? = null,
         val branches: List<SessionBranchEntity> = emptyList(),
         val participants: List<SessionParticipantEntity> = emptyList(),
         val currentChoices: List<String> = emptyList(),

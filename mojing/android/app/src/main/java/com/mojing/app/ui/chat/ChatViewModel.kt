@@ -473,6 +473,7 @@ class ChatViewModel @Inject constructor(
 
     private fun launchBranchTransition(
         onSuccess: (() -> Unit)? = null,
+        navigationLabel: String? = null,
         block: suspend () -> Unit,
     ): Boolean {
         if (activeGeneration != null || branchTransitionJob?.isActive == true) return false
@@ -484,7 +485,7 @@ class ChatViewModel @Inject constructor(
         manualCompactionJob?.cancel()
         historyLoadJob?.cancel()
         historyLoadJob = null
-        _state.update { it.copy(isLoadingHistory = false) }
+        _state.update { it.copy(isLoadingHistory = false, branchNavigationLabel = navigationLabel) }
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             val owner = coroutineContext[Job]
             var completed = false
@@ -492,7 +493,10 @@ class ChatViewModel @Inject constructor(
                 block()
                 completed = true
             } finally {
-                if (branchTransitionJob === owner) branchTransitionJob = null
+                if (branchTransitionJob === owner) {
+                    branchTransitionJob = null
+                    if (navigationLabel != null) _state.update { it.copy(branchNavigationLabel = null) }
+                }
                 if (completed) onSuccess?.invoke()
             }
         }
@@ -3102,7 +3106,7 @@ class ChatViewModel @Inject constructor(
             _state.update { it.copy(error = "当前正在生成，请先停止或等待完成后再创建故事线") }
             return
         }
-        val launched = launchBranchTransition branchTransition@{
+        val launched = launchBranchTransition(navigationLabel = "正在创建并打开故事线…") branchTransition@{
             val parentBranch = currentBranchId()
             var branchCommitted = false
             var branchAvailableInList = false
@@ -3170,7 +3174,7 @@ class ChatViewModel @Inject constructor(
             _state.update { it.copy(error = "当前正在生成，请先停止或等待完成后再切换故事线") }
             return
         }
-        val launched = launchBranchTransition switchTransition@{
+        val launched = launchBranchTransition(navigationLabel = "正在打开故事线…") switchTransition@{
             val previousBranchId = currentBranchId()
             try {
                 val branches = sessionBranchDao.getBySession(sessionId)

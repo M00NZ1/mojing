@@ -766,7 +766,7 @@ fun ChatScreen(
                             Column {
                                 Text(stableSessionTitle.ifBlank { "对话" }, maxLines = 1,
                                     overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
-                                Text("已加载约 ${state.conversationTokenEstimate} Token",
+                                Text(state.branchNavigationLabel ?: "已加载约 ${state.conversationTokenEstimate} Token",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                             }
@@ -843,8 +843,9 @@ fun ChatScreen(
                                         },
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("故事线") },
+                                        text = { Text(state.branchNavigationLabel ?: "故事线") },
                                         leadingIcon = { Icon(Icons.Default.AccountTree, null) },
+                                        enabled = state.branchNavigationLabel == null,
                                         onClick = {
                                             topActionsMenuExpanded = false
                                             if (state.isGenerating) showGenerationLockedMessage()
