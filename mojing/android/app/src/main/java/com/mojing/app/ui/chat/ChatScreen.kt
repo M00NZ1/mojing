@@ -537,7 +537,11 @@ fun ChatScreen(
         saveError = state.novelMetadataError,
         onEditStart = viewModel::clearNovelMetadataError,
         onRenameNovel = viewModel::renameNovel,
-        onNextChapter = { title, direction -> viewModel.requestNarrator(guidance = direction, nextChapter = true, chapterTitle = title) },
+        onNextChapter = viewModel::requestNextChapter,
+        onLoadChapterInput = { viewModel.loadChapterInput(state.currentBranchId) },
+        onSaveChapterInput = { title, direction, synchronous ->
+            viewModel.saveChapterInput(state.currentBranchId, title, direction, synchronous)
+        },
         onRenameChapter = viewModel::renameChapter,
         onExport = { exportNovelLauncher.launch("novel_${sessionId}.txt") },
         visible = showContents,

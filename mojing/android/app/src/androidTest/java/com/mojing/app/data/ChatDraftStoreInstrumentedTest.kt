@@ -11,6 +11,34 @@ import org.junit.runner.RunWith
 class ChatDraftStoreInstrumentedTest {
 
     @Test
+    fun chapterInputSurvivesRecreationAndCompletedChapterClearsOnlyMatchingBranchDraft() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = ChatDraftStore(context)
+        val sessionId = 8_290_005L
+        val main = ChapterInputDraft("第二章", "雨夜重逢")
+        val branch = ChapterInputDraft("另一章", "分支剧情")
+        try {
+            assertTrue(store.saveChapterInput(sessionId, "main", main, synchronous = true))
+            assertTrue(store.saveChapterInput(sessionId, "branch-1", branch, synchronous = true))
+            assertEquals(main, ChatDraftStore(context).loadChapterInput(sessionId, "main"))
+            assertEquals(branch, store.loadChapterInput(sessionId, "branch-1"))
+            assertTrue(!store.clearChapterInputIfMatching(sessionId, "main", ChapterInputDraft("旧标题", "雨夜重逢")))
+            assertEquals(main, store.loadChapterInput(sessionId, "main"))
+            assertTrue(store.clearChapterInputIfMatching(sessionId, "main", main))
+            assertEquals(ChapterInputDraft(), store.loadChapterInput(sessionId, "main"))
+            assertEquals(branch, store.loadChapterInput(sessionId, "branch-1"))
+            val damaged = """{"version":2,"title":"旧草稿"}"""
+            val prefs = context.getSharedPreferences("chat_drafts_v1", 0)
+            prefs.edit().putString("chapter_input_v1_${sessionId}_main", damaged).commit()
+            assertTrue(!store.clearChapterInputIfMatching(sessionId, "main", ChapterInputDraft()))
+            assertEquals(damaged, prefs.getString("chapter_input_v1_${sessionId}_main", null))
+        } finally {
+            store.saveChapterInput(sessionId, "main", ChapterInputDraft(), synchronous = true)
+            store.saveChapterInput(sessionId, "branch-1", ChapterInputDraft(), synchronous = true)
+        }
+    }
+
+    @Test
     fun quoteOnlyDraftSurvivesRecreationAndMalformedReferenceKeepsText() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val store = ChatDraftStore(context)

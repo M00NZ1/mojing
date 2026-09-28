@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.ChatDraftSnapshot
+import com.mojing.app.data.ChapterInputDraft
 import com.mojing.app.data.ChatDraftStore
 import com.mojing.app.data.ReplyRecoveryLoadResult
 import com.mojing.app.data.ReplyRecoverySnapshot
@@ -2788,6 +2789,27 @@ class ChatViewModel @Inject constructor(
         return w.isEmpty() || isPlaceholderApiBase(w)
     }
 
+    fun loadChapterInput(branchId: String): ChapterInputDraft = chatDraftStore.loadChapterInput(sessionId, branchId)
+
+    fun saveChapterInput(branchId: String, title: String, direction: String, synchronous: Boolean = false): Boolean =
+        runCatching { chatDraftStore.saveChapterInput(sessionId, branchId, ChapterInputDraft(title, direction), synchronous) }.getOrDefault(false)
+
+    fun requestNextChapter(title: String, direction: String): Boolean {
+        val branchId = currentBranchId()
+        val input = ChapterInputDraft(title, direction)
+        if (!saveChapterInput(branchId, title, direction, synchronous = true)) {
+            _state.update { it.copy(error = "章节输入未能保存到本机，请检查存储空间") }
+            return false
+        }
+        return requestNarrator(guidance = direction, nextChapter = true, chapterTitle = title,
+            onChapterCommitted = {
+                val cleared = runCatching { chatDraftStore.clearChapterInputIfMatching(sessionId, branchId, input) }.getOrDefault(false)
+                if (!cleared && runCatching { chatDraftStore.loadChapterInput(sessionId, branchId) == input }.getOrDefault(false)) {
+                    _state.update { it.copy(error = it.error ?: "章节已保存，但输入草稿未能清理") }
+                }
+            })
+    }
+
     fun requestNarrator(
         guidance: String = "",
         expectedTailMessageId: Long? = null,
@@ -2795,6 +2817,7 @@ class ChatViewModel @Inject constructor(
         nextChapter: Boolean = false,
         chapterTitle: String = "",
         onGuidanceCommitted: (() -> Unit)? = null,
+        onChapterCommitted: (() -> Unit)? = null,
     ): Boolean {
         if (nextChapter && !canContinueFromCurrentWindow()) return false
         if (_state.value.isGenerating || generationJob?.isActive == true) return false
@@ -3011,6 +3034,7 @@ class ChatViewModel @Inject constructor(
                                         generation.interruptedReplyText = ""
                                         if (chapterNumber == null) clearCommittedReplyRecovery(generation)
                                     }
+                                    if (chapterNumber != null) onChapterCommitted?.invoke()
                                     _state.value = _state.value.copy(streamingText = "")
                                     refreshMessagesUi(generation.branchId)
                                     if (currentBranchId() != generation.branchId) {

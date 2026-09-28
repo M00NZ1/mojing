@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.first
 import androidx.lifecycle.SavedStateHandle
 import android.content.Context
 import com.mojing.app.data.ChatDraftSnapshot
+import com.mojing.app.data.ChapterInputDraft
 import com.mojing.app.data.ChatDraftStore
 import com.mojing.app.data.ReplyRecoveryLoadResult
 import com.mojing.app.data.ReplyRecoverySnapshot
@@ -98,6 +99,51 @@ class ChatViewModelTest {
         every { it.saveReplyRecovery(any()) } returns true
         every { it.checkpointReplyRecovery(any()) } returns true
         every { it.clearReplyRecovery(any(), any()) } returns true
+    }
+
+    @Test
+    fun nextChapterKeepsEditorInputWhenLocalDraftCannotBeSaved() = runTest(testDispatcher) {
+        val draftStore = emptyDraftStore()
+        val input = ChapterInputDraft("第二章", "雨夜重逢")
+        every { draftStore.saveChapterInput(42L, "main", input, true) } returns false
+        val vm = createViewModel(chatDraftStore = draftStore)
+        advanceUntilIdle()
+
+        assertFalse(vm.requestNextChapter(input.title, input.direction))
+        assertEquals("章节输入未能保存到本机，请检查存储空间", vm.state.value.error)
+        verify(exactly = 0) { draftStore.clearChapterInputIfMatching(any(), any(), any()) }
+    }
+
+    @Test
+    fun nextChapterClearsMatchingInputOnlyAfterChapterIsCommitted() = runTest(testDispatcher) {
+        val input = ChapterInputDraft("第二章", "雨夜重逢")
+        val draftStore = emptyDraftStore()
+        every { draftStore.saveChapterInput(42L, "main", input, true) } returns true
+        val messages = mockk<MessageDao>(relaxed = true)
+        var committed = false
+        coEvery { messages.insert(match { it.speakerType == "narrator" }) } answers {
+            committed = true
+            8L
+        }
+        every { draftStore.clearChapterInputIfMatching(42L, "main", input) } answers {
+            assertTrue(committed)
+            true
+        }
+        val world = mockk<SessionWorldDao>(relaxed = true)
+        coEvery { world.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L, gameplayMode = "小说创作")
+        val engine = mockk<ChatEngine>(relaxed = true)
+        every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            flowOf(StreamState.Done("第二章\n雨夜重逢。"))
+        val vm = createViewModel(messageDao = messages, sessionWorldDao = world,
+            chatDraftStore = draftStore, secureStorage = validSecureStorage(),
+            llmApiService = validLlmApiService(), chatEngine = engine)
+        advanceUntilIdle()
+
+        assertTrue(vm.requestNextChapter(input.title, input.direction))
+        advanceUntilIdle()
+
+        assertTrue(committed)
+        verify(exactly = 1) { draftStore.clearChapterInputIfMatching(42L, "main", input) }
     }
 
     private fun submissionTransaction(

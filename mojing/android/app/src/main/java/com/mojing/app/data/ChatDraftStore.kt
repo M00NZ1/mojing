@@ -18,6 +18,8 @@ data class ChatDraftSnapshot(
     val quotedMessageId: Long? = null,
 )
 
+data class ChapterInputDraft(val title: String = "", val direction: String = "")
+
 data class ReplyRecoverySnapshot(
     val token: String,
     val sessionId: Long,
@@ -131,6 +133,46 @@ class ChatDraftStore @Inject constructor(
 ) {
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val recoveryLock = Any()
+    private val chapterInputLock = Any()
+
+    fun loadChapterInput(sessionId: Long, branchId: String): ChapterInputDraft = synchronized(chapterInputLock) {
+        if (sessionId <= 0L || branchId.isBlank()) return@synchronized ChapterInputDraft()
+        val raw = preferences.getString(chapterInputKey(sessionId, branchId), null)
+            ?: return@synchronized ChapterInputDraft()
+        runCatching { decodeChapterInput(raw) }.getOrNull() ?: ChapterInputDraft()
+    }
+
+    /** Editor changes stay local; closing or submitting uses a synchronous write. */
+    fun saveChapterInput(sessionId: Long, branchId: String, draft: ChapterInputDraft, synchronous: Boolean = false): Boolean = synchronized(chapterInputLock) {
+        if (sessionId <= 0L || branchId.isBlank()) return@synchronized false
+        val key = chapterInputKey(sessionId, branchId)
+        val editor = preferences.edit()
+        if (draft.title.isEmpty() && draft.direction.isEmpty()) editor.remove(key)
+        else editor.putString(key, JsonObject().apply {
+            addProperty("version", 1)
+            addProperty("title", draft.title)
+            addProperty("direction", draft.direction)
+        }.toString())
+        if (synchronous) editor.commit() else { editor.apply(); true }
+    }
+
+    /** A completed generation may clear only the exact input with which it started. */
+    fun clearChapterInputIfMatching(sessionId: Long, branchId: String, submitted: ChapterInputDraft): Boolean = synchronized(chapterInputLock) {
+        if (sessionId <= 0L || branchId.isBlank()) return@synchronized false
+        val key = chapterInputKey(sessionId, branchId)
+        val raw = preferences.getString(key, null) ?: return@synchronized submitted == ChapterInputDraft()
+        if (runCatching { decodeChapterInput(raw) }.getOrNull() != submitted) return@synchronized false
+        preferences.edit().remove(key).commit()
+    }
+
+    private fun decodeChapterInput(raw: String): ChapterInputDraft? {
+        val root = JsonParser.parseString(raw).asJsonObject
+        if (root.get("version")?.asInt != 1) return null
+        return ChapterInputDraft(
+            title = root.get("title")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty(),
+            direction = root.get("direction")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty(),
+        )
+    }
 
     fun load(sessionId: Long): ChatDraftSnapshot {
         if (sessionId <= 0L) return ChatDraftSnapshot()
@@ -249,6 +291,8 @@ class ChatDraftStore @Inject constructor(
     }
 
     private fun key(sessionId: Long): String = "session_$sessionId"
+
+    private fun chapterInputKey(sessionId: Long, branchId: String): String = "chapter_input_v1_${sessionId}_$branchId"
 
     private companion object {
         const val VERSION = 1

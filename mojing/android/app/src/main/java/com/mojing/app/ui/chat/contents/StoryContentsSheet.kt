@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.mojing.app.data.ChapterInputDraft
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -33,6 +34,8 @@ fun StoryContentsSheet(
     onEditStart: () -> Unit = {},
     onRenameNovel: (String, () -> Unit) -> Unit = { _, _ -> },
     onNextChapter: (String, String) -> Boolean = { _, _ -> false },
+    onLoadChapterInput: () -> ChapterInputDraft = { ChapterInputDraft() },
+    onSaveChapterInput: (String, String, Boolean) -> Boolean = { _, _, _ -> true },
     onRenameChapter: (Long, String, () -> Unit) -> Unit = { _, _, _ -> },
     onExport: () -> Unit = {},
     viewModel: StoryContentsViewModel = hiltViewModel(),
@@ -40,11 +43,12 @@ fun StoryContentsSheet(
     if (!visible) return
     LaunchedEffect(sessionId, branchId) { viewModel.load(sessionId, branchId) }
     val state by viewModel.state.collectAsState()
-    var editingNovel by remember { mutableStateOf(false) }
-    var creatingChapter by remember { mutableStateOf(false) }
-    var editingChapter by remember { mutableStateOf<StoryContentsEntry?>(null) }
-    var title by remember { mutableStateOf("") }
-    var direction by remember { mutableStateOf("") }
+    var editingNovel by remember(sessionId, branchId) { mutableStateOf(false) }
+    var creatingChapter by remember(sessionId, branchId) { mutableStateOf(false) }
+    var editingChapter by remember(sessionId, branchId) { mutableStateOf<StoryContentsEntry?>(null) }
+    var title by remember(sessionId, branchId) { mutableStateOf("") }
+    var direction by remember(sessionId, branchId) { mutableStateOf("") }
+    var chapterInputError by remember(sessionId, branchId) { mutableStateOf<String?>(null) }
     var locatingMessageId by remember(sessionId, branchId) { mutableStateOf<Long?>(null) }
     var failedOpenMessageId by remember(sessionId, branchId) { mutableStateOf<Long?>(null) }
     var openMessageError by remember(sessionId, branchId) { mutableStateOf<String?>(null) }
@@ -76,6 +80,10 @@ fun StoryContentsSheet(
         confirmValueChange = { it != SheetValue.Hidden || !currentSaving })
     if (editingNovel || creatingChapter || editingChapter != null) {
         fun closeEditor() {
+            if (creatingChapter && !onSaveChapterInput(title, direction, true)) {
+                chapterInputError = "章节输入未能保存到本机，请检查存储空间后重试"
+                return
+            }
             editingNovel = false
             creatingChapter = false
             editingChapter = null
@@ -94,14 +102,25 @@ fun StoryContentsSheet(
                         .padding(horizontal = 20.dp, vertical = 18.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         com.mojing.app.ui.common.MoJingTextField(value = title,
-                            onValueChange = { title = it.take(100) }, modifier = Modifier.fillMaxWidth(),
+                            onValueChange = {
+                                title = it.take(100)
+                                if (creatingChapter) {
+                                    chapterInputError = null
+                                    onSaveChapterInput(title, direction, false)
+                                }
+                            }, modifier = Modifier.fillMaxWidth(),
                             singleLine = true, enabled = !saving,
                             label = { Text(if (creatingChapter) "章节名（可由模型生成）" else "名称") })
                         if (creatingChapter) com.mojing.app.ui.common.MoJingTextField(
-                            value = direction, onValueChange = { direction = it.take(4000) },
+                            value = direction, onValueChange = {
+                                direction = it.take(4000)
+                                chapterInputError = null
+                                onSaveChapterInput(title, direction, false)
+                            },
                             modifier = Modifier.fillMaxWidth(), enabled = !saving,
                             label = { Text("剧情走向（可选）") }, minLines = 2, maxLines = 5)
                         saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                        chapterInputError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     FlowRow(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
@@ -113,6 +132,7 @@ fun StoryContentsSheet(
                             onClick = {
                                 when {
                                     creatingChapter -> if (onNextChapter(title, direction)) { creatingChapter = false; onDismiss() }
+                                        else chapterInputError = "未能开始生成；章节输入已保留，请检查对话提示后重试"
                                     editingNovel -> onRenameNovel(title) { editingNovel = false }
                                     else -> editingChapter?.let { entry -> onRenameChapter(entry.messageId, title) {
                                         editingChapter = null
@@ -207,7 +227,13 @@ fun StoryContentsSheet(
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             FlowRow(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                com.mojing.app.ui.common.MoJingButton(enabled = !controlsBusy, onClick = { title = ""; direction = ""; creatingChapter = true }) {
+                com.mojing.app.ui.common.MoJingButton(enabled = !controlsBusy, onClick = {
+                    val draft = onLoadChapterInput()
+                    title = draft.title
+                    direction = draft.direction
+                    chapterInputError = null
+                    creatingChapter = true
+                }) {
                     Text(when { state.entries.firstOrNull()?.incomplete == true -> "继续未完成章节"; state.entries.isEmpty() -> "生成开篇"; else -> "生成下一章" })
                 }
                 TextButton(enabled = !controlsBusy && state.entries.isNotEmpty(), onClick = onExport) { Text("导出小说 TXT") }
