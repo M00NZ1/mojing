@@ -9,12 +9,11 @@ import com.mojing.app.ui.theme.AppThemes
 import com.mojing.app.data.local.dao.CostRecordDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.WorldTemplateDao
-import com.mojing.app.data.local.entity.EncyclopediaEntity
-import com.mojing.app.data.local.entity.WorldTemplateEntity
 import com.mojing.app.data.remote.BackendSystemProbeApi
 import dagger.hilt.android.lifecycle.HiltViewModel
 import com.google.gson.JsonObject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
@@ -25,6 +24,25 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+internal data class CreationDefaultOption(
+    val key: String,
+    val label: String,
+    val id: Long,
+    val pinnedAt: Long,
+    val updatedAt: Long,
+)
+
+internal data class CreationDefaultPage(val rows: List<CreationDefaultOption>, val hasMore: Boolean)
+
+data class CreationDefaultLabels(
+    val world: String? = null,
+    val encyclopedia: String? = null,
+    val worldMissing: Boolean = false,
+    val encyclopediaMissing: Boolean = false,
+    val loading: Boolean = false,
+    val error: String? = null,
+)
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -181,37 +199,72 @@ class SettingsViewModel @Inject constructor(
     )
     val defaultEncyclopediaIdForAi: StateFlow<String> = _defaultEncyclopediaIdForAi.asStateFlow()
 
-    private val _availableWorldTemplates = MutableStateFlow<List<WorldTemplateEntity>>(emptyList())
-    val availableWorldTemplates: StateFlow<List<WorldTemplateEntity>> = _availableWorldTemplates.asStateFlow()
-    private val _availableEncyclopedias = MutableStateFlow<List<EncyclopediaEntity>>(emptyList())
-    val availableEncyclopedias: StateFlow<List<EncyclopediaEntity>> = _availableEncyclopedias.asStateFlow()
-    private val _creationOptionsLoading = MutableStateFlow(false)
-    val creationOptionsLoading: StateFlow<Boolean> = _creationOptionsLoading.asStateFlow()
-    private val _creationOptionsError = MutableStateFlow<String?>(null)
-    val creationOptionsError: StateFlow<String?> = _creationOptionsError.asStateFlow()
+    private val _creationDefaultLabels = MutableStateFlow(CreationDefaultLabels())
+    val creationDefaultLabels: StateFlow<CreationDefaultLabels> = _creationDefaultLabels.asStateFlow()
+    private var defaultLabelJob: Job? = null
+    private var defaultLabelRevision = 0
 
-    fun loadCreationOptions() {
-        if (_creationOptionsLoading.value) return
-        viewModelScope.launch {
-            _creationOptionsLoading.value = true
-            _creationOptionsError.value = null
-            val templates = runCatching { worldTemplateDao.getAll() }
-            val encyclopedias = runCatching { encyclopediaDao.getAll() }
-            templates.onSuccess { _availableWorldTemplates.value = it }
-            encyclopedias.onSuccess { _availableEncyclopedias.value = it }
-            _creationOptionsError.value = when {
-                templates.isFailure && encyclopedias.isFailure -> "世界与百科列表读取失败，请重试"
-                templates.isFailure -> "世界列表读取失败，请重试"
-                encyclopedias.isFailure -> "百科列表读取失败，请重试"
-                else -> null
-            }
-            _creationOptionsLoading.value = false
+    fun loadSelectedCreationDefaults() {
+        defaultLabelJob?.cancel()
+        val revision = ++defaultLabelRevision
+        val worldKey = _defaultWorldTemplateId.value.trim()
+        val encyclopediaKey = _defaultEncyclopediaIdForAi.value.trim().toLongOrNull()
+        _creationDefaultLabels.value = _creationDefaultLabels.value.copy(loading = true, error = null)
+        defaultLabelJob = viewModelScope.launch {
+            var worldError = false
+            var encyclopediaError = false
+            val world = if (worldKey.isBlank() || worldKey == "custom") null else try {
+                worldTemplateDao.getDefaultWorldByTemplateId(worldKey)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { worldError = true; null }
+            val encyclopedia = if (encyclopediaKey == null || encyclopediaKey <= 0L) null else try {
+                encyclopediaDao.getNameById(encyclopediaKey)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { encyclopediaError = true; null }
+            if (revision != defaultLabelRevision) return@launch
+            val previous = _creationDefaultLabels.value
+            _creationDefaultLabels.value = CreationDefaultLabels(
+                world = if (worldError) previous.world else world?.label,
+                encyclopedia = if (encyclopediaError) previous.encyclopedia else encyclopedia,
+                worldMissing = !worldError && worldKey.isNotBlank() && worldKey != "custom" && world == null,
+                encyclopediaMissing = !encyclopediaError && encyclopediaKey != null && encyclopediaKey > 0L && encyclopedia == null,
+                error = if (worldError || encyclopediaError) "已选默认资料暂时无法读取，请重试" else null,
+            )
         }
     }
 
+    internal suspend fun loadDefaultWorldPage(query: String, cursor: CreationDefaultOption?): CreationDefaultPage {
+        val rows = worldTemplateDao.getDefaultWorldPage(
+            query.trim(), cursor?.pinnedAt, cursor?.updatedAt, cursor?.id, 41,
+        )
+        return CreationDefaultPage(rows.take(40).map { CreationDefaultOption(
+            key = it.templateId, label = it.label, id = it.id,
+            pinnedAt = it.pinnedAt, updatedAt = it.updatedAt,
+        ) }, rows.size > 40)
+    }
+
+    internal suspend fun loadDefaultEncyclopediaPage(query: String, cursor: CreationDefaultOption?): CreationDefaultPage {
+        val rows = encyclopediaDao.getCharacterFilterPage(
+            query.trim(), cursor?.let { if (it.pinnedAt > 0L) 1 else 0 },
+            cursor?.pinnedAt, cursor?.updatedAt, cursor?.id, 41,
+        )
+        return CreationDefaultPage(rows.take(40).map { CreationDefaultOption(
+            key = it.id.toString(), label = it.name, id = it.id,
+            pinnedAt = it.pinnedAt, updatedAt = it.updatedAt,
+        ) }, rows.size > 40)
+    }
+
     fun updateDefaultWorldTemplateId(value: String) {
+        defaultLabelJob?.cancel()
+        defaultLabelRevision++
         _defaultWorldTemplateId.value = value
         secureStorage.defaultWorldTemplateId = value
+    }
+    internal fun selectDefaultWorld(option: CreationDefaultOption?) {
+        updateDefaultWorldTemplateId(option?.key ?: "custom")
+        _creationDefaultLabels.value = _creationDefaultLabels.value.copy(
+            world = option?.label, worldMissing = false, loading = false, error = null,
+        )
     }
     fun updateDefaultNarratorEnabled(value: Boolean) {
         _defaultNarratorEnabled.value = value
@@ -245,9 +298,17 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun updateDefaultEncyclopediaIdForAi(value: String) {
+        defaultLabelJob?.cancel()
+        defaultLabelRevision++
         _defaultEncyclopediaIdForAi.value = value.trim()
         val id = value.trim().toLongOrNull() ?: 0L
         secureStorage.defaultEncyclopediaIdForAi = id.coerceAtLeast(0L)
+    }
+    internal fun selectDefaultEncyclopedia(option: CreationDefaultOption?) {
+        updateDefaultEncyclopediaIdForAi(option?.key.orEmpty())
+        _creationDefaultLabels.value = _creationDefaultLabels.value.copy(
+            encyclopedia = option?.label, encyclopediaMissing = false, loading = false, error = null,
+        )
     }
 
     // Image API

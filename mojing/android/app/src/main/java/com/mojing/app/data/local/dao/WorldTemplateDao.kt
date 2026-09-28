@@ -25,8 +25,40 @@ data class WorldTemplateLibraryItem(
     val updatedAt: Long,
 )
 
+/** Defaults picker needs only the saved key, display name and stable sort fields. */
+data class DefaultWorldOption(
+    val id: Long,
+    val templateId: String,
+    val label: String,
+    val pinnedAt: Long,
+    val updatedAt: Long,
+)
+
 @Dao
 interface WorldTemplateDao {
+    @Query(
+        """
+        SELECT wt.id, wt.templateId, wt.label, wt.pinnedAt, wt.updatedAt FROM world_templates wt
+        LEFT JOIN world_templates better ON better.templateId = wt.templateId
+          AND (better.pinnedAt > wt.pinnedAt
+            OR (better.pinnedAt = wt.pinnedAt AND better.updatedAt > wt.updatedAt)
+            OR (better.pinnedAt = wt.pinnedAt AND better.updatedAt = wt.updatedAt AND better.id > wt.id))
+        WHERE wt.templateId != 'custom' AND better.id IS NULL
+          AND (:query = '' OR instr(lower(wt.label), lower(:query)) > 0)
+          AND (:cursorId IS NULL OR wt.pinnedAt < :cursorPinnedAt
+            OR (wt.pinnedAt = :cursorPinnedAt AND wt.updatedAt < :cursorUpdatedAt)
+            OR (wt.pinnedAt = :cursorPinnedAt AND wt.updatedAt = :cursorUpdatedAt AND wt.id < :cursorId))
+        ORDER BY wt.pinnedAt DESC, wt.updatedAt DESC, wt.id DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getDefaultWorldPage(
+        query: String, cursorPinnedAt: Long?, cursorUpdatedAt: Long?, cursorId: Long?, limit: Int,
+    ): List<DefaultWorldOption>
+
+    @Query("SELECT id, templateId, label, pinnedAt, updatedAt FROM world_templates WHERE templateId = :templateId ORDER BY pinnedAt DESC, updatedAt DESC, id DESC LIMIT 1")
+    suspend fun getDefaultWorldByTemplateId(templateId: String): DefaultWorldOption?
+
     @Query(
         """
         SELECT id, templateId, label, substr(category, 1, 80) AS category,

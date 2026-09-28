@@ -144,6 +144,31 @@ class MessageDaoTest {
         assertEquals(pinnedDefault, templateDao.getByTemplateId("duplicate-default")?.id)
     }
 
+    @Test
+    fun defaultWorldPickerPagesCanonicalTemplatesWithoutLoadingPrompts() = runBlocking {
+        val dao = db.worldTemplateDao()
+        val ids = (1..45).map { n ->
+            dao.upsert(WorldTemplateEntity(
+                templateId = "world-$n", label = if (n == 1) "远方灯塔" else "世界$n",
+                worldPrompt = "完整设定".repeat(100), updatedAt = 100L,
+            ))
+        }
+        val pinned = dao.upsert(WorldTemplateEntity(
+            templateId = "world-1", label = "置顶灯塔", pinnedAt = 300L, updatedAt = 90L,
+        ))
+        dao.upsert(WorldTemplateEntity(templateId = "custom", label = "自定义占位"))
+        val first = dao.getDefaultWorldPage("", null, null, null, 41)
+        assertEquals(41, first.size)
+        assertEquals(pinned, first.first().id)
+        val cursor = first[39]
+        val later = dao.getDefaultWorldPage("", cursor.pinnedAt, cursor.updatedAt, cursor.id, 41)
+        assertEquals(5, later.size)
+        assertTrue(first.take(40).map { it.id }.intersect(later.map { it.id }.toSet()).isEmpty())
+        assertFalse((first + later).any { it.id == ids[0] || it.templateId == "custom" })
+        assertEquals(pinned, dao.getDefaultWorldByTemplateId("world-1")?.id)
+        assertEquals(pinned, dao.getDefaultWorldPage("灯塔", null, null, null, 41).single().id)
+    }
+
     @Test fun characterSnapshotCursorUsesVisibleUserIdsAndBranchState() = runBlocking {
         val sid = sessionDao.insert(SessionEntity(title = "角色状态分支"))
         val main = (1..20).map { messageDao.insert(MessageEntity(sessionId = sid, speakerType = "user", content = "主线 $it")) }

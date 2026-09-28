@@ -2,6 +2,7 @@ package com.mojing.app.ui.settings
 
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingButton as Button
+import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
 import com.mojing.app.ui.common.MoJingToggleRow
 
 import androidx.activity.compose.BackHandler
@@ -26,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -305,8 +307,10 @@ fun ProfileTab(
 
 @Composable
 fun DefaultsTab(viewModel: SettingsViewModel) {
-    LaunchedEffect(Unit) { viewModel.loadCreationOptions() }
+    LaunchedEffect(Unit) { viewModel.loadSelectedCreationDefaults() }
     var showAdvancedDefaults by remember { mutableStateOf(false) }
+    var showWorldPicker by remember { mutableStateOf(false) }
+    var showEncyclopediaPicker by remember { mutableStateOf(false) }
     val temp by viewModel.defaultTemperature.collectAsStateWithLifecycle()
     val maxTokens by viewModel.defaultMaxTokens.collectAsStateWithLifecycle()
     val topP by viewModel.defaultTopP.collectAsStateWithLifecycle()
@@ -318,10 +322,7 @@ fun DefaultsTab(viewModel: SettingsViewModel) {
     val maxUpload by viewModel.maxUploadMb.collectAsStateWithLifecycle()
     val maxAuto by viewModel.maxAutoSpeakers.collectAsStateWithLifecycle()
     val defaultEncyclopediaIdForAi by viewModel.defaultEncyclopediaIdForAi.collectAsStateWithLifecycle()
-    val worldTemplates by viewModel.availableWorldTemplates.collectAsStateWithLifecycle()
-    val encyclopedias by viewModel.availableEncyclopedias.collectAsStateWithLifecycle()
-    val creationOptionsLoading by viewModel.creationOptionsLoading.collectAsStateWithLifecycle()
-    val creationOptionsError by viewModel.creationOptionsError.collectAsStateWithLifecycle()
+    val defaultLabels by viewModel.creationDefaultLabels.collectAsStateWithLifecycle()
 
     val tempError = temp.toFloatOrNull()?.let { it !in 0f..2f } != false
     val maxTokensError = maxTokens.toIntOrNull()?.let { it !in 1..200_000 } != false
@@ -329,19 +330,19 @@ fun DefaultsTab(viewModel: SettingsViewModel) {
     val memoryError = memoryCompact.toIntOrNull()?.let { it !in 10..2000 } != false
     val uploadError = maxUpload.toIntOrNull()?.let { it !in 1..200 } != false
     val autoError = maxAuto.toIntOrNull()?.let { it !in 1..10 } != false
-    val templateOptions = buildList {
-        add("custom" to "自定义（不套模板）")
-        worldTemplates.forEach { add(it.templateId to it.label.ifBlank { "未命名世界" }) }
-        if (defaultWorldTemplateId.isNotBlank() && none { it.first == defaultWorldTemplateId }) {
-            add(defaultWorldTemplateId to "原默认世界已不可用")
-        }
-    }.distinctBy { it.first }
-    val encyclopediaOptions = buildList {
-        add("" to "不预设")
-        encyclopedias.forEach { add(it.id.toString() to it.name.ifBlank { "未命名百科" }) }
-        if (defaultEncyclopediaIdForAi.isNotBlank() && none { it.first == defaultEncyclopediaIdForAi }) {
-            add(defaultEncyclopediaIdForAi to "原默认百科已不可用")
-        }
+    val worldLabel = when {
+        defaultWorldTemplateId.isBlank() || defaultWorldTemplateId == "custom" -> "自定义（不套模板）"
+        defaultLabels.loading -> "正在读取默认世界…"
+        defaultLabels.worldMissing -> "原默认世界已不可用"
+        defaultLabels.world != null -> defaultLabels.world.orEmpty()
+        else -> "已选世界 · $defaultWorldTemplateId"
+    }
+    val encyclopediaLabel = when {
+        defaultEncyclopediaIdForAi.isBlank() -> "不预设"
+        defaultLabels.loading -> "正在读取默认百科…"
+        defaultLabels.encyclopediaMissing -> "原默认百科已不可用"
+        defaultLabels.encyclopedia != null -> defaultLabels.encyclopedia.orEmpty()
+        else -> "已选百科 · $defaultEncyclopediaIdForAi"
     }
 
     Column(
@@ -355,10 +356,10 @@ fun DefaultsTab(viewModel: SettingsViewModel) {
             title = "新故事默认设置",
             description = "修改会立即保存在本机，只影响之后新建的故事。",
         )
-        if (creationOptionsLoading) {
+        if (defaultLabels.loading) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
-        creationOptionsError?.let { message ->
+        defaultLabels.error?.let { message ->
             ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -366,24 +367,16 @@ fun DefaultsTab(viewModel: SettingsViewModel) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(message, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = viewModel::loadCreationOptions) { Text("重新加载") }
+                    TextButton(onClick = viewModel::loadSelectedCreationDefaults) { Text("重新加载") }
                 }
             }
         }
-        CreationOptionPicker(
-            label = "默认世界",
-            selectedKey = defaultWorldTemplateId.ifBlank { "custom" },
-            options = templateOptions,
-            enabled = !creationOptionsLoading && creationOptionsError == null,
-            onSelect = viewModel::updateDefaultWorldTemplateId,
-        )
-        CreationOptionPicker(
-            label = "默认参考百科",
-            selectedKey = defaultEncyclopediaIdForAi,
-            options = encyclopediaOptions,
-            enabled = !creationOptionsLoading && creationOptionsError == null,
-            onSelect = viewModel::updateDefaultEncyclopediaIdForAi,
-        )
+        OutlinedButton(onClick = { showWorldPicker = true }, modifier = Modifier.fillMaxWidth()) {
+            Text("默认世界 · $worldLabel", maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        OutlinedButton(onClick = { showEncyclopediaPicker = true }, modifier = Modifier.fillMaxWidth()) {
+            Text("默认参考百科 · $encyclopediaLabel", maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
         SettingsDividerLabel("对话方式")
         MoJingToggleRow("旁白", "回复时包含场景旁白", defaultNarrator, viewModel::updateDefaultNarratorEnabled)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -442,42 +435,20 @@ fun DefaultsTab(viewModel: SettingsViewModel) {
             OutlinedTextField(value = topP, onValueChange = { viewModel.updateDefaultTopP(it) }, label = { Text("Top P") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), isError = topPError, supportingText = if (topPError) { { Text("请输入 0 到 1 之间的数字") } } else null)
         }
     }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun CreationOptionPicker(
-    label: String,
-    selectedKey: String,
-    options: List<Pair<String, String>>,
-    enabled: Boolean = true,
-    onSelect: (String) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val selectedLabel = options.firstOrNull { it.first == selectedKey }?.second ?: "请选择"
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { if (enabled) expanded = it }) {
-        OutlinedTextField(
-            value = selectedLabel,
-            onValueChange = {},
-            label = { Text(label) },
-            readOnly = true,
-            enabled = enabled,
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable, enabled),
-            singleLine = true,
-        )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.forEach { (key, name) ->
-                DropdownMenuItem(
-                    text = { Text(name) },
-                    onClick = {
-                        onSelect(key)
-                        expanded = false
-                    },
-                )
-            }
-        }
-    }
+    if (showWorldPicker) CreationDefaultPicker(
+        title = "默认世界", searchLabel = "世界模板", noSelectionLabel = "自定义（不套模板）",
+        selectedKey = defaultWorldTemplateId.ifBlank { "custom" },
+        loadPage = viewModel::loadDefaultWorldPage,
+        onSelect = viewModel::selectDefaultWorld,
+        onDismiss = { showWorldPicker = false },
+    )
+    if (showEncyclopediaPicker) CreationDefaultPicker(
+        title = "默认参考百科", searchLabel = "百科", noSelectionLabel = "不预设",
+        selectedKey = defaultEncyclopediaIdForAi,
+        loadPage = viewModel::loadDefaultEncyclopediaPage,
+        onSelect = viewModel::selectDefaultEncyclopedia,
+        onDismiss = { showEncyclopediaPicker = false },
+    )
 }
 
 @Composable
