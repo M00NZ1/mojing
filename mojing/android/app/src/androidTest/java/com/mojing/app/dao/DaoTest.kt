@@ -1590,6 +1590,22 @@ class EncyclopediaDaoTest {
         } while (rows.size > 24)
         assertEquals(55, seen.size)
         assertEquals(55, seen.toSet().size)
+        val exportedIds = mutableListOf<Long>()
+        var exportCursor: EncyclopediaEntity? = null
+        do {
+            val rows = encyclopediaDao.getExportPage(
+                cursorGroup = exportCursor?.let { if (it.pinnedAt > 0) 0 else 1 },
+                cursorPinnedAt = exportCursor?.pinnedAt,
+                cursorUpdatedAt = exportCursor?.updatedAt,
+                cursorId = exportCursor?.id,
+                limit = 32,
+            )
+            exportedIds += rows.map { it.id }
+            assertTrue(rows.all { it.worldPrompt.length == "完整设定".length * 1000 })
+            exportCursor = rows.lastOrNull()
+        } while (rows.size == 32)
+        assertEquals(55, exportedIds.size)
+        assertEquals(55, exportedIds.toSet().size)
         val searched = encyclopediaDao.getLibraryPage("世界 54", null, null, null, null, 25)
         assertEquals(1, searched.size)
         assertTrue(searched.single().preview.length <= 160)
@@ -1608,6 +1624,26 @@ class EncyclopediaDaoTest {
 
         val characters = entryDao.getByType(encId, "character")
         assertEquals(2, characters.size)
+    }
+
+    @Test
+    fun exportEntryPagesKeepEveryLongBody() = runBlocking {
+        val encId = encyclopediaDao.upsert(EncyclopediaEntity(name = "大百科"))
+        repeat(65) { index ->
+            entryDao.upsert(EncyclopediaEntryEntity(
+                encyclopediaId = encId, title = "条目$index", content = "正文".repeat(1000),
+            ))
+        }
+        val seen = mutableListOf<Long>()
+        var cursor = 0L
+        do {
+            val page = entryDao.getExportPage(encId, cursor, 32)
+            seen += page.map { it.id }
+            assertTrue(page.all { it.content.length == "正文".length * 1000 })
+            cursor = page.lastOrNull()?.id ?: cursor
+        } while (page.size == 32)
+        assertEquals(65, seen.size)
+        assertEquals(65, seen.toSet().size)
     }
 
     @Test

@@ -78,6 +78,20 @@ interface EncyclopediaDao {
     @Query("SELECT * FROM world_encyclopedias ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, updatedAt DESC")
     suspend fun getAll(): List<EncyclopediaEntity>
 
+    @Query(
+        """SELECT * FROM world_encyclopedias
+        WHERE (:cursorId IS NULL
+          OR (CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END) > :cursorGroup
+          OR ((CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END) = :cursorGroup AND pinnedAt < :cursorPinnedAt)
+          OR ((CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END) = :cursorGroup AND pinnedAt = :cursorPinnedAt AND updatedAt < :cursorUpdatedAt)
+          OR ((CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END) = :cursorGroup AND pinnedAt = :cursorPinnedAt AND updatedAt = :cursorUpdatedAt AND id < :cursorId))
+        ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END ASC, pinnedAt DESC, updatedAt DESC, id DESC
+        LIMIT :limit""",
+    )
+    suspend fun getExportPage(
+        cursorGroup: Int?, cursorPinnedAt: Long?, cursorUpdatedAt: Long?, cursorId: Long?, limit: Int,
+    ): List<EncyclopediaEntity>
+
     @Query("SELECT * FROM world_encyclopedias WHERE id = :id")
     suspend fun getById(id: Long): EncyclopediaEntity?
 

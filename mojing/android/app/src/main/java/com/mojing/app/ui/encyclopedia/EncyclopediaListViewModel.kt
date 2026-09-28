@@ -20,14 +20,16 @@ import com.mojing.app.domain.usecase.SmartImportUseCase
 import com.mojing.app.domain.usecase.SaveCharacterEntryUseCase
 import com.mojing.app.ui.util.UserFacingStrings
 import com.mojing.app.ui.util.KeyedOperationOwner
-import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.google.gson.stream.JsonWriter
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,7 +40,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.OutputStream
+import java.io.OutputStreamWriter
+import java.io.StringWriter
 import javax.inject.Inject
+
+// World prompts and entry bodies are large; export reads only one small page of each at a time.
+private const val ENCYCLOPEDIA_EXPORT_BATCH_SIZE = 32
 
 data class EncyclopediaLibraryState(
     val items: List<EncyclopediaLibraryItem> = emptyList(),
@@ -75,38 +83,65 @@ internal object EncyclopediaExportCodec {
         val entries: List<ExportedEntry>,
     )
 
-    private val gson = Gson()
-
     fun toJson(
         encyclopedias: List<EncyclopediaEntity>,
         entriesByEncyclopediaId: Map<Long, List<EncyclopediaEntryEntity>>,
     ): String {
-        val data = encyclopedias.map { encyclopedia ->
-            mapOf(
-                "name" to encyclopedia.name,
-                "description" to encyclopedia.description,
-                "coverImagePath" to encyclopedia.coverImagePath,
-                "genreTags" to encyclopedia.genreTags,
-                "worldPrompt" to encyclopedia.worldPrompt,
-                "gameplayMode" to encyclopedia.gameplayMode,
-                "antiCheatPrompt" to encyclopedia.antiCheatPrompt,
-                "narratorConfigJson" to encyclopedia.narratorConfigJson,
-                "entries" to entriesByEncyclopediaId[encyclopedia.id].orEmpty().map { entry ->
-                    mapOf(
-                        "title" to entry.title,
-                        "entryType" to entry.entryType,
-                        "summary" to entry.summary,
-                        "content" to entry.content,
-                        "tags" to entry.tags,
-                        "confidence" to entry.confidence,
-                        "isFeatured" to entry.isFeatured,
-                        "changeNote" to entry.changeNote,
-                        "coverImagePath" to entry.coverImagePath,
-                    )
-                },
-            )
+        val output = StringWriter()
+        val writer = JsonWriter(output)
+        begin(writer)
+        encyclopedias.forEach { encyclopedia ->
+            beginEncyclopedia(writer, encyclopedia)
+            entriesByEncyclopediaId[encyclopedia.id].orEmpty().forEach { entry -> writeEntry(writer, entry) }
+            endEncyclopedia(writer)
         }
-        return gson.toJson(mapOf("version" to 2, "type" to "encyclopedias", "data" to data))
+        end(writer)
+        writer.flush()
+        return output.toString()
+    }
+
+    fun begin(writer: JsonWriter) {
+        writer.beginObject()
+        writer.name("version").value(2)
+        writer.name("type").value("encyclopedias")
+        writer.name("data").beginArray()
+    }
+
+    fun beginEncyclopedia(writer: JsonWriter, encyclopedia: EncyclopediaEntity) {
+        writer.beginObject()
+        writer.name("name").value(encyclopedia.name)
+        writer.name("description").value(encyclopedia.description)
+        writer.name("coverImagePath").value(encyclopedia.coverImagePath)
+        writer.name("genreTags").value(encyclopedia.genreTags)
+        writer.name("worldPrompt").value(encyclopedia.worldPrompt)
+        writer.name("gameplayMode").value(encyclopedia.gameplayMode)
+        writer.name("antiCheatPrompt").value(encyclopedia.antiCheatPrompt)
+        writer.name("narratorConfigJson").value(encyclopedia.narratorConfigJson)
+        writer.name("entries").beginArray()
+    }
+
+    fun writeEntry(writer: JsonWriter, entry: EncyclopediaEntryEntity) {
+        writer.beginObject()
+        writer.name("title").value(entry.title)
+        writer.name("entryType").value(entry.entryType)
+        writer.name("summary").value(entry.summary)
+        writer.name("content").value(entry.content)
+        writer.name("tags").value(entry.tags)
+        writer.name("confidence").value(entry.confidence)
+        writer.name("isFeatured").value(entry.isFeatured)
+        writer.name("changeNote").value(entry.changeNote)
+        writer.name("coverImagePath").value(entry.coverImagePath)
+        writer.endObject()
+    }
+
+    fun endEncyclopedia(writer: JsonWriter) {
+        writer.endArray()
+        writer.endObject()
+    }
+
+    fun end(writer: JsonWriter) {
+        writer.endArray()
+        writer.endObject()
     }
 
     fun fromJson(json: String): List<ExportedEncyclopedia> {
@@ -475,14 +510,40 @@ class EncyclopediaListViewModel @Inject constructor(
         return "封面已生成并保存"
     }
 
-    suspend fun exportJson(): String {
-        val encyclopedias = encyclopediaDao.getAll()
-        val entriesById = encyclopedias.associate { encyclopedia ->
-            encyclopedia.id to entryDao.getByEncyclopedia(encyclopedia.id)
-        }
-        return withContext(Dispatchers.Default) {
-            EncyclopediaExportCodec.toJson(encyclopedias, entriesById)
-        }
+    suspend fun exportJson(output: OutputStream) = withContext(Dispatchers.IO) {
+        val writer = JsonWriter(OutputStreamWriter(output, Charsets.UTF_8))
+        EncyclopediaExportCodec.begin(writer)
+        var worldCursor: EncyclopediaEntity? = null
+        do {
+            currentCoroutineContext().ensureActive()
+            val worlds = encyclopediaDao.getExportPage(
+                cursorGroup = worldCursor?.let { if (it.pinnedAt > 0) 0 else 1 },
+                cursorPinnedAt = worldCursor?.pinnedAt,
+                cursorUpdatedAt = worldCursor?.updatedAt,
+                cursorId = worldCursor?.id,
+                limit = ENCYCLOPEDIA_EXPORT_BATCH_SIZE,
+            )
+            worlds.forEach { encyclopedia ->
+                currentCoroutineContext().ensureActive()
+                EncyclopediaExportCodec.beginEncyclopedia(writer, encyclopedia)
+                var entryCursor = 0L
+                do {
+                    currentCoroutineContext().ensureActive()
+                    val entries = entryDao.getExportPage(
+                        encyclopedia.id, entryCursor, ENCYCLOPEDIA_EXPORT_BATCH_SIZE,
+                    )
+                    entries.forEach { entry ->
+                        currentCoroutineContext().ensureActive()
+                        EncyclopediaExportCodec.writeEntry(writer, entry)
+                    }
+                    entryCursor = entries.lastOrNull()?.id ?: entryCursor
+                } while (entries.size == ENCYCLOPEDIA_EXPORT_BATCH_SIZE)
+                EncyclopediaExportCodec.endEncyclopedia(writer)
+            }
+            worldCursor = worlds.lastOrNull()
+        } while (worlds.size == ENCYCLOPEDIA_EXPORT_BATCH_SIZE)
+        EncyclopediaExportCodec.end(writer)
+        writer.flush()
     }
 
     suspend fun importJson(text: String): String = try {

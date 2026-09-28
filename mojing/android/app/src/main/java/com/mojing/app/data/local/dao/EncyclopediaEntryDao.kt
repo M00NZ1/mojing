@@ -35,6 +35,9 @@ interface EncyclopediaEntryDao {
     @Query("SELECT * FROM encyclopedia_entries WHERE encyclopediaId = :encId ORDER BY id ASC")
     suspend fun getByEncyclopedia(encId: Long): List<EncyclopediaEntryEntity>
 
+    @Query("SELECT * FROM encyclopedia_entries WHERE encyclopediaId = :encId AND id > :afterId ORDER BY id ASC LIMIT :limit")
+    suspend fun getExportPage(encId: Long, afterId: Long, limit: Int): List<EncyclopediaEntryEntity>
+
     /** 批量生成 digest：按精选与更新时间取池子，避免大库全表扫描。 */
     @Query(
         """

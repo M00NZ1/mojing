@@ -7,6 +7,7 @@ import com.mojing.app.data.local.dao.EncyclopediaEntryDao
 import com.mojing.app.data.local.dao.EncyclopediaLibraryItem
 import com.mojing.app.data.local.dao.GenerationTaskDao
 import com.mojing.app.data.local.entity.EncyclopediaEntity
+import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
 import com.mojing.app.data.prefs.UiPreferencesRepository
 import com.mojing.app.data.remote.BackendEncyclopediaApi
 import com.mojing.app.data.repository.ImageRepository
@@ -60,6 +61,7 @@ class EncyclopediaListViewModelCoverTest {
         backend: BackendEncyclopediaApi,
         imageRepository: ImageRepository,
         secureStorage: SecureStorage,
+        entryDao: EncyclopediaEntryDao = mockk(relaxed = true),
     ): EncyclopediaListViewModel {
         val uiPreferences = mockk<UiPreferencesRepository> {
             every { encyclopediaListLayout } returns flowOf("list")
@@ -70,7 +72,7 @@ class EncyclopediaListViewModelCoverTest {
         return EncyclopediaListViewModel(
             deleteWorld = io.mockk.mockk(relaxed = true),
             encyclopediaDao = encyclopediaDao,
-            entryDao = mockk<EncyclopediaEntryDao>(relaxed = true),
+            entryDao = entryDao,
             characterDao = mockk<CharacterDao>(relaxed = true),
             saveCharacterEntry = mockk<SaveCharacterEntryUseCase>(relaxed = true),
             smartImportUseCase = mockk<SmartImportUseCase>(relaxed = true),
@@ -301,5 +303,45 @@ class EncyclopediaListViewModelCoverTest {
         assertEquals(listOf(last), viewModel.library.value.items)
         assertFalse(viewModel.library.value.hasNext)
         assertEquals(2, nextReads)
+    }
+
+    @Test
+    fun exportStreamsWorldAndEntryPagesInPortableVersionTwoFormat() = runTest(dispatcher) {
+        val worlds = (33L downTo 1L).map { id ->
+            EncyclopediaEntity(id = id, name = "世界$id", worldPrompt = "设定$id", updatedAt = 100L)
+        }
+        val entries = (1L..35L).map { id ->
+            EncyclopediaEntryEntity(id = id, encyclopediaId = 33L, title = "条目$id", content = "正文$id")
+        }
+        val encyclopediaDao = mockk<EncyclopediaDao> {
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any()) } returns emptyList()
+            coEvery { getExportPage(any(), any(), any(), any(), 32) } coAnswers {
+                worlds.filter { world -> arg<Long?>(3)?.let { world.id < it } ?: true }.take(32)
+            }
+        }
+        val entryDao = mockk<EncyclopediaEntryDao> {
+            coEvery { getExportPage(any(), any(), 32) } coAnswers {
+                if (arg<Long>(0) != 33L) emptyList() else entries.filter { it.id > arg<Long>(1) }.take(32)
+            }
+        }
+        val viewModel = createViewModel(
+            encyclopediaDao, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), entryDao,
+        )
+        val output = java.io.ByteArrayOutputStream()
+
+        viewModel.exportJson(output)
+
+        val json = output.toString("UTF-8")
+        val root = com.google.gson.JsonParser.parseString(json).asJsonObject
+        assertEquals(2, root.get("version").asInt)
+        assertEquals("encyclopedias", root.get("type").asString)
+        assertEquals(33, root.getAsJsonArray("data").size())
+        val imported = EncyclopediaExportCodec.fromJson(json)
+        assertEquals("世界33", imported.first().name)
+        assertEquals(35, imported.first().entries.size)
+        assertEquals("正文35", imported.first().entries.last().content)
+        coVerify(exactly = 2) { encyclopediaDao.getExportPage(any(), any(), any(), any(), 32) }
+        coVerify(exactly = 0) { encyclopediaDao.getAll() }
+        coVerify(exactly = 0) { entryDao.getByEncyclopedia(any()) }
     }
 }

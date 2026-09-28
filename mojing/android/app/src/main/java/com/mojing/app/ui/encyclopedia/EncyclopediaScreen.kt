@@ -168,8 +168,7 @@ fun EncyclopediaScreen(
         if (uri != null && !isImportingDocument && isExportingDocument) {
             scope.launch {
                 try {
-                    val json = viewModel.exportJson()
-                    ContentDocumentWriter.writeUtf8Text(context, uri, json)
+                    ContentDocumentWriter.writeStream(context, uri, viewModel::exportJson)
                     Toast.makeText(context, UserFacingStrings.exportSuccess(), Toast.LENGTH_SHORT).show()
                 } catch (cancelled: CancellationException) {
                     throw cancelled
