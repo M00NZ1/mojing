@@ -17,11 +17,10 @@ import com.mojing.app.data.remote.resolveMediaUrlAgainstPublicBase
 import com.mojing.app.util.ApiRootLines
 import com.mojing.app.data.prefs.UiPreferencesRepository
 import com.mojing.app.domain.usecase.SmartImportUseCase
-import com.mojing.app.domain.usecase.SaveCharacterEntryUseCase
+import com.mojing.app.domain.usecase.ImportEncyclopediaJsonUseCase
 import com.mojing.app.ui.util.UserFacingStrings
 import com.mojing.app.ui.util.KeyedOperationOwner
-import com.google.gson.JsonObject
-import com.google.gson.JsonParser
+import com.mojing.app.util.ContentDocumentReader
 import com.google.gson.stream.JsonWriter
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +42,9 @@ import java.io.File
 import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.io.StringWriter
+import java.io.ByteArrayInputStream
+import java.io.InputStream
+import java.io.PushbackInputStream
 import javax.inject.Inject
 
 // World prompts and entry bodies are large; export reads only one small page of each at a time.
@@ -59,30 +61,6 @@ data class EncyclopediaLibraryState(
 )
 
 internal object EncyclopediaExportCodec {
-    data class ExportedEntry(
-        val title: String,
-        val entryType: String,
-        val summary: String,
-        val content: String,
-        val tags: String,
-        val confidence: String,
-        val isFeatured: Boolean,
-        val changeNote: String,
-        val coverImagePath: String,
-    )
-
-    data class ExportedEncyclopedia(
-        val name: String,
-        val description: String,
-        val coverImagePath: String,
-        val genreTags: String,
-        val worldPrompt: String,
-        val gameplayMode: String,
-        val antiCheatPrompt: String,
-        val narratorConfigJson: String,
-        val entries: List<ExportedEntry>,
-    )
-
     fun toJson(
         encyclopedias: List<EncyclopediaEntity>,
         entriesByEncyclopediaId: Map<Long, List<EncyclopediaEntryEntity>>,
@@ -144,57 +122,13 @@ internal object EncyclopediaExportCodec {
         writer.endObject()
     }
 
-    fun fromJson(json: String): List<ExportedEncyclopedia> {
-        val root = JsonParser.parseString(json)
-        val data = when {
-            root.isJsonArray -> root.asJsonArray
-            root.isJsonObject -> root.asJsonObject.getAsJsonArray("data")
-            else -> null
-        } ?: throw IllegalArgumentException("未找到百科数据")
-        return data.mapNotNull encyclopediaItem@ { element ->
-            val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@encyclopediaItem null
-            val name = obj.string("name").trim()
-            if (name.isEmpty()) return@encyclopediaItem null
-            val entries = obj.getAsJsonArray("entries")?.mapNotNull entryItem@ { entryElement ->
-                val entry = entryElement.takeIf { it.isJsonObject }?.asJsonObject ?: return@entryItem null
-                ExportedEntry(
-                    title = entry.string("title"),
-                    entryType = entry.string("entryType").ifBlank { "world" },
-                    summary = entry.string("summary"),
-                    content = entry.string("content"),
-                    tags = entry.string("tags"),
-                    confidence = entry.string("confidence").ifBlank { "confirmed" },
-                    isFeatured = entry.boolean("isFeatured"),
-                    changeNote = entry.string("changeNote"),
-                    coverImagePath = entry.string("coverImagePath"),
-                )
-            }.orEmpty()
-            ExportedEncyclopedia(
-                name = name,
-                description = obj.string("description"),
-                coverImagePath = obj.string("coverImagePath"),
-                genreTags = obj.string("genreTags"),
-                worldPrompt = obj.string("worldPrompt"),
-                gameplayMode = obj.string("gameplayMode").ifBlank { "自由剧情" },
-                antiCheatPrompt = obj.string("antiCheatPrompt"),
-                narratorConfigJson = obj.string("narratorConfigJson").ifBlank { "{}" },
-                entries = entries,
-            )
-        }
-    }
-
-    private fun JsonObject.string(name: String): String =
-        get(name)?.takeIf { it.isJsonPrimitive && !it.isJsonNull }?.asString.orEmpty()
-
-    private fun JsonObject.boolean(name: String): Boolean =
-        get(name)?.takeIf { it.isJsonPrimitive && !it.isJsonNull }?.asBoolean == true
 }
 @HiltViewModel
 class EncyclopediaListViewModel @Inject constructor(
     private val encyclopediaDao: EncyclopediaDao,
     private val entryDao: EncyclopediaEntryDao,
     private val characterDao: CharacterDao,
-    private val saveCharacterEntry: SaveCharacterEntryUseCase,
+    private val importEncyclopediaJson: ImportEncyclopediaJsonUseCase,
     private val smartImportUseCase: SmartImportUseCase,
     private val secureStorage: SecureStorage,
     private val backendEncyclopediaApi: BackendEncyclopediaApi,
@@ -546,52 +480,58 @@ class EncyclopediaListViewModel @Inject constructor(
         writer.flush()
     }
 
-    suspend fun importJson(text: String): String = try {
-        val json = smartImportUseCase.parseToStructuredJson(text, "encyclopedia")
-        val data = withContext(Dispatchers.Default) { EncyclopediaExportCodec.fromJson(json) }
-        var encCount = 0
-        var entryCount = 0
-        data.forEach { exported ->
-            val encyclopediaId = encyclopediaDao.upsert(
-                EncyclopediaEntity(
-                    name = exported.name,
-                    description = exported.description,
-                    coverImagePath = exported.coverImagePath,
-                    genreTags = exported.genreTags,
-                    worldPrompt = exported.worldPrompt,
-                    gameplayMode = exported.gameplayMode,
-                    antiCheatPrompt = exported.antiCheatPrompt,
-                    narratorConfigJson = exported.narratorConfigJson,
-                ),
-            )
-            encCount++
-            exported.entries.forEach { entry ->
-                saveCharacterEntry(
-                    EncyclopediaEntryEntity(
-                        encyclopediaId = encyclopediaId,
-                        title = entry.title,
-                        entryType = entry.entryType,
-                        summary = entry.summary,
-                        content = entry.content,
-                        tags = entry.tags,
-                        confidence = entry.confidence,
-                        isFeatured = entry.isFeatured,
-                        changeNote = entry.changeNote,
-                        coverImagePath = entry.coverImagePath,
-                        // 不导入旧库的 meta/source ID，避免把角色或会话绑定到当前库的同号记录。
-                        metaJson = "{}",
-                        sourceSessionId = null,
-                        sourceMessageId = null,
-                    ),
-                )
-                entryCount++
-            }
+    suspend fun importDocument(input: InputStream): String = try {
+        val source = PushbackInputStream(input, 3)
+        val first = firstContentByte(source)
+        if (first < 0) throw IllegalArgumentException("导入文件为空")
+        source.unread(first)
+        if (first == '{'.code || first == '['.code) {
+            importStructuredJson(source)
+        } else {
+            val text = ContentDocumentReader.readBytes(
+                source, ContentDocumentReader.STRUCTURED_TEXT_IMPORT_MAX_BYTES,
+            ).toString(Charsets.UTF_8)
+            importJson(text)
         }
-        refresh()
-        "导入 $encCount 个百科，共 $entryCount 个词条"
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (e: Exception) {
         "导入异常: ${e.message}"
+    }
+
+    suspend fun importJson(text: String): String = try {
+        val json = smartImportUseCase.parseToStructuredJson(text, "encyclopedia")
+        importStructuredJson(ByteArrayInputStream(json.toByteArray(Charsets.UTF_8)))
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (e: Exception) {
+        "导入异常: ${e.message}"
+    }
+
+    private suspend fun importStructuredJson(input: InputStream): String {
+        val result = importEncyclopediaJson.import(input)
+        refresh()
+        return "导入 ${result.worlds} 个百科，共 ${result.entries} 个词条"
+    }
+
+    private fun firstContentByte(source: PushbackInputStream): Int {
+        var value = source.read()
+        while (value == ' '.code || value == '\n'.code || value == '\r'.code || value == '\t'.code) {
+            value = source.read()
+        }
+        if (value == 0xEF) {
+            val second = source.read()
+            val third = source.read()
+            if (second == 0xBB && third == 0xBF) {
+                value = source.read()
+                while (value == ' '.code || value == '\n'.code || value == '\r'.code || value == '\t'.code) {
+                    value = source.read()
+                }
+            } else {
+                if (third >= 0) source.unread(third)
+                if (second >= 0) source.unread(second)
+            }
+        }
+        return value
     }
 }

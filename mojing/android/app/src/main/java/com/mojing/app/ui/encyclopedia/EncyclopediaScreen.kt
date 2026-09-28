@@ -187,16 +187,7 @@ fun EncyclopediaScreen(
             isImportingDocument = true
             scope.launch {
                 try {
-                    val text = ContentDocumentReader.readUtf8Text(
-                        context,
-                        uri,
-                        ContentDocumentReader.STRUCTURED_TEXT_IMPORT_MAX_BYTES,
-                    )
-                    if (text.isBlank()) {
-                        Toast.makeText(context, UserFacingStrings.importReadFailed(), Toast.LENGTH_SHORT).show()
-                        return@launch
-                    }
-                    val msg = viewModel.importJson(text)
+                    val msg = ContentDocumentReader.readStream(context, uri, viewModel::importDocument)
                     Toast.makeText(context, UserFacingStrings.appendAndroidIfNeeded(msg), Toast.LENGTH_SHORT).show()
                 } catch (cancelled: CancellationException) {
                     throw cancelled

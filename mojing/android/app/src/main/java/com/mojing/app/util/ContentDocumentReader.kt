@@ -24,6 +24,15 @@ object ContentDocumentReader {
     suspend fun readUtf8Text(context: Context, uri: Uri, maxBytes: Int): String =
         readBytes(context, uri, maxBytes).toString(Charsets.UTF_8)
 
+    suspend fun <T> readStream(
+        context: Context,
+        uri: Uri,
+        reader: suspend (InputStream) -> T,
+    ): T = withContext(Dispatchers.IO) {
+        context.contentResolver.openInputStream(uri)?.buffered()?.use { input -> reader(input) }
+            ?: throw IllegalStateException("无法读取所选文件")
+    }
+
     internal suspend fun readBytes(input: InputStream, maxBytes: Int): ByteArray {
         require(maxBytes > 0)
         val output = ByteArrayOutputStream(minOf(maxBytes, BUFFER_SIZE))

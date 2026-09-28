@@ -1564,6 +1564,42 @@ class EncyclopediaDaoTest {
     }
 
     @Test
+    fun streamedImportKeepsCharacterLinkAndLateWorldMetadata() = runBlocking {
+        val importer = com.mojing.app.domain.usecase.ImportEncyclopediaJsonUseCase(
+            db, com.mojing.app.domain.usecase.SaveCharacterEntryUseCase(db),
+        )
+        val json = """{"version":2,"type":"encyclopedias","data":[{
+            "entries":[{"title":"阿青","entryType":"character","content":"守城者"}],
+            "name":"山海","worldPrompt":"群山与海"
+        }]}"""
+
+        val result = importer.import(json.byteInputStream())
+
+        assertEquals(1, result.worlds)
+        assertEquals(1, result.entries)
+        val world = encyclopediaDao.getAll().single()
+        assertEquals("山海", world.name)
+        assertEquals("群山与海", world.worldPrompt)
+        assertEquals("阿青", entryDao.getByEncyclopedia(world.id).single().title)
+        assertEquals(world.id, db.characterDao().getAll().single().boundEncyclopediaId)
+    }
+
+    @Test
+    fun malformedTailRollsBackWorldEntriesAndCharacterLink() = runBlocking {
+        val importer = com.mojing.app.domain.usecase.ImportEncyclopediaJsonUseCase(
+            db, com.mojing.app.domain.usecase.SaveCharacterEntryUseCase(db),
+        )
+        val broken = """{"data":[{"name":"山海","entries":[
+            {"title":"阿青","entryType":"character","content":"守城者"}]},"""
+
+        val failure = runCatching { importer.import(broken.byteInputStream()) }.exceptionOrNull()
+
+        assertNotNull(failure)
+        assertTrue(encyclopediaDao.getAll().isEmpty())
+        assertTrue(db.characterDao().getAll().isEmpty())
+    }
+
+    @Test
     fun libraryPagesUseStableCursorAndKeepWorldPromptsOutOfCards() = runBlocking {
         repeat(55) { index ->
             encyclopediaDao.upsert(

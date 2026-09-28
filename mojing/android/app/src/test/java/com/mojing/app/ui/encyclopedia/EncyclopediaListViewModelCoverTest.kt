@@ -12,7 +12,7 @@ import com.mojing.app.data.prefs.UiPreferencesRepository
 import com.mojing.app.data.remote.BackendEncyclopediaApi
 import com.mojing.app.data.repository.ImageRepository
 import com.mojing.app.domain.usecase.SmartImportUseCase
-import com.mojing.app.domain.usecase.SaveCharacterEntryUseCase
+import com.mojing.app.domain.usecase.ImportEncyclopediaJsonUseCase
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import io.mockk.coEvery
@@ -74,7 +74,7 @@ class EncyclopediaListViewModelCoverTest {
             encyclopediaDao = encyclopediaDao,
             entryDao = entryDao,
             characterDao = mockk<CharacterDao>(relaxed = true),
-            saveCharacterEntry = mockk<SaveCharacterEntryUseCase>(relaxed = true),
+            importEncyclopediaJson = mockk<ImportEncyclopediaJsonUseCase>(relaxed = true),
             smartImportUseCase = mockk<SmartImportUseCase>(relaxed = true),
             secureStorage = secureStorage,
             backendEncyclopediaApi = backend,
@@ -336,10 +336,11 @@ class EncyclopediaListViewModelCoverTest {
         assertEquals(2, root.get("version").asInt)
         assertEquals("encyclopedias", root.get("type").asString)
         assertEquals(33, root.getAsJsonArray("data").size())
-        val imported = EncyclopediaExportCodec.fromJson(json)
-        assertEquals("世界33", imported.first().name)
-        assertEquals(35, imported.first().entries.size)
-        assertEquals("正文35", imported.first().entries.last().content)
+        val firstWorld = root.getAsJsonArray("data")[0].asJsonObject
+        assertEquals("世界33", firstWorld.get("name").asString)
+        val firstEntries = firstWorld.getAsJsonArray("entries")
+        assertEquals(35, firstEntries.size())
+        assertEquals("正文35", firstEntries[34].asJsonObject.get("content").asString)
         coVerify(exactly = 2) { encyclopediaDao.getExportPage(any(), any(), any(), any(), 32) }
         coVerify(exactly = 0) { encyclopediaDao.getAll() }
         coVerify(exactly = 0) { entryDao.getByEncyclopedia(any()) }
