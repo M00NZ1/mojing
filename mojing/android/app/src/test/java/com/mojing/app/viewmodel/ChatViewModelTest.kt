@@ -14,6 +14,7 @@ import com.mojing.app.data.local.dao.BookmarkDao
 import com.mojing.app.data.local.entity.MessageBookmarkEntity
 import com.mojing.app.data.local.dao.AttachmentDao
 import com.mojing.app.data.local.dao.CharacterDao
+import com.mojing.app.data.local.dao.ChatCharacterPresentationRow
 import com.mojing.app.data.local.dao.NewSessionCharacterOption
 import com.mojing.app.data.local.dao.MessageDao
 import com.mojing.app.data.local.dao.MessagePreviewSource
@@ -1503,6 +1504,31 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun initialChatLoadsOnlyParticipantPresentationAndUsesFirstParticipantsThinkingFlag() = runTest(testDispatcher) {
+        val characters = mockk<CharacterDao>(relaxed = true)
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        coEvery { participants.getBySession(42L) } returns listOf(
+            SessionParticipantEntity(id = 1L, sessionId = 42L, characterId = 7L),
+            SessionParticipantEntity(id = 2L, sessionId = 42L, characterId = 8L),
+        )
+        coEvery { characters.getChatPresentationByIds(listOf(7L, 8L)) } returns listOf(
+            ChatCharacterPresentationRow(8L, "乙", "#222222", "avatar-b", "", false),
+            ChatCharacterPresentationRow(7L, "甲", "#111111", "avatar-a", "card-a", true),
+        )
+
+        val vm = createViewModel(characterDao = characters, participantDao = participants)
+        advanceUntilIdle()
+
+        assertEquals("甲", vm.state.value.characterNames[7L])
+        assertEquals("乙", vm.state.value.characterNames[8L])
+        assertEquals(listOf("甲", "乙"), vm.state.value.characterNames.values.toList())
+        assertEquals("card-a", vm.state.value.characterCardImages[7L])
+        assertTrue(vm.state.value.characterForcesThinkMax)
+        coVerify(exactly = 1) { characters.getChatPresentationByIds(listOf(7L, 8L)) }
+        coVerify(exactly = 0) { characters.getById(any()) }
+    }
+
+    @Test
     fun participantAdditionConfirmsOnlyAfterPersistence() = runTest(testDispatcher) {
         val character = CharacterEntity(id = 7L, name = "青鸾", boundEncyclopediaId = 3L)
         val characterDao = mockk<CharacterDao>(relaxed = true)
@@ -1511,6 +1537,10 @@ class ChatViewModelTest {
         val persistenceFinished = CompletableDeferred<Unit>()
         var committed = false
         coEvery { characterDao.getById(7L) } returns character
+        coEvery { characterDao.getChatPresentationByIds(listOf(7L)) } returns listOf(
+            ChatCharacterPresentationRow(7L, "青鸾", character.avatarColor,
+                character.avatarImagePath, character.cardImagePath, character.thinkMaxEnabled),
+        )
         coEvery { worldDao.getBySession(42L) } returns SessionWorldEntity(
             sessionId = 42L,
             encyclopediaId = 3L,

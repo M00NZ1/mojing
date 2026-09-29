@@ -16,6 +16,16 @@ data class NewSessionCharacterOption(
 
 data class CharacterNameRow(val id: Long, val name: String)
 
+/** Chat chrome needs only presentation fields and the first participant's thinking flag. */
+data class ChatCharacterPresentationRow(
+    val id: Long,
+    val name: String,
+    val avatarColor: String,
+    val avatarImagePath: String,
+    val cardImagePath: String,
+    val thinkMaxEnabled: Boolean,
+)
+
 /** Only fields rendered by the character library; credentials and full prompts stay in Room. */
 data class CharacterListItem(
     val id: Long,
@@ -35,6 +45,9 @@ data class CharacterListItem(
 interface CharacterDao {
     @Query("SELECT id, name FROM characters WHERE id IN (:ids)")
     suspend fun getNamesByIds(ids: List<Long>): List<CharacterNameRow>
+
+    @Query("SELECT id, name, avatarColor, avatarImagePath, cardImagePath, thinkMaxEnabled FROM characters WHERE id IN (:ids)")
+    suspend fun getChatPresentationByIds(ids: List<Long>): List<ChatCharacterPresentationRow>
 
     @Query(
         """

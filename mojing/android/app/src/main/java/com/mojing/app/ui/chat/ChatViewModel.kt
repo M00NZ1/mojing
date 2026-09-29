@@ -107,6 +107,7 @@ private data class CharacterUiMaps(
     val avatars: Map<Long, String>,
     val colors: Map<Long, String>,
     val cardImages: Map<Long, String>,
+    val thinkMaxEnabledIds: Set<Long>,
 )
 
 internal data class AddParticipantPage(val rows: List<NewSessionCharacterOption>, val hasMore: Boolean)
@@ -924,7 +925,6 @@ class ChatViewModel @Inject constructor(
         val excludedKeys = excludedKeysForWindow(initialBranchId, msgs)
         val maps = buildCharacterPresentationMaps(participants)
 
-        val firstChar = participants.firstOrNull()?.characterId?.let { characterDao.getById(it) }
         val displayCap = session.displayContextTokenLimit.takeIf { it > 0 } ?: 1_000_000
         val convEst = withContext(Dispatchers.Default) { estimateLoadedContextTokens(msgs, excludedKeys) }
 
@@ -994,7 +994,9 @@ class ChatViewModel @Inject constructor(
             userAvatarColor = secureStorage.userAvatarColor,
             allowSessionThinkMax = secureStorage.allowSessionThinkMax,
             sessionThinkMaxEnabled = session.thinkMaxEnabled,
-            characterForcesThinkMax = firstChar?.thinkMaxEnabled == true,
+            characterForcesThinkMax = participants.firstOrNull()?.characterId?.let {
+                it in maps.thinkMaxEnabledIds
+            } == true,
             displayContextTokenLimit = displayCap,
             conversationTokenEstimate = convEst,
             inputText = _state.value.inputText.ifEmpty { restoredInputText },
@@ -1041,16 +1043,21 @@ class ChatViewModel @Inject constructor(
         val avatars = mutableMapOf<Long, String>()
         val colors = mutableMapOf<Long, String>()
         val cardImages = mutableMapOf<Long, String>()
-        participants.map { it.characterId }.forEach { id ->
-            characterDao.getById(id)?.let {
-                names[id] = it.name
-                avatars[id] = it.avatarImagePath
-                colors[id] = it.avatarColor
-                val card = it.cardImagePath.trim()
-                if (card.isNotEmpty()) cardImages[id] = card
-            }
+        val participantIds = participants.map { it.characterId }.distinct()
+        val rows = participantIds.chunked(500).flatMap { ids ->
+            characterDao.getChatPresentationByIds(ids)
         }
-        return CharacterUiMaps(names, avatars, colors, cardImages)
+        val rowsById = rows.associateBy { it.id }
+        participantIds.forEach { id ->
+            val row = rowsById[id] ?: return@forEach
+            names[row.id] = row.name
+            avatars[row.id] = row.avatarImagePath
+            colors[row.id] = row.avatarColor
+            val card = row.cardImagePath.trim()
+            if (card.isNotEmpty()) cardImages[row.id] = card
+        }
+        return CharacterUiMaps(names, avatars, colors, cardImages,
+            rows.asSequence().filter { it.thinkMaxEnabled }.map { it.id }.toSet())
     }
 
     private suspend fun attachmentsForMessages(
@@ -1332,7 +1339,6 @@ class ChatViewModel @Inject constructor(
             val participants = participantDao.getBySession(sessionId)
             val maps = buildCharacterPresentationMaps(participants)
             val sess = sessionDao.getById(sessionId)
-            val firstChar = participants.firstOrNull()?.characterId?.let { characterDao.getById(it) }
             _state.value = _state.value.copy(
                 participants = participants,
                 characterNames = maps.names,
@@ -1344,7 +1350,9 @@ class ChatViewModel @Inject constructor(
                 userAvatarColor = secureStorage.userAvatarColor,
                 allowSessionThinkMax = secureStorage.allowSessionThinkMax,
                 sessionThinkMaxEnabled = sess?.thinkMaxEnabled == true,
-                characterForcesThinkMax = firstChar?.thinkMaxEnabled == true,
+                characterForcesThinkMax = participants.firstOrNull()?.characterId?.let {
+                    it in maps.thinkMaxEnabledIds
+                } == true,
             )
         }
     }
@@ -1734,7 +1742,10 @@ class ChatViewModel @Inject constructor(
         val displayLines = visibleDisplayLines(msgs, map)
         val sess = sessionDao.getById(sessionId)
         val participants = participantDao.getBySession(sessionId)
-        val firstChar = participants.firstOrNull()?.characterId?.let { characterDao.getById(it) }
+        val firstCharacterId = participants.firstOrNull()?.characterId
+        val firstCharacterForcesThinkMax = firstCharacterId?.let { id ->
+            characterDao.getChatPresentationByIds(listOf(id)).firstOrNull()?.thinkMaxEnabled
+        } == true
         val displayCap = sess?.displayContextTokenLimit?.takeIf { it > 0 } ?: 1_000_000
         val convEst = withContext(Dispatchers.Default) { estimateLoadedContextTokens(msgs, excludedKeys) }
         val memoryPage = if (refreshSummaryPage) try {
@@ -1874,7 +1885,7 @@ class ChatViewModel @Inject constructor(
                     eventNodesLoadError = if (applyEventPage || switchingBranch) null else current.eventNodesLoadError,
                     allowSessionThinkMax = secureStorage.allowSessionThinkMax,
                     sessionThinkMaxEnabled = sess?.thinkMaxEnabled == true,
-                    characterForcesThinkMax = firstChar?.thinkMaxEnabled == true,
+                    characterForcesThinkMax = firstCharacterForcesThinkMax,
                     displayContextTokenLimit = displayCap,
                     conversationTokenEstimate = convEst,
                 )
