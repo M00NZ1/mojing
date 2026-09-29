@@ -1005,10 +1005,12 @@ fun ChatScreen(
                                 Icon(Icons.Default.VolumeUp, contentDescription = null,
                                     tint = MaterialTheme.colorScheme.onSecondaryContainer)
                                 Text(
-                                    "正在准备或播放朗读",
+                                    state.speechVoiceRequestLabel.ifBlank { "正在准备或播放朗读" },
                                     modifier = Modifier.weight(1f).padding(start = 10.dp),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                                 TextButton(onClick = viewModel::stopSpeaking) { Text("停止") }
                             }

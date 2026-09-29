@@ -2248,6 +2248,7 @@ class ChatViewModel @Inject constructor(
         speechJob?.cancel()
         speechJob = null
         _speechActive.value = false
+        _state.update { it.copy(speechVoiceRequestLabel = "") }
         AndroidTts.stop()
         com.mojing.app.media.TtsPlayer.stop()
     }
@@ -2282,7 +2283,17 @@ class ChatViewModel @Inject constructor(
                 }
                 val char = characterId?.let { characterDao.getById(it) }
                 val preferences = com.mojing.app.data.VoicePreferences(appContext)
-                val choice = com.mojing.app.data.resolveVoiceChoice(char?.voiceProvider, char?.voiceModel, preferences.session(sessionId))
+                val sessionSelection = preferences.sessionSelection(sessionId)
+                val sessionChoice = sessionSelection.takeUnless { it.engineId == "inherit" } ?: preferences.global()
+                val choice = com.mojing.app.data.resolveVoiceChoice(char?.voiceProvider, char?.voiceModel, sessionChoice)
+                val source = when {
+                    com.mojing.app.data.characterHasOwnVoice(char?.voiceProvider) -> "角色设置"
+                    sessionSelection.engineId != "inherit" -> "对话设置"
+                    else -> "全局设置"
+                }
+                if (speechRevision == revision) {
+                    _state.update { it.copy(speechVoiceRequestLabel = "已请求$source：${choice.label()}") }
+                }
                 if (choice.engineId == "azure") {
                     val (region, key) = withContext(Dispatchers.IO) { preferences.azureRegion to preferences.azureKey }
                     val ok = com.mojing.app.media.AzureSpeech.speak(appContext, cleaned, region, key, choice.voiceId)
@@ -2309,6 +2320,7 @@ class ChatViewModel @Inject constructor(
                 if (speechRevision == revision) {
                     speechJob = null
                     _speechActive.value = false
+                    _state.update { it.copy(speechVoiceRequestLabel = "") }
                 }
             }
         }

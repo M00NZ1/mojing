@@ -38,7 +38,10 @@ class VoicePreferences(context: Context) {
     }
 }
 
+fun characterHasOwnVoice(characterProvider: String?): Boolean =
+    characterProvider == "azure" || characterProvider == "system" || characterProvider?.startsWith("android:") == true
+
 fun resolveVoiceChoice(characterProvider: String?, characterVoice: String?, conversation: VoiceChoice): VoiceChoice =
-    if (characterProvider == "azure" || characterProvider == "system" || characterProvider?.startsWith("android:") == true)
+    if (characterHasOwnVoice(characterProvider))
         VoiceChoice(characterProvider!!, characterVoice.orEmpty().takeUnless { it == "system" }.orEmpty())
     else conversation

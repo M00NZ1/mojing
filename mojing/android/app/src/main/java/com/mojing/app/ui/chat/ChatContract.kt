@@ -91,6 +91,7 @@ object ChatContract {
         val modelSelectionError: String? = null,
         val voiceSelectionSaving: Boolean = false,
         val voiceSelectionError: String? = null,
+        val speechVoiceRequestLabel: String = "",
         val novelMetadataSaving: Boolean = false,
         val novelMetadataError: String? = null,
         val memoryCompactionChunk: Int? = null,
