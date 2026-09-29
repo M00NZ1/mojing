@@ -70,6 +70,17 @@ class ModelPlatformsTest {
         assertEquals(listOf("a", "org/b", "c"), ModelPlatformCodec.modelNames(" a，org/b\na,c\r\n"))
     }
 
+    @Test fun savedDuplicateModelNamesAreDeduplicatedWithoutRewritingStorage() {
+        val raw = ModelPlatformCodec.encode(listOf(ModelPlatform(
+            "p", "平台", "https://example.test", "test-key", listOf("chat", "reason", "chat"), "chat",
+        )))
+        val values = mutableMapOf("model_platforms_v1" to raw)
+        val platform = storage(values).modelPlatforms().single()
+        assertEquals(listOf("chat", "reason"), platform.models)
+        assertEquals("chat", platform.selectedModel)
+        assertEquals(raw, values["model_platforms_v1"])
+    }
+
     @Test fun followingSettingsClearsOnlyTheSelectedSessionAndSurvivesReopen() {
         val values = mutableMapOf<String, String>()
         val s = storage(values)

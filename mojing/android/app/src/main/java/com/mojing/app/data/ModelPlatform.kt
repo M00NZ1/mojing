@@ -45,7 +45,7 @@ object ModelPlatformCodec {
             val p = item.asJsonObject
             ModelPlatform(p.get("id").asString, p.get("name").asString,
                 p.get("baseUrl").asString, p.get("apiKey").asString,
-                p.getAsJsonArray("models").map { it.asString }, p.get("selectedModel").asString)
+                p.getAsJsonArray("models").map { it.asString }.distinct(), p.get("selectedModel").asString)
         }
     }
 }
