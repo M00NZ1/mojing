@@ -126,6 +126,7 @@ object ChatContract {
         val memoryCorrections: List<SessionMemoryCorrectionEntity> = emptyList(),
         val lastMemoryCorrectionPromptTrace: MemoryCorrectionPromptTrace? = null,
         val eventNodes: List<SessionEventNodeEntity> = emptyList(),
+        val eventNodesLoaded: Boolean = false,
         /** User-expanded capacity survives optimistic deletion until the page is refilled. */
         val eventNodesWindowSize: Int = EVENT_NODE_PAGE_SIZE,
         val eventNodesHasMore: Boolean = false,

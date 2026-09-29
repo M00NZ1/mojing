@@ -52,10 +52,12 @@ fun ChatDrawer(
     sessionReady: Boolean = true,
     isGenerating: Boolean = false,
     eventNodes: List<SessionEventNodeEntity> = emptyList(),
+    eventNodesLoaded: Boolean = true,
     eventNodesHasMore: Boolean = false,
     eventNodesLoadingMore: Boolean = false,
     eventNodesLoadError: String? = null,
     onLoadMoreEventNodes: () -> Unit = {},
+    onOpenEvents: () -> Unit = {},
     eventBusyIds: Set<Long> = emptySet(),
     eventActionErrors: Map<Long, String> = emptyMap(),
     characterNames: Map<Long, String> = emptyMap(),
@@ -129,7 +131,8 @@ fun ChatDrawer(
     }
     val tabs = listOf("角色", "世界", "记忆", "事件", "书签")
 
-    LaunchedEffect(selectedTab, drawerOpen, sessionReady) {
+    LaunchedEffect(selectedTab, drawerOpen, sessionReady, currentBranchId) {
+        if (selectedTab == 3 && drawerOpen && sessionReady) onOpenEvents()
         if (selectedTab == 4 && drawerOpen && sessionReady) onOpenBookmarks()
     }
 
@@ -223,6 +226,7 @@ fun ChatDrawer(
                 busyIds = eventBusyIds,
                 actionErrors = eventActionErrors,
                 currentBranchId = currentBranchId,
+                loaded = eventNodesLoaded,
                 hasOlderEvents = eventNodesHasMore,
                 olderEventsLoading = eventNodesLoadingMore,
                 olderEventsError = eventNodesLoadError,
@@ -996,12 +1000,27 @@ fun TimelineTab(
     busyIds: Set<Long> = emptySet(),
     actionErrors: Map<Long, String> = emptyMap(),
     currentBranchId: String = "main",
+    loaded: Boolean = true,
     hasOlderEvents: Boolean = false,
     olderEventsLoading: Boolean = false,
     olderEventsError: String? = null,
     onLoadOlderEvents: () -> Unit = {},
     sourceNavigationBusy: Boolean = false,
 ) {
+    if (!loaded) {
+        Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (olderEventsError == null) {
+                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                Text("正在加载当前故事线事件…", style = MaterialTheme.typography.bodyMedium)
+            } else {
+                Text(olderEventsError, style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = onLoadOlderEvents, modifier = Modifier.heightIn(min = 48.dp)) { Text("重试加载") }
+            }
+        }
+        return
+    }
     var deleteTarget by remember(currentBranchId) { mutableStateOf<Long?>(null) }
     var selectedFilter by remember(currentBranchId) { mutableStateOf(0) }
     val visibleEvents = remember(events, selectedFilter) {

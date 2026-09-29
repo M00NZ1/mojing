@@ -218,6 +218,7 @@ class ChatViewModel @Inject constructor(
     private var bookmarkInitialLoadJob: Job? = null
     private val messageWindowRevision = java.util.concurrent.atomic.AtomicLong()
     private val eventRefreshRevision = java.util.concurrent.atomic.AtomicLong()
+    private var eventPanelRequestedBranchId: String? = null
     private val correctionRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     private val memorySummaryListRevision = java.util.concurrent.atomic.AtomicLong()
     private var manualCompactionJob: Job? = null
@@ -797,6 +798,8 @@ class ChatViewModel @Inject constructor(
 
     fun retryInitialization() {
         if (initializationJob?.isActive == true) return
+        eventPanelRequestedBranchId = null
+        eventRefreshRevision.incrementAndGet()
         bookmarkInitialLoadJob?.cancel()
         bookmarkInitialLoadJob = null
         _state.update {
@@ -910,11 +913,6 @@ class ChatViewModel @Inject constructor(
         }
         val memoryPage = memorySegmentDao.getRecentForBranch(sessionId, initialBranchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
         val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, initialBranchId)
-        val eventPage = eventNodeDao.getPageForBranch(
-            sessionId = sessionId,
-            branchId = initialBranchId,
-            limit = EVENT_NODE_PAGE_SIZE + 1,
-        )
         val initialRows = getMessageTailForBranch(initialBranchId, INITIAL_MESSAGE_WINDOW_SIZE + 1)
         val hasOlderMessages = initialRows.size > INITIAL_MESSAGE_WINDOW_SIZE
         val msgs = initialRows.take(INITIAL_MESSAGE_WINDOW_SIZE).asReversed()
@@ -947,9 +945,10 @@ class ChatViewModel @Inject constructor(
             memorySegmentsHasMore = memoryPage.size > MEMORY_SEGMENT_PAGE_SIZE,
             memorySegmentsLoadingMore = false,
             memorySegmentsLoadError = null,
-            eventNodes = eventPage.take(EVENT_NODE_PAGE_SIZE),
+            eventNodes = emptyList(),
+            eventNodesLoaded = false,
             eventNodesWindowSize = EVENT_NODE_PAGE_SIZE,
-            eventNodesHasMore = eventPage.size > EVENT_NODE_PAGE_SIZE,
+            eventNodesHasMore = false,
             eventNodesLoadingMore = false,
             eventNodesLoadError = null,
             branches = branches,
@@ -1638,12 +1637,15 @@ class ChatViewModel @Inject constructor(
         // Navigation owns the window until its refresh finishes; background writers may still finish their writes.
         if (branchTransitionJob?.isActive == true && currentCoroutineContext()[Job] !== branchTransitionJob) return
         val windowRevision = messageWindowRevision.incrementAndGet()
-        val eventRevision = eventRefreshRevision.incrementAndGet()
         val correctionRevision = correctionRefreshRevision.incrementAndGet()
         val branches = sessionBranchDao.getBySession(sessionId)
         val branchId = if (
             requestedBranchId == "main" || branches.any { it.branchId == requestedBranchId }
         ) requestedBranchId else "main"
+        val refreshEventPage = switchBranchOnSuccess ||
+            (eventPanelRequestedBranchId == branchId && _state.value.eventNodesLoaded)
+        val eventRevision = if (refreshEventPage) eventRefreshRevision.incrementAndGet()
+            else eventRefreshRevision.get()
         val anchor = anchorMessageId?.let { getVisibleMessage(branchId, it) }
         val historyWindow = _state.value.takeIf { current ->
             !switchBranchOnSuccess && anchorMessageId == null && current.currentBranchId == branchId &&
@@ -1709,11 +1711,17 @@ class ChatViewModel @Inject constructor(
         }
         val eventWindowSize = _state.value.takeIf { it.currentBranchId == branchId }
             ?.eventNodesWindowSize ?: EVENT_NODE_PAGE_SIZE
-        val eventPage = eventNodeDao.getPageForBranch(
-            sessionId = sessionId,
-            branchId = branchId,
-            limit = eventWindowSize + 1,
-        )
+        val eventPage = if (refreshEventPage) try {
+            eventNodeDao.getPageForBranch(sessionId = sessionId, branchId = branchId, limit = eventWindowSize + 1)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            _state.update { state -> if (state.currentBranchId == startingBranchId &&
+                !state.eventNodesLoaded && state.eventNodesLoadingMore)
+                state.copy(eventNodesLoadingMore = false, eventNodesLoadError = "事件读取未完成，请重试")
+                else state }
+            throw failure
+        } else null
         bookmarkMutex.withLock {
             val bookmarkIds = bookmarkedIdsForWindow(msgs)
             if (currentBranchId() != startingBranchId || messageWindowRevision.get() != windowRevision) {
@@ -1724,8 +1732,9 @@ class ChatViewModel @Inject constructor(
                 // A slower read must not replace a newer refresh or history navigation.
                 if (current.currentBranchId != startingBranchId ||
                     messageWindowRevision.get() != windowRevision) return@update current
-                val applyEventPage = current.currentBranchId != branchId ||
-                    (eventRefreshRevision.get() == eventRevision && current.eventNodesWindowSize == eventWindowSize)
+                val switchingBranch = current.currentBranchId != branchId
+                val applyEventPage = eventPage != null && (switchingBranch ||
+                    (eventRefreshRevision.get() == eventRevision && current.eventNodesWindowSize == eventWindowSize))
                 current.copy(
                     messages = msgs,
                     excludedContextKeys = excludedKeys,
@@ -1750,14 +1759,15 @@ class ChatViewModel @Inject constructor(
                     roundChoiceOptions = roundChoices.options,
                     roundChoiceMessageId = roundChoices.sourceMessageId,
                     branchAnchorsByMessageId = anchors,
-                    eventNodes = if (applyEventPage)
-                        eventPage.take(eventWindowSize) else current.eventNodes,
-                    eventNodesWindowSize = if (applyEventPage && current.currentBranchId != branchId)
+                    eventNodes = if (applyEventPage) eventPage!!.take(eventWindowSize)
+                        else if (switchingBranch) emptyList() else current.eventNodes,
+                    eventNodesLoaded = if (applyEventPage) true else if (switchingBranch) false else current.eventNodesLoaded,
+                    eventNodesWindowSize = if (switchingBranch)
                         EVENT_NODE_PAGE_SIZE else current.eventNodesWindowSize,
-                    eventNodesHasMore = if (applyEventPage)
-                        eventPage.size > eventWindowSize else current.eventNodesHasMore,
-                    eventNodesLoadingMore = if (applyEventPage) false else current.eventNodesLoadingMore,
-                    eventNodesLoadError = if (applyEventPage) null else current.eventNodesLoadError,
+                    eventNodesHasMore = if (applyEventPage) eventPage!!.size > eventWindowSize
+                        else if (switchingBranch) false else current.eventNodesHasMore,
+                    eventNodesLoadingMore = if (applyEventPage || switchingBranch) false else current.eventNodesLoadingMore,
+                    eventNodesLoadError = if (applyEventPage || switchingBranch) null else current.eventNodesLoadError,
                     allowSessionThinkMax = secureStorage.allowSessionThinkMax,
                     sessionThinkMaxEnabled = sess?.thinkMaxEnabled == true,
                     characterForcesThinkMax = firstChar?.thinkMaxEnabled == true,
@@ -1765,6 +1775,10 @@ class ChatViewModel @Inject constructor(
                     conversationTokenEstimate = convEst,
                 )
             }
+        }
+        if (switchBranchOnSuccess && currentBranchId() == branchId &&
+            messageWindowRevision.get() == windowRevision) {
+            eventPanelRequestedBranchId = branchId
         }
     }
 
@@ -4301,6 +4315,7 @@ class ChatViewModel @Inject constructor(
                 if (it.currentBranchId == branchId && eventRefreshRevision.get() == revision &&
                     it.eventNodesWindowSize == requestedSize) it.copy(
                     eventNodes = page.take(requestedSize),
+                    eventNodesLoaded = true,
                     eventNodesHasMore = page.size > requestedSize,
                     eventNodesLoadingMore = false,
                     eventNodesLoadError = null,
@@ -4318,8 +4333,41 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun loadEventNodesIfNeeded() {
+        val current = _state.value
+        if (!current.isReady || current.eventNodesLoaded || current.eventNodesLoadingMore) return
+        val branchId = current.currentBranchId
+        eventPanelRequestedBranchId = branchId
+        val revision = eventRefreshRevision.incrementAndGet()
+        _state.update { state -> if (state.currentBranchId == branchId)
+            state.copy(eventNodesLoadingMore = true, eventNodesLoadError = null) else state }
+        viewModelScope.launch {
+            try {
+                val page = eventNodeDao.getPageForBranch(sessionId, branchId, limit = EVENT_NODE_PAGE_SIZE + 1)
+                _state.update { state -> if (state.currentBranchId == branchId && eventRefreshRevision.get() == revision)
+                    state.copy(
+                        eventNodes = page.take(EVENT_NODE_PAGE_SIZE),
+                        eventNodesLoaded = true,
+                        eventNodesHasMore = page.size > EVENT_NODE_PAGE_SIZE,
+                        eventNodesWindowSize = EVENT_NODE_PAGE_SIZE,
+                    ) else state }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                _state.update { state -> if (state.currentBranchId == branchId && eventRefreshRevision.get() == revision)
+                    state.copy(eventNodesLoadError = "事件读取失败，请重试") else state }
+            } finally {
+                _state.update { state -> if (state.currentBranchId == branchId && eventRefreshRevision.get() == revision)
+                    state.copy(eventNodesLoadingMore = false) else state }
+            }
+        }
+    }
+
     fun loadMoreEventNodes() {
         val current = _state.value
+        if (!current.eventNodesLoaded) {
+            loadEventNodesIfNeeded()
+            return
+        }
         if (!current.isReady || !current.eventNodesHasMore || current.eventNodesLoadingMore) return
         val branchId = current.currentBranchId
         val tail = current.eventNodes.lastOrNull() ?: return

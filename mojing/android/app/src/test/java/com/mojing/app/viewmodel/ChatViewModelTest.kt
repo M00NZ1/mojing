@@ -1088,6 +1088,9 @@ class ChatViewModelTest {
             assertTrue(vm.state.value.isReady)
             coVerify(exactly = 1) { messages.getVisibleMessagesTail(42L, "branch-1", any()) }
             coVerify(exactly = 1) { memorySegments.getRecentForBranch(42L, "branch-1", any()) }
+            coVerify(exactly = 0) { eventNodes.getPageForBranch(42L, "branch-1", null, null, any()) }
+            vm.loadEventNodesIfNeeded()
+            advanceUntilIdle()
             coVerify(exactly = 1) { eventNodes.getPageForBranch(42L, "branch-1", null, null, any()) }
         }
 
@@ -2999,6 +3002,8 @@ class ChatViewModelTest {
         coEvery { events.deleteById(1) } coAnswers { gate.await(); throw IllegalStateException("write failed") }
         val vm = createViewModel(eventNodeDao = events)
         advanceUntilIdle()
+        vm.loadEventNodesIfNeeded()
+        advanceUntilIdle()
         vm.deleteEventNode(1)
         runCurrent()
         vm.deleteEventNode(1)
@@ -3033,6 +3038,11 @@ class ChatViewModelTest {
         val vm = createViewModel(eventNodeDao = events)
         advanceUntilIdle()
 
+        assertFalse(vm.state.value.eventNodesLoaded)
+        coVerify(exactly = 0) { events.getPageForBranch(42L, "main", null, null, any()) }
+        vm.loadEventNodesIfNeeded()
+        advanceUntilIdle()
+
         assertEquals((100L downTo 77L).toList(), vm.state.value.eventNodes.map { it.id })
         assertTrue(vm.state.value.eventNodesHasMore)
         vm.loadMoreEventNodes()
@@ -3041,6 +3051,27 @@ class ChatViewModelTest {
         assertEquals((100L downTo 53L).toList(), vm.state.value.eventNodes.map { it.id })
         assertTrue(vm.state.value.eventNodesHasMore)
         assertFalse(vm.state.value.eventNodesLoadingMore)
+        assertEquals(null, vm.state.value.eventNodesLoadError)
+    }
+
+    @Test fun eventTimelineFirstReadFailureKeepsChatReadyAndCanRetry() = runTest(testDispatcher) {
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        val source = SessionEventNodeEntity(id = 1L, sessionId = 42L, title = "新事件")
+        coEvery { events.getPageForBranch(42L, "main", null, null, 25) } throws IllegalStateException("read failed")
+        val vm = createViewModel(eventNodeDao = events)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.isReady)
+
+        vm.loadEventNodesIfNeeded()
+        advanceUntilIdle()
+        assertFalse(vm.state.value.eventNodesLoaded)
+        assertEquals("事件读取失败，请重试", vm.state.value.eventNodesLoadError)
+
+        coEvery { events.getPageForBranch(42L, "main", null, null, 25) } returns listOf(source)
+        vm.loadMoreEventNodes()
+        advanceUntilIdle()
+        assertEquals(listOf(source), vm.state.value.eventNodes)
+        assertTrue(vm.state.value.eventNodesLoaded)
         assertEquals(null, vm.state.value.eventNodesLoadError)
     }
 
@@ -3066,6 +3097,8 @@ class ChatViewModelTest {
         )
 
         val vm = createViewModel(eventNodeDao = events, sessionBranchDao = branches)
+        advanceUntilIdle()
+        vm.loadEventNodesIfNeeded()
         advanceUntilIdle()
         vm.loadMoreEventNodes()
         advanceUntilIdle()
@@ -3095,6 +3128,9 @@ class ChatViewModelTest {
         val vm = createViewModel(eventNodeDao = events)
         advanceUntilIdle()
 
+        vm.loadEventNodesIfNeeded()
+        advanceUntilIdle()
+
         vm.loadMoreEventNodes()
         advanceUntilIdle()
         assertEquals(48, vm.state.value.eventNodes.size)
@@ -3117,6 +3153,9 @@ class ChatViewModelTest {
         coEvery { events.getPageForBranch(42L, "main", 77L, 77L, 25) } returns
             (76L downTo 52L).map { id -> SessionEventNodeEntity(id = id, sessionId = 42L, createdAt = id) }
         val vm = createViewModel(eventNodeDao = events)
+        advanceUntilIdle()
+
+        vm.loadEventNodesIfNeeded()
         advanceUntilIdle()
 
         val delayedRefresh = CompletableDeferred<List<SessionEventNodeEntity>>()
@@ -3145,6 +3184,8 @@ class ChatViewModelTest {
                 SessionEventNodeEntity(id = 6L, sessionId = 42L, title = "事件6", createdAt = 6L),
             )
         val vm = createViewModel(eventNodeDao = events)
+        advanceUntilIdle()
+        vm.loadEventNodesIfNeeded()
         advanceUntilIdle()
         val loaded = vm.state.value.eventNodes
 
@@ -3190,6 +3231,8 @@ class ChatViewModelTest {
         coEvery { events.getPageForBranch(42, "main", null, null, any()) } returns listOf(source)
         val vm = createViewModel(eventNodeDao = events)
         advanceUntilIdle()
+        vm.loadEventNodesIfNeeded()
+        advanceUntilIdle()
         coEvery { events.getPageForBranch(42, "main", null, null, any()) } throws IllegalStateException("read failed")
         vm.toggleEventNodeResolved(1)
         advanceUntilIdle()
@@ -3210,6 +3253,8 @@ class ChatViewModelTest {
         coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId = 42, branchId = "B", sourceMessageId = 8))
         val vm = createViewModel(eventNodeDao = events, sessionBranchDao = branches)
         advanceUntilIdle()
+        vm.loadEventNodesIfNeeded()
+        advanceUntilIdle()
         val reply = CompletableDeferred<List<SessionEventNodeEntity>>()
         coEvery { events.getPageForBranch(42, "main", null, null, any()) } coAnswers { reply.await() }
         vm.toggleEventNodeResolved(1)
@@ -3229,6 +3274,8 @@ class ChatViewModelTest {
         coEvery { events.getPageForBranch(42, "main", null, null, any()) } returns listOf(source)
         val vm = createViewModel(eventNodeDao = events)
         advanceUntilIdle()
+        vm.loadEventNodesIfNeeded()
+        advanceUntilIdle()
         coEvery { events.getPageForBranch(42, "main", null, null, any()) } returns emptyList()
         vm.deleteEventNode(1)
         advanceUntilIdle()
@@ -3242,6 +3289,8 @@ class ChatViewModelTest {
         val source = SessionEventNodeEntity(id = 1, sessionId = 42, title = "事件")
         coEvery { events.getPageForBranch(42, "main", null, null, any()) } returns listOf(source)
         val vm = createViewModel(eventNodeDao = events)
+        advanceUntilIdle()
+        vm.loadEventNodesIfNeeded()
         advanceUntilIdle()
         val older = CompletableDeferred<List<SessionEventNodeEntity>>()
         var reads = 0
@@ -3594,6 +3643,8 @@ class ChatViewModelTest {
         )
         advanceUntilIdle()
 
+        vm.loadEventNodesIfNeeded()
+        advanceUntilIdle()
         vm.loadMoreEventNodes()
         advanceUntilIdle()
         assertEquals(25, vm.state.value.eventNodes.size)
@@ -3643,6 +3694,8 @@ class ChatViewModelTest {
         )
         advanceUntilIdle()
 
+        vm.loadEventNodesIfNeeded()
+        advanceUntilIdle()
         vm.createBranch(7L)
         runCurrent()
         assertEquals("正在创建并打开故事线…", vm.state.value.branchNavigationLabel)
