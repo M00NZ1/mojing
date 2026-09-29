@@ -50,4 +50,13 @@ class PreparedBubbleTextTest {
 
         assertEquals(listOf(speech), text.speeches)
     }
+
+    @Test
+    fun longUserMessageKeepsQuoteAndCompleteBody() {
+        val body = "我马上来。".repeat(3000)
+        val text = prepareUserBubbleText("> 林汐：码头见\n\n$body")
+
+        assertEquals("林汐：码头见", text.quote)
+        assertEquals(body, text.fallbackBody)
+    }
 }

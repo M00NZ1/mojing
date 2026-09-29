@@ -120,17 +120,24 @@ private sealed interface BubbleTextLoad {
 }
 
 @Composable
-private fun rememberBubbleText(raw: String, narrator: Boolean): Pair<BubbleTextLoad, () -> Unit> {
-    if (raw.length <= ChatMessageTextFormat.ASYNC_BODY_CHAR_THRESHOLD) {
-        return BubbleTextLoad.Ready(remember(raw, narrator) { prepareBubbleText(raw, narrator) }) to {}
+private fun rememberBubbleText(raw: String, speakerType: String): Pair<BubbleTextLoad, () -> Unit> {
+    val prepare: () -> PreparedBubbleText = {
+        when (speakerType) {
+            "user" -> prepareUserBubbleText(raw)
+            "narrator" -> prepareBubbleText(raw, narrator = true)
+            else -> prepareBubbleText(raw, narrator = false)
+        }
     }
-    val load = remember(raw, narrator) { mutableStateOf<BubbleTextLoad>(BubbleTextLoad.Loading) }
-    var attempt by remember(raw, narrator) { mutableIntStateOf(0) }
-    LaunchedEffect(raw, narrator, attempt) {
+    if (raw.length <= ChatMessageTextFormat.ASYNC_BODY_CHAR_THRESHOLD) {
+        return BubbleTextLoad.Ready(remember(raw, speakerType) { prepare() }) to {}
+    }
+    val load = remember(raw, speakerType) { mutableStateOf<BubbleTextLoad>(BubbleTextLoad.Loading) }
+    var attempt by remember(raw, speakerType) { mutableIntStateOf(0) }
+    LaunchedEffect(raw, speakerType, attempt) {
         load.value = BubbleTextLoad.Loading
         try {
             load.value = BubbleTextLoad.Ready(withContext(Dispatchers.Default) {
-                prepareBubbleText(raw, narrator)
+                prepare()
             })
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -613,27 +620,26 @@ fun UserMessageBubble(
                             val showCaption = message.content.isNotBlank() &&
                                 (message.content != "[图片]" || attachments.isEmpty())
                             if (showCaption) {
-                                val quoted = remember(message.content) {
-                                    ChatMessageTextFormat.splitQuote(message.content)
-                                }
-                                quoted.quote?.let { source ->
-                                    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                        shape = RoundedCornerShape(8.dp)) {
-                                        SearchableMessageText("引用 · $source", modifier = Modifier.padding(10.dp),
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            maxLines = if (LocalMessageSearchHighlight.current.query.isBlank()) 3 else Int.MAX_VALUE)
+                                val (textLoad, retryText) = rememberBubbleText(message.content, speakerType = "user")
+                                if (textLoad is BubbleTextLoad.Ready) {
+                                    textLoad.text.quote?.let { source ->
+                                        Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                            shape = RoundedCornerShape(8.dp)) {
+                                            SearchableMessageText("引用 · $source", modifier = Modifier.padding(10.dp),
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                maxLines = if (LocalMessageSearchHighlight.current.query.isBlank()) 3 else Int.MAX_VALUE)
+                                        }
+                                        Spacer(Modifier.height(8.dp))
                                     }
-                                    Spacer(Modifier.height(8.dp))
+                                    SearchableMessageText(
+                                        text = textLoad.text.fallbackBody,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        style = d.bodyTextStyle(),
+                                    )
+                                } else {
+                                    BubbleTextPreparationNotice(textLoad, retryText)
                                 }
-                                val body = remember(quoted.body) {
-                                    ChatMessageTextFormat.forBubbleDisplay(quoted.body)
-                                }
-                                SearchableMessageText(
-                    text = body,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    style = d.bodyTextStyle(),
-                                )
                             }
                         }
                     }
@@ -840,7 +846,7 @@ fun CharacterMessageBubble(
                 if (attachments.isNotEmpty()) {
                     CharacterAttachmentChips(attachments, onImageClick)
                 }
-                val (textLoad, retryText) = rememberBubbleText(message.content, narrator = false)
+                val (textLoad, retryText) = rememberBubbleText(message.content, speakerType = "character")
                 if (textLoad is BubbleTextLoad.Ready) {
                 val prepared = textLoad.text
                 if (prepared.structuredRenderable) {
@@ -980,7 +986,7 @@ fun NarratorMessageBubble(
     modifier: Modifier = Modifier,
 ) {
     val d = LocalChatDensityMetrics.current
-    val (textLoad, retryText) = rememberBubbleText(message.content, narrator = true)
+    val (textLoad, retryText) = rememberBubbleText(message.content, speakerType = "narrator")
     Surface(
         shape = RoundedCornerShape(d.bubbleCornerOuter),
         color = MaterialTheme.colorScheme.surfaceContainer,

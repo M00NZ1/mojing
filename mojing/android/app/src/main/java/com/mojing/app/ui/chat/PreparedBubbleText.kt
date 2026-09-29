@@ -12,6 +12,7 @@ internal data class PreparedBubbleText(
     val choices: List<String>,
     val plainBody: String,
     val fallbackBody: String,
+    val quote: String? = null,
 )
 
 internal fun prepareBubbleText(raw: String, narrator: Boolean): PreparedBubbleText {
@@ -31,5 +32,19 @@ internal fun prepareBubbleText(raw: String, narrator: Boolean): PreparedBubbleTe
         fallbackBody = if (narrator || !structuredRenderable)
             ChatMessageTextFormat.forBubbleDisplay(if (isStructured) StructuredParser.stripTags(raw) else raw)
         else "",
+    )
+}
+
+internal fun prepareUserBubbleText(raw: String): PreparedBubbleText {
+    val quoted = ChatMessageTextFormat.splitQuote(raw)
+    return PreparedBubbleText(
+        structuredRenderable = false,
+        narrations = emptyList(),
+        thoughts = emptyList(),
+        speeches = emptyList(),
+        choices = emptyList(),
+        plainBody = "",
+        fallbackBody = ChatMessageTextFormat.forBubbleDisplay(quoted.body),
+        quote = quoted.quote,
     )
 }
