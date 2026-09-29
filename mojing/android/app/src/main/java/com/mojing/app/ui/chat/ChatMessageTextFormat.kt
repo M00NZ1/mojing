@@ -84,7 +84,7 @@ object ChatMessageTextFormat {
         return line.substring(0, end)
     }
 
-    /** 搜索、收藏、分支和会话列表共用的单行摘要。 */
+    /** 完整正文已在手时的单行摘要。 */
     fun preview(
         raw: String,
         speakerType: String?,
@@ -105,7 +105,7 @@ object ChatMessageTextFormat {
                 .ifBlank { "此消息包含非文本内容" }
         }
 
-    /** Story-library DAO supplies only a prefix; remove incomplete protocol tags before showing it. */
+    /** List DAOs supply only a prefix; remove incomplete protocol tags before showing it. */
     fun sessionListPreview(rawPrefix: String, speakerType: String?, maxChars: Int): String {
         if (speakerType == "user") return preview(rawPrefix, speakerType, maxChars)
         val visible = ConversationMessageText.forUserVisibleText(rawPrefix, speakerType)

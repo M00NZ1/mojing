@@ -16,6 +16,7 @@ import com.mojing.app.data.local.dao.AttachmentDao
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.NewSessionCharacterOption
 import com.mojing.app.data.local.dao.MessageDao
+import com.mojing.app.data.local.dao.MessagePreviewSource
 import com.mojing.app.data.local.dao.SessionEventNodeDao
 import com.mojing.app.data.local.entity.SessionEventNodeEntity
 import com.mojing.app.data.local.dao.MessageRecallResult
@@ -533,6 +534,8 @@ class ChatViewModelTest {
         val message = MessageEntity(id = 501L, sessionId = 42L, content = "保留当前阅读位置")
         val messages = mockk<MessageDao>(relaxed = true)
         coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(message)
+        coEvery { messages.getMessagePreviewPrefixesInSession(42L, listOf(501L)) } returns
+            listOf(MessagePreviewSource(501L, "user", message.content))
         val bookmarks = mockk<BookmarkDao>(relaxed = true)
         var stored: MessageBookmarkEntity? = null
         val release = kotlinx.coroutines.CompletableDeferred<Unit>()
@@ -563,6 +566,30 @@ class ChatViewModelTest {
         assertTrue(history === vm.state.value.messages)
         coVerify(exactly = 1) { bookmarks.insert(any()) }
         coVerify(exactly = 1) { messages.getMainMessagesTail(42L, any()) }
+    }
+
+    @Test
+    fun bookmarkListUsesBoundedSourcePreviewsAndKeepsOriginalIds() = runTest(testDispatcher) {
+        val marks = listOf(
+            MessageBookmarkEntity(id = 1L, sessionId = 42L, messageId = 501L),
+            MessageBookmarkEntity(id = 2L, sessionId = 42L, messageId = 502L),
+        )
+        val bookmarks = mockk<BookmarkDao>(relaxed = true)
+        val messages = mockk<MessageDao>(relaxed = true)
+        coEvery { bookmarks.getFirstPage(42L, 41) } returns marks
+        coEvery { messages.getMessagePreviewPrefixesInSession(42L, match { it.toSet() == setOf(501L, 502L) }) } returns listOf(
+            MessagePreviewSource(501L, "narrator", "<NARRATION>雨夜里的渡口。"),
+            MessagePreviewSource(502L, "character", "<CHOICES><OPTION>仅有选项</OPTION></CHOICES>"),
+        )
+        val vm = createViewModel(messageDao = messages, bookmarkDao = bookmarks)
+        advanceUntilIdle()
+
+        assertEquals("雨夜里的渡口。", vm.state.value.bookmarkPreviews[501L])
+        assertEquals("（暂无摘要，可打开原文）", vm.state.value.bookmarkPreviews[502L])
+        assertEquals(listOf(501L, 502L), vm.state.value.bookmarks.map { it.messageId })
+        coVerify(exactly = 1) {
+            messages.getMessagePreviewPrefixesInSession(42L, match { it.toSet() == setOf(501L, 502L) })
+        }
     }
 
     @Test

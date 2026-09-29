@@ -25,7 +25,7 @@ import java.io.Reader
 
 private const val SESSION_SEARCH_INDEX_STATE_KEY_PREFIX = "message_search_session_state_v2:"
 
-/** Preview inputs omit search indexes and structured metadata; keep full body for tag parsing. */
+/** Compact list preview projection; content contains only the leading source prefix. */
 data class MessagePreviewSource(
     val id: Long,
     val speakerType: String,
@@ -327,13 +327,10 @@ interface MessageDao {
     )
     suspend fun getAttachmentStoragePaths(messageIds: List<Long>): List<String>
 
-    @Query("SELECT id, speakerType, content FROM messages WHERE sessionId = :sessionId AND id IN (:messageIds)")
-    suspend fun getPreviewSourcesInSession(sessionId: Long, messageIds: List<Long>): List<MessagePreviewSource>
-
-    /** 故事线面板仅显示短摘要，避免分叉点是长章节时读取完整正文。 */
+    /** 收藏和故事线面板只显示短摘要，不把长章节完整正文读入列表。 */
     @Query("SELECT id, speakerType, substr(content, 1, 4096) AS content FROM messages " +
         "WHERE sessionId = :sessionId AND id IN (:messageIds)")
-    suspend fun getBranchSourcePreviewPrefixesInSession(sessionId: Long, messageIds: List<Long>): List<MessagePreviewSource>
+    suspend fun getMessagePreviewPrefixesInSession(sessionId: Long, messageIds: List<Long>): List<MessagePreviewSource>
 
     @Query("SELECT * FROM messages WHERE sessionId = :sessionId AND id IN (:messageIds)")
     suspend fun getByIdsInSession(sessionId: Long, messageIds: List<Long>): List<MessageEntity>

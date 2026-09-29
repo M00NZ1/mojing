@@ -1047,7 +1047,7 @@ class ChatViewModel @Inject constructor(
         val previews = mutableMapOf<Long, String>()
         for (batch in ids.chunked(32)) {
             currentCoroutineContext().ensureActive()
-            val sources = messageDao.getBranchSourcePreviewPrefixesInSession(sessionId, batch)
+            val sources = messageDao.getMessagePreviewPrefixesInSession(sessionId, batch)
             previews.putAll(withContext(Dispatchers.Default) {
                 sources.associate { message ->
                     currentCoroutineContext().ensureActive()
@@ -1112,17 +1112,14 @@ class ChatViewModel @Inject constructor(
         if (messageIds.isEmpty()) return emptyMap()
         val previews = mutableMapOf<Long, String>()
         for (batch in messageIds.chunked(32)) {
-            val sources = messageDao.getPreviewSourcesInSession(sessionId, batch)
+            val sources = messageDao.getMessagePreviewPrefixesInSession(sessionId, batch)
             if (sources.isEmpty()) continue
             previews.putAll(withContext(Dispatchers.Default) {
                 sources.associate { message ->
                     currentCoroutineContext().ensureActive()
-                    message.id to ChatMessageTextFormat.preview(
-                        raw = message.content,
-                        speakerType = message.speakerType,
-                        maxChars = maxChars,
-                        emptyText = "（无正文）",
-                    )
+                    message.id to ChatMessageTextFormat.sessionListPreview(
+                        message.content, message.speakerType, maxChars,
+                    ).ifBlank { "（暂无摘要，可打开原文）" }
                 }
             })
         }
@@ -4152,11 +4149,12 @@ class ChatViewModel @Inject constructor(
                 val mark: MessageBookmarkEntity?
                 var preview: String? = null
                 if (bookmarked) {
-                    val message = _state.value.messages.firstOrNull { it.id == messageId }
-                        ?: messageDao.getById(messageId)
-                    check(message?.sessionId == sessionId) { "消息已不存在" }
+                    val source = messageDao.getMessagePreviewPrefixesInSession(sessionId, listOf(messageId))
+                        .firstOrNull { it.id == messageId }
+                    check(source != null) { "消息已不存在" }
                     preview = withContext(Dispatchers.Default) {
-                        ChatMessageTextFormat.preview(message!!.content, message.speakerType, 120, "（无正文）")
+                        ChatMessageTextFormat.sessionListPreview(source.content, source.speakerType, 120)
+                            .ifBlank { "（暂无摘要，可打开原文）" }
                     }
                     val entry = existing ?: MessageBookmarkEntity(sessionId = sessionId, messageId = messageId, note = "")
                     mark = if (existing == null) entry.copy(id = bookmarkDao.insert(entry)) else entry
