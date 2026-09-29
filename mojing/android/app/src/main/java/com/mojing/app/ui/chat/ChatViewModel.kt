@@ -301,6 +301,7 @@ class ChatViewModel @Inject constructor(
     private var narratorDraftRevision = 0L
     private var imageDraftRevision = 0L
     private var quoteDraftRevision = 0L
+    private var quotePreparationJob: Job? = null
 
     private fun persistCurrentDraft() {
         val current = _state.value
@@ -852,9 +853,15 @@ class ChatViewModel @Inject constructor(
             draftSubmissionSearchMarker(pendingSubmissionId),
         ) > 0
         val restoredInputText = if (draftSubmissionCommitted) "" else restoredDraft.inputText
-        val restoredQuote = if (draftSubmissionCommitted) null else restoredDraft.quotedMessageId?.let {
+        val restoredQuoteCandidate = if (draftSubmissionCommitted) null else restoredDraft.quotedMessageId?.let {
             messageDao.getByIdInSession(it, sessionId)
-        }?.takeIf { ChatMessageTextFormat.quoteSnippet(it.content, 120, it.speakerType).isNotBlank() }
+        }
+        val restoredQuoteSnippet = restoredQuoteCandidate?.takeIf { quoteDraftRevision == 0L }?.let { quote ->
+            withContext(Dispatchers.Default) {
+                ChatMessageTextFormat.quoteSnippet(quote.content, 120, quote.speakerType)
+            }
+        }
+        val restoredQuote = restoredQuoteCandidate?.takeIf { restoredQuoteSnippet?.isNotBlank() == true }
         val unavailableQuote = !draftSubmissionCommitted && restoredDraft.quotedMessageId != null && restoredQuote == null
 
         if (
@@ -970,6 +977,8 @@ class ChatViewModel @Inject constructor(
             conversationTokenEstimate = convEst,
             inputText = _state.value.inputText.ifEmpty { restoredInputText },
             quotingMessage = if (quoteDraftRevision == 0L) restoredQuote else _state.value.quotingMessage,
+            quotingSnippet = if (quoteDraftRevision == 0L) restoredQuoteSnippet?.takeIf { restoredQuote != null }
+                else _state.value.quotingSnippet,
             imagePrompt = if (imageDraftRevision == 0L) restoredDraft.imagePrompt else _state.value.imagePrompt,
             narratorGuidance = if (narratorDraftRevision == 0L) restoredDraft.narratorGuidance else _state.value.narratorGuidance,
             pendingLocalImagePaths = if (_state.value.pendingLocalImagePaths.isEmpty()) {
@@ -2311,9 +2320,13 @@ class ChatViewModel @Inject constructor(
             return
         }
         if (generationJob?.isActive == true || _state.value.isGenerating) return
+        if (current.quotingMessage != null && current.quotingSnippet == null) {
+            _state.update { it.copy(error = "引用正文正在准备，请稍候再发送") }
+            return
+        }
         val draftSubmissionId = UUID.randomUUID().toString()
         if (!beginDraftSubmission(draftSubmissionId)) return
-        val quote = _state.value.quotingMessage
+        val quote = current.quotingMessage
         val submittedQuoteRevision = quoteDraftRevision
         val quotedPrefix = quote?.let { q ->
             val label = when (q.speakerType) {
@@ -2321,7 +2334,7 @@ class ChatViewModel @Inject constructor(
                 "narrator" -> _state.value.world?.narratorName?.ifBlank { "\u65c1\u767d" } ?: "\u65c1\u767d"
                 else -> q.characterId?.let { _state.value.characterNames[it] } ?: "\u89d2\u8272"
             }
-            val snippet = ChatMessageTextFormat.quoteSnippet(q.content, 120, q.speakerType)
+            val snippet = current.quotingSnippet.orEmpty()
             if (snippet.isNotEmpty()) "> $label：$snippet\n\n" else "> $label\n\n"
         }.orEmpty()
         val outboundText = quotedPrefix + text
@@ -2334,6 +2347,7 @@ class ChatViewModel @Inject constructor(
                         state.copy(
                             inputText = if (activeDraftSubmissionId == draftSubmissionId) "" else state.inputText,
                             quotingMessage = if (quoteDraftRevision == submittedQuoteRevision) null else state.quotingMessage,
+                            quotingSnippet = if (quoteDraftRevision == submittedQuoteRevision) null else state.quotingSnippet,
                         )
                     }
                     finishDraftSubmission(draftSubmissionId)
@@ -2404,6 +2418,7 @@ class ChatViewModel @Inject constructor(
                             current.pendingLocalImagePaths.drop(pendingImageLocalPaths.size)
                         } else current.pendingLocalImagePaths,
                         quotingMessage = if (quoteDraftRevision == submittedQuoteRevision) null else current.quotingMessage,
+                        quotingSnippet = if (quoteDraftRevision == submittedQuoteRevision) null else current.quotingSnippet,
                     )
                 }
                 finishDraftSubmission(draftSubmissionId)
@@ -3521,14 +3536,46 @@ class ChatViewModel @Inject constructor(
     }
 
     fun setQuotingMessage(message: MessageEntity?) {
-        if (message != null && ChatMessageTextFormat.quoteSnippet(message.content, 120, message.speakerType).isBlank()) {
+        val immediateSnippet = message?.takeIf {
+            it.content.length <= ChatMessageTextFormat.ASYNC_BODY_CHAR_THRESHOLD
+        }?.let { ChatMessageTextFormat.quoteSnippet(it.content, 120, it.speakerType) }
+        if (message != null && immediateSnippet != null && immediateSnippet.isBlank()) {
             _state.value = _state.value.copy(error = UserFacingStrings.messageHasNoQuotableText())
             return
         }
+        quotePreparationJob?.cancel()
         quoteDraftRevision++
+        val revision = quoteDraftRevision
         if (message != _state.value.quotingMessage) activeDraftSubmissionId = null
-        _state.value = _state.value.copy(quotingMessage = message)
+        _state.value = _state.value.copy(quotingMessage = message, quotingSnippet = immediateSnippet)
         persistCurrentDraft()
+        if (message == null || immediateSnippet != null) return
+        quotePreparationJob = viewModelScope.launch {
+            val snippet = try {
+                withContext(Dispatchers.Default) {
+                    ChatMessageTextFormat.quoteSnippet(message.content, 120, message.speakerType)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+            if (quoteDraftRevision != revision || _state.value.quotingMessage?.id != message.id) return@launch
+            if (snippet.isNullOrBlank()) {
+                quoteDraftRevision++
+                _state.update { it.copy(
+                    quotingMessage = null,
+                    quotingSnippet = null,
+                    error = if (snippet == null) "引用正文准备失败，请重新选择" else UserFacingStrings.messageHasNoQuotableText(),
+                ) }
+                persistCurrentDraft()
+            } else {
+                _state.update { it.copy(
+                    quotingSnippet = snippet,
+                    error = if (it.error == "引用正文正在准备，请稍候再发送") null else it.error,
+                ) }
+            }
+        }
     }
 
     fun currentSpeakerTurnMode(): String = secureStorage.speakerTurnMode

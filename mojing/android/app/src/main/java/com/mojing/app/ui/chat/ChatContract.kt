@@ -169,6 +169,8 @@ object ChatContract {
         /** 路由中的会话已被删除或从未存在；页面应提示后返回会话主页。 */
         val sessionNotFound: Boolean = false,
         val quotingMessage: MessageEntity? = null,
+        /** 当前引用的可见摘要；有引用且为 null 时正在准备长正文。 */
+        val quotingSnippet: String? = null,
         /** 每轮选项（模型生成或世界模板） */
         val roundChoiceOptions: List<String> = emptyList(),
         /** [roundChoiceOptions] 所属的当前尾部回复；用于拒绝历史消息中的同名旧选项。 */

@@ -63,6 +63,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -1962,11 +1963,79 @@ class ChatViewModelTest {
         val vm = createViewModel(messageDao = dao, chatDraftStore = draftStore)
         advanceUntilIdle()
         assertEquals(source, vm.state.value.quotingMessage)
+        assertEquals("最新原文", vm.state.value.quotingSnippet)
         assertEquals("继续", vm.state.value.inputText)
         vm.setQuotingMessage(null)
         verify { draftStore.save(42L, ChatDraftSnapshot(inputText = "继续")) }
         vm.setQuotingMessage(source)
         verify { draftStore.save(42L, ChatDraftSnapshot(inputText = "继续", quotedMessageId = 71L)) }
+    }
+
+    @Test
+    fun longQuoteWaitsForOnePreparedSnippetWithoutLosingDraft() = runTest(testDispatcher) {
+        val draftStore = emptyDraftStore()
+        val messages = mockk<MessageDao>(relaxed = true)
+        val speech = "雨夜继续。".repeat(2000)
+        val source = MessageEntity(
+            id = 71L, sessionId = 42L, speakerType = "character",
+            content = "<SPEECH>$speech</SPEECH>",
+        )
+        val vm = createViewModel(messageDao = messages, chatDraftStore = draftStore)
+        advanceUntilIdle()
+
+        vm.setQuotingMessage(source)
+        vm.updateInput("我继续说")
+        vm.sendMessage()
+        assertEquals("引用正文正在准备，请稍候再发送", vm.state.value.error)
+        assertEquals("我继续说", vm.state.value.inputText)
+        coVerify(exactly = 0) { messages.insert(any()) }
+
+        advanceUntilIdle()
+        val prepared = withTimeout(10_000) { vm.state.first { it.quotingSnippet != null } }
+        assertEquals(speech.take(120), prepared.quotingSnippet)
+        assertEquals(source, prepared.quotingMessage)
+        assertEquals(null, prepared.error)
+    }
+
+    @Test
+    fun replacingOrCancellingLongQuoteKeepsLatePreparationFromRestoringIt() = runTest(testDispatcher) {
+        val source = MessageEntity(
+            id = 71L, sessionId = 42L, speakerType = "narrator",
+            content = "长篇正文。".repeat(3000),
+        )
+        val replacement = MessageEntity(id = 72L, sessionId = 42L, speakerType = "user", content = "新的引用")
+        val vm = createViewModel()
+        advanceUntilIdle()
+
+        vm.setQuotingMessage(source)
+        vm.setQuotingMessage(replacement)
+        advanceUntilIdle()
+        assertEquals(replacement, vm.state.value.quotingMessage)
+        assertEquals("新的引用", vm.state.value.quotingSnippet)
+
+        vm.setQuotingMessage(null)
+        advanceUntilIdle()
+
+        assertEquals(null, vm.state.value.quotingMessage)
+        assertEquals(null, vm.state.value.quotingSnippet)
+    }
+
+    @Test
+    fun unquotableLongMessageClearsReferenceButKeepsInput() = runTest(testDispatcher) {
+        val vm = createViewModel()
+        advanceUntilIdle()
+        vm.updateInput("保留这段输入")
+        vm.setQuotingMessage(MessageEntity(
+            id = 71L, sessionId = 42L, speakerType = "character",
+            content = " ".repeat(9000),
+        ))
+
+        advanceUntilIdle()
+        val cleared = withTimeout(10_000) {
+            vm.state.first { it.quotingMessage == null && it.error == UserFacingStrings.messageHasNoQuotableText() }
+        }
+        assertEquals(null, cleared.quotingSnippet)
+        assertEquals("保留这段输入", cleared.inputText)
     }
 
     @Test

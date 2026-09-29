@@ -1086,7 +1086,7 @@ fun ChatScreen(
                         }
                         state.quotingMessage?.let { q ->
                             QuoteDraftPreview(
-                                text = ChatMessageTextFormat.quoteSnippet(q.content, 120, q.speakerType),
+                                text = state.quotingSnippet ?: "正在准备引用…",
                                 speakerLabel = when (q.speakerType) {
                                     "user" -> state.userDisplayName.ifBlank { "我" }
                                     "narrator" -> state.world?.narratorName?.ifBlank { "旁白" } ?: "旁白"
