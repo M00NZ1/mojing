@@ -756,6 +756,8 @@ fun MemoryTab(
     onLoadMoreCorrections: () -> Unit = {},
 ) {
     var section by remember(currentBranchId) { mutableIntStateOf(0) }
+    var showCorrectionTrace by remember(currentBranchId) { mutableStateOf(false) }
+    val currentCorrectionTrace = promptTrace?.takeIf { it.branchId == currentBranchId }
     LaunchedEffect(currentBranchId, section, drawerOpen, sessionReady) {
         if (section == 1 && drawerOpen && sessionReady) onOpenCorrections()
     }
@@ -871,55 +873,56 @@ fun MemoryTab(
                     }
                 }
                 item {
-                    val currentTrace = promptTrace?.takeIf { it.branchId == currentBranchId }
                     Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
-                        var showTrace by remember(currentBranchId) { mutableStateOf(false) }
-                        TextButton(onClick = { showTrace = !showTrace }) {
-                            Text(if (showTrace) "收起提示依据" else "查看最近一次提示依据")
+                        TextButton(onClick = { showCorrectionTrace = !showCorrectionTrace }) {
+                            Text(if (showCorrectionTrace) "收起提示依据" else "查看最近一次提示依据")
                         }
-                        if (showTrace) {
-                        if (currentTrace == null) {
-                            Text(
-                                "本故事线尚未构造可追踪的角色或旁白请求",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                        } else {
-                            val responderType = if (currentTrace.responderType == "narrator") "旁白" else "角色"
-                            Text(
-                                "$responderType · ${currentTrace.responderLabel}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                            if (currentTrace.corrections.isEmpty()) {
-                                Text("本轮未采用用户纠正", modifier = Modifier.padding(top = 6.dp))
+                        if (showCorrectionTrace) {
+                            if (currentCorrectionTrace == null) {
+                                Text(
+                                    "本故事线尚未构造可追踪的角色或旁白请求",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 4.dp),
+                                )
                             } else {
-                                currentTrace.corrections.forEachIndexed { index, correction ->
-                                    Text(
-                                        "${index + 1}. ${if (correction.branchId == null) "全会话" else "本分支"} · ${correction.content}",
-                                        maxLines = 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                        modifier = Modifier.padding(top = 6.dp),
-                                    )
-                                    correction.sourceMessageId?.let {
-                                        Text(
-                                            "已关联原文",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
+                                val responderType = if (currentCorrectionTrace.responderType == "narrator") "旁白" else "角色"
+                                Text(
+                                    "$responderType · ${currentCorrectionTrace.responderLabel}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 4.dp),
+                                )
+                                Text("本轮采用 ${currentCorrectionTrace.corrections.size} 条用户纠正",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (currentCorrectionTrace.corrections.isEmpty()) {
+                                    Text("本轮未采用用户纠正", modifier = Modifier.padding(top = 6.dp))
                                 }
                             }
-                            Text(
-                                "用户纠正在自动记忆之前注入；这里只表示本机已构造提示，不代表模型已成功回复。",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 8.dp),
-                            )
                         }
                     }
+                }
+                if (showCorrectionTrace && currentCorrectionTrace != null) {
+                    items(count = currentCorrectionTrace.corrections.size,
+                        key = { "correction-trace:$it" }) { index ->
+                        val correction = currentCorrectionTrace.corrections[index]
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                            Text("${index + 1}. ${if (correction.branchId == null) "全会话" else "本分支"} · ${correction.content}",
+                                maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            if (correction.sourceMessageId != null) Text("已关联原文",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
+                }
+                item {
+                    if (showCorrectionTrace && currentCorrectionTrace != null) Text(
+                        "用户纠正在自动记忆之前注入；这里只表示本机已构造提示，不代表模型已成功回复。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    )
                     HorizontalDivider()
                 }
                 if (correctionsHasMore || correctionsLoading || correctionsLoadError != null) item {
