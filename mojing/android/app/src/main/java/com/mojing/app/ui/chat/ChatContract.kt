@@ -139,6 +139,7 @@ object ChatContract {
         val characterCardImages: Map<Long, String> = emptyMap(),
         val characterColors: Map<Long, String> = emptyMap(),
         val bookmarks: List<MessageBookmarkEntity> = emptyList(),
+        val bookmarksLoaded: Boolean = false,
         val bookmarksHasMore: Boolean = false,
         val bookmarksLoadingMore: Boolean = false,
         val bookmarksLoadError: String? = null,

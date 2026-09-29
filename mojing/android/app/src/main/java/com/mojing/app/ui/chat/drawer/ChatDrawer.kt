@@ -49,6 +49,7 @@ fun ChatDrawer(
     memoryCorrectionPromptTrace: MemoryCorrectionPromptTrace? = null,
     currentBranchId: String = "main",
     drawerOpen: Boolean = true,
+    sessionReady: Boolean = true,
     isGenerating: Boolean = false,
     eventNodes: List<SessionEventNodeEntity> = emptyList(),
     eventNodesHasMore: Boolean = false,
@@ -59,6 +60,7 @@ fun ChatDrawer(
     eventActionErrors: Map<Long, String> = emptyMap(),
     characterNames: Map<Long, String> = emptyMap(),
     bookmarks: List<MessageBookmarkEntity> = emptyList(),
+    bookmarksLoaded: Boolean = true,
     bookmarksHasMore: Boolean = false,
     bookmarksLoadingMore: Boolean = false,
     bookmarksLoadError: String? = null,
@@ -67,6 +69,7 @@ fun ChatDrawer(
     bookmarkPreviews: Map<Long, String> = emptyMap(),
     onJumpToBookmark: (Long) -> Unit,
     onRemoveBookmark: (Long) -> Unit,
+    onOpenBookmarks: () -> Unit = {},
     onLoadMoreBookmarks: () -> Unit,
     onToggleMute: (Long) -> Unit,
     onUpdateTalkativeness: (Long, Float, (Boolean) -> Unit) -> Unit,
@@ -125,6 +128,10 @@ fun ChatDrawer(
         }
     }
     val tabs = listOf("角色", "世界", "记忆", "事件", "书签")
+
+    LaunchedEffect(selectedTab, drawerOpen, sessionReady) {
+        if (selectedTab == 4 && drawerOpen && sessionReady) onOpenBookmarks()
+    }
 
     Column(modifier = Modifier.widthIn(max = 400.dp).fillMaxWidth()) {
         Row(
@@ -224,7 +231,7 @@ fun ChatDrawer(
             )
             4 -> BookmarksTab(
                 bookmarks, bookmarkPreviews, onJumpToBookmark, onRemoveBookmark,
-                bookmarkBusyIds, bookmarkLocatingId, bookmarksHasMore, bookmarksLoadingMore,
+                bookmarkBusyIds, bookmarkLocatingId, bookmarksLoaded, bookmarksHasMore, bookmarksLoadingMore,
                 bookmarksLoadError, onLoadMoreBookmarks,
             )
         }

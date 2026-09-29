@@ -584,9 +584,18 @@ class ChatViewModelTest {
         val vm = createViewModel(messageDao = messages, bookmarkDao = bookmarks)
         advanceUntilIdle()
 
+        assertTrue(vm.state.value.isReady)
+        assertTrue(vm.state.value.bookmarks.isEmpty())
+        coVerify(exactly = 0) { bookmarks.getFirstPage(any(), any()) }
+        vm.loadBookmarksIfNeeded()
+        advanceUntilIdle()
         assertEquals("雨夜里的渡口。", vm.state.value.bookmarkPreviews[501L])
         assertEquals("（暂无摘要，可打开原文）", vm.state.value.bookmarkPreviews[502L])
         assertEquals(listOf(501L, 502L), vm.state.value.bookmarks.map { it.messageId })
+        assertTrue(vm.state.value.bookmarksLoaded)
+        vm.loadBookmarksIfNeeded()
+        advanceUntilIdle()
+        coVerify(exactly = 1) { bookmarks.getFirstPage(42L, 41) }
         coVerify(exactly = 1) {
             messages.getMessagePreviewPrefixesInSession(42L, match { it.toSet() == setOf(501L, 502L) })
         }
@@ -600,6 +609,8 @@ class ChatViewModelTest {
         coEvery { bookmarks.getByMessageId(501L) } returns mark
         coEvery { bookmarks.deleteByMessageId(501L) } throws IllegalStateException("storage unavailable")
         val vm = createViewModel(bookmarkDao = bookmarks)
+        advanceUntilIdle()
+        vm.loadBookmarksIfNeeded()
         advanceUntilIdle()
         vm.removeBookmark(501L)
         advanceUntilIdle()
@@ -628,6 +639,10 @@ class ChatViewModelTest {
         val vm = createViewModel(messageDao = messages, bookmarkDao = bookmarks)
         advanceUntilIdle()
 
+        assertTrue(vm.state.value.bookmarks.isEmpty())
+        coVerify(exactly = 0) { bookmarks.getFirstPage(any(), any()) }
+        vm.loadBookmarksIfNeeded()
+        advanceUntilIdle()
         assertEquals(40, vm.state.value.bookmarks.size)
         assertTrue(vm.state.value.bookmarksHasMore)
         assertEquals(setOf(41L), vm.state.value.bookmarkedMessageIds)
@@ -640,6 +655,29 @@ class ChatViewModelTest {
         advanceUntilIdle()
         assertEquals(setOf(1L), vm.state.value.bookmarkedMessageIds)
         coVerify(exactly = 1) { bookmarks.getBefore(42L, marks[39].createdAt, marks[39].id, 41) }
+    }
+
+    @Test
+    fun bookmarkFirstPageFailureCanRetryWithoutBlockingChat() = runTest(testDispatcher) {
+        val mark = MessageBookmarkEntity(id = 1L, sessionId = 42L, messageId = 501L)
+        val bookmarks = mockk<BookmarkDao>(relaxed = true)
+        coEvery { bookmarks.getFirstPage(42L, 41) } throws IllegalStateException("storage unavailable")
+        val vm = createViewModel(bookmarkDao = bookmarks)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.isReady)
+
+        vm.loadBookmarksIfNeeded()
+        advanceUntilIdle()
+        assertEquals("收藏读取失败，请重试", vm.state.value.bookmarksLoadError)
+        assertFalse(vm.state.value.bookmarksLoadingMore)
+        assertTrue(vm.state.value.messages.isEmpty())
+
+        coEvery { bookmarks.getFirstPage(42L, 41) } returns listOf(mark)
+        vm.loadMoreBookmarks()
+        advanceUntilIdle()
+        assertEquals(listOf(501L), vm.state.value.bookmarks.map { it.messageId })
+        assertEquals(null, vm.state.value.bookmarksLoadError)
+        assertTrue(vm.state.value.isReady)
     }
 
     @Test

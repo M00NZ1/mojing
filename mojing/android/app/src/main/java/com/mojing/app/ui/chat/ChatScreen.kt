@@ -693,6 +693,7 @@ fun ChatScreen(
                             memoryCorrectionPromptTrace = state.lastMemoryCorrectionPromptTrace,
                             currentBranchId = state.currentBranchId,
                             drawerOpen = drawerState.isOpen,
+                            sessionReady = state.isReady,
                             isGenerating = state.isGenerating,
                             eventNodes = state.eventNodes,
                             eventNodesHasMore = state.eventNodesHasMore,
@@ -701,6 +702,7 @@ fun ChatScreen(
                             onLoadMoreEventNodes = viewModel::loadMoreEventNodes,
                             characterNames = state.characterNames,
                             bookmarks = state.bookmarks,
+                            bookmarksLoaded = state.bookmarksLoaded,
                             bookmarksHasMore = state.bookmarksHasMore,
                             bookmarksLoadingMore = state.bookmarksLoadingMore,
                             bookmarksLoadError = state.bookmarksLoadError,
@@ -717,6 +719,7 @@ fun ChatScreen(
                                 }
                             },
                             onRemoveBookmark = { mid -> viewModel.removeBookmark(mid) },
+                            onOpenBookmarks = viewModel::loadBookmarksIfNeeded,
                             onLoadMoreBookmarks = viewModel::loadMoreBookmarks,
                             onToggleMute = { viewModel.toggleMute(it) },
                             onUpdateTalkativeness = { id, value, onResult ->

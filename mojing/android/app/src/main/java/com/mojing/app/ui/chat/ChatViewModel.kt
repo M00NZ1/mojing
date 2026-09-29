@@ -215,6 +215,7 @@ class ChatViewModel @Inject constructor(
     private val sourceBranchId: String = savedStateHandle["sourceBranchId"] ?: ""
     private val _state = MutableStateFlow(ChatContract.State(sessionId = sessionId))
     private val bookmarkMutex = Mutex()
+    private var bookmarkInitialLoadJob: Job? = null
     private val messageWindowRevision = java.util.concurrent.atomic.AtomicLong()
     private val eventRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     private val correctionRefreshRevision = java.util.concurrent.atomic.AtomicLong()
@@ -796,6 +797,8 @@ class ChatViewModel @Inject constructor(
 
     fun retryInitialization() {
         if (initializationJob?.isActive == true) return
+        bookmarkInitialLoadJob?.cancel()
+        bookmarkInitialLoadJob = null
         _state.update {
             it.copy(
                 isReady = false,
@@ -924,10 +927,7 @@ class ChatViewModel @Inject constructor(
 
         val attMap = attachmentsForMessages(msgs)
         val displayLines = visibleDisplayLines(msgs, attMap)
-        val bookmarkPage = bookmarkDao.getFirstPage(sessionId, BOOKMARK_PAGE_SIZE + 1)
-        val marks = bookmarkPage.take(BOOKMARK_PAGE_SIZE)
         val bookmarkIds = bookmarkedIdsForWindow(msgs)
-        val previews = messagePreviews(marks.mapTo(mutableSetOf()) { it.messageId }, maxChars = 120)
         val roundChoices = withContext(Dispatchers.Default) {
             buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
         }
@@ -964,11 +964,14 @@ class ChatViewModel @Inject constructor(
             characterAvatars = maps.avatars,
             characterCardImages = maps.cardImages,
             characterColors = maps.colors,
-            bookmarks = marks,
-            bookmarksHasMore = bookmarkPage.size > BOOKMARK_PAGE_SIZE,
+            bookmarks = emptyList(),
+            bookmarksLoaded = false,
+            bookmarksHasMore = false,
+            bookmarksLoadingMore = false,
+            bookmarksLoadError = null,
             bookmarkedMessageIds = bookmarkIds,
             excludedContextKeys = excludedKeys,
-            bookmarkPreviews = previews,
+            bookmarkPreviews = emptyMap(),
             userDisplayName = secureStorage.userName,
             userAvatarImagePath = secureStorage.userAvatarImagePath,
             userAvatarColor = secureStorage.userAvatarColor,
@@ -4110,7 +4113,40 @@ class ChatViewModel @Inject constructor(
 
     fun removeBookmark(messageId: Long) = setBookmark(messageId, false)
 
+    fun loadBookmarksIfNeeded() {
+        if (!_state.value.isReady || _state.value.bookmarksLoaded || bookmarkInitialLoadJob?.isActive == true) return
+        _state.update { it.copy(bookmarksLoadingMore = true, bookmarksLoadError = null) }
+        bookmarkInitialLoadJob = viewModelScope.launch {
+            val owner = currentCoroutineContext()[Job]
+            try {
+                bookmarkMutex.withLock {
+                    val page = bookmarkDao.getFirstPage(sessionId, BOOKMARK_PAGE_SIZE + 1)
+                    val marks = page.take(BOOKMARK_PAGE_SIZE)
+                    val previews = messagePreviews(marks.mapTo(mutableSetOf()) { it.messageId }, maxChars = 120)
+                    currentCoroutineContext().ensureActive()
+                    _state.update { state -> state.copy(
+                        bookmarks = marks,
+                        bookmarksLoaded = true,
+                        bookmarksHasMore = page.size > BOOKMARK_PAGE_SIZE,
+                        bookmarkPreviews = previews,
+                    ) }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { _state.update { it.copy(bookmarksLoadError = "收藏读取失败，请重试") } }
+            finally {
+                if (bookmarkInitialLoadJob === owner) {
+                    bookmarkInitialLoadJob = null
+                    _state.update { it.copy(bookmarksLoadingMore = false) }
+                }
+            }
+        }
+    }
+
     fun loadMoreBookmarks() {
+        if (!_state.value.bookmarksLoaded) {
+            loadBookmarksIfNeeded()
+            return
+        }
         val current = _state.value
         if (!current.isReady || !current.bookmarksHasMore || current.bookmarksLoadingMore) return
         _state.update { it.copy(bookmarksLoadingMore = true, bookmarksLoadError = null) }
