@@ -28,7 +28,9 @@ import com.mojing.app.data.ModelPlatformCodec
 import com.mojing.app.data.repository.BillingPreferences
 import com.mojing.app.ui.common.ApiProviderPresets
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -37,8 +39,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostState) {
     val scope = rememberCoroutineScope()
     val activeId by viewModel.activePlatformId.collectAsStateWithLifecycle()
-    val initialPlatforms = remember { runCatching { viewModel.modelPlatforms() } }
-    var platforms by remember { mutableStateOf(initialPlatforms.getOrDefault(emptyList())) }
+    var platformLoad by remember { mutableStateOf(runCatching { viewModel.modelPlatforms() }) }
+    var platforms by remember { mutableStateOf(platformLoad.getOrDefault(emptyList())) }
     var selectedPlatformId by rememberSaveable { mutableStateOf(activeId) }
     var draft by remember { mutableStateOf<ModelPlatform?>(null) }
     var originalDraft by remember { mutableStateOf<ModelPlatform?>(null) }
@@ -61,12 +63,27 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
     }
     val selectedPlatform = platforms.firstOrNull { it.id == selectedPlatformId } ?: platforms.firstOrNull()
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (initialPlatforms.isFailure) {
-            Text("平台配置暂时无法读取，原数据已保留。请恢复可用配置后重试。", color = MaterialTheme.colorScheme.error)
+        if (platformLoad.isFailure) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("平台配置暂时无法读取，原数据已保留。重试后再编辑。",
+                    modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
+                TextButton(enabled = !busy, onClick = {
+                    busy = true
+                    scope.launch {
+                        try {
+                            val refreshed = withContext(Dispatchers.IO) { viewModel.modelPlatforms() }
+                            platforms = refreshed
+                            platformLoad = Result.success(refreshed)
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) { platformLoad = Result.failure(failure) }
+                        finally { busy = false }
+                    }
+                }) { Text(if (busy) "读取中…" else "重试读取") }
+            }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("我的平台", style = MaterialTheme.typography.titleMedium)
-            TextButton(enabled = !busy, onClick = {
+            TextButton(enabled = !busy && platformLoad.isSuccess, onClick = {
                 draft = ModelPlatform(UUID.randomUUID().toString(), "", "", "", emptyList())
                 originalDraft = draft; confirmDiscard = false
                 modelsText = ""; error = null; discoveryNotice = null
@@ -74,7 +91,7 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
         }
         com.mojing.app.ui.common.PlatformTabs(platforms, selectedPlatform?.id,
             onSelect = { selectedPlatformId = it }, modifier = Modifier.testTag("settings-platform-tabs"))
-        if (platforms.isEmpty() && initialPlatforms.isSuccess) {
+        if (platforms.isEmpty() && platformLoad.isSuccess) {
             Text("添加平台后，在这里管理连接、模型和价格。",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
