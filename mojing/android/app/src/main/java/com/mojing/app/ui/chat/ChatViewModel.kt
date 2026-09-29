@@ -907,7 +907,6 @@ class ChatViewModel @Inject constructor(
         val hasOlderMessages = initialRows.size > INITIAL_MESSAGE_WINDOW_SIZE
         val msgs = initialRows.take(INITIAL_MESSAGE_WINDOW_SIZE).asReversed()
         val excludedKeys = excludedKeysForWindow(initialBranchId, msgs)
-        val sourcePreviews = branchSourcePreviews(branches)
         val maps = buildCharacterPresentationMaps(participants)
 
         val firstChar = participants.firstOrNull()?.characterId?.let { characterDao.getById(it) }
@@ -946,7 +945,9 @@ class ChatViewModel @Inject constructor(
             currentBranchId = initialBranchId,
             roundChoiceOptions = roundChoices.options,
             roundChoiceMessageId = roundChoices.sourceMessageId,
-            branchSourcePreviews = sourcePreviews,
+            branchSourcePreviews = emptyMap(),
+            branchSourcePreviewsLoading = false,
+            branchSourcePreviewsError = null,
             characterNames = maps.names,
             characterAvatars = maps.avatars,
             characterCardImages = maps.cardImages,
@@ -1027,10 +1028,68 @@ class ChatViewModel @Inject constructor(
 
     private suspend fun branchSourcePreviews(
         branches: List<SessionBranchEntity>,
-    ): Map<Long, String> = messagePreviews(
-        messageIds = branches.map { it.sourceMessageId }.filter { it > 0L }.toSet(),
-        maxChars = 56,
-    )
+    ): Map<Long, String> {
+        val ids = branches.map { it.sourceMessageId }.filter { it > 0L }.toSet()
+        val previews = mutableMapOf<Long, String>()
+        for (batch in ids.chunked(32)) {
+            currentCoroutineContext().ensureActive()
+            val sources = messageDao.getBranchSourcePreviewPrefixesInSession(sessionId, batch)
+            previews.putAll(withContext(Dispatchers.Default) {
+                sources.associate { message ->
+                    currentCoroutineContext().ensureActive()
+                    message.id to ChatMessageTextFormat.sessionListPreview(
+                        message.content, message.speakerType, 56,
+                    ).ifBlank { "（无可见摘要）" }
+                }
+            })
+        }
+        return previews
+    }
+
+    private var branchSourcePreviewJob: Job? = null
+
+    fun loadBranchSourcePreviews() {
+        branchSourcePreviewJob?.cancel()
+        branchSourcePreviewJob = null
+        val branches = _state.value.branches
+        if (branches.none { it.sourceMessageId > 0L }) {
+            _state.update { it.copy(branchSourcePreviews = emptyMap(), branchSourcePreviewsLoading = false,
+                branchSourcePreviewsError = null) }
+            return
+        }
+        _state.update { it.copy(branchSourcePreviews = emptyMap(), branchSourcePreviewsLoading = true,
+            branchSourcePreviewsError = null) }
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            val owner = coroutineContext[Job]
+            try {
+                val previews = branchSourcePreviews(branches)
+                if (branchSourcePreviewJob === owner) {
+                    _state.update { current ->
+                        if (current.branches != branches) current.copy(branchSourcePreviewsError = "故事线已变化，请重试加载摘要")
+                        else current.copy(branchSourcePreviews = previews, branchSourcePreviewsError = null)
+                    }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (branchSourcePreviewJob === owner) {
+                    _state.update { it.copy(branchSourcePreviewsError = "分叉摘要加载失败，可重试；仍可按名称选择故事线") }
+                }
+            } finally {
+                if (branchSourcePreviewJob === owner) {
+                    branchSourcePreviewJob = null
+                    _state.update { it.copy(branchSourcePreviewsLoading = false) }
+                }
+            }
+        }
+        branchSourcePreviewJob = job
+        job.start()
+    }
+
+    fun cancelBranchSourcePreviews() {
+        branchSourcePreviewJob?.cancel()
+        branchSourcePreviewJob = null
+        _state.update { it.copy(branchSourcePreviewsLoading = false) }
+    }
 
     private suspend fun messagePreviews(
         messageIds: Set<Long>,
@@ -1579,7 +1638,6 @@ class ChatViewModel @Inject constructor(
                     )
                 }
             }
-        val sourcePreviews = branchSourcePreviews(branches)
         val map = attachmentsForMessages(msgs)
         val sess = sessionDao.getById(sessionId)
         val participants = participantDao.getBySession(sessionId)
@@ -1617,7 +1675,6 @@ class ChatViewModel @Inject constructor(
                     messageAttachments = map,
                     bookmarkedMessageIds = bookmarkIds,
                     branches = branches,
-                    branchSourcePreviews = sourcePreviews,
                     currentBranchId = branchId,
                     contextMemoryText = contextMemoryText,
                     contextMemoryStatus = if (current.currentBranchId == branchId) current.contextMemoryStatus else ContextMemoryStatus.IDLE,

@@ -51,6 +51,9 @@ fun BranchOverviewBottomSheet(
     visible: Boolean,
     branches: List<SessionBranchEntity>,
     sourcePreviews: Map<Long, String>,
+    sourcePreviewsLoading: Boolean = false,
+    sourcePreviewsError: String? = null,
+    onRetryPreviews: () -> Unit = {},
     currentBranchId: String = "main",
     onSelectBranch: (String, (String?) -> Unit) -> Unit,
     onDismiss: () -> Unit,
@@ -115,10 +118,25 @@ fun BranchOverviewBottomSheet(
             )
             Text(
                 if (query.isBlank()) "${storyBranches.size + 1} 条 · 选择一条继续阅读与创作"
+                else if (sourcePreviewsLoading || sourcePreviewsError != null)
+                    "已匹配 ${filtered.size + if (showMain) 1 else 0} 条 · 分叉内容搜索待摘要"
                 else "找到 ${filtered.size + if (showMain) 1 else 0} 条故事线",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (sourcePreviewsLoading) {
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text("正在读取分叉摘要；名称搜索和切换仍可用", Modifier.padding(start = 10.dp),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else if (sourcePreviewsError != null) {
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(sourcePreviewsError, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                    TextButton(onClick = onRetryPreviews) { Text("重试摘要") }
+                }
+            }
             if (pendingBranchId != null) {
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -170,7 +188,8 @@ fun BranchOverviewBottomSheet(
                 )
                 HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)
             }
-            if (query.isNotBlank() && filtered.isEmpty() && !showMain) item(key = "no-match") {
+            if (query.isNotBlank() && filtered.isEmpty() && !showMain &&
+                !sourcePreviewsLoading && sourcePreviewsError == null) item(key = "no-match") {
                 Column(Modifier.fillMaxWidth().padding(24.dp)) {
                     Text("没有匹配的故事线", style = MaterialTheme.typography.titleSmall)
                     TextButton(onClick = { query = "" }) { Text("显示全部故事线") }
@@ -216,7 +235,10 @@ fun BranchOverviewBottomSheet(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                preview?.let { "从「$it」处分出" } ?: "分叉位置已不可用",
+                                preview?.let { "从「$it」处分出" }
+                                    ?: if (sourcePreviewsLoading) "正在读取分叉摘要…"
+                                    else if (sourcePreviewsError != null) "摘要暂不可读，可按名称切换"
+                                    else "分叉位置已不可用",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 2,

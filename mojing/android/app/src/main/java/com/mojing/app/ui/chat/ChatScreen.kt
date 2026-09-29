@@ -1795,10 +1795,20 @@ fun ChatScreen(
         },
     )
 
+    LaunchedEffect(showBranchOverview) {
+        if (showBranchOverview) {
+            viewModel.loadBranchSourcePreviews()
+            try { kotlinx.coroutines.awaitCancellation() }
+            finally { viewModel.cancelBranchSourcePreviews() }
+        }
+    }
     BranchOverviewBottomSheet(
         visible = showBranchOverview,
         branches = state.branches,
         sourcePreviews = state.branchSourcePreviews,
+        sourcePreviewsLoading = state.branchSourcePreviewsLoading,
+        sourcePreviewsError = state.branchSourcePreviewsError,
+        onRetryPreviews = viewModel::loadBranchSourcePreviews,
         currentBranchId = state.currentBranchId,
         onSelectBranch = { branchId, onResult ->
             if (isImportingChat) {

@@ -177,6 +177,8 @@ object ChatContract {
         val branchAnchorsByMessageId: Map<Long, List<BranchAnchor>> = emptyMap(),
         /** 分支源消息可能不在当前窗口；预览按主键单独读取。 */
         val branchSourcePreviews: Map<Long, String> = emptyMap(),
+        val branchSourcePreviewsLoading: Boolean = false,
+        val branchSourcePreviewsError: String? = null,
     )
 
     sealed class Effect {

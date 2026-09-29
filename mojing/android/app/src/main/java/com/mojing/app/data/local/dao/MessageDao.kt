@@ -330,6 +330,11 @@ interface MessageDao {
     @Query("SELECT id, speakerType, content FROM messages WHERE sessionId = :sessionId AND id IN (:messageIds)")
     suspend fun getPreviewSourcesInSession(sessionId: Long, messageIds: List<Long>): List<MessagePreviewSource>
 
+    /** 故事线面板仅显示短摘要，避免分叉点是长章节时读取完整正文。 */
+    @Query("SELECT id, speakerType, substr(content, 1, 4096) AS content FROM messages " +
+        "WHERE sessionId = :sessionId AND id IN (:messageIds)")
+    suspend fun getBranchSourcePreviewPrefixesInSession(sessionId: Long, messageIds: List<Long>): List<MessagePreviewSource>
+
     @Query("SELECT * FROM messages WHERE sessionId = :sessionId AND id IN (:messageIds)")
     suspend fun getByIdsInSession(sessionId: Long, messageIds: List<Long>): List<MessageEntity>
 
