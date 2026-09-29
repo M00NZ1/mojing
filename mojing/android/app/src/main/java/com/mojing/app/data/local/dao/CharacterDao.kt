@@ -200,6 +200,23 @@ interface CharacterDao {
     @Query("SELECT * FROM characters ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, favorite DESC, createdAt DESC, id DESC")
     suspend fun getAll(): List<CharacterEntity>
 
+    /** Full export rows are read in bounded pages, preserving the former getAll order. */
+    @Query(
+        """SELECT * FROM characters
+        WHERE (:cursorId IS NULL
+          OR (CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END) > :cursorGroup
+          OR ((CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END) = :cursorGroup AND pinnedAt < :cursorPinnedAt)
+          OR ((CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END) = :cursorGroup AND pinnedAt = :cursorPinnedAt AND favorite < :cursorFavorite)
+          OR ((CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END) = :cursorGroup AND pinnedAt = :cursorPinnedAt AND favorite = :cursorFavorite AND createdAt < :cursorCreatedAt)
+          OR ((CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END) = :cursorGroup AND pinnedAt = :cursorPinnedAt AND favorite = :cursorFavorite AND createdAt = :cursorCreatedAt AND id < :cursorId))
+        ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, favorite DESC, createdAt DESC, id DESC
+        LIMIT :limit""",
+    )
+    suspend fun getExportPage(
+        cursorGroup: Int?, cursorPinnedAt: Long?, cursorFavorite: Boolean?, cursorCreatedAt: Long?,
+        cursorId: Long?, limit: Int,
+    ): List<CharacterEntity>
+
     /** Name collision checks never need persona text or provider credentials. */
     @Query("SELECT name FROM characters WHERE substr(name, 1, length(:prefix)) = :prefix")
     suspend fun getNamesStartingWith(prefix: String): List<String>

@@ -137,8 +137,7 @@ fun CharacterListScreen(
             exportWriteInterrupted = true
             scope.launch {
                 val notice = try {
-                    val json = viewModel.exportJson()
-                    ContentDocumentWriter.writeUtf8Text(context, uri, json)
+                    ContentDocumentWriter.writeStream(context, uri, viewModel::exportJson)
                     UserFacingStrings.exportSuccess()
                 } catch (cancelled: CancellationException) {
                     throw cancelled

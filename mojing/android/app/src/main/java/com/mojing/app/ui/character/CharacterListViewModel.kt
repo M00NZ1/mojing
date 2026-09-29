@@ -22,6 +22,7 @@ import com.mojing.app.domain.util.CharacterPortableCodec
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.google.gson.stream.JsonWriter
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -32,7 +33,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import java.io.OutputStream
+import java.io.OutputStreamWriter
+import java.io.StringWriter
 import javax.inject.Inject
 import kotlin.text.Charsets
 
@@ -53,6 +59,8 @@ data class CharacterFilterPage(
 
 private const val CHARACTER_LIBRARY_PAGE_SIZE = 40
 private const val CHARACTER_FILTER_PAGE_SIZE = 40
+// A full character includes long persona text; keep export pages smaller than UI metadata pages.
+private const val CHARACTER_EXPORT_BATCH_SIZE = 32
 
 internal fun newCharacterDraft(encyclopediaId: Long = 0L): CharacterEntity =
     CharacterEntity(name = "新角色", boundEncyclopediaId = encyclopediaId)
@@ -125,7 +133,24 @@ internal object CharacterExportCodec {
 
     fun toJson(characters: List<CharacterEntity>, encyclopedias: List<EncyclopediaNameOption>): String {
         val encNameById = encyclopedias.associate { it.id to it.name }
-        val data = characters.map { character ->
+        val output = StringWriter()
+        val writer = gson.newJsonWriter(output)
+        begin(writer)
+        characters.forEach { character -> writeCharacter(writer, character, encNameById[character.boundEncyclopediaId].orEmpty()) }
+        end(writer)
+        writer.flush()
+        return output.toString()
+    }
+
+    fun begin(writer: JsonWriter) {
+        writer.beginObject()
+        writer.name("version").value(2)
+        writer.name("type").value("characters")
+        writer.name("data").beginArray()
+    }
+
+    fun writeCharacter(writer: JsonWriter, character: CharacterEntity, encyclopediaName: String) {
+        gson.toJson(
             mapOf(
                 "name" to character.name,
                 "personaPrompt" to character.personaPrompt,
@@ -150,10 +175,16 @@ internal object CharacterExportCodec {
                 "thinkMaxEnabled" to character.thinkMaxEnabled,
                 "thinkMaxModelName" to character.thinkMaxModelName,
                 // 用百科名称而不是旧数据库 ID，避免在另一台设备上误绑同号百科。
-                "boundEncyclopediaName" to encNameById[character.boundEncyclopediaId].orEmpty(),
-            )
-        }
-        return gson.toJson(mapOf("version" to 2, "type" to "characters", "data" to data))
+                "boundEncyclopediaName" to encyclopediaName,
+            ),
+            Map::class.java,
+            writer,
+        )
+    }
+
+    fun end(writer: JsonWriter) {
+        writer.endArray()
+        writer.endObject()
     }
 
     fun fromJson(json: String): List<ExportedCharacter> {
@@ -472,12 +503,31 @@ class CharacterListViewModel @Inject constructor(
         }
     }
 
-    suspend fun exportJson(): String {
-        val characters = characterDao.getAll()
-        val encyclopedias = encyclopediaDao.getAllNameOptions()
-        return withContext(Dispatchers.Default) {
-            CharacterExportCodec.toJson(characters, encyclopedias)
-        }
+    suspend fun exportJson(output: OutputStream) = withContext(Dispatchers.IO) {
+        val writer = gson.newJsonWriter(OutputStreamWriter(output, Charsets.UTF_8))
+        CharacterExportCodec.begin(writer)
+        var cursor: CharacterEntity? = null
+        do {
+            currentCoroutineContext().ensureActive()
+            val page = characterDao.getExportPage(
+                cursorGroup = cursor?.let { if (it.pinnedAt > 0) 0 else 1 },
+                cursorPinnedAt = cursor?.pinnedAt,
+                cursorFavorite = cursor?.favorite,
+                cursorCreatedAt = cursor?.createdAt,
+                cursorId = cursor?.id,
+                limit = CHARACTER_EXPORT_BATCH_SIZE,
+            )
+            val encyclopediaIds = page.map { it.boundEncyclopediaId }.filter { it > 0 }.distinct()
+            val names: Map<Long, String> = if (encyclopediaIds.isEmpty()) emptyMap() else
+                encyclopediaDao.getNameOptionsByIds(encyclopediaIds).associate { it.id to it.name }
+            page.forEach { character ->
+                currentCoroutineContext().ensureActive()
+                CharacterExportCodec.writeCharacter(writer, character, names[character.boundEncyclopediaId].orEmpty())
+            }
+            cursor = page.lastOrNull()
+        } while (page.size == CHARACTER_EXPORT_BATCH_SIZE)
+        CharacterExportCodec.end(writer)
+        writer.flush()
     }
 
     suspend fun importFromDocument(bytes: ByteArray, fileHint: String?): CharacterImportResult {

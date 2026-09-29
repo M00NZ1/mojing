@@ -75,6 +75,9 @@ interface EncyclopediaDao {
     @Query("SELECT id, name FROM world_encyclopedias ORDER BY id")
     suspend fun getAllNameOptions(): List<EncyclopediaNameOption>
 
+    @Query("SELECT id, name FROM world_encyclopedias WHERE id IN (:ids)")
+    suspend fun getNameOptionsByIds(ids: List<Long>): List<EncyclopediaNameOption>
+
     @Query("SELECT * FROM world_encyclopedias ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, updatedAt DESC")
     suspend fun getAll(): List<EncyclopediaEntity>
 
