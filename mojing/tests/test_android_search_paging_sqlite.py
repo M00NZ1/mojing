@@ -90,7 +90,7 @@ def test_name_only_hits_share_cursor_count_and_branch_visibility_with_body_hits(
                       indexedThroughMessageId=5, limit=2, beforeMessageId=2**63 - 1)
         main_page = db.execute(search_sql("searchMainMessagesIndexed"), params).fetchall()
         assert [row[0] for row in main_page] == [3, 2]
-        assert main_page[0][5] == body_match
+        assert main_page[0][5] == body_match[:2048]
         assert db.execute(search_sql("countMainMessagesIndexed"), params).fetchone()[0] == 3
         params["beforeMessageId"] = 2
         older_page = db.execute(search_sql("searchMainMessagesIndexed"), params).fetchall()
@@ -102,3 +102,39 @@ def test_name_only_hits_share_cursor_count_and_branch_visibility_with_body_hits(
         params["exactMatch"] = 1
         assert [row[0] for row in db.execute(search_sql("searchMainMessagesIndexed"), params)] == [3, 1]
         assert db.execute(search_sql("countMainMessagesIndexed"), params).fetchone()[0] == 2
+
+
+def test_long_plain_hits_return_bounded_late_window_but_structured_and_normalized_hits_keep_body():
+    with sqlite3.connect(":memory:") as db:
+        db.executescript("""
+            CREATE TABLE messages(id INTEGER PRIMARY KEY, sessionId INTEGER, branchId TEXT,
+                regeneratedFromMessageId INTEGER, searchNormalized TEXT, content TEXT,
+                speakerType TEXT, characterId INTEGER, createdAt INTEGER);
+            CREATE TABLE characters(id INTEGER PRIMARY KEY, name TEXT);
+            CREATE TABLE branch_visibility_segments(sessionId INTEGER, targetBranchId TEXT,
+                sourceBranchId TEXT, maxMessageId INTEGER);
+            CREATE VIRTUAL TABLE message_search_fts USING fts4(tokens);
+            INSERT INTO branch_visibility_segments VALUES(42,'A','main',4),(42,'A','A',4);
+        """)
+        plain = "🌊" * 10000 + "灯塔线索" + "风" * 1000
+        structured = "<NARRATION>" + "风" * 10000 + "灯塔线索</NARRATION>"
+        branch_plain = "雨" * 10000 + "灯塔线索" + "雾" * 1000
+        normalized_only = "ＨＥＬＬＯ" + "风" * 10000
+        db.executemany("INSERT INTO messages VALUES(?,?,?,?,?,?,?,?,?)", [
+            (1, 42, "main", None, plain, plain, "user", None, 1),
+            (2, 42, "main", None, "风" * 10000 + "灯塔线索", structured, "character", None, 2),
+            (3, 42, "A", None, branch_plain, branch_plain, "narrator", None, 3),
+            (4, 42, "main", None, "hello" + "风" * 10000, normalized_only, "user", None, 4),
+        ])
+        db.executemany("INSERT INTO message_search_fts(rowid,tokens) VALUES(?,'hit')", [(i,) for i in range(1, 5)])
+        params = dict(sessionId=42, branchId="A", query="灯塔线索", normalizedQuery="灯塔线索",
+                      matchExpression="hit", exactMatch=0, indexComplete=1,
+                      indexedThroughMessageId=4, limit=10, beforeMessageId=2**63 - 1)
+        main = {row[0]: row[5] for row in db.execute(search_sql("searchMainMessagesIndexed"), params)}
+        branch = {row[0]: row[5] for row in db.execute(search_sql("searchVisibleMessagesIndexed"), params)}
+        assert len(main[1]) <= 2048 and "灯塔线索" in main[1] and main[1] != plain
+        assert main[2] == structured
+        assert len(branch[3]) <= 2048 and "灯塔线索" in branch[3] and branch[3] != branch_plain
+        params.update(query="hello", normalizedQuery="hello")
+        fallback = {row[0]: row[5] for row in db.execute(search_sql("searchMainMessagesIndexed"), params)}
+        assert fallback[4] == normalized_only

@@ -134,9 +134,14 @@ private const val MESSAGE_BODY_SEARCH_MATCH = """
         (message.searchNormalized = '' AND instr(lower(message.content), lower(:query)) > 0))))
 """
 
-/** Name-only matches need a preview, not an entire chapter; body matches still need the hit text. */
+/** Direct literal hits in plain text need only a bounded window; structured and normalized-only hits keep the full body. */
 private const val SEARCH_RESULT_CONTENT = """
-    CASE WHEN $MESSAGE_BODY_SEARCH_MATCH THEN message.content
+    CASE WHEN $MESSAGE_BODY_SEARCH_MATCH THEN
+             CASE WHEN :exactMatch = 0 AND length(:query) BETWEEN 1 AND 512
+                       AND (message.speakerType = 'user' OR instr(message.content, '<') = 0)
+                       AND instr(message.content, :query) > 0
+                  THEN substr(message.content, max(1, instr(message.content, :query) - 256), 2048)
+                  ELSE message.content END
          ELSE substr(message.content, 1, 2048) END AS content
 """
 
