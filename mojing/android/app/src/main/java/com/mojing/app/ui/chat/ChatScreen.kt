@@ -246,7 +246,12 @@ fun ChatScreen(
     var importStopping by remember(sessionId) { mutableStateOf(false) }
     var importJob by remember(sessionId) { mutableStateOf<Job?>(null) }
     var isAddingAttachment by remember(sessionId) { mutableStateOf(false) }
-    var isExportingChat by rememberSaveable(sessionId) { mutableStateOf(false) }
+    // Only the document picker survives recreation; its file-writing coroutine does not.
+    var pendingChatExportPicker by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var pendingNovelExportPicker by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var exportWriteInterrupted by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var isExportingFile by remember(sessionId) { mutableStateOf(false) }
+    val exportBusy = pendingChatExportPicker || pendingNovelExportPicker || isExportingFile
     var savingGalleryMessageId by remember(sessionId) { mutableStateOf<Long?>(null) }
     var pendingGalleryPermissionMessageId by remember(sessionId) { mutableStateOf<Long?>(null) }
     var showBranchOverview by remember { mutableStateOf(false) }
@@ -289,6 +294,13 @@ fun ChatScreen(
         if (state.sessionNotFound) {
             Toast.makeText(context, "对话不存在或已删除", Toast.LENGTH_SHORT).show()
             onBack()
+        }
+    }
+
+    LaunchedEffect(sessionId, exportWriteInterrupted, isExportingFile) {
+        if (exportWriteInterrupted && !isExportingFile) {
+            exportWriteInterrupted = false
+            snackbarHostState.showSnackbar("上次导出已中断，文件可能不完整，请重新导出")
         }
     }
 
@@ -445,40 +457,48 @@ fun ChatScreen(
         job.start()
     }
     val exportNovelLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
-        if (uri != null) scope.launch {
-            isExportingChat = true
-            try {
-                ContentDocumentWriter.writeStream(context, uri) { viewModel.exportNovel(it) }
-                snackbarHostState.showSnackbar("小说已导出")
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (e: Exception) { snackbarHostState.showSnackbar(UserFacingStrings.documentWriteFailed(e.message)) }
-            finally { isExportingChat = false }
+        val requested = pendingNovelExportPicker
+        pendingNovelExportPicker = false
+        if (requested && uri != null && !isExportingFile && !isImportingChat) {
+            isExportingFile = true
+            exportWriteInterrupted = true
+            scope.launch {
+                val notice = try {
+                    ContentDocumentWriter.writeStream(context, uri) { viewModel.exportNovel(it) }
+                    "小说已导出"
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (e: Exception) { UserFacingStrings.documentWriteFailed(e.message) }
+                finally {
+                    exportWriteInterrupted = false
+                    isExportingFile = false
+                }
+                snackbarHostState.showSnackbar(notice)
+            }
         }
     }
     val exportChatLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
-        if (uri == null) {
-            isExportingChat = false
-            return@rememberLauncherForActivityResult
-        }
-        if (!isExportingChat || isImportingChat) {
-            isExportingChat = false
-            return@rememberLauncherForActivityResult
-        }
+        val requested = pendingChatExportPicker
+        pendingChatExportPicker = false
+        if (uri == null || !requested || isExportingFile || isImportingChat) return@rememberLauncherForActivityResult
+        isExportingFile = true
+        exportWriteInterrupted = true
         scope.launch {
-            try {
+            val notice = try {
                 ContentDocumentWriter.writeStream(context, uri) { os ->
                     viewModel.exportMainBranchJson(os)
                 }
-                snackbarHostState.showSnackbar("聊天记录已导出")
+                "聊天记录已导出"
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
-                snackbarHostState.showSnackbar(UserFacingStrings.documentWriteFailed(e.message))
+                UserFacingStrings.documentWriteFailed(e.message)
             } finally {
-                isExportingChat = false
+                exportWriteInterrupted = false
+                isExportingFile = false
             }
+            snackbarHostState.showSnackbar(notice)
         }
     }
 
@@ -578,7 +598,7 @@ fun ChatScreen(
 
     com.mojing.app.ui.chat.contents.StoryContentsSheet(
         novelTitle = stableSessionTitle,
-        busy = state.isGenerating || isExportingChat,
+        busy = state.isGenerating || exportBusy,
         saving = state.novelMetadataSaving,
         saveError = state.novelMetadataError,
         onEditStart = viewModel::clearNovelMetadataError,
@@ -589,7 +609,14 @@ fun ChatScreen(
             viewModel.saveChapterInput(state.currentBranchId, title, direction, synchronous)
         },
         onRenameChapter = viewModel::renameChapter,
-        onExport = { exportNovelLauncher.launch("novel_${sessionId}.txt") },
+        onExport = {
+            pendingNovelExportPicker = true
+            try { exportNovelLauncher.launch("novel_${sessionId}.txt") }
+            catch (e: Exception) {
+                pendingNovelExportPicker = false
+                scope.launch { snackbarHostState.showSnackbar(UserFacingStrings.documentWriteFailed(e.message)) }
+            }
+        },
         visible = showContents,
         sessionId = sessionId,
         branchId = state.currentBranchId,
@@ -922,7 +949,7 @@ fun ChatScreen(
                                         enabled = state.participants.isNotEmpty() &&
                                             !state.isGenerating &&
                                             !isImportingChat &&
-                                            !isExportingChat,
+                                            !exportBusy,
                                         onClick = {
                                             topActionsMenuExpanded = false
                                             tavernImportLauncher.launch(
@@ -932,12 +959,16 @@ fun ChatScreen(
                                     )
                                     DropdownMenuItem(
                                         leadingIcon = { Icon(Icons.Default.FileUpload, null) },
-                                        text = { Text(if (isExportingChat) "正在导出主线聊天记录…" else "导出主线聊天记录…") },
-                                        enabled = !isExportingChat && !isImportingChat,
+                                        text = { Text(if (exportBusy) "正在导出文件…" else "导出主线聊天记录…") },
+                                        enabled = !exportBusy && !isImportingChat,
                                         onClick = {
                                             topActionsMenuExpanded = false
-                                            isExportingChat = true
-                                            exportChatLauncher.launch("chat_${sessionId}_${System.currentTimeMillis()}.json")
+                                            pendingChatExportPicker = true
+                                            try { exportChatLauncher.launch("chat_${sessionId}_${System.currentTimeMillis()}.json") }
+                                            catch (e: Exception) {
+                                                pendingChatExportPicker = false
+                                                scope.launch { snackbarHostState.showSnackbar(UserFacingStrings.documentWriteFailed(e.message)) }
+                                            }
                                         },
                                     )
                                 }
