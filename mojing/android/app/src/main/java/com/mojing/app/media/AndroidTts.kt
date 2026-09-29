@@ -181,11 +181,17 @@ object AndroidTts {
             tts = candidate
             candidate!!.setOnUtteranceProgressListener(listenerFor(candidate!!, candidateToken))
             callbackStatus?.let(callback)
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            UsbSessionLog.w("SystemTts", "init_error type=${error.javaClass.simpleName}")
+            engineToken++
+            tts = null
+            isInitialized = false
             isInitializing = false
             pendingSpeak = null
-            activeSpeakError?.invoke("指定的系统朗读引擎无法启动，请检查系统语音设置")
+            runCatching { candidate?.shutdown() }
+            val listener = activeSpeakError ?: errorListener
             activeSpeakError = null
+            listener?.invoke("指定的系统朗读引擎无法启动，请检查系统语音设置")
         }
     }
 

@@ -335,7 +335,7 @@ fun VoiceChoicePicker(
                 val defaultName = engines.firstOrNull { it.id == "android:$defaultEnginePackage" }?.name
                     ?: defaultEnginePackage
                 Text(
-                    "系统默认当前使用 $defaultName；选择具体引擎则固定使用它。",
+                    "系统设置的默认引擎：$defaultName；选择具体引擎时会优先使用它。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 20.dp),
