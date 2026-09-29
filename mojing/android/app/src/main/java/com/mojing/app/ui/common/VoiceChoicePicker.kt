@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -55,6 +56,7 @@ import com.mojing.app.media.AzureSpeech
 import com.mojing.app.media.VoiceEngineCatalog
 import com.mojing.app.media.VoiceCatalogException
 import com.mojing.app.media.VoiceEngineOption
+import com.mojing.app.media.VoiceCatalogResult
 import com.mojing.app.media.VoiceOption
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -85,6 +87,8 @@ fun VoiceChoicePicker(
     var query by remember { mutableStateOf("") }
     var searchExpanded by remember { mutableStateOf(false) }
     var voices by remember { mutableStateOf<List<VoiceOption>>(emptyList()) }
+    var defaultEnginePackage by remember { mutableStateOf<String?>(null) }
+    var showOtherLanguages by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(choice.engineId != "inherit") }
     var engineLoading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -122,7 +126,7 @@ fun VoiceChoicePicker(
         previewJob = scope.launch {
             try {
                 kotlinx.coroutines.withTimeout(30_000L) {
-                    val text = "你好，欢迎来到墨境。这是当前音色的试听。"
+                    val text = voicePreviewText(voice.languageTag)
                     if (engine == "azure") {
                         val credentials = withContext(Dispatchers.IO) { preferences.azureRegion to preferences.azureKey }
                         if (!AzureSpeech.speak(context.applicationContext, text, credentials.first, credentials.second, voice.id))
@@ -168,6 +172,7 @@ fun VoiceChoicePicker(
         selectedEngine = engineId
         query = ""
         searchExpanded = false
+        showOtherLanguages = false
         loading = true
         error = null
         voices = emptyList()
@@ -179,12 +184,17 @@ fun VoiceChoicePicker(
                     }
                     if (region.isBlank() || key.isBlank()) {
                         if (generation == loadGeneration) error = "请先在语音设置填写 Azure 区域和 API Key"
-                        emptyList()
-                    } else withContext(Dispatchers.IO) { AzureSpeech.voices(region, key) }
+                        VoiceCatalogResult(emptyList(), null)
+                    } else VoiceCatalogResult(withContext(Dispatchers.IO) { AzureSpeech.voices(region, key) }, null)
                 } else {
                     VoiceEngineCatalog.voices(context, engineId)
                 }
-                if (generation == loadGeneration && selectedEngine == engineId) voices = result
+                if (generation == loadGeneration && selectedEngine == engineId) {
+                    voices = result.voices
+                    showOtherLanguages = engineId != "azure" && engineId == choice.engineId &&
+                        result.voices.any { it.id == choice.voiceId && !it.isChineseVoice() }
+                    if (engineId != "azure") defaultEnginePackage = result.defaultEnginePackage
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -208,7 +218,10 @@ fun VoiceChoicePicker(
     }
 
     val searchQuery = query.trim()
-    val displayVoices = (listOf(VoiceOption("", if (selectedEngine == "azure") "默认 · 晓晓" else "引擎默认")) + voices.filter { it.id.isNotBlank() })
+    val otherLanguageCount = if (selectedEngine == "azure") 0 else voices.count { !it.isChineseVoice() }
+    val visibleVoices = if (selectedEngine == "azure" || showOtherLanguages || searchQuery.isNotBlank()) voices
+        else voices.filter { it.isChineseVoice() }
+    val displayVoices = (listOf(VoiceOption("", if (selectedEngine == "azure") "默认 · 晓晓" else "引擎默认")) + visibleVoices.filter { it.id.isNotBlank() })
         .distinctBy { it.id }
         .filter { searchQuery.isBlank() || it.name.contains(searchQuery, true) || it.id.contains(searchQuery, true) }
 
@@ -226,7 +239,7 @@ fun VoiceChoicePicker(
         contentWindowInsets = { WindowInsets.safeDrawing },
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().heightIn(max = (configuration.screenHeightDp * 0.85f).dp),
+            modifier = Modifier.fillMaxWidth().height((configuration.screenHeightDp * 0.85f).dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(
@@ -243,7 +256,7 @@ fun VoiceChoicePicker(
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             LazyColumn(
-                modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 state = voiceListState,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 12.dp),
             ) {
@@ -318,6 +331,16 @@ fun VoiceChoicePicker(
                     }
                 }
             }
+            if (selectedEngine != "azure" && defaultEnginePackage != null) {
+                val defaultName = engines.firstOrNull { it.id == "android:$defaultEnginePackage" }?.name
+                    ?: defaultEnginePackage
+                Text(
+                    "系统默认当前使用 $defaultName；选择具体引擎则固定使用它。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                )
+            }
             if (!azureConfigured) {
                 Text(
                     "使用微软语音：在设置 → 朗读中填写 Azure 区域和 Speech Key",
@@ -339,9 +362,12 @@ fun VoiceChoicePicker(
                 } else {
                     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 20.dp, end = 8.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        Text("音色", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                        Text("${displayVoices.size}", style = MaterialTheme.typography.labelMedium,
+                        Text(if (selectedEngine == "azure") "音色" else if (showOtherLanguages || searchQuery.isNotBlank()) "全部语种" else "中文音色", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        Text("${visibleVoices.size}", style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (otherLanguageCount > 0) TextButton(onClick = { showOtherLanguages = !showOtherLanguages }) {
+                            Text(if (showOtherLanguages) "只看中文" else "其他语种 $otherLanguageCount")
+                        }
                         if (voices.size > 8) IconButton(onClick = {
                             searchExpanded = !searchExpanded
                             if (!searchExpanded) query = ""
@@ -353,6 +379,14 @@ fun VoiceChoicePicker(
                     if (voices.size > 8 && searchExpanded) MoJingTextField(
                         value = query, onValueChange = { query = it }, singleLine = true,
                         placeholder = { Text("搜索音色") }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    )
+                    if (selectedEngine != "azure") Text(
+                        if (showOtherLanguages || searchQuery.isNotBlank()) "其他语种不是中文音色；朗读原文不会自动翻译，部分引擎可能回退到中文。"
+                        else if (voices.none { it.isChineseVoice() }) "此引擎未提供已安装的中文音色，可改用引擎默认或检查系统语音包。"
+                        else "这里只显示已安装的中文音色；其他语种可按需展开。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 20.dp),
                     )
                 }
             }
@@ -400,4 +434,19 @@ fun VoiceChoicePicker(
             }
         }
     }
+}
+
+internal fun VoiceOption.isChineseVoice(): Boolean = languageTag.substringBefore('-').equals("zh", ignoreCase = true)
+
+internal fun voicePreviewText(languageTag: String): String = when (languageTag.substringBefore('-').lowercase()) {
+    "en" -> "Hello, welcome to MoJing. This is a voice preview."
+    "ar" -> "مرحبًا، هذا مثال للاستماع إلى الصوت."
+    "ja" -> "こんにちは。これは音声の試聴です。"
+    "ko" -> "안녕하세요. 음성 미리 듣기입니다."
+    "fr" -> "Bonjour, ceci est un aperçu de la voix."
+    "de" -> "Hallo, dies ist eine Stimmprobe."
+    "es" -> "Hola, esta es una prueba de voz."
+    "ru" -> "Здравствуйте, это образец голоса."
+    "zh", "" -> "你好，欢迎来到墨境。这是当前音色的试听。"
+    else -> "1 2 3 4 5"
 }

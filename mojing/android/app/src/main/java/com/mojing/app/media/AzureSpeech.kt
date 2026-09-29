@@ -186,7 +186,7 @@ object AzureSpeech {
                     .ifBlank { item.optString("DisplayName").trim() }
                 val locale = item.optString("Locale").trim()
                 val label = listOf(display, locale).filter(String::isNotBlank).joinToString(" · ")
-                add(VoiceOption(id, label.ifBlank { id }))
+                add(VoiceOption(id, label.ifBlank { id }, locale))
             }
         }.distinctBy { it.id }
             .sortedWith(compareByDescending<VoiceOption> { it.id.startsWith("zh-", ignoreCase = true) }.thenBy { it.name })

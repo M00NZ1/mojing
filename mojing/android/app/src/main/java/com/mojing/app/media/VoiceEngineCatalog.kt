@@ -15,7 +15,13 @@ import java.util.Locale
 
 data class VoiceEngineOption(val id: String, val name: String)
 
-data class VoiceOption(val id: String, val name: String)
+data class VoiceOption(
+    val id: String,
+    val name: String,
+    val languageTag: String = "",
+)
+
+data class VoiceCatalogResult(val voices: List<VoiceOption>, val defaultEnginePackage: String?)
 
 internal class VoiceCatalogException(message: String, cause: Throwable? = null) : IllegalStateException(message, cause)
 
@@ -43,7 +49,7 @@ object VoiceEngineCatalog {
         }
     }
 
-    suspend fun voices(context: Context, engineId: String): List<VoiceOption> {
+    suspend fun voices(context: Context, engineId: String): VoiceCatalogResult {
         val packageName = when {
             engineId == "system" -> null
             engineId.startsWith(ANDROID_PREFIX) -> engineId.removePrefix(ANDROID_PREFIX).trim().takeIf { it.isNotEmpty() }
@@ -63,10 +69,10 @@ object VoiceEngineCatalog {
         } catch (e: Exception) {
             throw VoiceCatalogException("无法读取所选朗读引擎的音色，请检查引擎是否可用", e)
         }
-        return normalizeVoiceOptions(result)
+        return result.copy(voices = normalizeVoiceOptions(result.voices))
     }
 
-    private suspend fun queryVoices(context: Context, packageName: String?): List<VoiceOption> {
+    private suspend fun queryVoices(context: Context, packageName: String?): VoiceCatalogResult {
         if (packageName != null) {
             val available = withContext(Dispatchers.IO) {
                 context.packageManager.resolveService(
@@ -81,7 +87,14 @@ object VoiceEngineCatalog {
         val engine = withContext(Dispatchers.Main.immediate) { createQueryEngine(context, packageName) }
             ?: throw VoiceCatalogException("朗读引擎初始化失败，无法读取音色列表")
         return try {
-            withContext(Dispatchers.IO) { engine.voices.orEmpty().map { it.toOption() } }
+            withContext(Dispatchers.IO) {
+                VoiceCatalogResult(
+                    engine.voices.orEmpty()
+                        .filter { it.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) != true }
+                        .map { it.toOption() },
+                    runCatching { engine.defaultEngine }.getOrNull(),
+                )
+            }
         } finally {
             withContext(NonCancellable + Dispatchers.IO) { engine.shutdown() }
         }
@@ -119,7 +132,7 @@ object VoiceEngineCatalog {
     private fun Voice.toOption(): VoiceOption {
         val localeName = locale.getDisplayName(Locale.CHINESE).trim()
         val label = if (localeName.isBlank()) name else "$name · $localeName"
-        return VoiceOption(name, label)
+        return VoiceOption(name, label, locale.toLanguageTag())
     }
 }
 

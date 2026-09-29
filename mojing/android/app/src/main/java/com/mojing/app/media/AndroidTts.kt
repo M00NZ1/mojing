@@ -213,8 +213,17 @@ object AndroidTts {
                     fail(candidate, "指定的系统音色不可用，请重新选择该引擎的音色")
                     return
                 }
+                if (selected.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) == true) {
+                    fail(candidate, "该音色的语音数据尚未安装，请在系统文字转语音设置中安装后重试")
+                    return
+                }
                 if (runCatching { candidate.setVoice(selected) }.getOrDefault(TextToSpeech.ERROR) == TextToSpeech.ERROR) {
                     fail(candidate, "指定的系统音色无法使用，请更换音色后重试")
+                    return
+                }
+                val activeVoiceName = runCatching { candidate.voice?.name }.getOrNull()
+                if (activeVoiceName != null && activeVoiceName != requestedVoiceId) {
+                    fail(candidate, "朗读引擎未切换到所选音色，请更换音色或引擎")
                     return
                 }
             } else if (preferInstalledChinese) {
