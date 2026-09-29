@@ -21,7 +21,12 @@ object TtsPlayer {
 
     fun playOwned(audioFile: File, deleteWhenFinished: Boolean = false): PlaybackHandle? {
         stop()
-        val candidate = MediaPlayer()
+        val candidate = try {
+            MediaPlayer()
+        } catch (_: RuntimeException) {
+            if (deleteWhenFinished) runCatching { audioFile.delete() }
+            return null
+        }
         val handle = PlaybackHandle(++nextToken)
         synchronized(this) {
             active = Active(handle, candidate, audioFile.takeIf { deleteWhenFinished })
