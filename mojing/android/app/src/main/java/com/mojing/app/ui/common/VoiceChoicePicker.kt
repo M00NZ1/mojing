@@ -87,6 +87,7 @@ fun VoiceChoicePicker(
     var query by remember { mutableStateOf("") }
     var searchExpanded by remember { mutableStateOf(false) }
     var voices by remember { mutableStateOf<List<VoiceOption>>(emptyList()) }
+    var loadedEngine by remember { mutableStateOf<String?>(null) }
     var defaultEnginePackage by remember { mutableStateOf<String?>(null) }
     var showOtherLanguages by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(choice.engineId != "inherit") }
@@ -104,7 +105,7 @@ fun VoiceChoicePicker(
     var previewError by remember { mutableStateOf<String?>(null) }
     var previewGeneration by remember { mutableIntStateOf(0) }
     val voiceListState = rememberLazyListState()
-    LaunchedEffect(loadGeneration) { voiceListState.scrollToItem(0) }
+    LaunchedEffect(selectedEngine) { voiceListState.scrollToItem(0) }
 
     fun stopPreview() {
         previewGeneration++
@@ -170,12 +171,8 @@ fun VoiceChoicePicker(
         val generation = ++loadGeneration
         voiceLoadJob?.cancel()
         selectedEngine = engineId
-        query = ""
-        searchExpanded = false
-        showOtherLanguages = false
         loading = true
         error = null
-        voices = emptyList()
         voiceLoadJob = scope.launch {
             try {
                 val result = if (engineId == "azure") {
@@ -190,7 +187,10 @@ fun VoiceChoicePicker(
                     VoiceEngineCatalog.voices(context, engineId)
                 }
                 if (generation == loadGeneration && selectedEngine == engineId) {
+                    query = ""
+                    searchExpanded = false
                     voices = result.voices
+                    loadedEngine = engineId
                     showOtherLanguages = engineId != "azure" && engineId == choice.engineId &&
                         result.voices.any { it.id == choice.voiceId && !it.isChineseVoice() }
                     if (engineId != "azure") defaultEnginePackage = result.defaultEnginePackage
@@ -217,11 +217,12 @@ fun VoiceChoicePicker(
         if (selectedEngine != "inherit") load(selectedEngine)
     }
 
+    val displayedEngine = if (loading) loadedEngine ?: selectedEngine else selectedEngine
     val searchQuery = query.trim()
-    val otherLanguageCount = if (selectedEngine == "azure") 0 else voices.count { !it.isChineseVoice() }
-    val visibleVoices = if (selectedEngine == "azure" || showOtherLanguages || searchQuery.isNotBlank()) voices
+    val otherLanguageCount = if (displayedEngine == "azure") 0 else voices.count { !it.isChineseVoice() }
+    val visibleVoices = if (displayedEngine == "azure" || showOtherLanguages || searchQuery.isNotBlank()) voices
         else voices.filter { it.isChineseVoice() }
-    val displayVoices = (listOf(VoiceOption("", if (selectedEngine == "azure") "默认 · 晓晓" else "引擎默认")) + visibleVoices.filter { it.id.isNotBlank() })
+    val displayVoices = (listOf(VoiceOption("", if (displayedEngine == "azure") "默认 · 晓晓" else "引擎默认")) + visibleVoices.filter { it.id.isNotBlank() })
         .distinctBy { it.id }
         .filter { searchQuery.isBlank() || it.name.contains(searchQuery, true) || it.id.contains(searchQuery, true) }
 
@@ -307,16 +308,7 @@ fun VoiceChoicePicker(
                 }
                 HorizontalDivider()
             }
-            if (engineLoading) {
-                Row(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.Center) {
-                    CircularProgressIndicator()
-                }
-            } else if (engineError != null) {
-                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(engineError!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
-                    TextButton(onClick = ::loadEngines) { Text("重试") }
-                }
-            } else {
+            if (engines.isNotEmpty()) {
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -331,11 +323,25 @@ fun VoiceChoicePicker(
                     }
                 }
             }
+            if (engineLoading) {
+                Row(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.Center) {
+                    CircularProgressIndicator()
+                }
+            } else if (engineError != null) {
+                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(engineError!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
+                    TextButton(onClick = ::loadEngines) { Text("重试") }
+                }
+            }
             if (selectedEngine != "azure" && defaultEnginePackage != null) {
                 val defaultName = engines.firstOrNull { it.id == "android:$defaultEnginePackage" }?.name
                     ?: defaultEnginePackage
                 Text(
-                    "系统设置的默认引擎：$defaultName；选择具体引擎时会优先使用它。",
+                    when (selectedEngine) {
+                        "system" -> "系统默认当前指向 $defaultName；与“$defaultName”入口显示相同音色是正常的。"
+                        "android:$defaultEnginePackage" -> "当前所选就是系统设置的默认引擎；与“系统默认”显示相同音色。"
+                        else -> "系统设置的默认引擎：$defaultName；选择具体引擎时会优先使用它。"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 20.dp),
@@ -351,8 +357,13 @@ fun VoiceChoicePicker(
             }
             if (selectedEngine != "inherit") {
                 if (loading) {
-                    Row(modifier = Modifier.fillMaxWidth().padding(20.dp), horizontalArrangement = Arrangement.Center) {
-                        CircularProgressIndicator()
+                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Text(if (loadedEngine == null) "正在读取音色…" else "正在切换音色，当前列表暂不可选…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else if (error != null) {
                     Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -392,18 +403,18 @@ fun VoiceChoicePicker(
             }
             }
             }
-            if (selectedEngine != "inherit" && !loading && error == null) {
-                        if (displayVoices.isEmpty()) {
+            if (selectedEngine != "inherit" && (loading && loadedEngine != null || !loading && error == null)) {
+                        if (displayVoices.isEmpty() && !loading) {
                             item {
                                 Text("没有匹配的音色，请更换关键词", color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
                             }
                         }
-                        items(displayVoices, key = { "${selectedEngine}:${it.id}" }) { voice ->
-                            val selected = selectedEngine == choice.engineId && voice.id == choice.voiceId
+                        items(displayVoices, key = { "${displayedEngine}:${it.id}" }) { voice ->
+                            val selected = displayedEngine == choice.engineId && voice.id == choice.voiceId
                             Surface(
-                                enabled = !saving,
-                                onClick = { stopPreview(); onSelected(VoiceChoice(selectedEngine, voice.id)) },
+                                enabled = !saving && !loading,
+                                onClick = { stopPreview(); onSelected(VoiceChoice(displayedEngine, voice.id)) },
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                                 color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
                             ) {
@@ -423,7 +434,7 @@ fun VoiceChoicePicker(
                                     }
                                     if (selected) Icon(Icons.Default.Check, "已选音色", Modifier.size(20.dp),
                                         tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                                    TextButton(enabled = !saving, onClick = { preview(voice) }) {
+                                    TextButton(enabled = !saving && !loading, onClick = { preview(voice) }) {
                                         Text(if (previewId == voice.id) "停止" else "试听")
                                     }
                                 }
