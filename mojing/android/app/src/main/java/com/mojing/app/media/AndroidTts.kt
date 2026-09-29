@@ -33,12 +33,20 @@ object AndroidTts {
 
     /** Uses the same engine owner; cancellation stops only this speech request. */
     suspend fun speakAwaitCompletion(context: Context, text: String, choice: VoiceChoice): Boolean {
-        val cleaned = kotlinx.coroutines.withContext(textDispatcher) { TtsSpeakText.normalizeForSpeech(text).trim() }
+        val prepared = kotlinx.coroutines.withContext(textDispatcher) {
+            val cleaned = TtsSpeakText.normalizeForSpeech(text).trim()
+            PreparedSpeech(cleaned, if (cleaned.isBlank()) emptyList()
+                else SpeechChunks.split(cleaned, TextToSpeech.getMaxSpeechInputLength()))
+        }
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
-            if (cleaned.isBlank()) return@withContext false
+            if (prepared.chunks.isEmpty()) return@withContext false
             val completion = kotlinx.coroutines.CompletableDeferred<Boolean>()
             val token = synchronized(lock) {
-                speakPreparedWithVoice(context, cleaned, choice) { error -> completion.completeExceptionally(IllegalStateException(error)) }
+                speakPreparedWithVoice(
+                    context, prepared.text, choice,
+                    onError = { error -> completion.completeExceptionally(IllegalStateException(error)) },
+                    preparedChunks = prepared.chunks,
+                )
                 requestToken.also { if (!completion.isCompleted) previewCompletion = it to completion }
             }
             try { completion.await() }
@@ -58,7 +66,8 @@ object AndroidTts {
         previewCompletion = null
     }
 
-    private data class PendingSpeak(val text: String, val choice: VoiceChoice)
+    private data class PreparedSpeech(val text: String, val chunks: List<String>)
+    private data class PendingSpeak(val text: String, val choice: VoiceChoice, val chunks: List<String>? = null)
 
     /** Existing API: initialize the device default engine and prefer an installed Chinese voice. */
     fun init(context: Context) {
@@ -85,6 +94,7 @@ object AndroidTts {
         cleaned: String,
         choice: VoiceChoice,
         onError: ((String) -> Unit)?,
+        preparedChunks: List<String>? = null,
     ) {
         if (cleaned.isEmpty()) return
         if (choice.engineId == "azure") {
@@ -116,12 +126,12 @@ object AndroidTts {
             finishPreview(false)
             requestToken++
             activeSpeakError = onError
-            pendingSpeak = PendingSpeak(cleaned, choice)
+            pendingSpeak = PendingSpeak(cleaned, choice, preparedChunks)
             val sameEngine = isInitialized && activeEngineId == choice.engineId && activeVoiceId == choice.voiceId.trim()
             if (sameEngine && tts != null) {
                 val pending = pendingSpeak
                 pendingSpeak = null
-                enqueue(tts!!, requestToken, pending!!.text)
+                enqueue(tts!!, requestToken, pending!!.text, pending.chunks)
             } else {
                 disposeEngineLocked()
                 startEngineLocked(appContext!!, choice, preferInstalledChinese = false, packageName = packageName)
@@ -259,7 +269,7 @@ object AndroidTts {
             pendingSpeak?.let { pending ->
                 if (pending.choice.engineId == choice.engineId && pending.choice.voiceId.trim() == requestedVoiceId) {
                     pendingSpeak = null
-                    enqueue(candidate, requestToken, pending.text)
+                    enqueue(candidate, requestToken, pending.text, pending.chunks)
                 }
             }
         }
@@ -287,8 +297,8 @@ object AndroidTts {
         }
     }
 
-    private fun enqueue(engine: TextToSpeech, token: Long, text: String) {
-        val chunks = SpeechChunks.split(text, TextToSpeech.getMaxSpeechInputLength())
+    private fun enqueue(engine: TextToSpeech, token: Long, text: String, preparedChunks: List<String>? = null) {
+        val chunks = preparedChunks ?: SpeechChunks.split(text, TextToSpeech.getMaxSpeechInputLength())
         val ids = chunks.map { "mojing-$token-${++nextUtteranceId}" }
         lastUtteranceId = ids.lastOrNull()
         chunks.forEachIndexed { index, chunk ->
