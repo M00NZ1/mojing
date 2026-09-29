@@ -7,6 +7,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatMessageTextFormatTest {
+    @Test fun actionPreviewShowsLongChapterLeadWithoutProtocolTags() {
+        val chapter = "<NARRATION>" + "雨夜里的渡口。".repeat(600) +
+            "</NARRATION><CHOICES><OPTION>继续</OPTION></CHOICES>"
+
+        val preview = ChatMessageTextFormat.actionPreview(chapter, "character")
+
+        assertTrue(preview.startsWith("雨夜里的渡口。"))
+        assertFalse(preview.contains("<NARRATION>"))
+        assertFalse(preview.contains("<OPTION>"))
+        assertTrue(preview.length <= 240)
+        assertEquals("此消息包含非文本内容", ChatMessageTextFormat.actionPreview(
+            "<CHOICES><OPTION>继续</OPTION></CHOICES>".repeat(300), "character"))
+    }
+
     @Test fun unchangedEditorBodyDoesNotCreateAStructuredReplyBranch() {
         val raw = "<NARRATION>雨落在窗上。</NARRATION><SPEECH>别回头。</SPEECH>" +
             "<CHOICES><OPTION>继续</OPTION></CHOICES>"

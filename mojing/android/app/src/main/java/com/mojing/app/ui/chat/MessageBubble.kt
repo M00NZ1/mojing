@@ -342,7 +342,7 @@ fun MessageBubble(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 val preview = remember(message.content, message.speakerType) {
-                    ChatMessageTextFormat.preview(message.content, message.speakerType, 240, "此消息包含非文本内容")
+                    ChatMessageTextFormat.actionPreview(message.content, message.speakerType)
                 }
                 Surface(
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),

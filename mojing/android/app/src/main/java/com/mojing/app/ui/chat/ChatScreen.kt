@@ -220,6 +220,7 @@ fun ChatScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     var editingMessage by remember { mutableStateOf<com.mojing.app.data.local.entity.MessageEntity?>(null) }
     var editContent by remember { mutableStateOf("") }
+    var editOriginalBody by remember { mutableStateOf("") }
     var editSaving by remember { mutableStateOf(false) }
     var editFailure by remember { mutableStateOf<String?>(null) }
     var editCommitted by remember { mutableStateOf(false) }
@@ -1334,16 +1335,23 @@ fun ChatScreen(
                                         editSaving = false
                                         editFailure = null
                                         editCommitted = false
+                                        val visibleBody = ChatMessageTextFormat.visibleBody(
+                                            action.message.content, action.message.speakerType)
+                                        editOriginalBody = visibleBody
+                                        editContent = visibleBody
                                         editingMessage = action.message
-                                        editContent = ChatMessageTextFormat.visibleBody(action.message.content, action.message.speakerType)
                                     }
                                     is MessageAction.Copy -> {
-                                        val copyText = ChatMessageTextFormat.forClipboard(action.message.content, action.message.speakerType)
-                                        if (copyText.isBlank()) {
-                                            scope.launch { snackbarHostState.showSnackbar(UserFacingStrings.messageHasNoCopyableText()) }
-                                        } else {
-                                            clipboardManager.setText(AnnotatedString(copyText))
-                                            scope.launch { snackbarHostState.showSnackbar(UserFacingStrings.copiedToClipboard()) }
+                                        scope.launch {
+                                            val copyText = withContext(Dispatchers.Default) {
+                                                ChatMessageTextFormat.forClipboard(action.message.content, action.message.speakerType)
+                                            }
+                                            if (copyText.isBlank()) {
+                                                snackbarHostState.showSnackbar(UserFacingStrings.messageHasNoCopyableText())
+                                            } else {
+                                                clipboardManager.setText(AnnotatedString(copyText))
+                                                snackbarHostState.showSnackbar(UserFacingStrings.copiedToClipboard())
+                                            }
                                         }
                                     }
                                     is MessageAction.SaveImages -> {
@@ -1653,9 +1661,10 @@ fun ChatScreen(
             content = editContent,
             onContentChange = { editContent = it },
             isUser = messageBeingEdited.speakerType == "user",
-            hasChanges = editContent != ChatMessageTextFormat.visibleBody(messageBeingEdited.content, messageBeingEdited.speakerType),
-            canSave = !state.isGenerating && ChatMessageTextFormat.hasEditChanges(
-                messageBeingEdited.content, messageBeingEdited.speakerType, editContent),
+            hasChanges = editContent != editOriginalBody,
+            canSave = !state.isGenerating && editContent.trim().let { candidate ->
+                candidate.isNotEmpty() && candidate != editOriginalBody.trim()
+            },
             saving = editSaving,
             failure = editFailure,
             committed = editCommitted,

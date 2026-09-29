@@ -7,6 +7,8 @@ import com.mojing.app.domain.engine.StructuredParser
 object ChatMessageTextFormat {
     data class QuotedBody(val quote: String?, val body: String)
 
+    private const val ACTION_PREVIEW_SOURCE_CHARS = 2048
+
     private val sessionPreviewHiddenTail = Regex("<(?:CHOICES|OPTION|GEN_IMAGE|GEN_SPEECH)\\b", RegexOption.IGNORE_CASE)
     private val sessionPreviewDisplayTag = Regex("</?(?:NARRATION|THOUGHT|SPEECH)\\b[^>]*>", RegexOption.IGNORE_CASE)
     private val sessionPreviewDanglingTag = Regex("</?[A-Za-z_]+(?:\\s[^>]*)?$", RegexOption.IGNORE_CASE)
@@ -92,6 +94,15 @@ object ChatMessageTextFormat {
         .trim()
         .take(maxChars.coerceAtLeast(0))
         .ifBlank { emptyText }
+
+    /** The action sheet needs a short lead-in, not a full chapter parse on the UI thread. */
+    fun actionPreview(raw: String, speakerType: String?): String =
+        if (raw.length <= ACTION_PREVIEW_SOURCE_CHARS) {
+            preview(raw, speakerType, 240, "此消息包含非文本内容")
+        } else {
+            sessionListPreview(raw.take(ACTION_PREVIEW_SOURCE_CHARS), speakerType, 240)
+                .ifBlank { "此消息包含非文本内容" }
+        }
 
     /** Story-library DAO supplies only a prefix; remove incomplete protocol tags before showing it. */
     fun sessionListPreview(rawPrefix: String, speakerType: String?, maxChars: Int): String {
