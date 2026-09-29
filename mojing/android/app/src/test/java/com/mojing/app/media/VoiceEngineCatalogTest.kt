@@ -20,4 +20,13 @@ class VoiceEngineCatalogTest {
             normalized,
         )
     }
+
+    @Test
+    fun duplicateNameWithDifferentLanguagesAlwaysKeepsTheChineseRow() {
+        val english = VoiceOption("same-id", "声音 · 英语", "en-US")
+        val chinese = VoiceOption("same-id", "声音 · 中文", "zh-CN")
+
+        assertEquals(listOf(chinese), normalizeVoiceOptions(listOf(english, chinese)))
+        assertEquals(listOf(chinese), normalizeVoiceOptions(listOf(chinese, english)))
+    }
 }

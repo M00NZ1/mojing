@@ -140,5 +140,8 @@ object VoiceEngineCatalog {
 internal fun normalizeVoiceOptions(options: Iterable<VoiceOption>): List<VoiceOption> =
     options
         .filter { it.id.isNotBlank() }
+        .sortedWith(compareBy<VoiceOption> { it.id }
+            .thenBy { TtsVoicePolicy.duplicateNameLanguageRank(it.languageTag) }
+            .thenBy { it.languageTag })
         .distinctBy { it.id }
         .sortedWith(compareBy<VoiceOption> { it.name }.thenBy { it.id })

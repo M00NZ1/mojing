@@ -15,6 +15,18 @@ data class TtsVoiceInfo(
 )
 
 object TtsVoicePolicy {
+    /** A broken engine may return one name for several locales; keep catalog and playback in the same order. */
+    fun duplicateNameLanguageRank(languageTag: String): Int =
+        if (languageTag.substringBefore('-').equals("zh", ignoreCase = true)) 0 else 1
+
+    fun isRequestedVoiceActive(
+        requestedName: String,
+        requestedLanguageTag: String,
+        activeName: String,
+        activeLanguageTag: String,
+    ): Boolean = requestedName == activeName &&
+        requestedLanguageTag.substringBefore('-').equals(activeLanguageTag.substringBefore('-'), ignoreCase = true)
+
     fun chooseChineseVoice(voices: Collection<TtsVoiceInfo>): TtsVoiceInfo? =
         voices
             .asSequence()

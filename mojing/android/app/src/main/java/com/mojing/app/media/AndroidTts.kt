@@ -236,7 +236,16 @@ object AndroidTts {
             }
             val requestedVoiceId = choice.voiceId.trim()
             if (requestedVoiceId.isNotEmpty()) {
-                val selected = runCatching { candidate.voices.orEmpty().firstOrNull { it.name == requestedVoiceId } }.getOrNull()
+                val selected = runCatching {
+                    candidate.voices.orEmpty()
+                        .asSequence()
+                        .filter { it.name == requestedVoiceId }
+                        .sortedWith(compareBy<Voice> {
+                            if (it.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) == true) 1 else 0
+                        }.thenBy { TtsVoicePolicy.duplicateNameLanguageRank(it.locale.toLanguageTag()) }
+                            .thenBy { it.locale.toLanguageTag() })
+                        .firstOrNull()
+                }.getOrNull()
                 if (selected == null) {
                     fail(candidate, "指定的系统音色不可用，请重新选择该引擎的音色")
                     return
@@ -249,9 +258,12 @@ object AndroidTts {
                     fail(candidate, "指定的系统音色无法使用，请更换音色后重试")
                     return
                 }
-                val activeVoiceName = runCatching { candidate.voice?.name }.getOrNull()
-                if (activeVoiceName != null && activeVoiceName != requestedVoiceId) {
-                    fail(candidate, "朗读引擎未切换到所选音色，请更换音色或引擎")
+                val activeVoice = runCatching { candidate.voice }.getOrNull()
+                if (activeVoice != null && !TtsVoicePolicy.isRequestedVoiceActive(
+                    selected.name, selected.locale.toLanguageTag(),
+                    activeVoice.name, activeVoice.locale.toLanguageTag(),
+                )) {
+                    fail(candidate, "朗读引擎未切换到所选语种或音色，请更换语音或引擎")
                     return
                 }
             } else if (preferInstalledChinese) {
@@ -323,7 +335,9 @@ object AndroidTts {
                 installed = voice.features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) != true,
             )
         }) ?: return
-        voices.firstOrNull { it.name == selected.name }?.let { voice: Voice -> runCatching { engine.setVoice(voice) } }
+        voices.firstOrNull {
+            it.name == selected.name && it.locale.toLanguageTag() == selected.languageTag
+        }?.let { voice: Voice -> runCatching { engine.setVoice(voice) } }
     }
 
     private fun logVoiceState(engine: TextToSpeech, choice: VoiceChoice) {

@@ -1,9 +1,18 @@
 package com.mojing.app.media
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TtsVoicePolicyTest {
+    @Test
+    fun recognizesWhenEngineReportsDifferentLanguageAfterVoiceSelection() {
+        assertTrue(TtsVoicePolicy.isRequestedVoiceActive("voice-a", "en-US", "voice-a", "en-GB"))
+        assertFalse(TtsVoicePolicy.isRequestedVoiceActive("voice-a", "en-US", "voice-a", "zh-CN"))
+        assertFalse(TtsVoicePolicy.isRequestedVoiceActive("voice-a", "en-US", "voice-b", "en-US"))
+    }
+
     @Test
     fun prefersOfflineChineseVoice() {
         val selected = TtsVoicePolicy.chooseChineseVoice(
