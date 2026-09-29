@@ -61,7 +61,7 @@ function PriceEditor({ platformId, models }: { platformId: string; models: strin
   const persistedConfigured = selectedModel ? isPersistedConfigured(selectedModel) : false;
   const saving = save.isPending && save.variables?.price.model_name === selectedModel;
   function savePrice() {
-    if (!selectedModel || !price) return;
+    if (!prices.isSuccess || !prices.data || !selectedModel || !price) return;
     const required = [price.input, price.output];
     const values = [price.input, price.output, price.cached || '0'].map((value) => Number(value));
     if (required.some((value) => !value.trim()) || values.some((value) => !Number.isFinite(value) || value < 0)) {
@@ -93,8 +93,8 @@ function PriceEditor({ platformId, models }: { platformId: string; models: strin
   return <section className="model-platform-editor-section model-price-editor" aria-labelledby="model-price-title">
     <div className="model-platform-section-heading"><h4 id="model-price-title">模型价格</h4><p>按每百万 Token 填写输入、输出与缓存输入价格。未配置时用量会显示费用未知。</p></div>
     {prices.isPending && <p role="status" className="model-price-state">正在读取价格…</p>}
-    {prices.isError && <p role="alert" className="model-platform-error">价格读取失败。<button type="button" className="btn btn-sm" onClick={() => { void prices.refetch(); }}>重试</button></p>}
-    {!prices.isPending && <div className="model-price-list">
+    {prices.isError && <p role="alert" className="model-platform-error">价格读取失败，现有报价尚未核对。重试后才能编辑。<button type="button" className="btn btn-sm" onClick={() => { void prices.refetch(); }}>重试</button></p>}
+    {prices.isSuccess && prices.data && <div className="model-price-list">
       {models.length === 0 && <p className="model-price-state">先添加至少一个模型，再配置价格。</p>}
       {models.length > 0 && <>
         <div className="model-price-picker"><span>选择模型</span><ModelNamePicker models={models} value={selectedModel} onChange={(model) => { setSelectedModel(model); save.reset(); }} /></div>

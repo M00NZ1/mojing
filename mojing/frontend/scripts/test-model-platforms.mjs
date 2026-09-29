@@ -46,6 +46,8 @@ try {
   let catalog = { version: 1, active_id: null, platforms: [] };
   let choice = { version: 1, selection: null };
   let discoveryMode = 'success';
+  let priceReadFailure = true;
+  let priceWrites = 0;
   let selectionFailure = false;
   let selectionGate = null;
   const requests = [];
@@ -82,6 +84,10 @@ try {
       if (method === 'PUT' && selectionGate) await selectionGate;
       if (method === 'PUT' && selectionFailure) { status = 500; data = { detail: '保存失败，请重试' }; }
       else { if (method === 'PUT') choice = { version: 1, ...payload }; data = choice; }
+    } else if (endpoint === '/costs/prices') {
+      if (method === 'GET' && priceReadFailure) { status = 503; data = { detail: '暂时无法读取价格' }; }
+      else if (method === 'PUT') { priceWrites++; data = { ...payload, recalculated_count: 0 }; }
+      else data = { platform_id: url.searchParams.get('platform_id'), items: [{ model_name: 'chat', currency: 'USD', input_per_million: 2.5, output_per_million: 5, cached_input_per_million: 0 }] };
     } else if (endpoint === '/providers/catalog') data = providers;
     else if (endpoint === '/system/local-config') data = { public_text_api_key: '', public_text_base_url: '', public_text_model: '', public_image_api_key: '', public_voice_api_key: '', max_upload_mb: 20, max_auto_speakers: 2 };
     else if (endpoint === '/system/voice-service-config') data = { mode: 'builtin_only', external_api_key: '', external_base_url: '', enabled: false };
@@ -112,6 +118,14 @@ try {
   assert.equal(catalog.platforms[0].models.length, 3);
   const firstId = catalog.platforms[0].id;
   await page.getByRole('button', { name: '编辑', exact: true }).click();
+  const priceEditor = page.locator('.model-price-editor');
+  await priceEditor.getByRole('alert').filter({ hasText: '价格读取失败' }).waitFor();
+  assert.equal(await priceEditor.getByRole('button', { name: '保存价格' }).count(), 0, 'a failed price read must not expose zero-price saving');
+  assert.equal(priceWrites, 0);
+  priceReadFailure = false;
+  await priceEditor.getByRole('button', { name: '重试' }).click();
+  await priceEditor.getByRole('button', { name: '保存价格' }).waitFor();
+  assert.equal(await priceEditor.getByLabel('输入价格 / 百万 Token').inputValue(), '2.5');
   await page.getByLabel('平台名称', { exact: true }).fill('未保存平台名');
   const originalModelText = await page.getByLabel(/模型名称 ·/).inputValue();
   const originalKeyText = await page.getByLabel('API Key', { exact: false }).inputValue();
