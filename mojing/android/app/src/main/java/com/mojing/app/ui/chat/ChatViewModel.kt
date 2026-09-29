@@ -67,6 +67,7 @@ import com.mojing.app.domain.engine.NarratorEngine
 import com.mojing.app.domain.engine.SpeakerScheduler
 import com.mojing.app.domain.engine.OutputProcessor
 import com.mojing.app.domain.engine.UniversalContextMemoryManager
+import com.mojing.app.domain.engine.UniversalContextMemoryUpdateResult
 import com.mojing.app.domain.story.StoryCanon
 import com.mojing.app.domain.chat.MainBranchChatExportWriter
 import com.mojing.app.domain.chat.TavernChatImportParser
@@ -221,6 +222,7 @@ class ChatViewModel @Inject constructor(
     private var eventPanelRequestedBranchId: String? = null
     private val correctionRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     private val memorySummaryListRevision = java.util.concurrent.atomic.AtomicLong()
+    private val contextMemoryDisplayRevision = java.util.concurrent.atomic.AtomicLong()
     private var manualCompactionJob: Job? = null
     val state: StateFlow<ChatContract.State> = _state.asStateFlow()
     private var roundPlatform: com.mojing.app.data.ModelPlatform? = null
@@ -802,6 +804,7 @@ class ChatViewModel @Inject constructor(
         eventRefreshRevision.incrementAndGet()
         correctionRefreshRevision.incrementAndGet()
         memorySummaryListRevision.incrementAndGet()
+        contextMemoryDisplayRevision.incrementAndGet()
         bookmarkInitialLoadJob?.cancel()
         bookmarkInitialLoadJob = null
         _state.update {
@@ -940,7 +943,10 @@ class ChatViewModel @Inject constructor(
             messageAttachments = attMap,
             participants = participants, world = world,
             encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world),
-            contextMemoryText = universalContextMemoryManager.getFormattedMemory(sessionId, initialBranchId),
+            contextMemoryText = "",
+            contextMemoryLoaded = false,
+            contextMemoryLoading = false,
+            contextMemoryLoadError = null,
             memorySegments = emptyList(),
             memorySegmentsLoaded = false,
             memorySegmentsLoading = false,
@@ -1657,6 +1663,15 @@ class ChatViewModel @Inject constructor(
         }
         val summaryRevision = if (refreshSummaryPage) memorySummaryListRevision.incrementAndGet()
             else memorySummaryListRevision.get()
+        val refreshContextMemory = !switchBranchOnSuccess && _state.value.let {
+            it.currentBranchId == branchId && it.contextMemoryLoaded
+        }
+        val contextRevision = if (refreshContextMemory) contextMemoryDisplayRevision.incrementAndGet()
+            else contextMemoryDisplayRevision.get()
+        if (refreshContextMemory) {
+            _state.update { state -> if (state.currentBranchId == branchId)
+                state.copy(contextMemoryLoading = false) else state }
+        }
         if (refreshSummaryPage) {
             _state.update { state -> if (state.currentBranchId == branchId)
                 state.copy(memorySegmentsLoadingMore = false) else state }
@@ -1724,7 +1739,15 @@ class ChatViewModel @Inject constructor(
         } catch (_: Exception) {
             null
         } else null
-        val contextMemoryText = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
+        val contextMemoryText = if (refreshContextMemory) try {
+            withContext(Dispatchers.Default) {
+                universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        } else null
         val encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world)
         val roundChoices = if (hasNewerMessages) RoundChoiceSnapshot() else withContext(Dispatchers.Default) {
             buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
@@ -1756,6 +1779,10 @@ class ChatViewModel @Inject constructor(
                     memorySummaryListRevision.get() == summaryRevision
                 val summaryReadFailed = refreshSummaryPage && memoryPage == null &&
                     memorySummaryListRevision.get() == summaryRevision
+                val applyContextMemory = contextMemoryText != null && current.contextMemoryLoaded &&
+                    contextMemoryDisplayRevision.get() == contextRevision
+                val contextMemoryReadFailed = refreshContextMemory && contextMemoryText == null &&
+                    contextMemoryDisplayRevision.get() == contextRevision
                 val applyEventPage = eventPage != null && (switchingBranch ||
                     (eventRefreshRevision.get() == eventRevision && current.eventNodesWindowSize == eventWindowSize))
                 current.copy(
@@ -1770,7 +1797,13 @@ class ChatViewModel @Inject constructor(
                     bookmarkedMessageIds = bookmarkIds,
                     branches = branches,
                     currentBranchId = branchId,
-                    contextMemoryText = contextMemoryText,
+                    contextMemoryText = if (switchingBranch) "" else if (applyContextMemory)
+                        contextMemoryText!! else current.contextMemoryText,
+                    contextMemoryLoaded = if (switchingBranch) false else current.contextMemoryLoaded,
+                    contextMemoryLoading = if (switchingBranch) false else current.contextMemoryLoading,
+                    contextMemoryLoadError = if (switchingBranch || applyContextMemory) null
+                        else if (contextMemoryReadFailed) "长期记忆读取失败，请重试"
+                        else current.contextMemoryLoadError,
                     contextMemoryStatus = if (current.currentBranchId == branchId) current.contextMemoryStatus else ContextMemoryStatus.IDLE,
                     encyclopediaFoundation = encyclopediaFoundation,
                     memorySegments = if (switchingBranch) emptyList() else if (applySummaryPage)
@@ -1819,6 +1852,7 @@ class ChatViewModel @Inject constructor(
             if (branchId != startingBranchId) {
                 correctionRefreshRevision.incrementAndGet()
                 memorySummaryListRevision.incrementAndGet()
+                contextMemoryDisplayRevision.incrementAndGet()
             }
         }
     }
@@ -2850,8 +2884,7 @@ class ChatViewModel @Inject constructor(
                                 worldText = world?.worldPrompt.orEmpty(),
                                 activeCharacterNames = _state.value.characterNames.values.toList(),
                             )
-                            val updatedMemory = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
-                            _state.update { it.withContextMemoryResult(branchId, memoryResult, updatedMemory) }
+                            publishContextMemoryResult(branchId, memoryResult)
                             memoryV2Manager.extractEventNodes(
                                 sessionId = sessionId,
                                 branchId = branchId,
@@ -3261,8 +3294,7 @@ class ChatViewModel @Inject constructor(
                                             worldText = world.worldPrompt,
                                             activeCharacterNames = _state.value.characterNames.values.toList(),
                                         )
-                                        val updatedMemory = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
-                                        _state.update { it.withContextMemoryResult(branchId, memoryResult, updatedMemory) }
+                                        publishContextMemoryResult(branchId, memoryResult)
                                         val recentMessages = getContextMessagesForBranch(branchId).takeLast(20)
                                         memoryV2Manager.extractEventNodes(sessionId, branchId, null, recentMessages, apiKey, nb, model)
                                         refreshEventNodesForBranch(branchId)
@@ -4558,6 +4590,70 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun loadContextMemoryIfNeeded(force: Boolean = false) {
+        val current = _state.value
+        if (!current.isReady || current.contextMemoryLoading ||
+            (current.contextMemoryLoaded && !force)) return
+        val branchId = current.currentBranchId
+        val revision = contextMemoryDisplayRevision.incrementAndGet()
+        _state.update { state -> if (state.currentBranchId == branchId)
+            state.copy(contextMemoryLoading = true, contextMemoryLoadError = null) else state }
+        viewModelScope.launch {
+            try {
+                val memory = withContext(Dispatchers.Default) {
+                    universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
+                }
+                _state.update { state -> if (state.currentBranchId == branchId &&
+                    contextMemoryDisplayRevision.get() == revision) state.copy(
+                    contextMemoryText = memory,
+                    contextMemoryLoaded = true,
+                    contextMemoryLoadError = null,
+                ) else state }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                _state.update { state -> if (state.currentBranchId == branchId &&
+                    contextMemoryDisplayRevision.get() == revision)
+                    state.copy(contextMemoryLoadError = "长期记忆读取失败，请重试") else state }
+            } finally {
+                _state.update { state -> if (state.currentBranchId == branchId &&
+                    contextMemoryDisplayRevision.get() == revision)
+                    state.copy(contextMemoryLoading = false) else state }
+            }
+        }
+    }
+
+    private suspend fun publishContextMemoryResult(
+        branchId: String,
+        result: UniversalContextMemoryUpdateResult,
+    ) {
+        val current = _state.value
+        val refreshDisplay = result != UniversalContextMemoryUpdateResult.SUPERSEDED &&
+            current.currentBranchId == branchId &&
+            (current.contextMemoryLoaded || current.contextMemoryLoading)
+        val revision = if (refreshDisplay) contextMemoryDisplayRevision.incrementAndGet()
+            else contextMemoryDisplayRevision.get()
+        val memory = if (refreshDisplay) try {
+            withContext(Dispatchers.Default) {
+                universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        } else null
+        _state.update { state ->
+            val updated = state.withContextMemoryResult(branchId, result, state.contextMemoryText)
+            if (!refreshDisplay || state.currentBranchId != branchId ||
+                contextMemoryDisplayRevision.get() != revision) updated
+            else updated.copy(
+                contextMemoryText = memory ?: state.contextMemoryText,
+                contextMemoryLoaded = memory != null || state.contextMemoryLoaded,
+                contextMemoryLoading = false,
+                contextMemoryLoadError = if (memory == null) "长期记忆读取失败，请重试" else null,
+            )
+        }
+    }
+
     fun loadMemorySummariesIfNeeded() {
         val current = _state.value
         if (!current.isReady || current.memorySegmentsLoaded || current.memorySegmentsLoading) return
@@ -4767,14 +4863,30 @@ class ChatViewModel @Inject constructor(
                 worldText = world?.worldPrompt.orEmpty(),
                 activeCharacterNames = _state.value.characterNames.values.toList(),
             )
-            val memory = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
-            _state.update {
-                if (it.currentBranchId == branchId) it.copy(
-                    contextMemoryText = memory,
+            val revision = if (_state.value.currentBranchId == branchId)
+                contextMemoryDisplayRevision.incrementAndGet() else null
+            val memory = try {
+                withContext(Dispatchers.Default) {
+                    universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { null }
+            _state.update { state ->
+                if (revision == null || state.currentBranchId != branchId ||
+                    contextMemoryDisplayRevision.get() != revision) state
+                else state.copy(
+                    contextMemoryText = memory ?: state.contextMemoryText,
+                    contextMemoryLoaded = memory != null || state.contextMemoryLoaded,
+                    contextMemoryLoading = false,
+                    contextMemoryLoadError = if (memory == null) "长期记忆读取失败，请重试" else null,
                     contextMemoryStatus = if (ok) ContextMemoryStatus.UPDATED else ContextMemoryStatus.FAILED,
-                ) else it
+                )
             }
-            onDone(if (ok) "已重建当前会话记忆" else "重建失败，现有记忆未被清空")
+            onDone(when {
+                ok && memory == null -> "记忆已重建，显示刷新失败，请重试读取"
+                ok -> "已重建当前会话记忆"
+                else -> "重建失败，现有记忆未被清空"
+            })
           } catch (cancelled: CancellationException) { throw cancelled }
           catch (_: Exception) { onDone("重建失败，请重试") }
           finally { _state.update { it.copy(memoryOperationRunning = false) } }
@@ -4788,7 +4900,14 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 universalContextMemoryManager.clear(sessionId, branchId)
-                _state.update { if (it.currentBranchId == branchId) it.copy(contextMemoryText = "", contextMemoryStatus = ContextMemoryStatus.IDLE) else it }
+                if (_state.value.currentBranchId == branchId) contextMemoryDisplayRevision.incrementAndGet()
+                _state.update { if (it.currentBranchId == branchId) it.copy(
+                    contextMemoryText = "",
+                    contextMemoryLoaded = true,
+                    contextMemoryLoading = false,
+                    contextMemoryLoadError = null,
+                    contextMemoryStatus = ContextMemoryStatus.IDLE,
+                ) else it }
                 onDone("已清空长期记忆；后续对话会重新整理")
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { onDone("清空失败，请重试") }

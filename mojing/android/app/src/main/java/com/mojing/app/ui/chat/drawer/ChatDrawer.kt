@@ -40,6 +40,11 @@ fun ChatDrawer(
     world: SessionWorldEntity? = null,
     encyclopediaFoundation: String = "",
     contextMemoryText: String = "",
+    contextMemoryLoaded: Boolean = true,
+    contextMemoryLoading: Boolean = false,
+    contextMemoryLoadError: String? = null,
+    onOpenContextMemory: () -> Unit = {},
+    onRetryContextMemory: () -> Unit = {},
     contextMemoryStatus: ContextMemoryStatus = ContextMemoryStatus.IDLE,
     memoryOperationRunning: Boolean = false,
     manualCompactionRunning: Boolean = false,
@@ -221,6 +226,11 @@ fun ChatDrawer(
                 manualCompactionChunk,
                 onContinueStorySummary,
                 onStopStorySummary,
+                contextMemoryLoaded = contextMemoryLoaded,
+                contextMemoryLoading = contextMemoryLoading,
+                contextMemoryLoadError = contextMemoryLoadError,
+                onOpenContextMemory = onOpenContextMemory,
+                onRetryContextMemory = onRetryContextMemory,
                 hasOlderSummaries = memorySegmentsHasMore,
                 summariesLoaded = memorySegmentsLoaded,
                 summariesLoading = memorySegmentsLoading,
@@ -747,6 +757,11 @@ fun MemoryTab(
     manualCompactionChunk: Int? = null,
     onContinueStorySummary: () -> Unit,
     onStopStorySummary: () -> Unit,
+    contextMemoryLoaded: Boolean = true,
+    contextMemoryLoading: Boolean = false,
+    contextMemoryLoadError: String? = null,
+    onOpenContextMemory: () -> Unit = {},
+    onRetryContextMemory: () -> Unit = {},
     hasOlderSummaries: Boolean = false,
     summariesLoaded: Boolean = true,
     summariesLoading: Boolean = false,
@@ -768,6 +783,7 @@ fun MemoryTab(
     var showCorrectionTrace by remember(currentBranchId) { mutableStateOf(false) }
     val currentCorrectionTrace = promptTrace?.takeIf { it.branchId == currentBranchId }
     LaunchedEffect(currentBranchId, section, drawerOpen, sessionReady) {
+        if (section == 0 && drawerOpen && sessionReady) onOpenContextMemory()
         if (section == 1 && drawerOpen && sessionReady) onOpenCorrections()
         if (section == 2 && drawerOpen && sessionReady) onOpenSummaries()
     }
@@ -818,7 +834,26 @@ fun MemoryTab(
                             modifier = Modifier.padding(vertical = 8.dp),
                         )
                     }
-                    ExpandableMemoryText(contextMemoryText.ifBlank { "暂无长期记忆，可从当前故事线重建。" }, collapsedLines = 6)
+                    if (!contextMemoryLoaded) {
+                        if (contextMemoryLoading) {
+                            LinearProgressIndicator(Modifier.fillMaxWidth())
+                            Text("正在读取长期记忆…", modifier = Modifier.padding(top = 8.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else if (contextMemoryLoadError != null) {
+                            Text(contextMemoryLoadError, color = MaterialTheme.colorScheme.error)
+                            TextButton(onClick = onRetryContextMemory, modifier = Modifier.heightIn(min = 48.dp)) {
+                                Text("重试读取")
+                            }
+                        }
+                    } else {
+                        if (contextMemoryLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        if (contextMemoryLoadError != null) {
+                            Text(contextMemoryLoadError, color = MaterialTheme.colorScheme.error)
+                            TextButton(onClick = onRetryContextMemory, enabled = !contextMemoryLoading,
+                                modifier = Modifier.heightIn(min = 48.dp)) { Text("重试读取") }
+                        }
+                        ExpandableMemoryText(contextMemoryText.ifBlank { "暂无长期记忆，可从当前故事线重建。" }, collapsedLines = 6)
+                    }
                 }
             }
             if (section == 1 && !correctionsLoaded) item {

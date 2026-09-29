@@ -681,10 +681,35 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun contextMemoryDisplayLoadsOnlyWhenOpenedAndCanRetry() = runTest(testDispatcher) {
+        val memory = mockk<com.mojing.app.domain.engine.UniversalContextMemoryManager>(relaxed = true)
+        coEvery { memory.getFormattedMemory(42L, "main") } throws IllegalStateException("read failed")
+        val vm = createViewModel(contextMemory = memory)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.isReady)
+        assertFalse(vm.state.value.contextMemoryLoaded)
+        coVerify(exactly = 0) { memory.getFormattedMemory(42L, "main") }
+
+        vm.loadContextMemoryIfNeeded()
+        advanceUntilIdle()
+        assertFalse(vm.state.value.contextMemoryLoaded)
+        assertEquals("长期记忆读取失败，请重试", vm.state.value.contextMemoryLoadError)
+        coEvery { memory.getFormattedMemory(42L, "main") } returns "码头约定"
+        vm.loadContextMemoryIfNeeded(force = true)
+        advanceUntilIdle()
+        assertEquals("码头约定", vm.state.value.contextMemoryText)
+        assertTrue(vm.state.value.contextMemoryLoaded)
+        assertEquals(null, vm.state.value.contextMemoryLoadError)
+        coVerify(exactly = 2) { memory.getFormattedMemory(42L, "main") }
+    }
+
+    @Test
     fun clearingContextMemoryUpdatesDisplayedMemoryAndKeepsStateOnFailure() = runTest(testDispatcher) {
         val memory = mockk<com.mojing.app.domain.engine.UniversalContextMemoryManager>(relaxed = true)
         coEvery { memory.getFormattedMemory(42L, "main") } returns "码头约定"
         val vm = createViewModel(contextMemory = memory)
+        advanceUntilIdle()
+        vm.loadContextMemoryIfNeeded()
         advanceUntilIdle()
         assertEquals("码头约定", vm.state.value.contextMemoryText)
         coEvery { memory.clear(42L, "main") } throws IllegalStateException("busy")
@@ -920,10 +945,11 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun switchingBranchDiscardsOpenedSummaryListUntilNewBranchIsRead() = runTest(testDispatcher) {
+    fun switchingBranchDiscardsOpenedMemoryPanelsUntilNewBranchIsRead() = runTest(testDispatcher) {
         val branch = SessionBranchEntity(sessionId = 42L, branchId = "branch-1", sourceMessageId = 1L)
         val branches = mockk<SessionBranchDao>(relaxed = true)
         val segments = mockk<com.mojing.app.data.local.dao.SessionMemorySegmentDao>(relaxed = true)
+        val contextMemory = mockk<com.mojing.app.domain.engine.UniversalContextMemoryManager>(relaxed = true)
         val mainSummary = com.mojing.app.data.local.entity.SessionMemorySegmentEntity(
             id = 1, sessionId = 42, branchId = "main", endMessageId = 1, summary = "主线",
         )
@@ -931,21 +957,31 @@ class ChatViewModelTest {
         coEvery { branches.getBySession(42L) } returns listOf(branch)
         coEvery { segments.getRecentForBranch(42L, "main", 17) } returns listOf(mainSummary)
         coEvery { segments.getRecentForBranch(42L, "branch-1", 17) } returns listOf(branchSummary)
-        val vm = createViewModel(sessionBranchDao = branches, memorySegmentDao = segments)
+        coEvery { contextMemory.getFormattedMemory(42L, "main") } returns "主线记忆"
+        coEvery { contextMemory.getFormattedMemory(42L, "branch-1") } returns "支线记忆"
+        val vm = createViewModel(sessionBranchDao = branches, memorySegmentDao = segments,
+            contextMemory = contextMemory)
         advanceUntilIdle()
         vm.loadMemorySummariesIfNeeded()
+        vm.loadContextMemoryIfNeeded()
         advanceUntilIdle()
         assertEquals(listOf(mainSummary), vm.state.value.memorySegments)
+        assertEquals("主线记忆", vm.state.value.contextMemoryText)
 
         vm.switchBranch("branch-1")
         advanceUntilIdle()
         assertEquals("branch-1", vm.state.value.currentBranchId)
         assertFalse(vm.state.value.memorySegmentsLoaded)
         assertTrue(vm.state.value.memorySegments.isEmpty())
+        assertFalse(vm.state.value.contextMemoryLoaded)
+        assertEquals("", vm.state.value.contextMemoryText)
         coVerify(exactly = 0) { segments.getRecentForBranch(42L, "branch-1", any()) }
+        coVerify(exactly = 0) { contextMemory.getFormattedMemory(42L, "branch-1") }
         vm.loadMemorySummariesIfNeeded()
+        vm.loadContextMemoryIfNeeded()
         advanceUntilIdle()
         assertEquals(listOf(branchSummary), vm.state.value.memorySegments)
+        assertEquals("支线记忆", vm.state.value.contextMemoryText)
     }
 
     @Test
