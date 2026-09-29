@@ -7,6 +7,7 @@ import com.mojing.app.domain.engine.StructuredParser
 object ChatMessageTextFormat {
     data class QuotedBody(val quote: String?, val body: String)
 
+    internal const val ASYNC_BODY_CHAR_THRESHOLD = 8192
     private const val ACTION_PREVIEW_SOURCE_CHARS = 2048
 
     private val sessionPreviewHiddenTail = Regex("<(?:CHOICES|OPTION|GEN_IMAGE|GEN_SPEECH)\\b", RegexOption.IGNORE_CASE)

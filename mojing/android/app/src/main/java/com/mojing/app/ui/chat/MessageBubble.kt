@@ -42,6 +42,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
@@ -66,6 +68,9 @@ import com.mojing.app.ui.common.avatarImageModel
 import com.mojing.app.ui.common.ImagePreviewDialog
 import com.mojing.app.domain.billing.CurrencyDisplayState
 import com.mojing.app.domain.billing.formatBillingAmount
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
@@ -314,9 +319,51 @@ fun MessageBubble(
     readOnly: Boolean = false,
 ) {
     var showSelection by remember(message.id) { mutableStateOf(false) }
+    var selectedFullText by remember(message.id, message.content, message.speakerType) { mutableStateOf<String?>(null) }
+    var selectionError by remember(message.id, message.content) { mutableStateOf(false) }
+    var selectionAttempt by remember(message.id, message.content) { mutableIntStateOf(0) }
+    val closeSelection = {
+        showSelection = false
+        selectedFullText = null
+        selectionError = false
+    }
+    LaunchedEffect(showSelection, selectionAttempt, message.content, message.speakerType) {
+        if (!showSelection || message.content.length <= ChatMessageTextFormat.ASYNC_BODY_CHAR_THRESHOLD ||
+            selectedFullText != null) return@LaunchedEffect
+        selectionError = false
+        try {
+            selectedFullText = withContext(Dispatchers.Default) {
+                ChatMessageTextFormat.forClipboard(message.content, message.speakerType)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            selectionError = true
+        }
+    }
     if (showSelection) {
-        ChatTextSelectionDialog(ChatMessageTextFormat.forClipboard(message.content, message.speakerType),
-            onDismiss = { showSelection = false })
+        val fullText = if (message.content.length <= ChatMessageTextFormat.ASYNC_BODY_CHAR_THRESHOLD) {
+            remember(message.content, message.speakerType) {
+                ChatMessageTextFormat.forClipboard(message.content, message.speakerType)
+            }
+        } else selectedFullText
+        if (fullText != null) {
+            ChatTextSelectionDialog(fullText, onDismiss = closeSelection)
+        } else {
+            AlertDialog(
+                onDismissRequest = closeSelection,
+                title = { Text(if (selectionError) "正文准备失败" else "正在准备正文") },
+                text = { Text(if (selectionError) "请重试，消息原文仍保留。" else "长消息正在准备，请稍候") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        if (selectionError) selectionAttempt++ else closeSelection()
+                    }) { Text(if (selectionError) "重试" else "取消") }
+                },
+                dismissButton = {
+                    if (selectionError) TextButton(onClick = closeSelection) { Text("关闭") }
+                },
+            )
+        }
     }
     var showMenu by remember(message.id) { mutableStateOf(false) }
     var previewImagePath by remember(message.id) { mutableStateOf<String?>(null) }

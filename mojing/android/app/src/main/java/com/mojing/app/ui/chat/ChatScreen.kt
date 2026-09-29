@@ -221,6 +221,13 @@ fun ChatScreen(
     var editingMessage by remember { mutableStateOf<com.mojing.app.data.local.entity.MessageEntity?>(null) }
     var editContent by remember { mutableStateOf("") }
     var editOriginalBody by remember { mutableStateOf("") }
+    var editPreparingMessage by remember(sessionId, state.currentBranchId) {
+        mutableStateOf<com.mojing.app.data.local.entity.MessageEntity?>(null)
+    }
+    var editPreparationJob by remember { mutableStateOf<Job?>(null) }
+    DisposableEffect(sessionId, state.currentBranchId) {
+        onDispose { editPreparationJob?.cancel() }
+    }
     var editSaving by remember { mutableStateOf(false) }
     var editFailure by remember { mutableStateOf<String?>(null) }
     var editCommitted by remember { mutableStateOf(false) }
@@ -1332,14 +1339,47 @@ fun ChatScreen(
                                     when (action) {
                                     is MessageAction.Recall -> { recallMessage = action.message }
                                     is MessageAction.Edit -> {
+                                        editPreparationJob?.cancel()
+                                        editPreparingMessage = null
                                         editSaving = false
                                         editFailure = null
                                         editCommitted = false
-                                        val visibleBody = ChatMessageTextFormat.visibleBody(
-                                            action.message.content, action.message.speakerType)
-                                        editOriginalBody = visibleBody
-                                        editContent = visibleBody
-                                        editingMessage = action.message
+                                        val target = action.message
+                                        if (target.content.length <= ChatMessageTextFormat.ASYNC_BODY_CHAR_THRESHOLD) {
+                                            val body = ChatMessageTextFormat.visibleBody(target.content, target.speakerType)
+                                            editOriginalBody = body
+                                            editContent = body
+                                            editingMessage = target
+                                        } else {
+                                            val branchAtStart = state.currentBranchId
+                                            editPreparingMessage = target
+                                            editPreparationJob = scope.launch {
+                                                try {
+                                                    val body = withContext(Dispatchers.Default) {
+                                                        ChatMessageTextFormat.visibleBody(target.content, target.speakerType)
+                                                    }
+                                                    if (editPreparingMessage === target &&
+                                                        viewModel.state.value.currentBranchId == branchAtStart) {
+                                                        editOriginalBody = body
+                                                        editContent = body
+                                                        editingMessage = target
+                                                        editPreparingMessage = null
+                                                    }
+                                                } catch (cancelled: CancellationException) {
+                                                    throw cancelled
+                                                } catch (_: Exception) {
+                                                    if (editPreparingMessage === target &&
+                                                        viewModel.state.value.currentBranchId == branchAtStart) {
+                                                        editPreparingMessage = null
+                                                        snackbarHostState.showSnackbar("长消息准备失败，请重试编辑")
+                                                    }
+                                                } finally {
+                                                    if (editPreparationJob === currentCoroutineContext()[Job]) {
+                                                        editPreparationJob = null
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                     is MessageAction.Copy -> {
                                         scope.launch {
@@ -1655,8 +1695,27 @@ fun ChatScreen(
         )
     }
 
+    if (editPreparingMessage != null) {
+        val cancelPreparation = {
+            editPreparationJob?.cancel()
+            editPreparationJob = null
+            editPreparingMessage = null
+        }
+        AlertDialog(
+            onDismissRequest = cancelPreparation,
+            title = { Text("正在打开编辑器") },
+            text = { Text("长消息正在准备，请稍候") },
+            confirmButton = { TextButton(onClick = cancelPreparation) { Text("取消") } },
+        )
+    }
+
     val messageBeingEdited = editingMessage
     if (messageBeingEdited != null) {
+        val closeEditor = {
+            editingMessage = null
+            editContent = ""
+            editOriginalBody = ""
+        }
         MessageEditDialog(
             content = editContent,
             onContentChange = { editContent = it },
@@ -1681,12 +1740,12 @@ fun ChatScreen(
                     }) {
                         if (editingMessage?.id == messageBeingEdited.id) {
                             editSaving = false
-                            editingMessage = null
+                            closeEditor()
                         }
                     }
                 }
             },
-            onDismiss = { editingMessage = null },
+            onDismiss = closeEditor,
         )
     }
 
