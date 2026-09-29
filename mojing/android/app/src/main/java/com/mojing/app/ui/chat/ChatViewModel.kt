@@ -918,7 +918,9 @@ class ChatViewModel @Inject constructor(
         val marks = bookmarkPage.take(BOOKMARK_PAGE_SIZE)
         val bookmarkIds = bookmarkedIdsForWindow(msgs)
         val previews = messagePreviews(marks.mapTo(mutableSetOf()) { it.messageId }, maxChars = 120)
-        val roundChoices = buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
+        val roundChoices = withContext(Dispatchers.Default) {
+            buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
+        }
 
         _state.value = _state.value.copy(
             sessionTitle = session.title,
@@ -1648,7 +1650,9 @@ class ChatViewModel @Inject constructor(
         val contextMemoryText = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
         val encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world)
         val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, branchId)
-        val roundChoices = buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
+        val roundChoices = withContext(Dispatchers.Default) {
+            buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
+        }
         val eventWindowSize = _state.value.takeIf { it.currentBranchId == branchId }
             ?.eventNodesWindowSize ?: EVENT_NODE_PAGE_SIZE
         val eventPage = eventNodeDao.getPageForBranch(
@@ -1754,28 +1758,30 @@ class ChatViewModel @Inject constructor(
         val tokenEstimate = withContext(Dispatchers.Default) {
             estimateLoadedContextTokens(normalized, excludedKeys)
         }
-        bookmarkMutex.withLock {
-            val bookmarkIds = bookmarkedIdsForWindow(normalized)
-            _state.update { current ->
-            if (current.currentBranchId != branchId) return@update current
-            val roundChoices = if (hasNewerMessages) {
-                RoundChoiceSnapshot()
-            } else {
-                buildRoundChoiceSnapshot(current.world, normalized.filterNot { it.contextSelectionKey() in excludedKeys })
-            }
-            current.copy(
-                messages = normalized,
-                excludedContextKeys = excludedKeys,
-                displayLines = normalized.toChatDisplayLines(),
-                hasOlderMessages = hasOlderMessages,
-                hasNewerMessages = hasNewerMessages,
-                messageAttachments = attachments,
-                bookmarkedMessageIds = bookmarkIds,
-                focusedMessageId = focusedMessageId,
-                roundChoiceOptions = roundChoices.options,
-                roundChoiceMessageId = roundChoices.sourceMessageId,
-                conversationTokenEstimate = tokenEstimate,
-            )
+        withContext(Dispatchers.Default) {
+            bookmarkMutex.withLock {
+                val bookmarkIds = bookmarkedIdsForWindow(normalized)
+                _state.update { current ->
+                    if (current.currentBranchId != branchId) return@update current
+                    val roundChoices = if (hasNewerMessages) {
+                        RoundChoiceSnapshot()
+                    } else {
+                        buildRoundChoiceSnapshot(current.world, normalized.filterNot { it.contextSelectionKey() in excludedKeys })
+                    }
+                    current.copy(
+                        messages = normalized,
+                        excludedContextKeys = excludedKeys,
+                        displayLines = normalized.toChatDisplayLines(),
+                        hasOlderMessages = hasOlderMessages,
+                        hasNewerMessages = hasNewerMessages,
+                        messageAttachments = attachments,
+                        bookmarkedMessageIds = bookmarkIds,
+                        focusedMessageId = focusedMessageId,
+                        roundChoiceOptions = roundChoices.options,
+                        roundChoiceMessageId = roundChoices.sourceMessageId,
+                        conversationTokenEstimate = tokenEstimate,
+                    )
+                }
             }
         }
     }
