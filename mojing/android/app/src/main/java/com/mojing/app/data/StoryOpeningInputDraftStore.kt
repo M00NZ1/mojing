@@ -76,15 +76,16 @@ class StoryOpeningInputDraftStore @Inject constructor(@ApplicationContext contex
         }
     }
 
-    /** Persists a bounded, latest preview without replacing the input draft. */
-    suspend fun persistGenerationPreview(state: StoryOpeningGenerationState) = withContext(Dispatchers.IO) {
+    /** True when this request's preview is durable (or a newer preview is already stored). */
+    suspend fun persistGenerationPreview(state: StoryOpeningGenerationState): Boolean = withContext(Dispatchers.IO) {
         generationMutex.withLock {
-            val existing = preferences.getString(GENERATION_KEY, null) ?: return@withLock
+            val existing = preferences.getString(GENERATION_KEY, null) ?: return@withLock false
             val current = decodeGeneration(existing)
-            if (current.requestId != state.requestId) return@withLock
+            if (current.requestId != state.requestId) return@withLock false
             if (state.receivedChars < current.receivedChars ||
-                (state.receivedChars == current.receivedChars && state.elapsedMs < current.elapsedMs)) return@withLock
+                (state.receivedChars == current.receivedChars && state.elapsedMs < current.elapsedMs)) return@withLock true
             preferences.edit().putString(GENERATION_KEY, encodeGeneration(state)).commitOrThrow()
+            true
         }
     }
 

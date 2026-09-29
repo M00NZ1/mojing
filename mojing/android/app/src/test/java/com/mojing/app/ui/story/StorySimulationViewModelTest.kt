@@ -293,7 +293,7 @@ class StorySimulationViewModelTest {
         val saveGate = CompletableDeferred<Unit>()
         val drafts = mockk<StoryOpeningInputDraftStore>(relaxed = true) {
             coEvery { load() } returns null
-            coEvery { persistGenerationPreview(any()) } coAnswers { saveGate.await() }
+            coEvery { persistGenerationPreview(any()) } coAnswers { saveGate.await(); true }
         }
         val storage = mockk<SecureStorage>(relaxed = true) {
             every { publicApiKey } returns "key"; every { publicBaseUrl } returns "https://example.com"; every { publicModel } returns "model"
@@ -334,6 +334,32 @@ class StorySimulationViewModelTest {
         assertEquals("已收到正文", vm.state.value.preview)
         assertTrue(vm.state.value.error.orEmpty().contains("复制预览"))
         assertFalse(vm.flushInputDraftBeforeLeaving())
+    }
+
+    @Test
+    fun stopAndLeaveDoesNotClaimPreviewSavedWhenRequestRecordIsMissing() = runTest(dispatcher) {
+        val progress = slot<(StoryWritingProgress) -> Unit>()
+        val writing = mockk<StoryWritingUseCase>()
+        coEvery { writing.write(any(), any(), any(), any(), capture(progress)) } coAnswers {
+            CompletableDeferred<StoryWritingResult>().await()
+        }
+        val drafts = mockk<StoryOpeningInputDraftStore>(relaxed = true) {
+            coEvery { load() } returns null
+            coEvery { persistGenerationPreview(any()) } returns false
+        }
+        val storage = mockk<SecureStorage>(relaxed = true) {
+            every { publicApiKey } returns "key"; every { publicBaseUrl } returns "https://example.com"; every { publicModel } returns "model"
+        }
+        val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true),
+            storyWriting = writing, secureStorage = storage, inputDraftStore = drafts)
+        runCurrent(); vm.updatePremise("雾港来信"); vm.createStory {}; runCurrent()
+        progress.captured(StoryWritingProgress("接收正文", "model", 100, 20, 4, "尚未落盘的正文"))
+
+        assertFalse(vm.stopGenerationAndWaitForPreview())
+        assertEquals("尚未落盘的正文", vm.state.value.preview)
+        assertTrue(vm.state.value.error.orEmpty().contains("复制预览"))
+        // The input is committed once before the request; a failed preview must not add a leave commit.
+        coVerify(exactly = 1) { drafts.commit(any()) }
     }
 
     @Test
@@ -507,7 +533,7 @@ class StorySimulationViewModelTest {
         val saved = mutableListOf<StoryOpeningGenerationState>()
         val drafts = mockk<StoryOpeningInputDraftStore>(relaxed = true) {
             coEvery { load() } returns null
-            coEvery { persistGenerationPreview(capture(saved)) } returns Unit
+            coEvery { persistGenerationPreview(capture(saved)) } returns true
         }
         val storage = mockk<SecureStorage>(relaxed = true) {
             every { publicApiKey } returns "key"; every { publicBaseUrl } returns "https://example.com"; every { publicModel } returns "model"

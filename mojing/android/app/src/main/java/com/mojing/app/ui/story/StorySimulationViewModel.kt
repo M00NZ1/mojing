@@ -728,18 +728,22 @@ class StorySimulationViewModel @Inject constructor(
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 generationPersistMutex.withLock {
-                    inputDraftStore.persistGenerationPreview(StoryOpeningGenerationState(
+                    val saved = inputDraftStore.persistGenerationPreview(StoryOpeningGenerationState(
                         requestId = generationId, input = input, preview = preview,
                         model = progress.model, stage = progress.stage, receivedChars = progress.receivedChars,
                         elapsedMs = progress.elapsedMs,
                     ))
                     if (_state.value.requestToken == token && activeGenerationId == generationId) {
-                        lastPersistedPreviewLength = preview.length
-                        lastPersistedPreviewElapsedMs = progress.elapsedMs
+                        if (saved) {
+                            lastPersistedPreviewLength = preview.length
+                            lastPersistedPreviewElapsedMs = progress.elapsedMs
+                        } else _state.update { it.copy(error = "生成预览暂存失败，正文仍会继续生成。") }
                     }
                 }
             } catch (_: Exception) {
-                _state.update { it.copy(error = "生成预览暂存失败，正文仍会继续生成。") }
+                if (_state.value.requestToken == token && activeGenerationId == generationId) {
+                    _state.update { it.copy(error = "生成预览暂存失败，正文仍会继续生成。") }
+                }
             }
         }
     }
@@ -755,11 +759,11 @@ class StorySimulationViewModel @Inject constructor(
         if (preview.isBlank()) return@withContext true
         try {
             generationPersistMutex.withLock {
-                inputDraftStore.persistGenerationPreview(StoryOpeningGenerationState(
+                check(inputDraftStore.persistGenerationPreview(StoryOpeningGenerationState(
                     requestId = generationId, input = input, preview = preview,
                     model = progress.model, stage = progress.stage, receivedChars = progress.receivedChars,
                     elapsedMs = progress.elapsedMs,
-                ))
+                ))) { "Generation preview was not saved for the active request" }
             }
             true
         } catch (_: Exception) {
