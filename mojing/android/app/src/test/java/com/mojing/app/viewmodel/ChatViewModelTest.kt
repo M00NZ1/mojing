@@ -463,6 +463,7 @@ class ChatViewModelTest {
         )
         val vm = createViewModel(messageDao = messages, sessionBranchDao = branches)
         advanceUntilIdle()
+        assertEquals(listOf("B"), vm.state.value.branchAnchorsByMessageId[501L]?.map { it.branchId })
 
         val oldRefresh = CompletableDeferred<Unit>()
         coEvery { messages.getMainMessagesTail(42L, any()) } coAnswers {

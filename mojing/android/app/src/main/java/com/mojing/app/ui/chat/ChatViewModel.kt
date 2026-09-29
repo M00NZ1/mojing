@@ -938,6 +938,7 @@ class ChatViewModel @Inject constructor(
         val roundChoices = withContext(Dispatchers.Default) {
             buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
         }
+        val branchAnchors = anchorsForBranches(branches)
 
         _state.value = _state.value.copy(
             sessionTitle = session.title,
@@ -969,6 +970,7 @@ class ChatViewModel @Inject constructor(
             eventNodesLoadingMore = false,
             eventNodesLoadError = null,
             branches = branches,
+            branchAnchorsByMessageId = branchAnchors,
             memoryCorrections = emptyList(),
             memoryCorrectionsLoaded = false,
             memoryCorrectionsLoading = false,
@@ -1621,6 +1623,13 @@ class ChatViewModel @Inject constructor(
     private suspend fun getContextMessagesForCurrentBranch(): List<MessageEntity> =
         getContextMessagesForBranch(currentBranchId())
 
+    private fun anchorsForBranches(branches: List<SessionBranchEntity>): Map<Long, List<BranchAnchor>> = branches
+        .filter { it.sourceMessageId > 0L }
+        .groupBy { it.sourceMessageId }
+        .mapValues { (_, sources) ->
+            sources.map { branch -> BranchAnchor(branch.branchId, branch.label.ifBlank { branch.branchId }) }
+        }
+
     private suspend fun hasVisibleStoryMessageAfterRegenerationTarget(
         branchId: String,
         target: MessageEntity,
@@ -1760,17 +1769,7 @@ class ChatViewModel @Inject constructor(
         }
         val excludedKeys = excludedKeysForWindow(branchId, msgs)
         val world = sessionWorldDao.getBySession(sessionId)
-        val anchors = branches
-            .filter { it.sourceMessageId > 0L }
-            .groupBy { it.sourceMessageId }
-            .mapValues { (_, list) ->
-                list.map { b ->
-                    BranchAnchor(
-                        branchId = b.branchId,
-                        label = b.label.ifBlank { b.branchId },
-                    )
-                }
-            }
+        val anchors = anchorsForBranches(branches)
         val map = attachmentsForMessages(msgs)
         val displayLines = visibleDisplayLines(msgs, map)
         val sess = sessionDao.getById(sessionId)
