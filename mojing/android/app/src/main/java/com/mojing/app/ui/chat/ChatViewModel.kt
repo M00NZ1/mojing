@@ -2046,7 +2046,7 @@ class ChatViewModel @Inject constructor(
         _speechActive.value = true
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
-                val cleaned = TtsSpeakText.normalizeForSpeech(text)
+                val cleaned = withContext(Dispatchers.Default) { TtsSpeakText.normalizeForSpeech(text) }
                 if (cleaned.isBlank()) {
                     _state.update { it.copy(error = UserFacingStrings.ttsContentEmptyAfterClean()) }
                     return@launch

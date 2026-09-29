@@ -13,6 +13,7 @@ import java.util.Locale
 
 /** Android TTS owner. Engine instances are replaced atomically when a voice is changed. */
 object AndroidTts {
+    internal var textDispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.Default
     private val lock = Any()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var tts: TextToSpeech? = null
@@ -31,12 +32,13 @@ object AndroidTts {
     private var previewCompletion: Pair<Long, kotlinx.coroutines.CompletableDeferred<Boolean>>? = null
 
     /** Uses the same engine owner; cancellation stops only this speech request. */
-    suspend fun speakAwaitCompletion(context: Context, text: String, choice: VoiceChoice): Boolean =
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
-            if (TtsSpeakText.normalizeForSpeech(text).isBlank()) return@withContext false
+    suspend fun speakAwaitCompletion(context: Context, text: String, choice: VoiceChoice): Boolean {
+        val cleaned = kotlinx.coroutines.withContext(textDispatcher) { TtsSpeakText.normalizeForSpeech(text).trim() }
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+            if (cleaned.isBlank()) return@withContext false
             val completion = kotlinx.coroutines.CompletableDeferred<Boolean>()
             val token = synchronized(lock) {
-                speakWithVoice(context, text, choice) { error -> completion.completeExceptionally(IllegalStateException(error)) }
+                speakPreparedWithVoice(context, cleaned, choice) { error -> completion.completeExceptionally(IllegalStateException(error)) }
                 requestToken.also { if (!completion.isCompleted) previewCompletion = it to completion }
             }
             try { completion.await() }
@@ -46,6 +48,7 @@ object AndroidTts {
                 }
             }
         }
+    }
 
     suspend fun preview(context: Context, text: String, choice: VoiceChoice): Boolean =
         speakAwaitCompletion(context, text, choice)
@@ -74,6 +77,15 @@ object AndroidTts {
         onError: ((String) -> Unit)?,
     ) {
         val cleaned = TtsSpeakText.normalizeForSpeech(text).trim()
+        speakPreparedWithVoice(context, cleaned, choice, onError)
+    }
+
+    private fun speakPreparedWithVoice(
+        context: Context,
+        cleaned: String,
+        choice: VoiceChoice,
+        onError: ((String) -> Unit)?,
+    ) {
         if (cleaned.isEmpty()) return
         if (choice.engineId == "azure") {
             onError?.invoke("Azure 语音请使用 AzureSpeech 播放接口")

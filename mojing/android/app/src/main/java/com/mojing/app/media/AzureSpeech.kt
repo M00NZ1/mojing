@@ -84,11 +84,11 @@ object AzureSpeech {
         val normalizedRegion = normalizeRegion(region)
             ?: throw SpeechException("请在语音设置填写有效的 Azure 区域")
         val apiKey = key.trim()
-        val cleaned = TtsSpeakText.normalizeForSpeech(text)
+        val chunks = withContext(Dispatchers.Default) {
+            SpeechChunks.split(TtsSpeakText.normalizeForSpeech(text), MAX_SSML_TEXT)
+        }
         if (apiKey.isEmpty()) throw SpeechException("请在语音设置填写 Azure Speech Key")
-        if (cleaned.isBlank()) return false
         val voice = voiceId.trim().ifBlank { DEFAULT_VOICE }
-        val chunks = SpeechChunks.split(cleaned, MAX_SSML_TEXT)
         if (chunks.isEmpty()) return false
         return try {
             for (chunk in chunks) {

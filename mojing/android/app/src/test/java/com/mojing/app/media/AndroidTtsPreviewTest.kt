@@ -34,6 +34,7 @@ class AndroidTtsPreviewTest {
 
     @Before fun setUp() {
         Dispatchers.setMain(dispatcher)
+        AndroidTts.textDispatcher = dispatcher
         mockkStatic(TextToSpeech::class)
         every { TextToSpeech.getMaxSpeechInputLength() } returns 100
         every { context.applicationContext } returns context
@@ -54,6 +55,7 @@ class AndroidTtsPreviewTest {
         field("tts", null)
         field("isInitialized", false)
         unmockkStatic(TextToSpeech::class)
+        AndroidTts.textDispatcher = Dispatchers.Default
         Dispatchers.resetMain()
     }
 
@@ -76,6 +78,11 @@ class AndroidTtsPreviewTest {
         pending.cancel()
         runCurrent()
         verify(exactly = 1) { engine.stop() }
+    }
+
+    @Test fun contentRemovedBySpeechCleanupNeverStartsPlayback() = runTest(dispatcher) {
+        assertFalse(AndroidTts.speakAwaitCompletion(context, "😀", VoiceChoice()))
+        verify(exactly = 0) { engine.speak(any<CharSequence>(), any(), any(), any()) }
     }
 
     @Test fun replacedPreviewCannotStopNewSpeech() = runTest(dispatcher) {
