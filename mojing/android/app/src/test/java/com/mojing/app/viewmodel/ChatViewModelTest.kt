@@ -250,6 +250,34 @@ class ChatViewModelTest {
     private fun validLlmApiService(): LlmApiService = LlmApiService()
 
     @Test
+    fun initialDisplayLinesHideEmptyCommandsButKeepAttachedMessages() = runTest(testDispatcher) {
+        val hidden = MessageEntity(
+            id = 1L, sessionId = 42L, speakerType = "character",
+            content = "<NARRATION></NARRATION>", createdAt = 1L,
+        )
+        val visible = MessageEntity(
+            id = 2L, sessionId = 42L, speakerType = "character",
+            content = "故事继续。", createdAt = 2L,
+        )
+        val attached = MessageEntity(
+            id = 3L, sessionId = 42L, speakerType = "character",
+            content = "", createdAt = 3L,
+        )
+        val messages = mockk<MessageDao>(relaxed = true)
+        val attachments = mockk<AttachmentDao>(relaxed = true)
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(attached, visible, hidden)
+        coEvery { attachments.getByMessages(any()) } returns listOf(
+            MessageAttachmentEntity(messageId = 3L, mimeType = "image/png", storagePath = "image.png"),
+        )
+
+        val vm = createViewModel(messageDao = messages, attachmentDao = attachments)
+        advanceUntilIdle()
+
+        assertTrue(vm.state.value.isReady)
+        assertEquals(listOf(2L, 3L), vm.state.value.displayLines.map { it.selectedMessage().id })
+    }
+
+    @Test
     fun restoredReplyNeedsExplicitKeepAndIsInsertedOnlyOnce() = runTest(testDispatcher) {
         val snapshot = ReplyRecoverySnapshot(
             token = "123e4567-e89b-12d3-a456-426614174000", sessionId = 42L,

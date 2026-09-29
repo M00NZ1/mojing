@@ -914,6 +914,7 @@ class ChatViewModel @Inject constructor(
         val convEst = withContext(Dispatchers.Default) { estimateLoadedContextTokens(msgs, excludedKeys) }
 
         val attMap = attachmentsForMessages(msgs)
+        val displayLines = visibleDisplayLines(msgs, attMap)
         val bookmarkPage = bookmarkDao.getFirstPage(sessionId, BOOKMARK_PAGE_SIZE + 1)
         val marks = bookmarkPage.take(BOOKMARK_PAGE_SIZE)
         val bookmarkIds = bookmarkedIdsForWindow(msgs)
@@ -925,7 +926,7 @@ class ChatViewModel @Inject constructor(
         _state.value = _state.value.copy(
             sessionTitle = session.title,
             messages = msgs,
-            displayLines = msgs.toChatDisplayLines(),
+            displayLines = displayLines,
             hasOlderMessages = hasOlderMessages,
             hasNewerMessages = false,
             isLoadingHistory = false,
@@ -1585,6 +1586,16 @@ class ChatViewModel @Inject constructor(
         val options: List<String> = emptyList(),
     )
 
+    private suspend fun visibleDisplayLines(
+        messages: List<MessageEntity>,
+        attachments: Map<Long, List<MessageAttachmentEntity>>,
+    ): List<ChatDisplayLine> = withContext(Dispatchers.Default) {
+        messages.toChatDisplayLines().filter { line ->
+            val selected = line.selectedMessage()
+            shouldShowCharacterBubbleLine(selected, attachments[selected.id].orEmpty())
+        }
+    }
+
     private fun buildRoundChoiceSnapshot(
         world: SessionWorldEntity?,
         msgs: List<MessageEntity>,
@@ -1641,6 +1652,7 @@ class ChatViewModel @Inject constructor(
                 }
             }
         val map = attachmentsForMessages(msgs)
+        val displayLines = visibleDisplayLines(msgs, map)
         val sess = sessionDao.getById(sessionId)
         val participants = participantDao.getBySession(sessionId)
         val firstChar = participants.firstOrNull()?.characterId?.let { characterDao.getById(it) }
@@ -1671,7 +1683,7 @@ class ChatViewModel @Inject constructor(
                 current.copy(
                     messages = msgs,
                     excludedContextKeys = excludedKeys,
-                    displayLines = msgs.toChatDisplayLines(),
+                    displayLines = displayLines,
                     hasOlderMessages = hasOlderMessages,
                     hasNewerMessages = anchor != null && afterRows.size > radius,
                     isLoadingHistory = false,
@@ -1755,6 +1767,7 @@ class ChatViewModel @Inject constructor(
         )
         val excludedKeys = excludedKeysForWindow(branchId, normalized)
         val attachments = attachmentsForMessages(normalized)
+        val displayLines = visibleDisplayLines(normalized, attachments)
         val tokenEstimate = withContext(Dispatchers.Default) {
             estimateLoadedContextTokens(normalized, excludedKeys)
         }
@@ -1771,7 +1784,7 @@ class ChatViewModel @Inject constructor(
                     current.copy(
                         messages = normalized,
                         excludedContextKeys = excludedKeys,
-                        displayLines = normalized.toChatDisplayLines(),
+                        displayLines = displayLines,
                         hasOlderMessages = hasOlderMessages,
                         hasNewerMessages = hasNewerMessages,
                         messageAttachments = attachments,

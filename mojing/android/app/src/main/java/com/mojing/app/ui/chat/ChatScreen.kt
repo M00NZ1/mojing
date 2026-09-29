@@ -176,14 +176,7 @@ fun ChatScreen(
         }
     }
     val isImeOpen = isImeKeyboardOpen()
-    val visibleDisplayLines = remember(state.displayLines, state.messageAttachments) {
-        state.displayLines.filter { line ->
-            shouldShowCharacterBubbleLine(
-                line.selectedMessage(),
-                state.messageAttachments[line.selectedMessage().id].orEmpty(),
-            )
-        }
-    }
+    val visibleDisplayLines = state.displayLines
     val stableSessionTitle = remember(state.sessionTitle) {
         state.sessionTitle.lineSequence().firstOrNull().orEmpty().trim()
     }
@@ -1266,7 +1259,8 @@ fun ChatScreen(
                         Text("正在加载对话…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-            } else if (state.displayLines.isEmpty() && state.streamingText.isEmpty()) {
+            } else if (state.displayLines.isEmpty() && !state.hasOlderMessages &&
+                !state.hasNewerMessages && state.streamingText.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize().padding(padding),
                     contentAlignment = Alignment.Center
