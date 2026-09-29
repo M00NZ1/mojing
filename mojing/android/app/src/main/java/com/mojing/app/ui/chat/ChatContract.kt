@@ -97,8 +97,8 @@ object ChatContract {
         val memoryCompactionChunk: Int? = null,
         /** 会话创建时配置的展示用上下文上限（tokens），仅用于聊天页统计条 */
         val displayContextTokenLimit: Int = 1_000_000,
-        /** 本对话纳入上下文的消息正文 token 估算之和（仅展示） */
-        val conversationTokenEstimate: Int = 0,
+        /** 当前已加载窗口的消息正文 token 估算；null 表示尚未完成（仅展示）。 */
+        val conversationTokenEstimate: Int? = null,
         val currentBranchId: String = "main",
         val branchNavigationLabel: String? = null,
         val branches: List<SessionBranchEntity> = emptyList(),

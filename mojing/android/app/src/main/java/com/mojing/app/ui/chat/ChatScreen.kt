@@ -849,7 +849,10 @@ fun ChatScreen(
                             Column {
                                 Text(stableSessionTitle.ifBlank { "对话" }, maxLines = 1,
                                     overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
-                                Text(state.branchNavigationLabel ?: "已加载约 ${state.conversationTokenEstimate} Token",
+                                val windowStatus = state.conversationTokenEstimate?.let {
+                                    "当前窗口约 $it Token"
+                                } ?: "当前窗口 ${visibleDisplayLines.size} 条消息"
+                                Text(state.branchNavigationLabel ?: windowStatus,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                             }

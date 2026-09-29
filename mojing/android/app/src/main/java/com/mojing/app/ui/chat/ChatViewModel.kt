@@ -219,6 +219,9 @@ class ChatViewModel @Inject constructor(
     private val bookmarkMutex = Mutex()
     private var bookmarkInitialLoadJob: Job? = null
     private val messageWindowRevision = java.util.concurrent.atomic.AtomicLong()
+    internal var tokenEstimateDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Default
+    private var tokenEstimateJob: Job? = null
+    private val tokenEstimateRevision = java.util.concurrent.atomic.AtomicLong()
     private val eventRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     private var eventPanelRequestedBranchId: String? = null
     private val correctionRefreshRevision = java.util.concurrent.atomic.AtomicLong()
@@ -802,6 +805,8 @@ class ChatViewModel @Inject constructor(
 
     fun retryInitialization() {
         if (initializationJob?.isActive == true) return
+        tokenEstimateJob?.cancel()
+        tokenEstimateRevision.incrementAndGet()
         eventPanelRequestedBranchId = null
         eventRefreshRevision.incrementAndGet()
         correctionRefreshRevision.incrementAndGet()
@@ -815,6 +820,7 @@ class ChatViewModel @Inject constructor(
                 isReady = false,
                 initialLoadError = null,
                 sessionNotFound = false,
+                conversationTokenEstimate = null,
             )
         }
         initializationJob = viewModelScope.launch {
@@ -926,8 +932,6 @@ class ChatViewModel @Inject constructor(
         val maps = buildCharacterPresentationMaps(participants)
 
         val displayCap = session.displayContextTokenLimit.takeIf { it > 0 } ?: 1_000_000
-        val convEst = withContext(Dispatchers.Default) { estimateLoadedContextTokens(msgs, excludedKeys) }
-
         val attMap = attachmentsForMessages(msgs)
         val displayLines = visibleDisplayLines(msgs, attMap)
         val bookmarkIds = bookmarkedIdsForWindow(msgs)
@@ -998,7 +1002,7 @@ class ChatViewModel @Inject constructor(
                 it in maps.thinkMaxEnabledIds
             } == true,
             displayContextTokenLimit = displayCap,
-            conversationTokenEstimate = convEst,
+            conversationTokenEstimate = null,
             inputText = _state.value.inputText.ifEmpty { restoredInputText },
             quotingMessage = if (quoteDraftRevision == 0L) restoredQuote else _state.value.quotingMessage,
             quotingSnippet = if (quoteDraftRevision == 0L) restoredQuoteSnippet?.takeIf { restoredQuote != null }
@@ -1033,6 +1037,35 @@ class ChatViewModel @Inject constructor(
             val located = loadMessageWindow(initialBranchId, sourceMessageId)
             _state.update { it.copy(isReady = located,
                 initialLoadError = if (located) null else "来源消息已删除或不在来源故事线，请返回百科。") }
+        } else {
+            scheduleConversationTokenEstimate(msgs, excludedKeys, initialBranchId, messageWindowRevision.get())
+        }
+    }
+
+    private fun scheduleConversationTokenEstimate(
+        messages: List<MessageEntity>,
+        excludedKeys: Set<String>,
+        branchId: String,
+        windowRevision: Long,
+    ) {
+        tokenEstimateJob?.cancel()
+        val estimateRevision = tokenEstimateRevision.incrementAndGet()
+        tokenEstimateJob = viewModelScope.launch(tokenEstimateDispatcher) {
+            val estimate = try {
+                estimateLoadedContextTokens(messages, excludedKeys)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                UsbSessionLog.w("ChatTokenEstimate", "window estimate failed type=${failure.javaClass.simpleName}")
+                return@launch
+            }
+            currentCoroutineContext().ensureActive()
+            _state.update { current ->
+                if (tokenEstimateRevision.get() == estimateRevision &&
+                    messageWindowRevision.get() == windowRevision &&
+                    current.currentBranchId == branchId && current.messages === messages
+                ) current.copy(conversationTokenEstimate = estimate) else current
+            }
         }
     }
 
@@ -1747,7 +1780,6 @@ class ChatViewModel @Inject constructor(
             characterDao.getChatPresentationByIds(listOf(id)).firstOrNull()?.thinkMaxEnabled
         } == true
         val displayCap = sess?.displayContextTokenLimit?.takeIf { it > 0 } ?: 1_000_000
-        val convEst = withContext(Dispatchers.Default) { estimateLoadedContextTokens(msgs, excludedKeys) }
         val memoryPage = if (refreshSummaryPage) try {
             memorySegmentDao.getRecentForBranch(sessionId, branchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
         } catch (cancelled: CancellationException) {
@@ -1887,7 +1919,7 @@ class ChatViewModel @Inject constructor(
                     sessionThinkMaxEnabled = sess?.thinkMaxEnabled == true,
                     characterForcesThinkMax = firstCharacterForcesThinkMax,
                     displayContextTokenLimit = displayCap,
-                    conversationTokenEstimate = convEst,
+                    conversationTokenEstimate = null,
                 )
             }
         }
@@ -1899,6 +1931,10 @@ class ChatViewModel @Inject constructor(
                 memorySummaryListRevision.incrementAndGet()
                 contextMemoryDisplayRevision.incrementAndGet()
             }
+        }
+        if (_state.value.messages === msgs && currentBranchId() == branchId &&
+            messageWindowRevision.get() == windowRevision) {
+            scheduleConversationTokenEstimate(msgs, excludedKeys, branchId, windowRevision)
         }
     }
 
@@ -1950,10 +1986,7 @@ class ChatViewModel @Inject constructor(
         val excludedKeys = excludedKeysForWindow(branchId, normalized)
         val attachments = attachmentsForMessages(normalized)
         val displayLines = visibleDisplayLines(normalized, attachments)
-        val tokenEstimate = withContext(Dispatchers.Default) {
-            estimateLoadedContextTokens(normalized, excludedKeys)
-        }
-        return withContext(Dispatchers.Default) {
+        val applied = withContext(Dispatchers.Default) {
             bookmarkMutex.withLock {
                 if (currentBranchId() != branchId || messageWindowRevision.get() != windowRevision) {
                     return@withLock false
@@ -1981,12 +2014,17 @@ class ChatViewModel @Inject constructor(
                         focusedMessageId = focusedMessageId,
                         roundChoiceOptions = roundChoices.options,
                         roundChoiceMessageId = roundChoices.sourceMessageId,
-                        conversationTokenEstimate = tokenEstimate,
+                        conversationTokenEstimate = null,
                     )
                 }
                 true
             }
         }
+        if (applied && _state.value.messages === normalized && currentBranchId() == branchId &&
+            messageWindowRevision.get() == windowRevision) {
+            scheduleConversationTokenEstimate(normalized, excludedKeys, branchId, windowRevision)
+        }
+        return applied
     }
 
     fun loadOlderMessages() {

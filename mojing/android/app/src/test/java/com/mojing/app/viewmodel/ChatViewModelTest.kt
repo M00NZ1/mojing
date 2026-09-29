@@ -59,6 +59,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
@@ -81,6 +82,33 @@ import kotlin.io.path.createTempDirectory
 class ChatViewModelTest {
 
     private val testDispatcher = StandardTestDispatcher()
+
+    @Test
+    fun chatDisplaysWindowBeforeEstimateAndIgnoresOldWindowResult() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(
+            MessageEntity(id = 7L, sessionId = 42L, content = "长篇正文"),
+        )
+        val oldEstimateScheduler = TestCoroutineScheduler()
+        val vm = createViewModel(messageDao = messages)
+        vm.tokenEstimateDispatcher = StandardTestDispatcher(oldEstimateScheduler)
+
+        advanceUntilIdle()
+        assertTrue(vm.state.value.isReady)
+        assertEquals(null, vm.state.value.conversationTokenEstimate)
+        assertEquals(listOf(7L), vm.state.value.messages.map { it.id })
+
+        val latestEstimateScheduler = TestCoroutineScheduler()
+        vm.tokenEstimateDispatcher = StandardTestDispatcher(latestEstimateScheduler)
+        assertTrue(vm.returnToLatestMessages())
+        advanceUntilIdle()
+        oldEstimateScheduler.advanceUntilIdle()
+        assertEquals(null, vm.state.value.conversationTokenEstimate)
+
+        latestEstimateScheduler.advanceUntilIdle()
+        assertEquals(com.mojing.app.domain.engine.TokenCounter.estimateScaledPrefix("长篇正文"),
+            vm.state.value.conversationTokenEstimate)
+    }
 
     @Before
     fun setup() {
