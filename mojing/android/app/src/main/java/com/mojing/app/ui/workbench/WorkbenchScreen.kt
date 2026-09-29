@@ -96,7 +96,10 @@ fun WorkbenchScreen(
     var deleteTarget by remember { mutableStateOf<WorldTemplateLibraryItem?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var isImportingDocument by remember { mutableStateOf(false) }
-    var isExportingDocument by rememberSaveable { mutableStateOf(false) }
+    var pendingExportPicker by rememberSaveable { mutableStateOf(false) }
+    var exportWriteInterrupted by rememberSaveable { mutableStateOf(false) }
+    var isExportingDocument by remember { mutableStateOf(false) }
+    val exportBusy = pendingExportPicker || isExportingDocument
     var isCoverTaskBusy by remember { mutableStateOf(false) }
     var mainTab by remember { mutableStateOf(WorkbenchMainTab.TEMPLATES) }
     var templateSearch by rememberSaveable { mutableStateOf(viewModel.library.value.query) }
@@ -119,6 +122,12 @@ fun WorkbenchScreen(
     val keyboardController = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(exportWriteInterrupted, isExportingDocument) {
+        if (exportWriteInterrupted && !isExportingDocument) {
+            exportWriteInterrupted = false
+            Toast.makeText(context, "上次导出已中断，文件可能不完整，请重新导出", Toast.LENGTH_LONG).show()
+        }
+    }
     val isImeOpen = isImeKeyboardOpen()
     var showStopAndContinueDialog by remember { mutableStateOf(false) }
     var showSavingDialog by remember { mutableStateOf(false) }
@@ -200,25 +209,29 @@ fun WorkbenchScreen(
     }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if (uri != null && !isImportingDocument && isExportingDocument) {
+        val requested = pendingExportPicker
+        pendingExportPicker = false
+        if (uri != null && requested && !isImportingDocument && !isExportingDocument) {
+            isExportingDocument = true
+            exportWriteInterrupted = true
             scope.launch {
-                try {
+                val notice = try {
                     ContentDocumentWriter.writeStream(context, uri, viewModel::exportJson)
-                    Toast.makeText(context, UserFacingStrings.exportSuccess(), Toast.LENGTH_SHORT).show()
+                    UserFacingStrings.exportSuccess()
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
-                    Toast.makeText(context, UserFacingStrings.exportWriteFailed(), Toast.LENGTH_SHORT).show()
+                    UserFacingStrings.exportWriteFailed()
                 } finally {
+                    exportWriteInterrupted = false
                     isExportingDocument = false
                 }
+                Toast.makeText(context, notice, Toast.LENGTH_SHORT).show()
             }
-        } else {
-            isExportingDocument = false
         }
     }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null && !isImportingDocument && !isExportingDocument) {
+        if (uri != null && !isImportingDocument && !exportBusy) {
             isImportingDocument = true
             scope.launch {
                 try {
@@ -305,9 +318,9 @@ fun WorkbenchScreen(
                     Box {
                         IconButton(
                             onClick = { showMoreMenu = true },
-                            enabled = !isImportingDocument && !isExportingDocument && !generateBusy,
+                            enabled = !isImportingDocument && !exportBusy && !generateBusy,
                         ) {
-                            if (isImportingDocument || isExportingDocument) {
+                            if (isImportingDocument || exportBusy) {
                                 CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                             } else {
                                 Icon(Icons.Default.MoreVert, "更多")
@@ -316,19 +329,23 @@ fun WorkbenchScreen(
                         DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
                             DropdownMenuItem(
                                 text = { Text(if (isImportingDocument) "正在导入…" else "导入模板") },
-                                enabled = !isImportingDocument && !isExportingDocument,
+                                enabled = !isImportingDocument && !exportBusy,
                                 onClick = {
                                     showMoreMenu = false
                                     importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text(if (isExportingDocument) "正在导出…" else "导出模板") },
-                                enabled = !isImportingDocument && !isExportingDocument,
+                                text = { Text(if (exportBusy) "正在导出…" else "导出模板") },
+                                enabled = !isImportingDocument && !exportBusy,
                                 onClick = {
                                     showMoreMenu = false
-                                    isExportingDocument = true
-                                    exportLauncher.launch("mojing_templates.json")
+                                    pendingExportPicker = true
+                                    try { exportLauncher.launch("mojing_templates.json") }
+                                    catch (_: Exception) {
+                                        pendingExportPicker = false
+                                        Toast.makeText(context, UserFacingStrings.exportWriteFailed(), Toast.LENGTH_SHORT).show()
+                                    }
                                 },
                             )
                             if (viewModel.isCompanionBackendConfigured()) {

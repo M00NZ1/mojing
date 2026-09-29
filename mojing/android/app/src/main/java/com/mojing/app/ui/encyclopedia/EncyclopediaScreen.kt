@@ -90,7 +90,10 @@ fun EncyclopediaScreen(
     var renaming by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<EncyclopediaLibraryItem?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
-    var isExportingDocument by rememberSaveable { mutableStateOf(false) }
+    var pendingExportPicker by rememberSaveable { mutableStateOf(false) }
+    var exportWriteInterrupted by rememberSaveable { mutableStateOf(false) }
+    var isExportingDocument by remember { mutableStateOf(false) }
+    val exportBusy = pendingExportPicker || isExportingDocument
     var coverPickTarget by remember { mutableStateOf<EncyclopediaLibraryItem?>(null) }
     var coverCropBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var coverPendingEncId by remember { mutableStateOf<Long?>(null) }
@@ -102,6 +105,13 @@ fun EncyclopediaScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(exportWriteInterrupted, isExportingDocument) {
+        if (exportWriteInterrupted && !isExportingDocument) {
+            exportWriteInterrupted = false
+            Toast.makeText(context, "上次导出已中断，文件可能不完整，请重新导出", Toast.LENGTH_LONG).show()
+        }
+    }
 
     LaunchedEffect(searchDraft) {
         delay(200)
@@ -165,25 +175,29 @@ fun EncyclopediaScreen(
     }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if (uri != null && !isImportingDocument && isExportingDocument) {
+        val requested = pendingExportPicker
+        pendingExportPicker = false
+        if (uri != null && requested && !isImportingDocument && !isExportingDocument) {
+            isExportingDocument = true
+            exportWriteInterrupted = true
             scope.launch {
-                try {
+                val notice = try {
                     ContentDocumentWriter.writeStream(context, uri, viewModel::exportJson)
-                    Toast.makeText(context, UserFacingStrings.exportSuccess(), Toast.LENGTH_SHORT).show()
+                    UserFacingStrings.exportSuccess()
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
-                    Toast.makeText(context, UserFacingStrings.exportWriteFailed(), Toast.LENGTH_SHORT).show()
+                    UserFacingStrings.exportWriteFailed()
                 } finally {
+                    exportWriteInterrupted = false
                     isExportingDocument = false
                 }
+                Toast.makeText(context, notice, Toast.LENGTH_SHORT).show()
             }
-        } else {
-            isExportingDocument = false
         }
     }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null && !isImportingDocument && !isExportingDocument) {
+        if (uri != null && !isImportingDocument && !exportBusy) {
             viewModel.startDocumentImport(context, uri)
         }
     }
@@ -284,9 +298,9 @@ fun EncyclopediaScreen(
                     Box {
                         IconButton(
                             onClick = { showMoreMenu = true },
-                            enabled = !isImportingDocument && !isExportingDocument,
+                            enabled = !isImportingDocument && !exportBusy,
                         ) {
-                            if (isImportingDocument || isExportingDocument) {
+                            if (isImportingDocument || exportBusy) {
                                 CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                             } else {
                                 Icon(Icons.Default.MoreVert, "更多")
@@ -295,19 +309,23 @@ fun EncyclopediaScreen(
                         DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
                             DropdownMenuItem(
                                 text = { Text(if (isImportingDocument) "正在导入…" else "导入百科") },
-                                enabled = !isImportingDocument && !isExportingDocument,
+                                enabled = !isImportingDocument && !exportBusy,
                                 onClick = {
                                     showMoreMenu = false
                                     importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text(if (isExportingDocument) "正在导出…" else "导出百科") },
-                                enabled = !isImportingDocument && !isExportingDocument,
+                                text = { Text(if (exportBusy) "正在导出…" else "导出百科") },
+                                enabled = !isImportingDocument && !exportBusy,
                                 onClick = {
                                     showMoreMenu = false
-                                    isExportingDocument = true
-                                    exportLauncher.launch("mojing_encyclopedias.json")
+                                    pendingExportPicker = true
+                                    try { exportLauncher.launch("mojing_encyclopedias.json") }
+                                    catch (_: Exception) {
+                                        pendingExportPicker = false
+                                        Toast.makeText(context, UserFacingStrings.exportWriteFailed(), Toast.LENGTH_SHORT).show()
+                                    }
                                 },
                             )
                         }

@@ -79,10 +79,20 @@ fun CharacterListScreen(
     var filterPickerOpen by remember { mutableStateOf(false) }
     var isImportingDocument by remember { mutableStateOf(false) }
     var importResult by remember { mutableStateOf<CharacterImportResult?>(null) }
-    var isExportingDocument by rememberSaveable { mutableStateOf(false) }
+    var pendingExportPicker by rememberSaveable { mutableStateOf(false) }
+    var exportWriteInterrupted by rememberSaveable { mutableStateOf(false) }
+    var isExportingDocument by remember { mutableStateOf(false) }
+    val exportBusy = pendingExportPicker || isExportingDocument
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(exportWriteInterrupted, isExportingDocument) {
+        if (exportWriteInterrupted && !isExportingDocument) {
+            exportWriteInterrupted = false
+            Toast.makeText(context, "上次导出已中断，文件可能不完整，请重新导出", Toast.LENGTH_LONG).show()
+        }
+    }
 
     LaunchedEffect(Unit) {
         viewModel.refreshSelectedFilterName()
@@ -120,26 +130,30 @@ fun CharacterListScreen(
     }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if (uri != null && !isImportingDocument && isExportingDocument) {
+        val requested = pendingExportPicker
+        pendingExportPicker = false
+        if (uri != null && requested && !isImportingDocument && !isExportingDocument) {
+            isExportingDocument = true
+            exportWriteInterrupted = true
             scope.launch {
-                try {
+                val notice = try {
                     val json = viewModel.exportJson()
                     ContentDocumentWriter.writeUtf8Text(context, uri, json)
-                    Toast.makeText(context, UserFacingStrings.exportSuccess(), Toast.LENGTH_SHORT).show()
+                    UserFacingStrings.exportSuccess()
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
-                    Toast.makeText(context, UserFacingStrings.exportWriteFailed(), Toast.LENGTH_SHORT).show()
+                    UserFacingStrings.exportWriteFailed()
                 } finally {
+                    exportWriteInterrupted = false
                     isExportingDocument = false
                 }
+                Toast.makeText(context, notice, Toast.LENGTH_SHORT).show()
             }
-        } else {
-            isExportingDocument = false
         }
     }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null && !isImportingDocument && !isExportingDocument) {
+        if (uri != null && !isImportingDocument && !exportBusy) {
             isImportingDocument = true
             scope.launch {
                 try {
@@ -188,9 +202,9 @@ fun CharacterListScreen(
                     Box {
                         IconButton(
                             onClick = { showMoreMenu = true },
-                            enabled = !isImportingDocument && !isExportingDocument,
+                            enabled = !isImportingDocument && !exportBusy,
                         ) {
-                            if (isImportingDocument || isExportingDocument) {
+                            if (isImportingDocument || exportBusy) {
                                 CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                             } else {
                                 Icon(Icons.Default.MoreVert, "更多")
@@ -201,19 +215,23 @@ fun CharacterListScreen(
                                 text = {
                                     Text(if (isImportingDocument) "正在导入…" else "导入（便携包 / JSON / TXT / Word / PNG）")
                                 },
-                                enabled = !isImportingDocument && !isExportingDocument,
+                                enabled = !isImportingDocument && !exportBusy,
                                 onClick = {
                                     showMoreMenu = false
                                     importLauncher.launch(arrayOf("application/json", "text/plain", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "image/png", "*/*"))
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text(if (isExportingDocument) "正在导出…" else "导出角色") },
-                                enabled = !isImportingDocument && !isExportingDocument,
+                                text = { Text(if (exportBusy) "正在导出…" else "导出角色") },
+                                enabled = !isImportingDocument && !exportBusy,
                                 onClick = {
                                     showMoreMenu = false
-                                    isExportingDocument = true
-                                    exportLauncher.launch("mojing_characters.json")
+                                    pendingExportPicker = true
+                                    try { exportLauncher.launch("mojing_characters.json") }
+                                    catch (_: Exception) {
+                                        pendingExportPicker = false
+                                        Toast.makeText(context, UserFacingStrings.exportWriteFailed(), Toast.LENGTH_SHORT).show()
+                                    }
                                 },
                             )
                         }
