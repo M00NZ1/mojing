@@ -46,6 +46,12 @@ fun ChatDrawer(
     manualCompactionChunk: Int? = null,
     memorySegments: List<SessionMemorySegmentEntity> = emptyList(),
     memoryCorrections: List<SessionMemoryCorrectionEntity> = emptyList(),
+    memoryCorrectionsLoaded: Boolean = true,
+    memoryCorrectionsLoading: Boolean = false,
+    memoryCorrectionsHasMore: Boolean = false,
+    memoryCorrectionsLoadError: String? = null,
+    onOpenMemoryCorrections: () -> Unit = {},
+    onLoadMoreMemoryCorrections: () -> Unit = {},
     memoryCorrectionPromptTrace: MemoryCorrectionPromptTrace? = null,
     currentBranchId: String = "main",
     drawerOpen: Boolean = true,
@@ -217,6 +223,14 @@ fun ChatDrawer(
                 olderSummariesError = memorySegmentsLoadError,
                 onLoadOlderSummaries = onLoadMoreMemorySummaries,
                 sourceNavigationBusy = sourceOpeningId != null,
+                correctionsLoaded = memoryCorrectionsLoaded,
+                correctionsLoading = memoryCorrectionsLoading,
+                correctionsHasMore = memoryCorrectionsHasMore,
+                correctionsLoadError = memoryCorrectionsLoadError,
+                drawerOpen = drawerOpen,
+                sessionReady = sessionReady,
+                onOpenCorrections = onOpenMemoryCorrections,
+                onLoadMoreCorrections = onLoadMoreMemoryCorrections,
             )
             3 -> TimelineTab(
                 eventNodes,
@@ -732,12 +746,24 @@ fun MemoryTab(
     olderSummariesError: String? = null,
     onLoadOlderSummaries: () -> Unit = {},
     sourceNavigationBusy: Boolean = false,
+    correctionsLoaded: Boolean = true,
+    correctionsLoading: Boolean = false,
+    correctionsHasMore: Boolean = false,
+    correctionsLoadError: String? = null,
+    drawerOpen: Boolean = true,
+    sessionReady: Boolean = true,
+    onOpenCorrections: () -> Unit = {},
+    onLoadMoreCorrections: () -> Unit = {},
 ) {
     var section by remember(currentBranchId) { mutableIntStateOf(0) }
+    LaunchedEffect(currentBranchId, section, drawerOpen, sessionReady) {
+        if (section == 1 && drawerOpen && sessionReady) onOpenCorrections()
+    }
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("长期记忆", "用户纠正 ${corrections.size}", "自动摘要").forEachIndexed { index, label ->
+            listOf("长期记忆", if (correctionsLoaded) "用户纠正 ${corrections.size}${if (correctionsHasMore) "+" else ""}" else "用户纠正", "自动摘要")
+                .forEachIndexed { index, label ->
                 FilterChip(selected = section == index, onClick = { section = index }, label = { Text(label) })
             }
         }
@@ -783,7 +809,23 @@ fun MemoryTab(
                     ExpandableMemoryText(contextMemoryText.ifBlank { "暂无长期记忆，可从当前故事线重建。" }, collapsedLines = 6)
                 }
             }
-            if (section == 1) {
+            if (section == 1 && !correctionsLoaded) item {
+                Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (correctionsLoadError == null) {
+                        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                        Text(if (correctionsLoading) "正在读取用户纠正…" else "准备读取用户纠正…",
+                            style = MaterialTheme.typography.bodyMedium)
+                    } else {
+                        Text(correctionsLoadError, style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error)
+                        TextButton(onClick = onOpenCorrections, modifier = Modifier.heightIn(min = 48.dp)) {
+                            Text("重试加载")
+                        }
+                    }
+                }
+            }
+            if (section == 1 && correctionsLoaded) {
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -879,6 +921,21 @@ fun MemoryTab(
                     }
                     }
                     HorizontalDivider()
+                }
+                if (correctionsHasMore || correctionsLoading || correctionsLoadError != null) item {
+                    Column(Modifier.fillMaxWidth().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (correctionsLoading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        correctionsLoadError?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error)
+                        }
+                        if (!correctionsLoading && (correctionsHasMore || correctionsLoadError != null)) {
+                            TextButton(onClick = onLoadMoreCorrections, modifier = Modifier.heightIn(min = 48.dp)) {
+                                Text(if (correctionsLoadError == null) "加载较早纠正" else "重试加载")
+                            }
+                        }
+                    }
                 }
             }
             if (section == 2) {

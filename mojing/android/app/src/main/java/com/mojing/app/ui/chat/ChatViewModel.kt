@@ -800,6 +800,7 @@ class ChatViewModel @Inject constructor(
         if (initializationJob?.isActive == true) return
         eventPanelRequestedBranchId = null
         eventRefreshRevision.incrementAndGet()
+        correctionRefreshRevision.incrementAndGet()
         bookmarkInitialLoadJob?.cancel()
         bookmarkInitialLoadJob = null
         _state.update {
@@ -912,7 +913,6 @@ class ChatViewModel @Inject constructor(
             runCatching { uiPreferencesRepository.clearLastChatBranch(sessionId) }
         }
         val memoryPage = memorySegmentDao.getRecentForBranch(sessionId, initialBranchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
-        val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, initialBranchId)
         val initialRows = getMessageTailForBranch(initialBranchId, INITIAL_MESSAGE_WINDOW_SIZE + 1)
         val hasOlderMessages = initialRows.size > INITIAL_MESSAGE_WINDOW_SIZE
         val msgs = initialRows.take(INITIAL_MESSAGE_WINDOW_SIZE).asReversed()
@@ -952,7 +952,12 @@ class ChatViewModel @Inject constructor(
             eventNodesLoadingMore = false,
             eventNodesLoadError = null,
             branches = branches,
-            memoryCorrections = memoryCorrections,
+            memoryCorrections = emptyList(),
+            memoryCorrectionsLoaded = false,
+            memoryCorrectionsLoading = false,
+            memoryCorrectionsHasMore = false,
+            memoryCorrectionsWindowSize = MEMORY_CORRECTION_PAGE_SIZE,
+            memoryCorrectionsLoadError = null,
             currentBranchId = initialBranchId,
             roundChoiceOptions = roundChoices.options,
             roundChoiceMessageId = roundChoices.sourceMessageId,
@@ -1637,7 +1642,6 @@ class ChatViewModel @Inject constructor(
         // Navigation owns the window until its refresh finishes; background writers may still finish their writes.
         if (branchTransitionJob?.isActive == true && currentCoroutineContext()[Job] !== branchTransitionJob) return
         val windowRevision = messageWindowRevision.incrementAndGet()
-        val correctionRevision = correctionRefreshRevision.incrementAndGet()
         val branches = sessionBranchDao.getBySession(sessionId)
         val branchId = if (
             requestedBranchId == "main" || branches.any { it.branchId == requestedBranchId }
@@ -1705,7 +1709,6 @@ class ChatViewModel @Inject constructor(
         val memoryPage = memorySegmentDao.getRecentForBranch(sessionId, branchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
         val contextMemoryText = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
         val encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world)
-        val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, branchId)
         val roundChoices = if (hasNewerMessages) RoundChoiceSnapshot() else withContext(Dispatchers.Default) {
             buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
         }
@@ -1754,8 +1757,14 @@ class ChatViewModel @Inject constructor(
                     memorySegmentsHasMore = memoryPage.size > MEMORY_SEGMENT_PAGE_SIZE,
                     memorySegmentsLoadingMore = false,
                     memorySegmentsLoadError = null,
-                    memoryCorrections = if (current.currentBranchId != branchId || correctionRefreshRevision.get() == correctionRevision)
-                        memoryCorrections else current.memoryCorrections,
+                    memoryCorrections = if (switchingBranch) emptyList()
+                        else current.memoryCorrections,
+                    memoryCorrectionsLoaded = if (switchingBranch) false else current.memoryCorrectionsLoaded,
+                    memoryCorrectionsLoading = if (switchingBranch) false else current.memoryCorrectionsLoading,
+                    memoryCorrectionsHasMore = if (switchingBranch) false else current.memoryCorrectionsHasMore,
+                    memoryCorrectionsWindowSize = if (switchingBranch) MEMORY_CORRECTION_PAGE_SIZE
+                        else current.memoryCorrectionsWindowSize,
+                    memoryCorrectionsLoadError = if (switchingBranch) null else current.memoryCorrectionsLoadError,
                     roundChoiceOptions = roundChoices.options,
                     roundChoiceMessageId = roundChoices.sourceMessageId,
                     branchAnchorsByMessageId = anchors,
@@ -1779,6 +1788,7 @@ class ChatViewModel @Inject constructor(
         if (switchBranchOnSuccess && currentBranchId() == branchId &&
             messageWindowRevision.get() == windowRevision) {
             eventPanelRequestedBranchId = branchId
+            if (branchId != startingBranchId) correctionRefreshRevision.incrementAndGet()
         }
     }
 
@@ -3774,7 +3784,7 @@ class ChatViewModel @Inject constructor(
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
-                    _state.update { it.copy(error = "纠正已保存，列表刷新失败，请重新打开对话") }
+                    _state.update { it.copy(error = "纠正已保存，列表刷新失败，请在用户纠正页重试加载") }
                 }
             }
         }
@@ -3787,24 +3797,135 @@ class ChatViewModel @Inject constructor(
             return
         }
         viewModelScope.launch {
-            try {
+            val deleted = try {
                 check(memoryCorrectionDao.deleteById(sessionId, id) == 1) { "纠正记录不存在" }
-                refreshMemoryCorrectionsOnly()
-                onResult(true)
-            } catch (e: Exception) {
+                true
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (e: Exception) {
                 _state.update { it.copy(error = "纠正记忆删除失败：${e.message?.takeIf { it.isNotBlank() } ?: "未知错误"}") }
-                onResult(false)
+                false
+            }
+            onResult(deleted)
+            if (!deleted) return@launch
+            _state.update { state -> state.copy(memoryCorrections = state.memoryCorrections.filterNot { it.id == id }) }
+            try { refreshMemoryCorrectionsOnly() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                _state.update { it.copy(error = "纠正已删除，列表刷新失败，请在用户纠正页重试加载") }
+            }
+        }
+    }
+
+    fun loadMemoryCorrectionsIfNeeded() {
+        val current = _state.value
+        if (!current.isReady || current.memoryCorrectionsLoaded || current.memoryCorrectionsLoading) return
+        val branchId = current.currentBranchId
+        val revision = correctionRefreshRevision.incrementAndGet()
+        _state.update { state -> if (state.currentBranchId == branchId)
+            state.copy(memoryCorrectionsLoading = true, memoryCorrectionsLoadError = null) else state }
+        viewModelScope.launch {
+            try {
+                val page = memoryCorrectionDao.getVisibleFirstPage(
+                    sessionId, branchId, MEMORY_CORRECTION_PAGE_SIZE + 1,
+                )
+                _state.update { state -> if (state.currentBranchId == branchId &&
+                    correctionRefreshRevision.get() == revision) state.copy(
+                    memoryCorrections = page.take(MEMORY_CORRECTION_PAGE_SIZE),
+                    memoryCorrectionsLoaded = true,
+                    memoryCorrectionsHasMore = page.size > MEMORY_CORRECTION_PAGE_SIZE,
+                    memoryCorrectionsWindowSize = MEMORY_CORRECTION_PAGE_SIZE,
+                    memoryCorrectionsLoadError = null,
+                ) else state }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                _state.update { state -> if (state.currentBranchId == branchId &&
+                    correctionRefreshRevision.get() == revision)
+                    state.copy(memoryCorrectionsLoadError = "用户纠正读取失败，请重试") else state }
+            } finally {
+                _state.update { state -> if (state.currentBranchId == branchId &&
+                    correctionRefreshRevision.get() == revision)
+                    state.copy(memoryCorrectionsLoading = false) else state }
+            }
+        }
+    }
+
+    fun loadMoreMemoryCorrections() {
+        val current = _state.value
+        if (!current.memoryCorrectionsLoaded) {
+            loadMemoryCorrectionsIfNeeded()
+            return
+        }
+        if (current.memoryCorrectionsLoadError != null && !current.memoryCorrectionsHasMore &&
+            !current.memoryCorrectionsLoading) {
+            _state.update { it.copy(memoryCorrectionsLoading = true, memoryCorrectionsLoadError = null) }
+            viewModelScope.launch {
+                try { refreshMemoryCorrectionsOnly() }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { /* The panel keeps its retryable read error. */ }
+            }
+            return
+        }
+        if (!current.isReady || !current.memoryCorrectionsHasMore || current.memoryCorrectionsLoading) return
+        val branchId = current.currentBranchId
+        val tail = current.memoryCorrections.lastOrNull() ?: return
+        val revision = correctionRefreshRevision.get()
+        val windowSize = current.memoryCorrectionsWindowSize
+        _state.update { it.copy(memoryCorrectionsLoading = true, memoryCorrectionsLoadError = null) }
+        viewModelScope.launch {
+            try {
+                val page = memoryCorrectionDao.getVisibleBefore(
+                    sessionId, branchId, tail.createdAt, tail.id, MEMORY_CORRECTION_PAGE_SIZE + 1,
+                )
+                _state.update { state -> if (state.currentBranchId == branchId &&
+                    correctionRefreshRevision.get() == revision &&
+                    state.memoryCorrections.lastOrNull()?.id == tail.id &&
+                    state.memoryCorrectionsWindowSize == windowSize) state.copy(
+                    memoryCorrections = (state.memoryCorrections + page.take(MEMORY_CORRECTION_PAGE_SIZE))
+                        .distinctBy { it.id },
+                    memoryCorrectionsHasMore = page.size > MEMORY_CORRECTION_PAGE_SIZE,
+                    memoryCorrectionsWindowSize = windowSize + MEMORY_CORRECTION_PAGE_SIZE,
+                ) else state }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                _state.update { state -> if (state.currentBranchId == branchId &&
+                    correctionRefreshRevision.get() == revision)
+                    state.copy(memoryCorrectionsLoadError = "更多用户纠正读取失败，请重试") else state }
+            } finally {
+                _state.update { state -> if (state.currentBranchId == branchId &&
+                    correctionRefreshRevision.get() == revision)
+                    state.copy(memoryCorrectionsLoading = false) else state }
             }
         }
     }
 
     private suspend fun refreshMemoryCorrectionsOnly() {
+        val displayed = _state.value
+        if (!displayed.memoryCorrectionsLoaded && !displayed.memoryCorrectionsLoading) return
         val branchId = currentBranchId()
         val revision = correctionRefreshRevision.incrementAndGet()
-        val corrections = memoryCorrectionDao.getVisible(sessionId, branchId)
-        _state.update { current ->
-            if (current.currentBranchId == branchId && correctionRefreshRevision.get() == revision)
-                current.copy(memoryCorrections = corrections) else current
+        try {
+            val windowSize = _state.value.takeIf { it.currentBranchId == branchId }
+                ?.memoryCorrectionsWindowSize ?: MEMORY_CORRECTION_PAGE_SIZE
+            val page = memoryCorrectionDao.getVisibleFirstPage(sessionId, branchId, windowSize + 1)
+            _state.update { current ->
+                if (current.currentBranchId == branchId && correctionRefreshRevision.get() == revision &&
+                    current.memoryCorrectionsWindowSize == windowSize) current.copy(
+                    memoryCorrections = page.take(windowSize),
+                    memoryCorrectionsLoaded = true,
+                    memoryCorrectionsHasMore = page.size > windowSize,
+                    memoryCorrectionsLoading = false,
+                    memoryCorrectionsLoadError = null,
+                ) else current
+            }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) {
+            _state.update { state -> if (state.currentBranchId == branchId &&
+                correctionRefreshRevision.get() == revision) state.copy(
+                memoryCorrectionsHasMore = false,
+                memoryCorrectionsLoading = false,
+                memoryCorrectionsLoadError = "纠正列表刷新失败，请重试",
+            ) else state }
+            throw failure
         }
     }
 

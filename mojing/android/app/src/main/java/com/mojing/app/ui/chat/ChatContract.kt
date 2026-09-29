@@ -11,6 +11,7 @@ import com.mojing.app.data.local.entity.MessageBookmarkEntity
 import com.mojing.app.data.local.entity.SessionMemoryCorrectionEntity
 
 internal const val EVENT_NODE_PAGE_SIZE = 24
+internal const val MEMORY_CORRECTION_PAGE_SIZE = 16
 
 data class SavedImageNotice(val messageId: Long, val branchId: String)
 
@@ -124,6 +125,11 @@ object ChatContract {
         val memorySegmentsLoadingMore: Boolean = false,
         val memorySegmentsLoadError: String? = null,
         val memoryCorrections: List<SessionMemoryCorrectionEntity> = emptyList(),
+        val memoryCorrectionsLoaded: Boolean = false,
+        val memoryCorrectionsLoading: Boolean = false,
+        val memoryCorrectionsHasMore: Boolean = false,
+        val memoryCorrectionsWindowSize: Int = MEMORY_CORRECTION_PAGE_SIZE,
+        val memoryCorrectionsLoadError: String? = null,
         val lastMemoryCorrectionPromptTrace: MemoryCorrectionPromptTrace? = null,
         val eventNodes: List<SessionEventNodeEntity> = emptyList(),
         val eventNodesLoaded: Boolean = false,

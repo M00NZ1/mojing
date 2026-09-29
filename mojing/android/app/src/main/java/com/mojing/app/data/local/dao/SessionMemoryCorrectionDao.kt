@@ -16,6 +16,27 @@ interface SessionMemoryCorrectionDao {
     )
     suspend fun getVisible(sessionId: Long, branchId: String): List<SessionMemoryCorrectionEntity>
 
+    @Query(
+        "SELECT * FROM session_memory_corrections " +
+            "WHERE sessionId = :sessionId AND (branchId IS NULL OR branchId = :branchId) " +
+            "ORDER BY createdAt DESC, id DESC LIMIT :limit",
+    )
+    suspend fun getVisibleFirstPage(sessionId: Long, branchId: String, limit: Int): List<SessionMemoryCorrectionEntity>
+
+    @Query(
+        "SELECT * FROM session_memory_corrections " +
+            "WHERE sessionId = :sessionId AND (branchId IS NULL OR branchId = :branchId) " +
+            "AND (createdAt < :beforeCreatedAt OR (createdAt = :beforeCreatedAt AND id < :beforeId)) " +
+            "ORDER BY createdAt DESC, id DESC LIMIT :limit",
+    )
+    suspend fun getVisibleBefore(
+        sessionId: Long,
+        branchId: String,
+        beforeCreatedAt: Long,
+        beforeId: Long,
+        limit: Int,
+    ): List<SessionMemoryCorrectionEntity>
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(entity: SessionMemoryCorrectionEntity): Long
 

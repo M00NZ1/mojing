@@ -708,15 +708,110 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun initializationLoadsVisibleMemoryCorrectionsForMainBranch() = runTest(testDispatcher) {
+    fun memoryCorrectionsLoadOnlyWhenTheirPanelOpens() = runTest(testDispatcher) {
         val correction = SessionMemoryCorrectionEntity(sessionId = 42L, content = "主线纠正")
         val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
-        coEvery { dao.getVisible(42L, "main") } returns listOf(correction)
+        coEvery { dao.getVisibleFirstPage(42L, "main", 17) } returns listOf(correction)
 
         val vm = createViewModel(memoryCorrectionDao = dao)
         advanceUntilIdle()
 
+        assertTrue(vm.state.value.isReady)
+        assertFalse(vm.state.value.memoryCorrectionsLoaded)
+        coVerify(exactly = 0) { dao.getVisibleFirstPage(42L, "main", any()) }
+        coVerify(exactly = 0) { dao.getVisible(42L, "main") }
+        vm.loadMemoryCorrectionsIfNeeded()
+        advanceUntilIdle()
         assertEquals(listOf(correction), vm.state.value.memoryCorrections)
+        assertTrue(vm.state.value.memoryCorrectionsLoaded)
+        vm.loadMemoryCorrectionsIfNeeded()
+        advanceUntilIdle()
+        coVerify(exactly = 1) { dao.getVisibleFirstPage(42L, "main", 17) }
+    }
+
+    @Test
+    fun memoryCorrectionsFirstReadFailureCanRetryWithoutBlockingChat() = runTest(testDispatcher) {
+        val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
+        val correction = SessionMemoryCorrectionEntity(sessionId = 42L, content = "可恢复的纠正")
+        coEvery { dao.getVisibleFirstPage(42L, "main", 17) } throws IllegalStateException("read failed")
+        val vm = createViewModel(memoryCorrectionDao = dao)
+        advanceUntilIdle()
+
+        vm.loadMemoryCorrectionsIfNeeded()
+        advanceUntilIdle()
+        assertTrue(vm.state.value.isReady)
+        assertFalse(vm.state.value.memoryCorrectionsLoaded)
+        assertFalse(vm.state.value.memoryCorrectionsLoading)
+        assertEquals("用户纠正读取失败，请重试", vm.state.value.memoryCorrectionsLoadError)
+
+        coEvery { dao.getVisibleFirstPage(42L, "main", 17) } returns listOf(correction)
+        vm.loadMemoryCorrectionsIfNeeded()
+        advanceUntilIdle()
+        assertEquals(listOf(correction), vm.state.value.memoryCorrections)
+        assertTrue(vm.state.value.memoryCorrectionsLoaded)
+        assertEquals(null, vm.state.value.memoryCorrectionsLoadError)
+    }
+
+    @Test
+    fun memoryCorrectionsPageThroughEqualTimestampsWithoutRepeatingRows() = runTest(testDispatcher) {
+        val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
+        val corrections = (19L downTo 1L).map { id ->
+            SessionMemoryCorrectionEntity(id = id, sessionId = 42L, content = "纠正 $id", createdAt = 100L)
+        }
+        coEvery { dao.getVisibleFirstPage(42L, "main", 17) } returns corrections.take(17)
+        coEvery { dao.getVisibleBefore(42L, "main", 100L, 4L, 17) } returns corrections.drop(16)
+        val vm = createViewModel(memoryCorrectionDao = dao)
+        advanceUntilIdle()
+
+        vm.loadMemoryCorrectionsIfNeeded()
+        advanceUntilIdle()
+        assertEquals(corrections.take(16).map { it.id }, vm.state.value.memoryCorrections.map { it.id })
+        assertTrue(vm.state.value.memoryCorrectionsHasMore)
+
+        vm.loadMoreMemoryCorrections()
+        advanceUntilIdle()
+        assertEquals(corrections.map { it.id }, vm.state.value.memoryCorrections.map { it.id })
+        assertFalse(vm.state.value.memoryCorrectionsHasMore)
+        coVerify(exactly = 1) { dao.getVisibleBefore(42L, "main", 100L, 4L, 17) }
+    }
+
+    @Test
+    fun failedOlderCorrectionPageKeepsCurrentRowsAndCanRetry() = runTest(testDispatcher) {
+        val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
+        val corrections = (17L downTo 1L).map { id ->
+            SessionMemoryCorrectionEntity(id = id, sessionId = 42L, content = "纠正 $id", createdAt = 100L)
+        }
+        coEvery { dao.getVisibleFirstPage(42L, "main", 17) } returns corrections
+        coEvery { dao.getVisibleBefore(42L, "main", 100L, 2L, 17) } throws IllegalStateException("read failed")
+        val vm = createViewModel(memoryCorrectionDao = dao)
+        advanceUntilIdle()
+        vm.loadMemoryCorrectionsIfNeeded()
+        advanceUntilIdle()
+
+        vm.loadMoreMemoryCorrections()
+        advanceUntilIdle()
+        assertEquals(corrections.take(16).map { it.id }, vm.state.value.memoryCorrections.map { it.id })
+        assertTrue(vm.state.value.memoryCorrectionsHasMore)
+        assertEquals("更多用户纠正读取失败，请重试", vm.state.value.memoryCorrectionsLoadError)
+
+        coEvery { dao.getVisibleBefore(42L, "main", 100L, 2L, 17) } returns listOf(corrections.last())
+        vm.loadMoreMemoryCorrections()
+        advanceUntilIdle()
+        assertEquals(corrections.map { it.id }, vm.state.value.memoryCorrections.map { it.id })
+        assertFalse(vm.state.value.memoryCorrectionsHasMore)
+        assertEquals(null, vm.state.value.memoryCorrectionsLoadError)
+    }
+
+    @Test
+    fun savingCorrectionOutsideItsPanelDoesNotReadTheDisplayList() = runTest(testDispatcher) {
+        val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
+        val vm = createViewModel(memoryCorrectionDao = dao)
+        advanceUntilIdle()
+        vm.saveMemoryCorrection(null, "从消息保存的纠正", "main")
+        advanceUntilIdle()
+
+        assertFalse(vm.state.value.memoryCorrectionsLoaded)
+        coVerify(exactly = 0) { dao.getVisibleFirstPage(42L, "main", any()) }
     }
 
     @Test
@@ -724,8 +819,10 @@ class ChatViewModelTest {
         val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
         val events = mockk<SessionEventNodeDao>(relaxed = true)
         var corrections = emptyList<SessionMemoryCorrectionEntity>()
-        coEvery { dao.getVisible(42L, "main") } answers { corrections }
+        coEvery { dao.getVisibleFirstPage(42L, "main", any()) } answers { corrections }
         val vm = createViewModel(memoryCorrectionDao = dao, eventNodeDao = events)
+        advanceUntilIdle()
+        vm.loadMemoryCorrectionsIfNeeded()
         advanceUntilIdle()
         val release = CompletableDeferred<List<SessionEventNodeEntity>>()
         coEvery { events.getPageForBranch(42L, "main", null, null, any()) } coAnswers { release.await() }
@@ -746,34 +843,41 @@ class ChatViewModelTest {
         val branchDao = mockk<SessionBranchDao>(relaxed = true)
         val other = SessionMemoryCorrectionEntity(sessionId = 42, branchId = "branch-1", content = "另一条故事线")
         coEvery { branchDao.getBySession(42L) } returns listOf(SessionBranchEntity(sessionId = 42, branchId = "branch-1", sourceMessageId = 1))
-        coEvery { dao.getVisible(42L, "main") } returns emptyList()
-        coEvery { dao.getVisible(42L, "branch-1") } returns listOf(other)
+        coEvery { dao.getVisibleFirstPage(42L, "main", any()) } returns emptyList()
+        coEvery { dao.getVisibleFirstPage(42L, "branch-1", any()) } returns listOf(other)
         val vm = createViewModel(memoryCorrectionDao = dao, sessionBranchDao = branchDao)
         advanceUntilIdle()
+        vm.loadMemoryCorrectionsIfNeeded()
+        advanceUntilIdle()
         val oldRead = CompletableDeferred<List<SessionMemoryCorrectionEntity>>()
-        coEvery { dao.getVisible(42L, "main") } coAnswers { oldRead.await() }
+        coEvery { dao.getVisibleFirstPage(42L, "main", any()) } coAnswers { oldRead.await() }
         vm.saveMemoryCorrection(null, "主线纠正", "main")
         runCurrent()
         vm.switchBranch("branch-1")
+        advanceUntilIdle()
+        assertTrue(vm.state.value.memoryCorrections.isEmpty())
+        vm.loadMemoryCorrectionsIfNeeded()
         advanceUntilIdle()
         assertEquals(listOf(other), vm.state.value.memoryCorrections)
         oldRead.complete(listOf(other.copy(branchId = "main", content = "主线旧查询")))
         advanceUntilIdle()
         assertEquals("branch-1", vm.state.value.currentBranchId)
         assertEquals(listOf(other), vm.state.value.memoryCorrections)
-        coVerify(exactly = 1) { dao.getVisible(42L, "branch-1") }
+        coVerify(exactly = 1) { dao.getVisibleFirstPage(42L, "branch-1", 17) }
     }
 
     @Test
     fun latestCorrectionRefreshWinsWhenSavesFinishOutOfOrder() = runTest(testDispatcher) {
         val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
-        coEvery { dao.getVisible(42L, "main") } returns emptyList()
+        coEvery { dao.getVisibleFirstPage(42L, "main", any()) } returns emptyList()
         val vm = createViewModel(memoryCorrectionDao = dao)
+        advanceUntilIdle()
+        vm.loadMemoryCorrectionsIfNeeded()
         advanceUntilIdle()
         val oldRead = CompletableDeferred<List<SessionMemoryCorrectionEntity>>()
         val latest = SessionMemoryCorrectionEntity(sessionId = 42, content = "最新纠正")
         var reads = 0
-        coEvery { dao.getVisible(42L, "main") } coAnswers { if (++reads == 1) oldRead.await() else listOf(latest) }
+        coEvery { dao.getVisibleFirstPage(42L, "main", any()) } coAnswers { if (++reads == 1) oldRead.await() else listOf(latest) }
         vm.saveMemoryCorrection(null, "第一次", "main")
         runCurrent()
         vm.saveMemoryCorrection(null, "第二次", "main")
@@ -786,11 +890,11 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun switchingBranchRefreshesCorrectionsWithoutTouchingAutomaticMemory() = runTest(testDispatcher) {
+    fun switchingBranchLoadsCorrectionsOnlyWhenOpenedWithoutTouchingAutomaticMemory() = runTest(testDispatcher) {
         val correction = SessionMemoryCorrectionEntity(sessionId = 42L, branchId = "branch-1", content = "分支纠正")
         val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
-        coEvery { dao.getVisible(42L, "main") } returns emptyList()
-        coEvery { dao.getVisible(42L, "branch-1") } returns listOf(correction)
+        coEvery { dao.getVisibleFirstPage(42L, "main", any()) } returns emptyList()
+        coEvery { dao.getVisibleFirstPage(42L, "branch-1", any()) } returns listOf(correction)
         val branches = listOf(SessionBranchEntity(sessionId = 42L, branchId = "branch-1", sourceMessageId = 1L))
         val branchDao = mockk<SessionBranchDao>(relaxed = true)
         coEvery { branchDao.getBySession(42L) } returns branches
@@ -808,6 +912,9 @@ class ChatViewModelTest {
 
         assertEquals("branch-1", vm.state.value.currentBranchId)
         assertEquals(listOf<String?>(null), results)
+        assertFalse(vm.state.value.memoryCorrectionsLoaded)
+        vm.loadMemoryCorrectionsIfNeeded()
+        advanceUntilIdle()
         assertEquals(listOf(correction), vm.state.value.memoryCorrections)
         assertEquals(null, vm.state.value.branchNavigationLabel)
         coVerify(exactly = 1) { preferences.setLastChatBranch(42L, "branch-1") }
@@ -917,7 +1024,7 @@ class ChatViewModelTest {
         )
         coEvery { branchDao.getBySession(42L) } returns listOf(branch)
         coEvery { messageDao.getVisibleMessagesTail(42L, "branch-1", any()) } returns listOf(branchMessage)
-        coEvery { corrections.getVisible(42L, "branch-1") } returns listOf(correction)
+        coEvery { corrections.getVisibleFirstPage(42L, "branch-1", 17) } returns listOf(correction)
 
         val vm = createViewModel(
             messageDao = messageDao,
@@ -929,6 +1036,9 @@ class ChatViewModelTest {
 
         assertEquals("branch-1", vm.state.value.currentBranchId)
         assertEquals(listOf("分支中的回复"), vm.state.value.messages.map { it.content })
+        assertFalse(vm.state.value.memoryCorrectionsLoaded)
+        vm.loadMemoryCorrectionsIfNeeded()
+        advanceUntilIdle()
         assertEquals(listOf(correction), vm.state.value.memoryCorrections)
         coVerify(exactly = 0) { messageDao.getMainMessagesTail(42L, any()) }
     }
@@ -965,10 +1075,12 @@ class ChatViewModelTest {
     fun correctionFailureKeepsExistingVisibleCorrections() = runTest(testDispatcher) {
         val existing = SessionMemoryCorrectionEntity(sessionId = 42L, content = "已有纠正")
         val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
-        coEvery { dao.getVisible(42L, "main") } returns listOf(existing)
+        coEvery { dao.getVisibleFirstPage(42L, "main", 17) } returns listOf(existing)
         coEvery { dao.insert(any()) } throws IllegalStateException("write failed")
 
         val vm = createViewModel(memoryCorrectionDao = dao)
+        advanceUntilIdle()
+        vm.loadMemoryCorrectionsIfNeeded()
         advanceUntilIdle()
         vm.saveMemoryCorrection(null, "新纠正", "main", null)
         advanceUntilIdle()
@@ -982,13 +1094,42 @@ class ChatViewModelTest {
         val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
         val vm = createViewModel(memoryCorrectionDao = dao)
         advanceUntilIdle()
-        coEvery { dao.getVisible(42L, "main") } throws IllegalStateException("read failed")
+        coEvery { dao.getVisibleFirstPage(42L, "main", 17) } returns emptyList()
+        vm.loadMemoryCorrectionsIfNeeded()
+        advanceUntilIdle()
+        coEvery { dao.getVisibleFirstPage(42L, "main", 17) } throws IllegalStateException("read failed")
         val results = mutableListOf<Boolean>()
         vm.saveMemoryCorrection(null, "已保存", "main", onResult = { results += it })
         advanceUntilIdle()
         assertEquals(listOf(true), results)
         coVerify(exactly = 1) { dao.insert(any()) }
         assertTrue(vm.state.value.error.orEmpty().contains("纠正已保存"))
+    }
+
+    @Test
+    fun deletedCorrectionRemainsDeletedWhenListRefreshFails() = runTest(testDispatcher) {
+        val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
+        val correction = SessionMemoryCorrectionEntity(id = 7L, sessionId = 42L, content = "待删除纠正")
+        coEvery { dao.getVisibleFirstPage(42L, "main", 17) } returns listOf(correction)
+        coEvery { dao.deleteById(42L, 7L) } returns 1
+        val vm = createViewModel(memoryCorrectionDao = dao)
+        advanceUntilIdle()
+        vm.loadMemoryCorrectionsIfNeeded()
+        advanceUntilIdle()
+
+        coEvery { dao.getVisibleFirstPage(42L, "main", 17) } throws IllegalStateException("read failed")
+        val results = mutableListOf<Boolean>()
+        vm.deleteMemoryCorrection(7L) { results += it }
+        advanceUntilIdle()
+        assertEquals(listOf(true), results)
+        assertTrue(vm.state.value.memoryCorrections.isEmpty())
+        assertTrue(vm.state.value.error.orEmpty().contains("纠正已删除"))
+        assertEquals("纠正列表刷新失败，请重试", vm.state.value.memoryCorrectionsLoadError)
+
+        coEvery { dao.getVisibleFirstPage(42L, "main", 17) } returns emptyList()
+        vm.loadMoreMemoryCorrections()
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.memoryCorrectionsLoadError)
     }
 
     @Test
@@ -1019,7 +1160,6 @@ class ChatViewModelTest {
         )
         val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
         val messageDao = mockk<MessageDao>(relaxed = true)
-        coEvery { dao.getVisible(42L, "main") } returns listOf(existing)
         coEvery { dao.getById(42L, 7L) } returns existing
         coEvery { messageDao.getByIdInSession(999L, 42L) } returns null
 
