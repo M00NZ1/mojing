@@ -1645,13 +1645,41 @@ class ChatViewModel @Inject constructor(
             requestedBranchId == "main" || branches.any { it.branchId == requestedBranchId }
         ) requestedBranchId else "main"
         val anchor = anchorMessageId?.let { getVisibleMessage(branchId, it) }
+        val historyWindow = _state.value.takeIf { current ->
+            !switchBranchOnSuccess && anchorMessageId == null && current.currentBranchId == branchId &&
+                current.hasNewerMessages && current.messages.isNotEmpty()
+        }
+        val historyEndId = historyWindow?.messages?.lastOrNull()?.id?.takeIf { it < Long.MAX_VALUE }
+        val historySize = historyWindow?.messages?.size?.coerceAtMost(MAX_MESSAGE_WINDOW_SIZE) ?: 0
+        val historyRows = historyEndId?.let { getMessagesBefore(branchId, it + 1, historySize + 1) }.orEmpty()
+        val preserveHistory = historyRows.isNotEmpty()
         val radius = INITIAL_MESSAGE_WINDOW_SIZE / 2
-        val pageRows = if (anchor == null) getMessageTailForBranch(branchId, INITIAL_MESSAGE_WINDOW_SIZE + 1)
-            else getMessagesBefore(branchId, anchor.id, radius + 1)
-        val afterRows = if (anchor == null) emptyList() else getMessagesAfter(branchId, anchor.id, radius + 1)
-        val hasOlderMessages = pageRows.size > if (anchor == null) INITIAL_MESSAGE_WINDOW_SIZE else radius
-        val msgs = if (anchor == null) pageRows.take(INITIAL_MESSAGE_WINDOW_SIZE).asReversed()
-            else pageRows.take(radius).asReversed() + anchor + afterRows.take(radius)
+        val pageRows = when {
+            preserveHistory -> historyRows
+            anchor != null -> getMessagesBefore(branchId, anchor.id, radius + 1)
+            else -> getMessageTailForBranch(branchId, INITIAL_MESSAGE_WINDOW_SIZE + 1)
+        }
+        val afterRows = when {
+            preserveHistory -> getMessagesAfter(branchId, historyEndId!!, 1)
+            anchor != null -> getMessagesAfter(branchId, anchor.id, radius + 1)
+            else -> emptyList()
+        }
+        val hasOlderMessages = pageRows.size > when {
+            preserveHistory -> historySize
+            anchor != null -> radius
+            else -> INITIAL_MESSAGE_WINDOW_SIZE
+        }
+        val msgs = when {
+            preserveHistory -> pageRows.take(historySize).asReversed()
+            anchor != null -> pageRows.take(radius).asReversed() + anchor + afterRows.take(radius)
+            else -> pageRows.take(INITIAL_MESSAGE_WINDOW_SIZE).asReversed()
+        }
+        val hasNewerMessages = if (preserveHistory) afterRows.isNotEmpty()
+            else anchor != null && afterRows.size > radius
+        val focusedMessageId = when {
+            preserveHistory -> historyWindow?.focusedMessageId?.takeIf { id -> msgs.any { it.id == id } }
+            else -> anchor?.id
+        }
         val excludedKeys = excludedKeysForWindow(branchId, msgs)
         val world = sessionWorldDao.getBySession(sessionId)
         val anchors = branches
@@ -1676,7 +1704,7 @@ class ChatViewModel @Inject constructor(
         val contextMemoryText = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
         val encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world)
         val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, branchId)
-        val roundChoices = withContext(Dispatchers.Default) {
+        val roundChoices = if (hasNewerMessages) RoundChoiceSnapshot() else withContext(Dispatchers.Default) {
             buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
         }
         val eventWindowSize = _state.value.takeIf { it.currentBranchId == branchId }
@@ -1703,9 +1731,9 @@ class ChatViewModel @Inject constructor(
                     excludedContextKeys = excludedKeys,
                     displayLines = displayLines,
                     hasOlderMessages = hasOlderMessages,
-                    hasNewerMessages = anchor != null && afterRows.size > radius,
+                    hasNewerMessages = hasNewerMessages,
                     isLoadingHistory = false,
-                    focusedMessageId = anchor?.id,
+                    focusedMessageId = focusedMessageId,
                     messageAttachments = map,
                     bookmarkedMessageIds = bookmarkIds,
                     branches = branches,
@@ -4016,7 +4044,7 @@ class ChatViewModel @Inject constructor(
                     return@swipeTransition
                 }
                 selectionCommitted = true
-                refreshMessagesUi(branchId)
+                refreshMessagesUi(branchId, anchorMessageId = messageId.takeIf { _state.value.hasNewerMessages })
                 if (currentBranchId() != branchId) {
                     _state.update { it.copy(error = "回复版本已切换，但当前故事线刷新失败，请重新进入对话") }
                     onResult(false)

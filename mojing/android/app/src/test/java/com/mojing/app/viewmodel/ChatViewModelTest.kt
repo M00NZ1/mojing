@@ -4040,6 +4040,42 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun chapterRefreshKeepsHistoricalWindowUntilReaderReturnsToLatest() = runTest(testDispatcher) {
+        val messageDao = mockk<MessageDao>(relaxed = true)
+        val target = MessageEntity(id = 500L, sessionId = 42L, content = "旧剧情")
+        coEvery { messageDao.getMainMessagesTail(42L, 81) } returns
+            (601L downTo 521L).map { MessageEntity(id = it, sessionId = 42L, content = "最新消息") }
+        coEvery { messageDao.getMainMessageById(42L, 500L) } returns target
+        coEvery { messageDao.getMainMessagesBefore(42L, 500L, 41) } returns
+            (499L downTo 458L).map { MessageEntity(id = it, sessionId = 42L, content = "旧消息") }
+        coEvery { messageDao.getMainMessagesAfter(42L, 500L, 41) } returns
+            (501L..542L).map { MessageEntity(id = it, sessionId = 42L, content = "后续消息") }
+        coEvery { messageDao.getMainMessagesBefore(42L, 541L, 82) } returns
+            (540L downTo 459L).map { MessageEntity(id = it, sessionId = 42L, content = "窗口消息") }
+        coEvery { messageDao.getMainMessagesAfter(42L, 540L, 1) } returns
+            listOf(MessageEntity(id = 541L, sessionId = 42L, content = "较新消息"))
+        val vm = createViewModel(messageDao = messageDao)
+        advanceUntilIdle()
+
+        assertTrue(vm.openMessageInHistory(500L))
+        advanceUntilIdle()
+        vm.renameChapter(500L, "更新标题") {}
+        advanceUntilIdle()
+
+        assertEquals(81, vm.state.value.messages.size)
+        assertEquals(460L, vm.state.value.messages.first().id)
+        assertEquals(540L, vm.state.value.messages.last().id)
+        assertTrue(vm.state.value.hasNewerMessages)
+        coVerify(exactly = 1) { messageDao.getMainMessagesTail(42L, 81) }
+
+        assertTrue(vm.returnToLatestMessages())
+        advanceUntilIdle()
+        assertEquals(601L, vm.state.value.messages.last().id)
+        assertFalse(vm.state.value.hasNewerMessages)
+        coVerify(exactly = 2) { messageDao.getMainMessagesTail(42L, 81) }
+    }
+
+    @Test
     fun historicalWindowPreservesDraftsUntilReturningToLatest() = runTest(testDispatcher) {
         val messageDao = mockk<MessageDao>(relaxed = true)
         val target = MessageEntity(id = 500L, sessionId = 42L, content = "旧剧情")
