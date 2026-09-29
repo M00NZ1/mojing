@@ -5,8 +5,10 @@ import android.os.Build
 import com.mojing.app.BuildConfig
 import com.google.gson.JsonObject
 import java.io.BufferedInputStream
+import java.io.BufferedReader
 import java.io.File
 import java.io.FileInputStream
+import java.io.InputStreamReader
 import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -17,6 +19,7 @@ import java.util.zip.ZipOutputStream
 object LogExportManager {
     private val fileNameFmt = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
     private val exportedAtFmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US)
+    private val logRecordStart = Regex("^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3} [VDIWE] [A-Za-z][A-Za-z0-9_]*: ")
 
     fun defaultZipFileName(nowMs: Long = System.currentTimeMillis()): String {
         val ts = synchronized(fileNameFmt) { fileNameFmt.format(Date(nowMs)) }
@@ -66,8 +69,24 @@ object LogExportManager {
     private fun writeFileIfExists(zos: ZipOutputStream, file: File, entryName: String) {
         if (!file.isFile) return
         zos.putNextEntry(ZipEntry(entryName))
-        BufferedInputStream(FileInputStream(file)).use { input ->
-            input.copyTo(zos)
+        BufferedReader(InputStreamReader(BufferedInputStream(FileInputStream(file)), Charsets.UTF_8)).use { input ->
+            var skippingOldReplyBody = false
+            input.forEachLine { line ->
+                val isRecord = logRecordStart.containsMatchIn(line)
+                if (isRecord) skippingOldReplyBody = false
+                if (!skippingOldReplyBody) {
+                    val bodyMarker = when {
+                        isRecord && " rawLen=" in line && " raw=" in line -> " raw="
+                        isRecord && " displayLen=" in line && " display=" in line -> " display="
+                        else -> null
+                    }
+                    val safeLine = if (bodyMarker == null) line else {
+                        skippingOldReplyBody = true
+                        line.substringBefore(bodyMarker) + bodyMarker + "[redacted]"
+                    }
+                    zos.write((safeLine + "\n").toByteArray(Charsets.UTF_8))
+                }
+            }
         }
         zos.closeEntry()
     }
