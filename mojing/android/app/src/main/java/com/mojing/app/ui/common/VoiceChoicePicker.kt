@@ -217,12 +217,13 @@ fun VoiceChoicePicker(
         if (selectedEngine != "inherit") load(selectedEngine)
     }
 
-    val displayedEngine = if (loading) loadedEngine ?: selectedEngine else selectedEngine
     val searchQuery = query.trim()
-    val otherLanguageCount = if (displayedEngine == "azure") 0 else voices.count { !it.isChineseVoice() }
-    val visibleVoices = if (displayedEngine == "azure" || showOtherLanguages || searchQuery.isNotBlank()) voices
-        else voices.filter { it.isChineseVoice() }
-    val displayVoices = (listOf(VoiceOption("", if (displayedEngine == "azure") "默认 · 晓晓" else "引擎默认")) + visibleVoices.filter { it.id.isNotBlank() })
+    // Do not display the previous engine's voices under a newly selected engine while it loads.
+    val readyVoices = voices.takeIf { !loading && error == null && loadedEngine == selectedEngine }.orEmpty()
+    val otherLanguageCount = if (selectedEngine == "azure") 0 else readyVoices.count { !it.isChineseVoice() }
+    val visibleVoices = if (selectedEngine == "azure" || showOtherLanguages || searchQuery.isNotBlank()) readyVoices
+        else readyVoices.filter { it.isChineseVoice() }
+    val displayVoices = (listOf(VoiceOption("", if (selectedEngine == "azure") "默认 · 晓晓" else "引擎默认")) + visibleVoices.filter { it.id.isNotBlank() })
         .distinctBy { it.id }
         .filter { searchQuery.isBlank() || it.name.contains(searchQuery, true) || it.id.contains(searchQuery, true) }
 
@@ -314,11 +315,16 @@ fun VoiceChoicePicker(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     engines.forEach { engine ->
+                        val engineName = when {
+                            engine.id == "system" -> "跟随系统默认"
+                            engine.id.startsWith("android:") -> "指定 · ${engine.name}"
+                            else -> engine.name
+                        }
                         FilterChip(
                             selected = selectedEngine == engine.id,
                             onClick = { if (selectedEngine != engine.id) load(engine.id) },
                             enabled = !saving && (engine.id != "azure" || azureConfigured),
-                            label = { Text(engine.name, modifier = Modifier.widthIn(max = 180.dp), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            label = { Text(engineName, modifier = Modifier.widthIn(max = 180.dp), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         )
                     }
                 }
@@ -338,9 +344,9 @@ fun VoiceChoicePicker(
                     ?: defaultEnginePackage
                 Text(
                     when (selectedEngine) {
-                        "system" -> "系统默认当前指向 $defaultName；与“$defaultName”入口显示相同音色是正常的。"
-                        "android:$defaultEnginePackage" -> "当前所选就是系统设置的默认引擎；与“系统默认”显示相同音色。"
-                        else -> "系统设置的默认引擎：$defaultName；选择具体引擎时会优先使用它。"
+                        "system" -> "系统设置的默认引擎是 $defaultName；此选项会跟随系统设置。"
+                        "android:$defaultEnginePackage" -> "已指定 $defaultName。它也是系统设置的默认引擎，因此两项音色相同。"
+                        else -> "系统设置的默认引擎是 $defaultName；已请求所选引擎，若不可用 Android 可能回退。"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -361,7 +367,7 @@ fun VoiceChoicePicker(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        Text(if (loadedEngine == null) "正在读取音色…" else "正在切换音色，当前列表暂不可选…",
+                        Text(if (loadedEngine == null) "正在读取音色…" else "正在读取所选引擎的音色…",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -373,13 +379,13 @@ fun VoiceChoicePicker(
                 } else {
                     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 20.dp, end = 8.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (selectedEngine == "azure") "音色" else if (showOtherLanguages || searchQuery.isNotBlank()) "全部语种" else "中文音色", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        Text(if (selectedEngine == "azure") "音色" else if (showOtherLanguages || searchQuery.isNotBlank()) "全部语种与声音" else "中文语音", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                         Text("${visibleVoices.size}", style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                         if (otherLanguageCount > 0) TextButton(onClick = { showOtherLanguages = !showOtherLanguages }) {
                             Text(if (showOtherLanguages) "只看中文" else "其他语种 $otherLanguageCount")
                         }
-                        if (voices.size > 8) IconButton(onClick = {
+                        if (readyVoices.size > 8) IconButton(onClick = {
                             searchExpanded = !searchExpanded
                             if (!searchExpanded) query = ""
                         }) {
@@ -387,14 +393,14 @@ fun VoiceChoicePicker(
                                 if (searchExpanded) "收起音色搜索" else "搜索音色")
                         }
                     }
-                    if (voices.size > 8 && searchExpanded) MoJingTextField(
+                    if (readyVoices.size > 8 && searchExpanded) MoJingTextField(
                         value = query, onValueChange = { query = it }, singleLine = true,
                         placeholder = { Text("搜索音色") }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     )
                     if (selectedEngine != "azure") Text(
-                        if (showOtherLanguages || searchQuery.isNotBlank()) "其他语种不是中文音色；朗读原文不会自动翻译，部分引擎可能回退到中文。"
-                        else if (voices.none { it.isChineseVoice() }) "此引擎未提供已安装的中文音色，可改用引擎默认或检查系统语音包。"
-                        else "这里只显示已安装的中文音色；其他语种可按需展开。",
+                        if (showOtherLanguages || searchQuery.isNotBlank()) "列表包含引擎报告的语言和声音，不代表会翻译原文或一定有不同声线；中文正文仍可能按中文朗读。试听使用对应语种。"
+                        else if (readyVoices.none { it.isChineseVoice() }) "此引擎未提供已安装的中文语音，可改用引擎默认或检查系统语音包。"
+                        else "这里只显示已安装的中文语音；其他语种可按需展开。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 20.dp),
@@ -403,18 +409,18 @@ fun VoiceChoicePicker(
             }
             }
             }
-            if (selectedEngine != "inherit" && (loading && loadedEngine != null || !loading && error == null)) {
-                        if (displayVoices.isEmpty() && !loading) {
+            if (selectedEngine != "inherit" && !loading && error == null && loadedEngine == selectedEngine) {
+                        if (displayVoices.isEmpty()) {
                             item {
                                 Text("没有匹配的音色，请更换关键词", color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
                             }
                         }
-                        items(displayVoices, key = { "${displayedEngine}:${it.id}" }) { voice ->
-                            val selected = displayedEngine == choice.engineId && voice.id == choice.voiceId
+                        items(displayVoices, key = { "${selectedEngine}:${it.id}" }) { voice ->
+                            val selected = selectedEngine == choice.engineId && voice.id == choice.voiceId
                             Surface(
-                                enabled = !saving && !loading,
-                                onClick = { stopPreview(); onSelected(VoiceChoice(displayedEngine, voice.id)) },
+                                enabled = !saving,
+                                onClick = { stopPreview(); onSelected(VoiceChoice(selectedEngine, voice.id)) },
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                                 color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
                             ) {
