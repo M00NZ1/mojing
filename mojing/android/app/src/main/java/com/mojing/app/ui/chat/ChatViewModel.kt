@@ -112,6 +112,11 @@ internal data class AddParticipantPage(val rows: List<NewSessionCharacterOption>
 
 private const val ADD_PARTICIPANT_PAGE_SIZE = 40
 
+internal fun estimateLoadedContextTokens(messages: List<MessageEntity>, excludedKeys: Set<String>): Int =
+    messages.asSequence()
+        .filter { it.includeInContext && it.contextSelectionKey() !in excludedKeys }
+        .sumOf { TokenCounter.estimateScaledPrefix(ConversationMessageText.forDerivedContext(it)) }
+
 private class GenerationContext(
     val branchId: String,
     val expectedTailMessageId: Long? = null,
@@ -907,8 +912,7 @@ class ChatViewModel @Inject constructor(
 
         val firstChar = participants.firstOrNull()?.characterId?.let { characterDao.getById(it) }
         val displayCap = session.displayContextTokenLimit.takeIf { it > 0 } ?: 1_000_000
-        val convEst = msgs.filter { it.includeInContext && it.contextSelectionKey() !in excludedKeys }
-            .sumOf { TokenCounter.estimateScaledPrefix(ConversationMessageText.forDerivedContext(it)) }
+        val convEst = withContext(Dispatchers.Default) { estimateLoadedContextTokens(msgs, excludedKeys) }
 
         val attMap = attachmentsForMessages(msgs)
         val bookmarkPage = bookmarkDao.getFirstPage(sessionId, BOOKMARK_PAGE_SIZE + 1)
@@ -1581,8 +1585,7 @@ class ChatViewModel @Inject constructor(
         val participants = participantDao.getBySession(sessionId)
         val firstChar = participants.firstOrNull()?.characterId?.let { characterDao.getById(it) }
         val displayCap = sess?.displayContextTokenLimit?.takeIf { it > 0 } ?: 1_000_000
-        val convEst = msgs.filter { it.includeInContext && it.contextSelectionKey() !in excludedKeys }
-            .sumOf { TokenCounter.estimateScaledPrefix(ConversationMessageText.forDerivedContext(it)) }
+        val convEst = withContext(Dispatchers.Default) { estimateLoadedContextTokens(msgs, excludedKeys) }
         val memoryPage = memorySegmentDao.getRecentForBranch(sessionId, branchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
         val contextMemoryText = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
         val encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world)
@@ -1691,10 +1694,9 @@ class ChatViewModel @Inject constructor(
         )
         val excludedKeys = excludedKeysForWindow(branchId, normalized)
         val attachments = attachmentsForMessages(normalized)
-        val tokenEstimate = normalized
-            .asSequence()
-            .filter { it.includeInContext && it.contextSelectionKey() !in excludedKeys }
-            .sumOf { TokenCounter.estimateScaledPrefix(it.content) }
+        val tokenEstimate = withContext(Dispatchers.Default) {
+            estimateLoadedContextTokens(normalized, excludedKeys)
+        }
         bookmarkMutex.withLock {
             val bookmarkIds = bookmarkedIdsForWindow(normalized)
             _state.update { current ->
