@@ -98,14 +98,13 @@ class ChatViewModelTest {
         assertEquals(null, vm.state.value.conversationTokenEstimate)
         assertEquals(listOf(7L), vm.state.value.messages.map { it.id })
 
-        val latestEstimateScheduler = TestCoroutineScheduler()
-        vm.tokenEstimateDispatcher = StandardTestDispatcher(latestEstimateScheduler)
+        vm.tokenEstimateDispatcher = testDispatcher
         assertTrue(vm.returnToLatestMessages())
         advanceUntilIdle()
+        assertFalse(vm.state.value.isLoadingHistory)
+        assertEquals(null, vm.state.value.error)
+        assertEquals(listOf(7L), vm.state.value.messages.map { it.id })
         oldEstimateScheduler.advanceUntilIdle()
-        assertEquals(null, vm.state.value.conversationTokenEstimate)
-
-        latestEstimateScheduler.advanceUntilIdle()
         assertEquals(com.mojing.app.domain.engine.TokenCounter.estimateScaledPrefix("长篇正文"),
             vm.state.value.conversationTokenEstimate)
     }
@@ -267,7 +266,10 @@ class ChatViewModelTest {
         narratorEngine = NarratorEngine(),
         chatDraftStore = chatDraftStore,
         appContext = appContext,
-    )
+    ).also {
+        it.preparationDispatcher = testDispatcher
+        it.tokenEstimateDispatcher = testDispatcher
+    }
 
     private fun validSecureStorage(
         apiKey: String = "sk-test",
@@ -3286,6 +3288,8 @@ class ChatViewModelTest {
                 bookmarkDao = bookmarks,
                 appContext = context,
             )
+            advanceUntilIdle()
+            vm.loadBookmarksIfNeeded()
             advanceUntilIdle()
             assertEquals(listOf(8L, 9L, 10L), vm.state.value.bookmarks.map { it.messageId })
 

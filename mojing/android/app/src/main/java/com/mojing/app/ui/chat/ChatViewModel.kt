@@ -220,6 +220,7 @@ class ChatViewModel @Inject constructor(
     private var bookmarkInitialLoadJob: Job? = null
     private val messageWindowRevision = java.util.concurrent.atomic.AtomicLong()
     internal var tokenEstimateDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Default
+    internal var preparationDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Default
     private var tokenEstimateJob: Job? = null
     private val tokenEstimateRevision = java.util.concurrent.atomic.AtomicLong()
     private val eventRefreshRevision = java.util.concurrent.atomic.AtomicLong()
@@ -879,7 +880,7 @@ class ChatViewModel @Inject constructor(
             messageDao.getByIdInSession(it, sessionId)
         }
         val restoredQuoteSnippet = restoredQuoteCandidate?.takeIf { quoteDraftRevision == 0L }?.let { quote ->
-            withContext(Dispatchers.Default) {
+            withContext(preparationDispatcher) {
                 ChatMessageTextFormat.quoteSnippet(quote.content, 120, quote.speakerType)
             }
         }
@@ -935,7 +936,7 @@ class ChatViewModel @Inject constructor(
         val attMap = attachmentsForMessages(msgs)
         val displayLines = visibleDisplayLines(msgs, attMap)
         val bookmarkIds = bookmarkedIdsForWindow(msgs)
-        val roundChoices = withContext(Dispatchers.Default) {
+        val roundChoices = withContext(preparationDispatcher) {
             buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
         }
         val branchAnchors = anchorsForBranches(branches)
@@ -1065,7 +1066,7 @@ class ChatViewModel @Inject constructor(
             _state.update { current ->
                 if (tokenEstimateRevision.get() == estimateRevision &&
                     messageWindowRevision.get() == windowRevision &&
-                    current.currentBranchId == branchId && current.messages === messages
+                    current.currentBranchId == branchId && current.messages == messages
                 ) current.copy(conversationTokenEstimate = estimate) else current
             }
         }
@@ -1110,7 +1111,7 @@ class ChatViewModel @Inject constructor(
         for (batch in ids.chunked(32)) {
             currentCoroutineContext().ensureActive()
             val sources = messageDao.getMessagePreviewPrefixesInSession(sessionId, batch)
-            previews.putAll(withContext(Dispatchers.Default) {
+            previews.putAll(withContext(preparationDispatcher) {
                 sources.associate { message ->
                     currentCoroutineContext().ensureActive()
                     message.id to ChatMessageTextFormat.sessionListPreview(
@@ -1176,7 +1177,7 @@ class ChatViewModel @Inject constructor(
         for (batch in messageIds.chunked(32)) {
             val sources = messageDao.getMessagePreviewPrefixesInSession(sessionId, batch)
             if (sources.isEmpty()) continue
-            previews.putAll(withContext(Dispatchers.Default) {
+            previews.putAll(withContext(preparationDispatcher) {
                 sources.associate { message ->
                     currentCoroutineContext().ensureActive()
                     message.id to ChatMessageTextFormat.sessionListPreview(
@@ -1667,7 +1668,7 @@ class ChatViewModel @Inject constructor(
     private suspend fun visibleDisplayLines(
         messages: List<MessageEntity>,
         attachments: Map<Long, List<MessageAttachmentEntity>>,
-    ): List<ChatDisplayLine> = withContext(Dispatchers.Default) {
+    ): List<ChatDisplayLine> = withContext(preparationDispatcher) {
         messages.toChatDisplayLines().filter { line ->
             val selected = line.selectedMessage()
             shouldShowCharacterBubbleLine(selected, attachments[selected.id].orEmpty())
@@ -1787,7 +1788,7 @@ class ChatViewModel @Inject constructor(
             null
         } else null
         val contextMemoryText = if (refreshContextMemory) try {
-            withContext(Dispatchers.Default) {
+            withContext(preparationDispatcher) {
                 universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
             }
         } catch (cancelled: CancellationException) {
@@ -1804,13 +1805,13 @@ class ChatViewModel @Inject constructor(
                 state.copy(encyclopediaFoundationLoading = false) else state }
         }
         val encyclopediaFoundation = if (refreshFoundation) try {
-            withContext(Dispatchers.Default) { contextBuilder.encyclopediaFoundation(world) }
+            withContext(preparationDispatcher) { contextBuilder.encyclopediaFoundation(world) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
             null
         } else null
-        val roundChoices = if (hasNewerMessages) RoundChoiceSnapshot() else withContext(Dispatchers.Default) {
+        val roundChoices = if (hasNewerMessages) RoundChoiceSnapshot() else withContext(preparationDispatcher) {
             buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
         }
         val eventWindowSize = _state.value.takeIf { it.currentBranchId == branchId }
@@ -1931,7 +1932,7 @@ class ChatViewModel @Inject constructor(
                 contextMemoryDisplayRevision.incrementAndGet()
             }
         }
-        if (_state.value.messages === msgs && currentBranchId() == branchId &&
+        if (_state.value.messages == msgs && currentBranchId() == branchId &&
             messageWindowRevision.get() == windowRevision) {
             scheduleConversationTokenEstimate(msgs, excludedKeys, branchId, windowRevision)
         }
@@ -1985,7 +1986,7 @@ class ChatViewModel @Inject constructor(
         val excludedKeys = excludedKeysForWindow(branchId, normalized)
         val attachments = attachmentsForMessages(normalized)
         val displayLines = visibleDisplayLines(normalized, attachments)
-        val applied = withContext(Dispatchers.Default) {
+        val applied = withContext(preparationDispatcher) {
             bookmarkMutex.withLock {
                 if (currentBranchId() != branchId || messageWindowRevision.get() != windowRevision) {
                     return@withLock false
@@ -2019,7 +2020,7 @@ class ChatViewModel @Inject constructor(
                 true
             }
         }
-        if (applied && _state.value.messages === normalized && currentBranchId() == branchId &&
+        if (applied && _state.value.messages == normalized && currentBranchId() == branchId &&
             messageWindowRevision.get() == windowRevision) {
             scheduleConversationTokenEstimate(normalized, excludedKeys, branchId, windowRevision)
         }
@@ -2358,7 +2359,7 @@ class ChatViewModel @Inject constructor(
         _speechActive.value = true
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
-                val cleaned = withContext(Dispatchers.Default) { TtsSpeakText.normalizeForSpeech(text) }
+                val cleaned = withContext(preparationDispatcher) { TtsSpeakText.normalizeForSpeech(text) }
                 if (cleaned.isBlank()) {
                     _state.update { it.copy(error = UserFacingStrings.ttsContentEmptyAfterClean()) }
                     return@launch
@@ -3788,7 +3789,7 @@ class ChatViewModel @Inject constructor(
         if (message == null || immediateSnippet != null) return
         quotePreparationJob = viewModelScope.launch {
             val snippet = try {
-                withContext(Dispatchers.Default) {
+                withContext(preparationDispatcher) {
                     ChatMessageTextFormat.quoteSnippet(message.content, 120, message.speakerType)
                 }
             } catch (cancelled: CancellationException) {
@@ -4480,7 +4481,7 @@ class ChatViewModel @Inject constructor(
                     val source = messageDao.getMessagePreviewPrefixesInSession(sessionId, listOf(messageId))
                         .firstOrNull { it.id == messageId }
                     check(source != null) { "消息已不存在" }
-                    preview = withContext(Dispatchers.Default) {
+                    preview = withContext(preparationDispatcher) {
                         ChatMessageTextFormat.sessionListPreview(source.content, source.speakerType, 120)
                             .ifBlank { "（暂无摘要，可打开原文）" }
                     }
@@ -4701,7 +4702,7 @@ class ChatViewModel @Inject constructor(
             encyclopediaFoundationLoadError = null) }
         viewModelScope.launch {
             try {
-                val foundation = withContext(Dispatchers.Default) {
+                val foundation = withContext(preparationDispatcher) {
                     contextBuilder.encyclopediaFoundation(world)
                 }
                 _state.update { state -> if (encyclopediaFoundationRevision.get() == revision &&
@@ -4733,7 +4734,7 @@ class ChatViewModel @Inject constructor(
             state.copy(contextMemoryLoading = true, contextMemoryLoadError = null) else state }
         viewModelScope.launch {
             try {
-                val memory = withContext(Dispatchers.Default) {
+                val memory = withContext(preparationDispatcher) {
                     universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
                 }
                 _state.update { state -> if (state.currentBranchId == branchId &&
@@ -4766,7 +4767,7 @@ class ChatViewModel @Inject constructor(
         val revision = if (refreshDisplay) contextMemoryDisplayRevision.incrementAndGet()
             else contextMemoryDisplayRevision.get()
         val memory = if (refreshDisplay) try {
-            withContext(Dispatchers.Default) {
+            withContext(preparationDispatcher) {
                 universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
             }
         } catch (cancelled: CancellationException) {
@@ -4999,7 +5000,7 @@ class ChatViewModel @Inject constructor(
             val revision = if (_state.value.currentBranchId == branchId)
                 contextMemoryDisplayRevision.incrementAndGet() else null
             val memory = try {
-                withContext(Dispatchers.Default) {
+                withContext(preparationDispatcher) {
                     universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }

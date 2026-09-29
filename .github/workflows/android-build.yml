@@ -29,6 +29,8 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: true
 
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --no-daemon '-Dorg.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8' -Pkotlin.compiler.execution.strategy=in-process --max-workers=2
@@ -49,6 +51,7 @@ jobs:
         with:
           name: mojing-debug
           path: mojing/android/app/build/outputs/apk/debug/*.apk
+          retention-days: 1
 
       - name: Upload optimized CI test APK
         if: github.event_name == 'workflow_dispatch'
@@ -56,3 +59,4 @@ jobs:
         with:
           name: mojing-ci-test-not-for-upgrade
           path: mojing/android/app/build/outputs/apk/release/*.apk
+          retention-days: 1
