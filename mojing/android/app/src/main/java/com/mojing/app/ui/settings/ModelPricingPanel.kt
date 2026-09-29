@@ -54,9 +54,12 @@ fun ModelPricingPanel(
         )
         LazyColumn(Modifier.fillMaxWidth().heightIn(max = 280.dp)) {
         items(platform.models, key = { it }) { model ->
-            val configured by androidx.compose.runtime.produceState<ModelPricing?>(null, platform.id, model, revision) {
-                value = runCatching { prices.price(platform.id, model) }.getOrNull()
+            val priceResult by androidx.compose.runtime.produceState<Result<ModelPricing?>?>(null, platform.id, model, revision) {
+                value = try { Result.success(prices.price(platform.id, model)) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) { Result.failure(failure) }
             }
+            val result = priceResult
             androidx.compose.material3.Surface(modifier = Modifier.fillMaxWidth(),
                 color = MaterialTheme.colorScheme.surface) {
             Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 12.dp, vertical = 8.dp),
@@ -65,15 +68,20 @@ fun ModelPricingPanel(
                     Text(model, style = MaterialTheme.typography.bodyMedium, maxLines = 2,
                         overflow = TextOverflow.Ellipsis)
                     Text(
-                        configured?.let { "输入 ${it.inputPerMillion.formatRate()} · 输出 ${it.outputPerMillion.formatRate()} ${it.currency}" }
-                            ?: "未配置价格",
+                        when {
+                            result == null -> "正在读取价格…"
+                            result.isFailure -> "价格读取失败，请重试"
+                            else -> result.getOrNull()?.let { "输入 ${it.inputPerMillion.formatRate()} · 输出 ${it.outputPerMillion.formatRate()} ${it.currency}" }
+                                ?: "未配置价格"
+                        },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (result?.isFailure == true) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                TextButton(onClick = { editing = model }) { Text("编辑") }
+                TextButton(onClick = { editing = model }) { Text(if (result?.isFailure == true) "重试" else "编辑") }
             }
             }
             androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
