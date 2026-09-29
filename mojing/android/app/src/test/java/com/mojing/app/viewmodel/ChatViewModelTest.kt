@@ -453,6 +453,81 @@ class ChatViewModelTest {
         assertFalse(vm.state.value.novelMetadataSaving)
     }
 
+    @Test fun slowSameBranchRefreshCannotReplaceACompletedNavigationRefresh() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val original = MessageEntity(id = 501L, sessionId = 42L, content = "旧窗口")
+        val latest = MessageEntity(id = 502L, sessionId = 42L, content = "新窗口")
+        coEvery { messages.getMainMessageById(42L, 501L) } returns original
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(original)
+        val vm = createViewModel(messageDao = messages)
+        advanceUntilIdle()
+
+        val oldRead = CompletableDeferred<List<MessageEntity>>()
+        var refreshReads = 0
+        coEvery { messages.getMainMessagesTail(42L, any()) } coAnswers {
+            if (++refreshReads == 1) oldRead.await() else listOf(latest)
+        }
+        vm.renameChapter(501L, "新章名") {}
+        runCurrent()
+        vm.switchBranch("main")
+        advanceUntilIdle()
+        assertEquals(listOf(latest), vm.state.value.messages)
+
+        oldRead.complete(listOf(original))
+        advanceUntilIdle()
+        assertEquals(listOf(latest), vm.state.value.messages)
+        assertEquals(2, refreshReads)
+    }
+
+    @Test fun slowTailRefreshCannotPullReaderBackFromAnOlderMessage() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val latest = MessageEntity(id = 501L, sessionId = 42L, content = "最新章节")
+        val older = MessageEntity(id = 1L, sessionId = 42L, content = "较早章节")
+        coEvery { messages.getMainMessageById(42L, 501L) } returns latest
+        coEvery { messages.getMainMessageById(42L, 1L) } returns older
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(latest)
+        val vm = createViewModel(messageDao = messages)
+        advanceUntilIdle()
+
+        val oldRead = CompletableDeferred<List<MessageEntity>>()
+        coEvery { messages.getMainMessagesTail(42L, any()) } coAnswers { oldRead.await() }
+        vm.renameChapter(501L, "新章名") {}
+        runCurrent()
+        assertTrue(vm.openMessageInHistory(1L))
+        advanceUntilIdle()
+        assertEquals(1L, vm.state.value.focusedMessageId)
+        assertEquals(listOf(older), vm.state.value.messages)
+
+        oldRead.complete(listOf(latest))
+        advanceUntilIdle()
+        assertEquals(1L, vm.state.value.focusedMessageId)
+        assertEquals(listOf(older), vm.state.value.messages)
+    }
+
+    @Test fun lateHistoryLookupCannotReplaceACompletedLatestWindow() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val latest = MessageEntity(id = 501L, sessionId = 42L, content = "最新章节")
+        val older = MessageEntity(id = 1L, sessionId = 42L, content = "较早章节")
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(latest)
+        coEvery { messages.getMainMessageById(42L, 501L) } returns latest
+        val vm = createViewModel(messageDao = messages)
+        advanceUntilIdle()
+
+        val oldLookup = CompletableDeferred<MessageEntity>()
+        coEvery { messages.getMainMessageById(42L, 1L) } coAnswers { oldLookup.await() }
+        assertTrue(vm.openMessageInHistory(1L))
+        runCurrent()
+        vm.renameChapter(501L, "新章名") {}
+        advanceUntilIdle()
+        assertEquals(listOf(latest), vm.state.value.messages)
+
+        oldLookup.complete(older)
+        advanceUntilIdle()
+        assertEquals(listOf(latest), vm.state.value.messages)
+        assertEquals(null, vm.state.value.focusedMessageId)
+        assertEquals(null, vm.state.value.error)
+    }
+
     @Test
     fun bookmarkActionsKeepHistoryAndIgnoreDuplicateClicks() = runTest(testDispatcher) {
         val message = MessageEntity(id = 501L, sessionId = 42L, content = "保留当前阅读位置")

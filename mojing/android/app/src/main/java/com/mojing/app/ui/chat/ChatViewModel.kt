@@ -215,6 +215,7 @@ class ChatViewModel @Inject constructor(
     private val sourceBranchId: String = savedStateHandle["sourceBranchId"] ?: ""
     private val _state = MutableStateFlow(ChatContract.State(sessionId = sessionId))
     private val bookmarkMutex = Mutex()
+    private val messageWindowRevision = java.util.concurrent.atomic.AtomicLong()
     private val eventRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     private val correctionRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     private val memorySummaryListRevision = java.util.concurrent.atomic.AtomicLong()
@@ -495,6 +496,7 @@ class ChatViewModel @Inject constructor(
         manualCompactionJob?.cancel()
         historyLoadJob?.cancel()
         historyLoadJob = null
+        messageWindowRevision.incrementAndGet()
         _state.update { it.copy(isLoadingHistory = false, branchNavigationLabel = navigationLabel) }
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             val owner = coroutineContext[Job]
@@ -1633,6 +1635,9 @@ class ChatViewModel @Inject constructor(
     ) {
         val startingBranchId = currentBranchId()
         if (!switchBranchOnSuccess && requestedBranchId != startingBranchId) return
+        // Navigation owns the window until its refresh finishes; background writers may still finish their writes.
+        if (branchTransitionJob?.isActive == true && currentCoroutineContext()[Job] !== branchTransitionJob) return
+        val windowRevision = messageWindowRevision.incrementAndGet()
         val eventRevision = eventRefreshRevision.incrementAndGet()
         val correctionRevision = correctionRefreshRevision.incrementAndGet()
         val branches = sessionBranchDao.getBySession(sessionId)
@@ -1683,10 +1688,14 @@ class ChatViewModel @Inject constructor(
         )
         bookmarkMutex.withLock {
             val bookmarkIds = bookmarkedIdsForWindow(msgs)
+            if (currentBranchId() != startingBranchId || messageWindowRevision.get() != windowRevision) {
+                return@withLock
+            }
             memorySummaryListRevision.incrementAndGet()
             _state.update { current ->
-                // An older read must not restore its branch after another navigation completed.
-                if (current.currentBranchId != startingBranchId) return@update current
+                // A slower read must not replace a newer refresh or history navigation.
+                if (current.currentBranchId != startingBranchId ||
+                    messageWindowRevision.get() != windowRevision) return@update current
                 val applyEventPage = current.currentBranchId != branchId ||
                     (eventRefreshRevision.get() == eventRevision && current.eventNodesWindowSize == eventWindowSize)
                 current.copy(
@@ -1732,17 +1741,18 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun launchHistoryLoad(
-        block: suspend (branchId: String) -> Unit,
+        block: suspend (branchId: String, windowRevision: Long) -> Unit,
     ): Boolean {
         if (activeGeneration != null ||
             historyLoadJob?.isActive == true ||
             branchTransitionJob?.isActive == true
         ) return false
         val branchId = currentBranchId()
+        val windowRevision = messageWindowRevision.incrementAndGet()
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             val owner = coroutineContext[Job]
             try {
-                block(branchId)
+                block(branchId, windowRevision)
             } catch (_: CancellationException) {
                 // A branch transition or a newer owner superseded this window request.
             } catch (_: Exception) {
@@ -1768,8 +1778,9 @@ class ChatViewModel @Inject constructor(
         hasOlderMessages: Boolean,
         hasNewerMessages: Boolean,
         focusedMessageId: Long? = null,
-    ) {
-        if (currentBranchId() != branchId) return
+        windowRevision: Long = messageWindowRevision.get(),
+    ): Boolean {
+        if (currentBranchId() != branchId || messageWindowRevision.get() != windowRevision) return false
         val normalized = withEffectiveSwipeSelections(
             branchId,
             messages.distinctBy { it.id }.sortedBy { it.id },
@@ -1780,11 +1791,18 @@ class ChatViewModel @Inject constructor(
         val tokenEstimate = withContext(Dispatchers.Default) {
             estimateLoadedContextTokens(normalized, excludedKeys)
         }
-        withContext(Dispatchers.Default) {
+        return withContext(Dispatchers.Default) {
             bookmarkMutex.withLock {
+                if (currentBranchId() != branchId || messageWindowRevision.get() != windowRevision) {
+                    return@withLock false
+                }
                 val bookmarkIds = bookmarkedIdsForWindow(normalized)
+                if (currentBranchId() != branchId || messageWindowRevision.get() != windowRevision) {
+                    return@withLock false
+                }
                 _state.update { current ->
-                    if (current.currentBranchId != branchId) return@update current
+                    if (current.currentBranchId != branchId || messageWindowRevision.get() != windowRevision)
+                        return@update current
                     val roundChoices = if (hasNewerMessages) {
                         RoundChoiceSnapshot()
                     } else {
@@ -1804,6 +1822,7 @@ class ChatViewModel @Inject constructor(
                         conversationTokenEstimate = tokenEstimate,
                     )
                 }
+                true
             }
         }
     }
@@ -1812,7 +1831,7 @@ class ChatViewModel @Inject constructor(
         val snapshot = _state.value
         val anchorId = snapshot.messages.firstOrNull()?.id ?: return
         if (!snapshot.hasOlderMessages) return
-        launchHistoryLoad { branchId ->
+        launchHistoryLoad { branchId, windowRevision ->
             val rows = getMessagesBefore(branchId, anchorId, MESSAGE_PAGE_SIZE + 1)
             val olderPage = rows.take(MESSAGE_PAGE_SIZE).asReversed()
             val current = _state.value
@@ -1824,6 +1843,7 @@ class ChatViewModel @Inject constructor(
                 messages = bounded,
                 hasOlderMessages = rows.size > MESSAGE_PAGE_SIZE,
                 hasNewerMessages = current.hasNewerMessages || merged.size > bounded.size,
+                windowRevision = windowRevision,
             )
         }
     }
@@ -1832,7 +1852,7 @@ class ChatViewModel @Inject constructor(
         val snapshot = _state.value
         val anchorId = snapshot.messages.lastOrNull()?.id ?: return
         if (!snapshot.hasNewerMessages) return
-        launchHistoryLoad { branchId ->
+        launchHistoryLoad { branchId, windowRevision ->
             val rows = getMessagesAfter(branchId, anchorId, MESSAGE_PAGE_SIZE + 1)
             val newerPage = rows.take(MESSAGE_PAGE_SIZE)
             val current = _state.value
@@ -1844,33 +1864,36 @@ class ChatViewModel @Inject constructor(
                 messages = bounded,
                 hasOlderMessages = current.hasOlderMessages || merged.size > bounded.size,
                 hasNewerMessages = rows.size > MESSAGE_PAGE_SIZE,
+                windowRevision = windowRevision,
             )
         }
     }
 
     fun returnToLatestMessages(): Boolean =
-        launchHistoryLoad { branchId ->
+        launchHistoryLoad { branchId, windowRevision ->
             val rows = getMessageTailForBranch(branchId, INITIAL_MESSAGE_WINDOW_SIZE + 1)
             applyHistoryWindow(
                 branchId = branchId,
                 messages = rows.take(INITIAL_MESSAGE_WINDOW_SIZE).asReversed(),
                 hasOlderMessages = rows.size > INITIAL_MESSAGE_WINDOW_SIZE,
                 hasNewerMessages = false,
+                windowRevision = windowRevision,
             )
         }
 
     fun openMessageInHistory(messageId: Long): Boolean =
-        launchHistoryLoad { branchId ->
-            if (!loadMessageWindow(branchId, messageId)) {
+        launchHistoryLoad { branchId, windowRevision ->
+            if (!loadMessageWindow(branchId, messageId, windowRevision) &&
+                messageWindowRevision.get() == windowRevision) {
                 _state.update { it.copy(error = "该消息已删除或不在当前故事线") }
             }
         }
 
     fun openMessageInHistoryWithResult(messageId: Long, onResult: (Boolean) -> Unit): Boolean =
-        launchHistoryLoad { branchId ->
+        launchHistoryLoad { branchId, windowRevision ->
             var opened = false
             try {
-                opened = loadMessageWindow(branchId, messageId) &&
+                opened = loadMessageWindow(branchId, messageId, windowRevision) &&
                     currentBranchId() == branchId && _state.value.messages.any { it.id == messageId }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -1936,19 +1959,23 @@ class ChatViewModel @Inject constructor(
         _state.update { it.copy(bookmarkReadOnlyMessage = null) }
     }
 
-    private suspend fun loadMessageWindow(branchId: String, messageId: Long): Boolean {
+    private suspend fun loadMessageWindow(
+        branchId: String,
+        messageId: Long,
+        windowRevision: Long = messageWindowRevision.get(),
+    ): Boolean {
         val target = getVisibleMessage(branchId, messageId) ?: return false
         val radius = INITIAL_MESSAGE_WINDOW_SIZE / 2
         val beforeRows = getMessagesBefore(branchId, target.id, radius + 1)
         val afterRows = getMessagesAfter(branchId, target.id, radius + 1)
-        applyHistoryWindow(
+        return applyHistoryWindow(
             branchId = branchId,
             messages = beforeRows.take(radius).asReversed() + target + afterRows.take(radius),
             hasOlderMessages = beforeRows.size > radius,
             hasNewerMessages = afterRows.size > radius,
             focusedMessageId = target.id,
+            windowRevision = windowRevision,
         )
-        return true
     }
 
     fun clearFocusedMessage() {
@@ -1958,10 +1985,10 @@ class ChatViewModel @Inject constructor(
     fun showSavedImage(): Boolean {
         val notice = _state.value.savedImageNotice ?: return false
         if (currentBranchId() != notice.branchId) return false
-        return launchHistoryLoad { branchId ->
-            val found = loadMessageWindow(branchId, notice.messageId)
+        return launchHistoryLoad { branchId, windowRevision ->
+            val found = loadMessageWindow(branchId, notice.messageId, windowRevision)
             _state.update {
-                if (it.savedImageNotice != notice) it else it.copy(
+                if (it.savedImageNotice != notice || messageWindowRevision.get() != windowRevision) it else it.copy(
                     savedImageNotice = null,
                     error = if (found) null else "配图消息已删除或不在当前故事线",
                 )
