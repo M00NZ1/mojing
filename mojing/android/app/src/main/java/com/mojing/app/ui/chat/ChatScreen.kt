@@ -1800,9 +1800,12 @@ fun ChatScreen(
         branches = state.branches,
         sourcePreviews = state.branchSourcePreviews,
         currentBranchId = state.currentBranchId,
-        onSelectBranch = {
-            if (state.isGenerating) showGenerationLockedMessage()
-            else viewModel.switchBranch(it)
+        onSelectBranch = { branchId, onResult ->
+            if (isImportingChat) {
+                onResult("请先完成或停止聊天记录导入")
+            } else if (state.isGenerating) {
+                onResult("当前正在生成，请先停止或等待完成后再切换故事线")
+            } else viewModel.switchBranch(branchId, onResult)
         },
         onDismiss = { showBranchOverview = false },
     )

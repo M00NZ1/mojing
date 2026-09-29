@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -20,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountTree
@@ -50,7 +52,7 @@ fun BranchOverviewBottomSheet(
     branches: List<SessionBranchEntity>,
     sourcePreviews: Map<Long, String>,
     currentBranchId: String = "main",
-    onSelectBranch: (String) -> Unit,
+    onSelectBranch: (String, (String?) -> Unit) -> Unit,
     onDismiss: () -> Unit,
 ) {
     if (!visible) return
@@ -65,6 +67,24 @@ fun BranchOverviewBottomSheet(
     }
     var query by rememberSaveable { mutableStateOf("") }
     var searching by rememberSaveable { mutableStateOf(false) }
+    var pendingBranchId by remember { mutableStateOf<String?>(null) }
+    var selectionError by remember { mutableStateOf<String?>(null) }
+    var sheetActive by remember { mutableStateOf(true) }
+    DisposableEffect(Unit) { onDispose { sheetActive = false } }
+    fun selectBranch(branchId: String) {
+        if (pendingBranchId != null) return
+        pendingBranchId = branchId
+        selectionError = null
+        onSelectBranch(branchId) { failure ->
+            if (sheetActive) {
+                if (failure == null) onDismiss()
+                else {
+                    pendingBranchId = null
+                    selectionError = failure
+                }
+            }
+        }
+    }
     val listState = rememberLazyListState()
     LaunchedEffect(query) { listState.scrollToItem(0) }
     val filtered = remember(storyBranches, labelsById, sourcePreviews, query) {
@@ -84,13 +104,13 @@ fun BranchOverviewBottomSheet(
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("故事线", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                IconButton(onClick = { searching = !searching; if (!searching) query = "" }) {
+                IconButton(onClick = { searching = !searching; if (!searching) query = ""; selectionError = null }) {
                     Icon(Icons.Default.Search, if (searching) "收起故事线搜索" else "搜索故事线")
                 }
                 IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "关闭故事线") }
             }
             if (searching) com.mojing.app.ui.common.SearchBar(
-                query = query, onQueryChange = { query = it }, modifier = Modifier.fillMaxWidth(),
+                query = query, onQueryChange = { query = it; selectionError = null }, modifier = Modifier.fillMaxWidth(),
                 placeholder = "搜索名称、来源或分叉内容", clearDescription = "清除搜索",
             )
             Text(
@@ -99,6 +119,17 @@ fun BranchOverviewBottomSheet(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (pendingBranchId != null) {
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text("正在打开故事线…", Modifier.padding(start = 10.dp),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else if (selectionError != null) {
+                Text(selectionError.orEmpty(),
+                    Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error)
+            }
         }
         LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 24.dp)) {
             if (showMain) item(key = "main") {
@@ -106,10 +137,10 @@ fun BranchOverviewBottomSheet(
                 ListItem(
                     modifier = Modifier.selectable(
                         selected = isCurrent,
+                        enabled = pendingBranchId == null,
                         role = Role.RadioButton,
                         onClick = {
-                            if (!isCurrent) onSelectBranch("main")
-                            onDismiss()
+                            if (isCurrent) onDismiss() else selectBranch("main")
                         },
                     ),
                     headlineContent = {
@@ -162,10 +193,10 @@ fun BranchOverviewBottomSheet(
                 ListItem(
                     modifier = Modifier.selectable(
                         selected = isCurrent,
+                        enabled = pendingBranchId == null,
                         role = Role.RadioButton,
                         onClick = {
-                            if (!isCurrent) onSelectBranch(branch.branchId)
-                            onDismiss()
+                            if (isCurrent) onDismiss() else selectBranch(branch.branchId)
                         },
                     ),
                     headlineContent = {

@@ -633,10 +633,12 @@ class ChatViewModelTest {
             uiPreferencesRepository = preferences,
         )
         advanceUntilIdle()
-        vm.switchBranch("branch-1")
+        val results = mutableListOf<String?>()
+        vm.switchBranch("branch-1") { results += it }
         advanceUntilIdle()
 
         assertEquals("branch-1", vm.state.value.currentBranchId)
+        assertEquals(listOf<String?>(null), results)
         assertEquals(listOf(correction), vm.state.value.memoryCorrections)
         assertEquals(null, vm.state.value.branchNavigationLabel)
         coVerify(exactly = 1) { preferences.setLastChatBranch(42L, "branch-1") }
@@ -645,18 +647,24 @@ class ChatViewModelTest {
     @Test
     fun switchingBranchRejectsAStaleIdWithoutChangingOrPersisting() = runTest(testDispatcher) {
         val branchDao = mockk<SessionBranchDao>(relaxed = true)
-        coEvery { branchDao.getBySession(42L) } returns emptyList()
+        var branches = listOf(SessionBranchEntity(sessionId = 42L, branchId = "missing-branch", sourceMessageId = 1L))
+        coEvery { branchDao.getBySession(42L) } answers { branches }
         val preferences = uiPreferences()
         val vm = createViewModel(
             sessionBranchDao = branchDao,
             uiPreferencesRepository = preferences,
         )
         advanceUntilIdle()
+        assertEquals(1, vm.state.value.branches.size)
 
-        vm.switchBranch("missing-branch")
+        branches = emptyList()
+        val results = mutableListOf<String?>()
+        vm.switchBranch("missing-branch") { results += it }
         advanceUntilIdle()
 
         assertEquals("main", vm.state.value.currentBranchId)
+        assertEquals(emptyList<SessionBranchEntity>(), vm.state.value.branches)
+        assertEquals(listOf("故事线已不存在，请刷新后重试"), results)
         assertEquals("故事线已不存在，请刷新后重试", vm.state.value.error)
         coVerify(exactly = 0) { preferences.setLastChatBranch(any(), any()) }
     }
@@ -701,13 +709,16 @@ class ChatViewModelTest {
         )
         advanceUntilIdle()
 
-        vm.switchBranch("branch-1")
+        val results = mutableListOf<String?>()
+        vm.switchBranch("branch-1") { results += it }
         runCurrent()
         assertEquals("正在打开故事线…", vm.state.value.branchNavigationLabel)
+        assertEquals(emptyList<String?>(), results)
         branchRead.completeExceptionally(IllegalStateException("database unavailable"))
         advanceUntilIdle()
 
         assertEquals("main", vm.state.value.currentBranchId)
+        assertEquals(listOf("故事线切换失败，请重试"), results)
         assertEquals("故事线切换失败，请重试", vm.state.value.error)
         assertEquals(null, vm.state.value.branchNavigationLabel)
         coVerify(exactly = 0) { preferences.setLastChatBranch(any(), any()) }

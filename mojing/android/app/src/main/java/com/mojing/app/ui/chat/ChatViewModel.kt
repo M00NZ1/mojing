@@ -3261,15 +3261,19 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun switchBranch(branchId: String) {
+    fun switchBranch(branchId: String, onResult: (String?) -> Unit = {}) {
         if (_state.value.isGenerating) {
-            _state.update { it.copy(error = "当前正在生成，请先停止或等待完成后再切换故事线") }
+            val reason = "当前正在生成，请先停止或等待完成后再切换故事线"
+            _state.update { it.copy(error = reason) }
+            onResult(reason)
             return
         }
         val launched = launchBranchTransition(navigationLabel = "正在打开故事线…") switchTransition@{
             val previousBranchId = currentBranchId()
+            var switched = false
             try {
                 val branches = sessionBranchDao.getBySession(sessionId)
+                _state.update { it.copy(branches = branches) }
                 if (branchId != "main" && branches.none { it.branchId == branchId }) {
                     _state.update { it.copy(error = "故事线已不存在，请刷新后重试") }
                     return@switchTransition
@@ -3282,6 +3286,7 @@ class ChatViewModel @Inject constructor(
                 }
                 _state.update { it.copy(error = null) }
                 persistCurrentBranchSelection()
+                switched = true
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -3291,10 +3296,15 @@ class ChatViewModel @Inject constructor(
                         error = "故事线切换失败，请重试",
                     )
                 }
+            } finally {
+                onResult(if (switched) null else _state.value.error ?: "故事线未能打开，请重试")
             }
         }
         if (!launched) {
-            _state.update { it.copy(error = "当前正在切换故事线，请稍后再试") }
+            val reason = if (_state.value.replyRecovery != null) _state.value.error ?: "请先处理上次中断的回复"
+                else "当前正在切换故事线，请稍后再试"
+            _state.update { it.copy(error = reason) }
+            onResult(reason)
         }
     }
 
