@@ -88,8 +88,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -184,6 +189,15 @@ fun ChatScreen(
     }
     val listState = rememberLazyListState()
     var stickToBottom by remember { mutableStateOf(true) }
+    var followGeneration by remember(sessionId, state.currentBranchId) { mutableStateOf(false) }
+    val manualScrollConnection = remember(sessionId, state.currentBranchId) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput && available.y != 0f) followGeneration = false
+                return Offset.Zero
+            }
+        }
+    }
     var hasAutoPositionedInitially by remember(sessionId, state.currentBranchId) { mutableStateOf(false) }
     var speakerTurnMode by remember { mutableStateOf(viewModel.currentSpeakerTurnMode()) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -468,6 +482,30 @@ fun ChatScreen(
             info.totalItemsCount == 0 || (last == info.totalItemsCount - 1 &&
                 tail != null && tail.offset + tail.size <= info.viewportEndOffset)
         }.collect { stickToBottom = it }
+    }
+
+    LaunchedEffect(state.isGenerating, stickToBottom, showSearchDialog, state.focusedMessageId) {
+        if (showSearchDialog || state.focusedMessageId != null) {
+            followGeneration = false
+        } else if (state.isGenerating) {
+            if (stickToBottom) followGeneration = true
+        } else if (followGeneration) {
+            withFrameNanos { }
+            if (followGeneration) {
+                val total = listState.layoutInfo.totalItemsCount
+                if (total > 0) listState.scrollToItem(total - 1)
+                followGeneration = false
+            }
+        }
+    }
+
+    LaunchedEffect(state.streamingText.length, followGeneration, showSearchDialog) {
+        if (!followGeneration || showSearchDialog || state.streamingText.isEmpty()) return@LaunchedEffect
+        withFrameNanos { }
+        if (followGeneration) {
+            val total = listState.layoutInfo.totalItemsCount
+            if (total > 0) listState.scrollToItem(total - 1)
+        }
     }
 
     LaunchedEffect(visibleDisplayLines.size, state.streamingText.length, stickToBottom) {
@@ -1224,7 +1262,7 @@ fun ChatScreen(
                 Box(Modifier.fillMaxSize().padding(padding)) {
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().nestedScroll(manualScrollConnection),
                         contentPadding = PaddingValues(vertical = densityMetrics.listContentVertical)
                     ) {
                     if (state.hasOlderMessages) {
@@ -1389,9 +1427,13 @@ fun ChatScreen(
                     }
                     item(key = "chat-end") { Spacer(Modifier.height(1.dp)) }
                     }
-                    if (!stickToBottom || state.hasNewerMessages) {
+                    if ((!stickToBottom && !followGeneration) || state.hasNewerMessages) {
                         ExtendedFloatingActionButton(
-                            onClick = { latestLoadAttempted = false; latestRequested = true },
+                            onClick = {
+                                if (state.isGenerating) followGeneration = true
+                                latestLoadAttempted = false
+                                latestRequested = true
+                            },
                             modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
                             icon = { Icon(Icons.Default.KeyboardArrowDown, null) },
                             text = { Text(if (state.isLoadingHistory) "加载中" else "回到最新") },
