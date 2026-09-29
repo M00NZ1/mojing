@@ -890,6 +890,65 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun summaryPanelLoadsOnDemandAndRetriesItsFirstRead() = runTest(testDispatcher) {
+        val segments = mockk<com.mojing.app.data.local.dao.SessionMemorySegmentDao>(relaxed = true)
+        val summary = com.mojing.app.data.local.entity.SessionMemorySegmentEntity(
+            id = 7, sessionId = 42, endMessageId = 12, summary = "已整理",
+        )
+        var fail = true
+        coEvery { segments.getRecentForBranch(42L, "main", 17) } answers {
+            if (fail) error("read failed") else listOf(summary)
+        }
+        val vm = createViewModel(memorySegmentDao = segments)
+        advanceUntilIdle()
+
+        assertTrue(vm.state.value.isReady)
+        assertFalse(vm.state.value.memorySegmentsLoaded)
+        coVerify(exactly = 0) { segments.getRecentForBranch(42L, "main", any()) }
+        vm.loadMemorySummariesIfNeeded()
+        advanceUntilIdle()
+        assertFalse(vm.state.value.memorySegmentsLoaded)
+        assertEquals("摘要读取失败，请重试", vm.state.value.memorySegmentsLoadError)
+
+        fail = false
+        vm.loadMemorySummariesIfNeeded()
+        advanceUntilIdle()
+        assertTrue(vm.state.value.memorySegmentsLoaded)
+        assertEquals(listOf(summary), vm.state.value.memorySegments)
+        assertEquals(null, vm.state.value.memorySegmentsLoadError)
+        coVerify(exactly = 2) { segments.getRecentForBranch(42L, "main", 17) }
+    }
+
+    @Test
+    fun switchingBranchDiscardsOpenedSummaryListUntilNewBranchIsRead() = runTest(testDispatcher) {
+        val branch = SessionBranchEntity(sessionId = 42L, branchId = "branch-1", sourceMessageId = 1L)
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        val segments = mockk<com.mojing.app.data.local.dao.SessionMemorySegmentDao>(relaxed = true)
+        val mainSummary = com.mojing.app.data.local.entity.SessionMemorySegmentEntity(
+            id = 1, sessionId = 42, branchId = "main", endMessageId = 1, summary = "主线",
+        )
+        val branchSummary = mainSummary.copy(id = 2, branchId = "branch-1", summary = "支线")
+        coEvery { branches.getBySession(42L) } returns listOf(branch)
+        coEvery { segments.getRecentForBranch(42L, "main", 17) } returns listOf(mainSummary)
+        coEvery { segments.getRecentForBranch(42L, "branch-1", 17) } returns listOf(branchSummary)
+        val vm = createViewModel(sessionBranchDao = branches, memorySegmentDao = segments)
+        advanceUntilIdle()
+        vm.loadMemorySummariesIfNeeded()
+        advanceUntilIdle()
+        assertEquals(listOf(mainSummary), vm.state.value.memorySegments)
+
+        vm.switchBranch("branch-1")
+        advanceUntilIdle()
+        assertEquals("branch-1", vm.state.value.currentBranchId)
+        assertFalse(vm.state.value.memorySegmentsLoaded)
+        assertTrue(vm.state.value.memorySegments.isEmpty())
+        coVerify(exactly = 0) { segments.getRecentForBranch(42L, "branch-1", any()) }
+        vm.loadMemorySummariesIfNeeded()
+        advanceUntilIdle()
+        assertEquals(listOf(branchSummary), vm.state.value.memorySegments)
+    }
+
+    @Test
     fun switchingBranchLoadsCorrectionsOnlyWhenOpenedWithoutTouchingAutomaticMemory() = runTest(testDispatcher) {
         val correction = SessionMemoryCorrectionEntity(sessionId = 42L, branchId = "branch-1", content = "分支纠正")
         val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
@@ -1227,8 +1286,11 @@ class ChatViewModelTest {
 
             assertTrue(vm.state.value.isReady)
             coVerify(exactly = 1) { messages.getVisibleMessagesTail(42L, "branch-1", any()) }
-            coVerify(exactly = 1) { memorySegments.getRecentForBranch(42L, "branch-1", any()) }
+            coVerify(exactly = 0) { memorySegments.getRecentForBranch(42L, "branch-1", any()) }
             coVerify(exactly = 0) { eventNodes.getPageForBranch(42L, "branch-1", null, null, any()) }
+            vm.loadMemorySummariesIfNeeded()
+            advanceUntilIdle()
+            coVerify(exactly = 1) { memorySegments.getRecentForBranch(42L, "branch-1", 17) }
             vm.loadEventNodesIfNeeded()
             advanceUntilIdle()
             coVerify(exactly = 1) { eventNodes.getPageForBranch(42L, "branch-1", null, null, any()) }
@@ -3700,6 +3762,8 @@ class ChatViewModelTest {
         coEvery { messageDao.recallInSession(42L, 500L) } answers { deleted = true; MessageRecallResult(true, deletedMessageIds = listOf(500L)) }
         val vm = createViewModel(messageDao = messageDao, memorySegmentDao = segmentDao)
         advanceUntilIdle()
+        vm.loadMemorySummariesIfNeeded()
+        advanceUntilIdle()
         assertEquals(listOf(affected, earlier), vm.state.value.memorySegments)
         vm.openMessageInHistory(500L)
         advanceUntilIdle()
@@ -3982,6 +4046,8 @@ class ChatViewModelTest {
         )
         advanceUntilIdle()
 
+        vm.loadMemorySummariesIfNeeded()
+        advanceUntilIdle()
         assertEquals(listOf(obsolete, earlier), vm.state.value.memorySegments)
         val selected = CompletableDeferred<Boolean>()
         vm.selectSwipeVariant("group", target.id) { selected.complete(it) }

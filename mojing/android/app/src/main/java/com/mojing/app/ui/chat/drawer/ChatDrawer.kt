@@ -105,9 +105,12 @@ fun ChatDrawer(
     characterForcesThinkMax: Boolean = false,
     onSessionThinkMax: (Boolean) -> Unit,
     memorySegmentsHasMore: Boolean = false,
+    memorySegmentsLoaded: Boolean = false,
+    memorySegmentsLoading: Boolean = false,
     memorySegmentsLoadingMore: Boolean = false,
     memorySegmentsLoadError: String? = null,
     onLoadMoreMemorySummaries: () -> Unit = {},
+    onOpenMemorySummaries: () -> Unit = {},
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     var pendingTab by remember { mutableStateOf<Int?>(null) }
@@ -219,9 +222,12 @@ fun ChatDrawer(
                 onContinueStorySummary,
                 onStopStorySummary,
                 hasOlderSummaries = memorySegmentsHasMore,
+                summariesLoaded = memorySegmentsLoaded,
+                summariesLoading = memorySegmentsLoading,
                 olderSummariesLoading = memorySegmentsLoadingMore,
                 olderSummariesError = memorySegmentsLoadError,
                 onLoadOlderSummaries = onLoadMoreMemorySummaries,
+                onOpenSummaries = onOpenMemorySummaries,
                 sourceNavigationBusy = sourceOpeningId != null,
                 correctionsLoaded = memoryCorrectionsLoaded,
                 correctionsLoading = memoryCorrectionsLoading,
@@ -742,9 +748,12 @@ fun MemoryTab(
     onContinueStorySummary: () -> Unit,
     onStopStorySummary: () -> Unit,
     hasOlderSummaries: Boolean = false,
+    summariesLoaded: Boolean = true,
+    summariesLoading: Boolean = false,
     olderSummariesLoading: Boolean = false,
     olderSummariesError: String? = null,
     onLoadOlderSummaries: () -> Unit = {},
+    onOpenSummaries: () -> Unit = {},
     sourceNavigationBusy: Boolean = false,
     correctionsLoaded: Boolean = true,
     correctionsLoading: Boolean = false,
@@ -760,6 +769,7 @@ fun MemoryTab(
     val currentCorrectionTrace = promptTrace?.takeIf { it.branchId == currentBranchId }
     LaunchedEffect(currentBranchId, section, drawerOpen, sessionReady) {
         if (section == 1 && drawerOpen && sessionReady) onOpenCorrections()
+        if (section == 2 && drawerOpen && sessionReady) onOpenSummaries()
     }
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
@@ -988,8 +998,30 @@ fun MemoryTab(
                         }
                     }
                 }
-                if (segments.isEmpty()) {
-                    item { Text("暂无摘要。对话积累后会自动整理，也可点“继续整理”。原文始终保留。", modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                if (!summariesLoaded) {
+                    item {
+                        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                            if (summariesLoading) {
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                                Text("正在读取摘要…", modifier = Modifier.padding(top = 8.dp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            } else if (olderSummariesError != null) {
+                                Text(olderSummariesError, color = MaterialTheme.colorScheme.error)
+                                TextButton(onClick = onOpenSummaries) { Text("重试读取") }
+                            }
+                        }
+                    }
+                } else if (segments.isEmpty()) {
+                    item {
+                        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                            if (olderSummariesError == null) Text("暂无摘要。对话积累后会自动整理，也可点“继续整理”。原文始终保留。",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            else {
+                                Text(olderSummariesError, color = MaterialTheme.colorScheme.error)
+                                TextButton(onClick = onLoadOlderSummaries, enabled = !summariesLoading) { Text("重试读取") }
+                            }
+                        }
+                    }
                 } else {
                     items(segments, key = { "summary:${it.id}" }) { segment ->
                         Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
@@ -1038,7 +1070,8 @@ fun MemoryTab(
                             if (olderSummariesError != null) Text(olderSummariesError, style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.error)
                             TextButton(onClick = onLoadOlderSummaries,
-                                enabled = !olderSummariesLoading && !isGenerating && !memoryOperationRunning,
+                                enabled = !olderSummariesLoading && !summariesLoading &&
+                                    !isGenerating && !memoryOperationRunning,
                                 modifier = Modifier.heightIn(min = 48.dp)) {
                                 Text(if (olderSummariesLoading) "正在读取更早摘要…" else if (olderSummariesError != null) "重试读取" else "查看更早摘要")
                             }

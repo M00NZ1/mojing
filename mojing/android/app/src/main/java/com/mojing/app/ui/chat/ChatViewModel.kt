@@ -801,6 +801,7 @@ class ChatViewModel @Inject constructor(
         eventPanelRequestedBranchId = null
         eventRefreshRevision.incrementAndGet()
         correctionRefreshRevision.incrementAndGet()
+        memorySummaryListRevision.incrementAndGet()
         bookmarkInitialLoadJob?.cancel()
         bookmarkInitialLoadJob = null
         _state.update {
@@ -912,7 +913,6 @@ class ChatViewModel @Inject constructor(
         if (invalidRememberedBranch) {
             runCatching { uiPreferencesRepository.clearLastChatBranch(sessionId) }
         }
-        val memoryPage = memorySegmentDao.getRecentForBranch(sessionId, initialBranchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
         val initialRows = getMessageTailForBranch(initialBranchId, INITIAL_MESSAGE_WINDOW_SIZE + 1)
         val hasOlderMessages = initialRows.size > INITIAL_MESSAGE_WINDOW_SIZE
         val msgs = initialRows.take(INITIAL_MESSAGE_WINDOW_SIZE).asReversed()
@@ -941,8 +941,10 @@ class ChatViewModel @Inject constructor(
             participants = participants, world = world,
             encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world),
             contextMemoryText = universalContextMemoryManager.getFormattedMemory(sessionId, initialBranchId),
-            memorySegments = memoryPage.take(MEMORY_SEGMENT_PAGE_SIZE),
-            memorySegmentsHasMore = memoryPage.size > MEMORY_SEGMENT_PAGE_SIZE,
+            memorySegments = emptyList(),
+            memorySegmentsLoaded = false,
+            memorySegmentsLoading = false,
+            memorySegmentsHasMore = false,
             memorySegmentsLoadingMore = false,
             memorySegmentsLoadError = null,
             eventNodes = emptyList(),
@@ -1650,6 +1652,15 @@ class ChatViewModel @Inject constructor(
             (eventPanelRequestedBranchId == branchId && _state.value.eventNodesLoaded)
         val eventRevision = if (refreshEventPage) eventRefreshRevision.incrementAndGet()
             else eventRefreshRevision.get()
+        val refreshSummaryPage = !switchBranchOnSuccess && _state.value.let {
+            it.currentBranchId == branchId && it.memorySegmentsLoaded
+        }
+        val summaryRevision = if (refreshSummaryPage) memorySummaryListRevision.incrementAndGet()
+            else memorySummaryListRevision.get()
+        if (refreshSummaryPage) {
+            _state.update { state -> if (state.currentBranchId == branchId)
+                state.copy(memorySegmentsLoadingMore = false) else state }
+        }
         val anchor = anchorMessageId?.let { getVisibleMessage(branchId, it) }
         val historyWindow = _state.value.takeIf { current ->
             !switchBranchOnSuccess && anchorMessageId == null && current.currentBranchId == branchId &&
@@ -1706,7 +1717,13 @@ class ChatViewModel @Inject constructor(
         val firstChar = participants.firstOrNull()?.characterId?.let { characterDao.getById(it) }
         val displayCap = sess?.displayContextTokenLimit?.takeIf { it > 0 } ?: 1_000_000
         val convEst = withContext(Dispatchers.Default) { estimateLoadedContextTokens(msgs, excludedKeys) }
-        val memoryPage = memorySegmentDao.getRecentForBranch(sessionId, branchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
+        val memoryPage = if (refreshSummaryPage) try {
+            memorySegmentDao.getRecentForBranch(sessionId, branchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        } else null
         val contextMemoryText = universalContextMemoryManager.getFormattedMemory(sessionId, branchId)
         val encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world)
         val roundChoices = if (hasNewerMessages) RoundChoiceSnapshot() else withContext(Dispatchers.Default) {
@@ -1730,12 +1747,15 @@ class ChatViewModel @Inject constructor(
             if (currentBranchId() != startingBranchId || messageWindowRevision.get() != windowRevision) {
                 return@withLock
             }
-            memorySummaryListRevision.incrementAndGet()
             _state.update { current ->
                 // A slower read must not replace a newer refresh or history navigation.
                 if (current.currentBranchId != startingBranchId ||
                     messageWindowRevision.get() != windowRevision) return@update current
                 val switchingBranch = current.currentBranchId != branchId
+                val applySummaryPage = memoryPage != null && current.memorySegmentsLoaded &&
+                    memorySummaryListRevision.get() == summaryRevision
+                val summaryReadFailed = refreshSummaryPage && memoryPage == null &&
+                    memorySummaryListRevision.get() == summaryRevision
                 val applyEventPage = eventPage != null && (switchingBranch ||
                     (eventRefreshRevision.get() == eventRevision && current.eventNodesWindowSize == eventWindowSize))
                 current.copy(
@@ -1753,10 +1773,18 @@ class ChatViewModel @Inject constructor(
                     contextMemoryText = contextMemoryText,
                     contextMemoryStatus = if (current.currentBranchId == branchId) current.contextMemoryStatus else ContextMemoryStatus.IDLE,
                     encyclopediaFoundation = encyclopediaFoundation,
-                    memorySegments = memoryPage.take(MEMORY_SEGMENT_PAGE_SIZE),
-                    memorySegmentsHasMore = memoryPage.size > MEMORY_SEGMENT_PAGE_SIZE,
-                    memorySegmentsLoadingMore = false,
-                    memorySegmentsLoadError = null,
+                    memorySegments = if (switchingBranch) emptyList() else if (applySummaryPage)
+                        memoryPage!!.take(MEMORY_SEGMENT_PAGE_SIZE) else current.memorySegments,
+                    memorySegmentsLoaded = if (switchingBranch) false else current.memorySegmentsLoaded,
+                    memorySegmentsLoading = if (switchingBranch) false else current.memorySegmentsLoading,
+                    memorySegmentsHasMore = if (switchingBranch) false else if (applySummaryPage)
+                        memoryPage!!.size > MEMORY_SEGMENT_PAGE_SIZE else if (summaryReadFailed)
+                        false else current.memorySegmentsHasMore,
+                    memorySegmentsLoadingMore = if (switchingBranch || applySummaryPage) false
+                        else current.memorySegmentsLoadingMore,
+                    memorySegmentsLoadError = if (switchingBranch || applySummaryPage) null
+                        else if (summaryReadFailed) "摘要读取失败，请重试"
+                        else current.memorySegmentsLoadError,
                     memoryCorrections = if (switchingBranch) emptyList()
                         else current.memoryCorrections,
                     memoryCorrectionsLoaded = if (switchingBranch) false else current.memoryCorrectionsLoaded,
@@ -1788,7 +1816,10 @@ class ChatViewModel @Inject constructor(
         if (switchBranchOnSuccess && currentBranchId() == branchId &&
             messageWindowRevision.get() == windowRevision) {
             eventPanelRequestedBranchId = branchId
-            if (branchId != startingBranchId) correctionRefreshRevision.incrementAndGet()
+            if (branchId != startingBranchId) {
+                correctionRefreshRevision.incrementAndGet()
+                memorySummaryListRevision.incrementAndGet()
+            }
         }
     }
 
@@ -2630,7 +2661,7 @@ class ChatViewModel @Inject constructor(
                 try {
                     refreshMemorySummaryPage(branchId)
                 } catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { /* 摘要已保存，下一次正常消息刷新时重新读取。 */ }
+                catch (_: Exception) { /* 摘要已保存，已打开的列表保留重试入口。 */ }
             }
         }
 
@@ -4527,21 +4558,91 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun loadMemorySummariesIfNeeded() {
+        val current = _state.value
+        if (!current.isReady || current.memorySegmentsLoaded || current.memorySegmentsLoading) return
+        val branchId = current.currentBranchId
+        val revision = memorySummaryListRevision.incrementAndGet()
+        _state.update { state -> if (state.currentBranchId == branchId)
+            state.copy(memorySegmentsLoading = true, memorySegmentsLoadingMore = false,
+                memorySegmentsLoadError = null) else state }
+        viewModelScope.launch {
+            try {
+                val page = memorySegmentDao.getRecentForBranch(sessionId, branchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
+                _state.update { state -> if (state.currentBranchId == branchId &&
+                    memorySummaryListRevision.get() == revision) state.copy(
+                    memorySegments = page.take(MEMORY_SEGMENT_PAGE_SIZE),
+                    memorySegmentsLoaded = true,
+                    memorySegmentsHasMore = page.size > MEMORY_SEGMENT_PAGE_SIZE,
+                    memorySegmentsLoadError = null,
+                ) else state }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                _state.update { state -> if (state.currentBranchId == branchId &&
+                    memorySummaryListRevision.get() == revision)
+                    state.copy(memorySegmentsLoadError = "摘要读取失败，请重试") else state }
+            } finally {
+                _state.update { state -> if (state.currentBranchId == branchId &&
+                    memorySummaryListRevision.get() == revision)
+                    state.copy(memorySegmentsLoading = false) else state }
+            }
+        }
+    }
+
     private suspend fun refreshMemorySummaryPage(branchId: String) {
-        val page = memorySegmentDao.getRecentForBranch(sessionId, branchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
-        memorySummaryListRevision.incrementAndGet()
-        _state.update { state -> if (state.currentBranchId == branchId) state.copy(
-            memorySegments = page.take(MEMORY_SEGMENT_PAGE_SIZE),
-            memorySegmentsHasMore = page.size > MEMORY_SEGMENT_PAGE_SIZE,
-            memorySegmentsLoadingMore = false,
-            memorySegmentsLoadError = null,
-        ) else state }
+        val current = _state.value
+        if (current.currentBranchId != branchId ||
+            (!current.memorySegmentsLoaded && !current.memorySegmentsLoading &&
+                current.memorySegmentsLoadError == null)) return
+        val revision = memorySummaryListRevision.incrementAndGet()
+        _state.update { state -> if (state.currentBranchId == branchId)
+            state.copy(memorySegmentsLoading = true, memorySegmentsLoadingMore = false,
+                memorySegmentsLoadError = null) else state }
+        try {
+            val page = memorySegmentDao.getRecentForBranch(sessionId, branchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
+            _state.update { state -> if (state.currentBranchId == branchId &&
+                memorySummaryListRevision.get() == revision) state.copy(
+                memorySegments = page.take(MEMORY_SEGMENT_PAGE_SIZE),
+                memorySegmentsLoaded = true,
+                memorySegmentsLoading = false,
+                memorySegmentsHasMore = page.size > MEMORY_SEGMENT_PAGE_SIZE,
+                memorySegmentsLoadingMore = false,
+                memorySegmentsLoadError = null,
+            ) else state }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) {
+            _state.update { state -> if (state.currentBranchId == branchId &&
+                memorySummaryListRevision.get() == revision) state.copy(
+                memorySegmentsLoading = false,
+                memorySegmentsHasMore = false,
+                memorySegmentsLoadError = "摘要列表刷新失败，请重试",
+            ) else state }
+            throw failure
+        } finally {
+            _state.update { state -> if (state.currentBranchId == branchId &&
+                memorySummaryListRevision.get() == revision)
+                state.copy(memorySegmentsLoading = false) else state }
+        }
     }
 
     fun loadMoreMemorySummaries() {
         val current = _state.value
+        if (!current.memorySegmentsLoaded) {
+            loadMemorySummariesIfNeeded()
+            return
+        }
+        if (current.memorySegmentsLoadError != null && !current.memorySegmentsHasMore &&
+            !current.memorySegmentsLoading && !current.memorySegmentsLoadingMore) {
+            viewModelScope.launch {
+                try { refreshMemorySummaryPage(current.currentBranchId) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { /* The panel keeps its retryable read error. */ }
+            }
+            return
+        }
         if (!current.isReady || current.isGenerating || current.memoryOperationRunning ||
-            !current.memorySegmentsHasMore || current.memorySegmentsLoadingMore) return
+            !current.memorySegmentsHasMore || current.memorySegmentsLoading ||
+            current.memorySegmentsLoadingMore) return
         val branchId = current.currentBranchId
         val tail = current.memorySegments.lastOrNull() ?: return
         val revision = memorySummaryListRevision.get()
@@ -4558,8 +4659,12 @@ class ChatViewModel @Inject constructor(
                     )
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { _state.update { if (it.currentBranchId == branchId) it.copy(memorySegmentsLoadError = "较早摘要读取失败，请重试") else it } }
-            finally { _state.update { if (it.currentBranchId == branchId) it.copy(memorySegmentsLoadingMore = false) else it } }
+            catch (_: Exception) { _state.update { if (it.currentBranchId == branchId &&
+                memorySummaryListRevision.get() == revision)
+                it.copy(memorySegmentsLoadError = "较早摘要读取失败，请重试") else it } }
+            finally { _state.update { if (it.currentBranchId == branchId &&
+                memorySummaryListRevision.get() == revision)
+                it.copy(memorySegmentsLoadingMore = false) else it } }
         }
     }
 
@@ -4606,8 +4711,11 @@ class ChatViewModel @Inject constructor(
                     },
                 )
                 if (compacted) {
-                    refreshMemorySummaryPage(branchId)
-                    onDone("当前故事线摘要已更新")
+                    try {
+                        refreshMemorySummaryPage(branchId)
+                        onDone("当前故事线摘要已更新")
+                    } catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { onDone("摘要已保存，列表刷新失败，请重试读取") }
                 } else {
                     onDone("本轮整理尚未完成，可再次继续；原文不受影响")
                 }

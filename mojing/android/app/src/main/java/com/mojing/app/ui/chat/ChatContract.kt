@@ -121,6 +121,8 @@ object ChatContract {
         val manualCompactionRunning: Boolean = false,
         val manualCompactionChunk: Int? = null,
         val memorySegments: List<SessionMemorySegmentEntity> = emptyList(),
+        val memorySegmentsLoaded: Boolean = false,
+        val memorySegmentsLoading: Boolean = false,
         val memorySegmentsHasMore: Boolean = false,
         val memorySegmentsLoadingMore: Boolean = false,
         val memorySegmentsLoadError: String? = null,
