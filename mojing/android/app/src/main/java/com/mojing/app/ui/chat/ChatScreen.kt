@@ -1788,19 +1788,20 @@ private fun ReplyRecoveryCard(
 }
 
 /** 历史占位、仅标签无正文等：不在列表中占位，避免「仅含自动配图」单独一条气泡。 */
-private fun shouldShowCharacterBubbleLine(m: MessageEntity, attachments: List<MessageAttachmentEntity>): Boolean {
+internal fun shouldShowCharacterBubbleLine(m: MessageEntity, attachments: List<MessageAttachmentEntity>): Boolean {
     if (m.speakerType != "character") return true
     if (attachments.isNotEmpty()) return true
     val c = m.content.trim()
     if (c.isEmpty()) return false
     if (c == "（本条仅含自动配图/语音指令）") return false
+    // Most history is ordinary prose. Avoid normalizing and parsing every loaded line on the UI thread.
+    if ('<' !in c) return true
+    val isStructured = StructuredParser.isStructured(m.content)
+    if (!isStructured) return ChatMessageTextFormat.forBubbleDisplay(m.content).isNotBlank()
     val reply = StructuredParser.parse(m.content)
-    val structuredRenderable = StructuredParser.isStructured(m.content) &&
-        (reply.narrations.isNotEmpty() || reply.thoughts.isNotEmpty() ||
-            reply.speeches.isNotEmpty() || reply.choices.isNotEmpty())
-    if (structuredRenderable) return true
-    val raw = if (StructuredParser.isStructured(m.content)) StructuredParser.stripTags(m.content) else m.content
-    return ChatMessageTextFormat.forBubbleDisplay(raw).isNotBlank()
+    if (reply.narrations.isNotEmpty() || reply.thoughts.isNotEmpty() ||
+        reply.speeches.isNotEmpty() || reply.choices.isNotEmpty()) return true
+    return ChatMessageTextFormat.forBubbleDisplay(StructuredParser.stripTags(m.content)).isNotBlank()
 }
 
 /** 当前回合选项是输入动作，即使输入法仍打开也必须保持可见。 */
