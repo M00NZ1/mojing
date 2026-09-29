@@ -39,6 +39,11 @@ fun ChatDrawer(
     participants: List<SessionParticipantEntity>,
     world: SessionWorldEntity? = null,
     encyclopediaFoundation: String = "",
+    encyclopediaFoundationLoaded: Boolean = true,
+    encyclopediaFoundationLoading: Boolean = false,
+    encyclopediaFoundationLoadError: String? = null,
+    onOpenEncyclopediaFoundation: () -> Unit = {},
+    onRetryEncyclopediaFoundation: () -> Unit = {},
     contextMemoryText: String = "",
     contextMemoryLoaded: Boolean = true,
     contextMemoryLoading: Boolean = false,
@@ -145,7 +150,10 @@ fun ChatDrawer(
     }
     val tabs = listOf("角色", "世界", "记忆", "事件", "书签")
 
-    LaunchedEffect(selectedTab, drawerOpen, sessionReady, currentBranchId) {
+    LaunchedEffect(selectedTab, drawerOpen, sessionReady, currentBranchId,
+        world?.encyclopediaId, world?.worldPrompt,
+        encyclopediaFoundationLoaded) {
+        if (selectedTab == 1 && drawerOpen && sessionReady) onOpenEncyclopediaFoundation()
         if (selectedTab == 3 && drawerOpen && sessionReady) onOpenEvents()
         if (selectedTab == 4 && drawerOpen && sessionReady) onOpenBookmarks()
     }
@@ -198,6 +206,10 @@ fun ChatDrawer(
             1 -> WorldConfigTab(
                 world = world,
                 encyclopediaFoundation = encyclopediaFoundation,
+                foundationLoaded = encyclopediaFoundationLoaded,
+                foundationLoading = encyclopediaFoundationLoading,
+                foundationLoadError = encyclopediaFoundationLoadError,
+                onRetryFoundation = onRetryEncyclopediaFoundation,
                 onWorldSettingChanged = onWorldSettingChanged,
                 onSaveSessionWorldCredentials = onSaveSessionWorldCredentials,
                 onCredentialFieldsDirty = onWorldCredentialFieldsDirty,
@@ -464,6 +476,10 @@ fun ParticipantsTab(
 fun WorldConfigTab(
     world: SessionWorldEntity?,
     encyclopediaFoundation: String = "",
+    foundationLoaded: Boolean = true,
+    foundationLoading: Boolean = false,
+    foundationLoadError: String? = null,
+    onRetryFoundation: () -> Unit = {},
     onWorldSettingChanged: (String, Boolean) -> Unit,
     onSaveSessionWorldCredentials: (SessionWorldCredentialDraft) -> Unit,
     onCredentialFieldsDirty: (Boolean) -> Unit,
@@ -581,8 +597,23 @@ fun WorldConfigTab(
                 )
             }
         }
-        val sceneText = listOf(w.worldPrompt.trim(), encyclopediaFoundation.trim())
-            .filter(String::isNotBlank).distinct().joinToString("\n\n")
+        if (w.encyclopediaId != null && (!foundationLoaded || foundationLoadError != null)) {
+            if (foundationLoading) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text("正在读取百科基础设定…", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else if (foundationLoadError != null) {
+                Text(foundationLoadError, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = onRetryFoundation, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("重试读取")
+                }
+            }
+        }
+        val sceneText = remember(w.worldPrompt, encyclopediaFoundation) {
+            listOf(w.worldPrompt.trim(), encyclopediaFoundation.trim())
+                .filter(String::isNotBlank).distinct().joinToString("\n\n")
+        }
         if (sceneText.isNotBlank()) {
             var expanded by remember(w.encyclopediaId, w.templateId) { mutableStateOf(false) }
             Text("本场基础设定", style = MaterialTheme.typography.titleSmall)

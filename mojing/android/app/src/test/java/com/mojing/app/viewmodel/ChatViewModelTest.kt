@@ -35,6 +35,7 @@ import com.mojing.app.data.local.entity.SessionEntity
 import com.mojing.app.data.local.entity.SessionParticipantEntity
 import com.mojing.app.data.local.entity.SessionWorldCredentialDraft
 import com.mojing.app.data.local.entity.SessionWorldEntity
+import com.mojing.app.domain.engine.ContextBuilder
 import com.mojing.app.data.local.entity.SessionMemoryCorrectionEntity
 import com.mojing.app.data.prefs.UiPreferencesRepository
 import com.mojing.app.domain.engine.ChatEngine
@@ -190,6 +191,7 @@ class ChatViewModelTest {
         eventNodeDao: SessionEventNodeDao = mockk(relaxed = true),
         memorySegmentDao: com.mojing.app.data.local.dao.SessionMemorySegmentDao = mockk(relaxed = true),
         contextMemory: com.mojing.app.domain.engine.UniversalContextMemoryManager = mockk(relaxed = true),
+        contextBuilder: ContextBuilder = mockk(relaxed = true),
         participantDao: ParticipantDao = mockk(relaxed = true),
         chatDraftStore: ChatDraftStore = emptyDraftStore(),
         secureStorage: SecureStorage = mockk(relaxed = true) { every { sessionModelSelection(any()) } returns null },
@@ -217,7 +219,7 @@ class ChatViewModelTest {
         secureStorage = secureStorage,
         promptBuilder = mockk(relaxed = true),
         memoryCompactor = mockk(relaxed = true),
-        contextBuilder = mockk(relaxed = true),
+        contextBuilder = contextBuilder,
         tokenBudgetManager = mockk(relaxed = true),
         slidingWindowBuilder = mockk(relaxed = true),
         snapshotExtractor = mockk(relaxed = true),
@@ -678,6 +680,33 @@ class ChatViewModelTest {
         assertEquals(listOf(501L), vm.state.value.bookmarks.map { it.messageId })
         assertEquals(null, vm.state.value.bookmarksLoadError)
         assertTrue(vm.state.value.isReady)
+    }
+
+    @Test
+    fun encyclopediaFoundationLoadsOnlyWhenWorldTabOpensAndCanRetry() = runTest(testDispatcher) {
+        val world = SessionWorldEntity(sessionId = 42L, encyclopediaId = 7L, worldPrompt = "当前场景")
+        val worldDao = mockk<SessionWorldDao>(relaxed = true)
+        val builder = mockk<ContextBuilder>(relaxed = true)
+        coEvery { worldDao.getBySession(42L) } returns world
+        coEvery { builder.encyclopediaFoundation(world) } throws IllegalStateException("read failed")
+        val vm = createViewModel(sessionWorldDao = worldDao, contextBuilder = builder)
+        advanceUntilIdle()
+
+        assertTrue(vm.state.value.isReady)
+        assertFalse(vm.state.value.encyclopediaFoundationLoaded)
+        coVerify(exactly = 0) { builder.encyclopediaFoundation(any()) }
+        vm.loadEncyclopediaFoundationIfNeeded()
+        advanceUntilIdle()
+        assertEquals("百科基础设定读取失败，请重试", vm.state.value.encyclopediaFoundationLoadError)
+        assertFalse(vm.state.value.encyclopediaFoundationLoaded)
+
+        coEvery { builder.encyclopediaFoundation(world) } returns "百科正文"
+        vm.loadEncyclopediaFoundationIfNeeded(force = true)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.encyclopediaFoundationLoaded)
+        assertEquals("百科正文", vm.state.value.encyclopediaFoundation)
+        assertEquals(null, vm.state.value.encyclopediaFoundationLoadError)
+        coVerify(exactly = 2) { builder.encyclopediaFoundation(world) }
     }
 
     @Test

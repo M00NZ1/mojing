@@ -223,6 +223,7 @@ class ChatViewModel @Inject constructor(
     private val correctionRefreshRevision = java.util.concurrent.atomic.AtomicLong()
     private val memorySummaryListRevision = java.util.concurrent.atomic.AtomicLong()
     private val contextMemoryDisplayRevision = java.util.concurrent.atomic.AtomicLong()
+    private val encyclopediaFoundationRevision = java.util.concurrent.atomic.AtomicLong()
     private var manualCompactionJob: Job? = null
     val state: StateFlow<ChatContract.State> = _state.asStateFlow()
     private var roundPlatform: com.mojing.app.data.ModelPlatform? = null
@@ -805,6 +806,7 @@ class ChatViewModel @Inject constructor(
         correctionRefreshRevision.incrementAndGet()
         memorySummaryListRevision.incrementAndGet()
         contextMemoryDisplayRevision.incrementAndGet()
+        encyclopediaFoundationRevision.incrementAndGet()
         bookmarkInitialLoadJob?.cancel()
         bookmarkInitialLoadJob = null
         _state.update {
@@ -942,7 +944,10 @@ class ChatViewModel @Inject constructor(
             isLoadingHistory = false,
             messageAttachments = attMap,
             participants = participants, world = world,
-            encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world),
+            encyclopediaFoundation = "",
+            encyclopediaFoundationLoaded = world?.encyclopediaId == null,
+            encyclopediaFoundationLoading = false,
+            encyclopediaFoundationLoadError = null,
             contextMemoryText = "",
             contextMemoryLoaded = false,
             contextMemoryLoading = false,
@@ -1748,7 +1753,21 @@ class ChatViewModel @Inject constructor(
         } catch (_: Exception) {
             null
         } else null
-        val encyclopediaFoundation = contextBuilder.encyclopediaFoundation(world)
+        val refreshFoundation = world?.encyclopediaId != null && _state.value.encyclopediaFoundationLoaded
+        val foundationRevision = if (refreshFoundation) encyclopediaFoundationRevision.incrementAndGet()
+            else encyclopediaFoundationRevision.get()
+        if (refreshFoundation) {
+            _state.update { state -> if (state.world?.encyclopediaId == world?.encyclopediaId &&
+                state.world?.worldPrompt == world?.worldPrompt)
+                state.copy(encyclopediaFoundationLoading = false) else state }
+        }
+        val encyclopediaFoundation = if (refreshFoundation) try {
+            withContext(Dispatchers.Default) { contextBuilder.encyclopediaFoundation(world) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        } else null
         val roundChoices = if (hasNewerMessages) RoundChoiceSnapshot() else withContext(Dispatchers.Default) {
             buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
         }
@@ -1783,6 +1802,12 @@ class ChatViewModel @Inject constructor(
                     contextMemoryDisplayRevision.get() == contextRevision
                 val contextMemoryReadFailed = refreshContextMemory && contextMemoryText == null &&
                     contextMemoryDisplayRevision.get() == contextRevision
+                val foundationChanged = current.world?.encyclopediaId != world?.encyclopediaId ||
+                    current.world?.worldPrompt != world?.worldPrompt
+                val applyFoundation = encyclopediaFoundation != null &&
+                    encyclopediaFoundationRevision.get() == foundationRevision
+                val foundationReadFailed = refreshFoundation && encyclopediaFoundation == null &&
+                    encyclopediaFoundationRevision.get() == foundationRevision
                 val applyEventPage = eventPage != null && (switchingBranch ||
                     (eventRefreshRevision.get() == eventRevision && current.eventNodesWindowSize == eventWindowSize))
                 current.copy(
@@ -1805,7 +1830,16 @@ class ChatViewModel @Inject constructor(
                         else if (contextMemoryReadFailed) "长期记忆读取失败，请重试"
                         else current.contextMemoryLoadError,
                     contextMemoryStatus = if (current.currentBranchId == branchId) current.contextMemoryStatus else ContextMemoryStatus.IDLE,
-                    encyclopediaFoundation = encyclopediaFoundation,
+                    encyclopediaFoundation = if (world?.encyclopediaId == null) "" else if (applyFoundation)
+                        encyclopediaFoundation!! else if (foundationChanged) "" else current.encyclopediaFoundation,
+                    encyclopediaFoundationLoaded = if (world?.encyclopediaId == null) true
+                        else if (applyFoundation) true else if (foundationChanged) false
+                        else current.encyclopediaFoundationLoaded,
+                    encyclopediaFoundationLoading = if (foundationChanged || applyFoundation || foundationReadFailed) false
+                        else current.encyclopediaFoundationLoading,
+                    encyclopediaFoundationLoadError = if (world?.encyclopediaId == null || applyFoundation) null
+                        else if (foundationReadFailed) "百科基础设定读取失败，请重试"
+                        else if (foundationChanged) null else current.encyclopediaFoundationLoadError,
                     memorySegments = if (switchingBranch) emptyList() else if (applySummaryPage)
                         memoryPage!!.take(MEMORY_SEGMENT_PAGE_SIZE) else current.memorySegments,
                     memorySegmentsLoaded = if (switchingBranch) false else current.memorySegmentsLoaded,
@@ -4598,6 +4632,45 @@ class ChatViewModel @Inject constructor(
                     if (eventRefreshRevision.get() == revision && state.currentBranchId == branchId)
                         state.copy(eventNodesLoadingMore = false) else state
                 }
+            }
+        }
+    }
+
+    fun loadEncyclopediaFoundationIfNeeded(force: Boolean = false) {
+        val current = _state.value
+        if (!current.isReady || current.encyclopediaFoundationLoading ||
+            (current.encyclopediaFoundationLoaded && !force)) return
+        val world = current.world
+        val encyclopediaId = world?.encyclopediaId
+        if (world == null || encyclopediaId == null) {
+            _state.update { it.copy(encyclopediaFoundation = "",
+                encyclopediaFoundationLoaded = true, encyclopediaFoundationLoadError = null) }
+            return
+        }
+        val revision = encyclopediaFoundationRevision.incrementAndGet()
+        val worldPrompt = world.worldPrompt
+        _state.update { it.copy(encyclopediaFoundationLoading = true,
+            encyclopediaFoundationLoadError = null) }
+        viewModelScope.launch {
+            try {
+                val foundation = withContext(Dispatchers.Default) {
+                    contextBuilder.encyclopediaFoundation(world)
+                }
+                _state.update { state -> if (encyclopediaFoundationRevision.get() == revision &&
+                    state.world?.encyclopediaId == encyclopediaId && state.world?.worldPrompt == worldPrompt)
+                    state.copy(encyclopediaFoundation = foundation,
+                        encyclopediaFoundationLoaded = true, encyclopediaFoundationLoadError = null)
+                    else state }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                _state.update { state -> if (encyclopediaFoundationRevision.get() == revision &&
+                    state.world?.encyclopediaId == encyclopediaId && state.world?.worldPrompt == worldPrompt)
+                    state.copy(encyclopediaFoundationLoadError = "百科基础设定读取失败，请重试")
+                    else state }
+            } finally {
+                _state.update { state -> if (encyclopediaFoundationRevision.get() == revision &&
+                    state.world?.encyclopediaId == encyclopediaId && state.world?.worldPrompt == worldPrompt)
+                    state.copy(encyclopediaFoundationLoading = false) else state }
             }
         }
     }
