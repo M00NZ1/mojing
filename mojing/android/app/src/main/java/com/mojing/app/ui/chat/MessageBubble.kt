@@ -62,8 +62,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import com.mojing.app.data.local.entity.MessageAttachmentEntity
 import com.mojing.app.data.local.entity.MessageEntity
-import com.mojing.app.domain.engine.StructuredParser
-import com.mojing.app.domain.engine.StructuredReply
 import com.mojing.app.ui.common.avatarImageModel
 import com.mojing.app.ui.common.ImagePreviewDialog
 import com.mojing.app.domain.billing.CurrencyDisplayState
@@ -84,7 +82,6 @@ internal fun ReplyUsageCaption(json: String, sessionId: Long, fallbackText: Stri
     val recordedDuration = remember(json) { ReplyGenerationMetadata.durationLabel(json) }
     val savedUsage = remember(json) { ReplyGenerationMetadata.usage(json) }
     if (recordedDuration == null && savedUsage == null && fallbackText.isBlank()) return
-    val fallbackTokens = remember(fallbackText) { com.mojing.app.domain.engine.TokenCounter.estimateScaledPrefix(fallbackText) }
     val duration = recordedDuration ?: "时长未记录"
     val recordId = remember(json) { runCatching { savedUsage?.get("record_id")?.asLong }.getOrNull() }
     val lookup = LocalReplyUsageLookup.current
@@ -96,6 +93,9 @@ internal fun ReplyUsageCaption(json: String, sessionId: Long, fallbackText: Stri
     val usage = remember(savedUsage, liveRecord, sessionId) {
         mergeReplyUsage(savedUsage, liveRecord, sessionId)
     }
+    val fallbackTokens = if (usage == null) remember(fallbackText) {
+        com.mojing.app.domain.engine.TokenCounter.estimateScaledPrefix(fallbackText)
+    } else 0
     val currencyState = LocalBillingCurrencyState.current
     val caption = runCatching {
         if (usage == null) "$duration · 正文约 $fallbackTokens Token · 费用未记录" else {
@@ -111,6 +111,47 @@ internal fun ReplyUsageCaption(json: String, sessionId: Long, fallbackText: Stri
         .semantics { contentDescription = "本条回复生成用量" },
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
+}
+
+private sealed interface BubbleTextLoad {
+    data object Loading : BubbleTextLoad
+    data object Failed : BubbleTextLoad
+    data class Ready(val text: PreparedBubbleText) : BubbleTextLoad
+}
+
+@Composable
+private fun rememberBubbleText(raw: String, narrator: Boolean): Pair<BubbleTextLoad, () -> Unit> {
+    if (raw.length <= ChatMessageTextFormat.ASYNC_BODY_CHAR_THRESHOLD) {
+        return BubbleTextLoad.Ready(remember(raw, narrator) { prepareBubbleText(raw, narrator) }) to {}
+    }
+    val load = remember(raw, narrator) { mutableStateOf<BubbleTextLoad>(BubbleTextLoad.Loading) }
+    var attempt by remember(raw, narrator) { mutableIntStateOf(0) }
+    LaunchedEffect(raw, narrator, attempt) {
+        load.value = BubbleTextLoad.Loading
+        try {
+            load.value = BubbleTextLoad.Ready(withContext(Dispatchers.Default) {
+                prepareBubbleText(raw, narrator)
+            })
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            load.value = BubbleTextLoad.Failed
+        }
+    }
+    return load.value to { attempt++ }
+}
+
+@Composable
+private fun BubbleTextPreparationNotice(load: BubbleTextLoad, onRetry: () -> Unit) {
+    when (load) {
+        BubbleTextLoad.Loading -> Text(
+            "正在准备长消息…",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        BubbleTextLoad.Failed -> TextButton(onClick = onRetry) { Text("正文加载失败，重试") }
+        is BubbleTextLoad.Ready -> Unit
+    }
 }
 
 @Composable
@@ -799,19 +840,11 @@ fun CharacterMessageBubble(
                 if (attachments.isNotEmpty()) {
                     CharacterAttachmentChips(attachments, onImageClick)
                 }
-                val isStructured = remember(message.content) { StructuredParser.isStructured(message.content) }
-                val reply = remember(message.content, isStructured) {
-                    if (isStructured) StructuredParser.parse(message.content) else StructuredReply()
-                }
-                val structuredRenderable = isStructured &&
-                    (reply.narrations.isNotEmpty() || reply.thoughts.isNotEmpty() ||
-                        reply.speeches.isNotEmpty() || reply.choices.isNotEmpty())
-                val narrationBodies = remember(message.content) { reply.narrations.map(ChatMessageTextFormat::forBubbleDisplay) }
-                val thoughtBodies = remember(message.content) { reply.thoughts.map(ChatMessageTextFormat::forBubbleDisplay) }
-                val speechBodies = remember(message.content) { reply.speeches.map { ChatMessageTextFormat.forBubbleDisplay(it.text) } }
-                val choiceBodies = remember(message.content) { reply.choices.map(ChatMessageTextFormat::forBubbleDisplay) }
-                if (structuredRenderable) {
-                    narrationBodies.forEach { body ->
+                val (textLoad, retryText) = rememberBubbleText(message.content, narrator = false)
+                if (textLoad is BubbleTextLoad.Ready) {
+                val prepared = textLoad.text
+                if (prepared.structuredRenderable) {
+                    prepared.narrations.forEach { body ->
                         if (body.isBlank()) return@forEach
                         Surface(
                             shape = RoundedCornerShape(d.bubbleCornerOuter),
@@ -827,7 +860,7 @@ fun CharacterMessageBubble(
                         }
                         Spacer(modifier = Modifier.size(4.dp))
                     }
-                    thoughtBodies.forEach { body ->
+                    prepared.thoughts.forEach { body ->
                         if (body.isBlank()) return@forEach
                         SearchableMessageText(
                     text = "💭 $body",
@@ -836,7 +869,7 @@ fun CharacterMessageBubble(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    speechBodies.forEach { body ->
+                    prepared.speeches.forEach { body ->
                         if (body.isBlank()) return@forEach
                         Row(modifier = Modifier.padding(top = 4.dp)) {
                             Surface(
@@ -853,7 +886,7 @@ fun CharacterMessageBubble(
                             }
                         }
                     }
-                    val plainBody = remember(message.content) { ChatMessageTextFormat.forBubbleDisplay(reply.plainText) }
+                    val plainBody = prepared.plainBody
                     if (plainBody.isNotBlank()) {
                         Row(modifier = Modifier.padding(top = 4.dp)) {
                             Surface(
@@ -875,7 +908,7 @@ fun CharacterMessageBubble(
                             }
                         }
                     }
-                    if (showHistoricalChoices) choiceBodies.forEach { body ->
+                    if (showHistoricalChoices) prepared.choices.forEach { body ->
                         if (body.isBlank()) return@forEach
                         Surface(
                             shape = RoundedCornerShape(d.bubbleCornerOuter),
@@ -893,12 +926,7 @@ fun CharacterMessageBubble(
                         }
                     }
                 } else {
-                    val plain = remember(message.content) {
-                        ChatMessageTextFormat.forBubbleDisplay(
-                            if (isStructured)
-                                StructuredParser.stripTags(message.content) else message.content,
-                        )
-                    }
+                    val plain = prepared.fallbackBody
                     if (plain.isNotBlank()) {
                         Row {
                             Surface(
@@ -915,6 +943,9 @@ fun CharacterMessageBubble(
                             }
                         }
                     }
+                }
+                } else {
+                    BubbleTextPreparationNotice(textLoad, retryText)
                 }
             }
             menu()
@@ -949,16 +980,7 @@ fun NarratorMessageBubble(
     modifier: Modifier = Modifier,
 ) {
     val d = LocalChatDensityMetrics.current
-    val isStructured = remember(message.content) { StructuredParser.isStructured(message.content) }
-    val reply = remember(message.content, isStructured) {
-        if (isStructured) StructuredParser.parse(message.content) else StructuredReply()
-    }
-    val body = remember(message.content, isStructured) {
-        ChatMessageTextFormat.forBubbleDisplay(
-            if (isStructured) StructuredParser.stripTags(message.content) else message.content,
-        )
-    }
-    val choices = remember(message.content) { reply.choices.map(ChatMessageTextFormat::forBubbleDisplay) }
+    val (textLoad, retryText) = rememberBubbleText(message.content, narrator = true)
     Surface(
         shape = RoundedCornerShape(d.bubbleCornerOuter),
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -967,6 +989,11 @@ fun NarratorMessageBubble(
             .padding(horizontal = d.narratorHorizontal, vertical = d.narratorVertical)
     ) {
         Column(modifier = Modifier.padding(d.narratorInnerPadding)) {
+            if (textLoad !is BubbleTextLoad.Ready) {
+                BubbleTextPreparationNotice(textLoad, retryText)
+                return@Column
+            }
+            val body = textLoad.text.fallbackBody
             if (body.isNotBlank()) {
                 SearchableMessageText(
                     text = "🎭 $body",
@@ -974,7 +1001,7 @@ fun NarratorMessageBubble(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
                 )
             }
-            if (showHistoricalChoices) choices.forEach { label ->
+            if (showHistoricalChoices) textLoad.text.choices.forEach { label ->
                 if (label.isBlank()) return@forEach
                 Surface(
                     shape = RoundedCornerShape(d.bubbleCornerOuter),
