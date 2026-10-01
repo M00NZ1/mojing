@@ -1,5 +1,21 @@
 package com.mojing.app.ui.chat
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.automirrored.outlined.VolumeUp
+import androidx.compose.material.icons.automirrored.outlined.CallSplit
+import androidx.compose.material.icons.automirrored.outlined.Reply
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.AddCircleOutline
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Bookmark
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.RemoveCircleOutline
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.TextFields
 import android.media.MediaPlayer
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -21,10 +37,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.CallSplit
-import androidx.compose.material.icons.automirrored.filled.Reply
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -34,7 +46,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -182,13 +193,13 @@ internal fun MessageActionPanelContent(
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        MessageQuickAction("复制", Icons.Default.ContentCopy, Modifier.weight(1f)) {
+        MessageQuickAction("复制", Icons.Outlined.ContentCopy, Modifier.weight(1f)) {
             onDismiss(); onAction(MessageAction.Copy(message))
         }
-        MessageQuickAction("引用回复", Icons.AutoMirrored.Filled.Reply, Modifier.weight(1f)) {
+        MessageQuickAction("引用回复", Icons.AutoMirrored.Outlined.Reply, Modifier.weight(1f)) {
             onAction(MessageAction.Quote(message)); onDismiss()
         }
-        MessageQuickAction("编辑", Icons.Default.Edit, Modifier.weight(1f), enabled = !isGenerating) {
+        MessageQuickAction("编辑", Icons.Outlined.Edit, Modifier.weight(1f), enabled = !isGenerating) {
             onDismiss(); onAction(MessageAction.Edit(message))
         }
     }
@@ -196,7 +207,7 @@ internal fun MessageActionPanelContent(
         MessageActionRow(modifier = Modifier.fillMaxWidth(), text = { Text("选择文字") },
             supportingText = "打开正文，自由选择并复制段落",
             onClick = { onDismiss(); onSelectText() },
-            leadingIcon = { Icon(Icons.Default.TextFields, null) })
+            leadingIcon = { Icon(Icons.Outlined.TextFields, null) })
     }
     HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
     if (imageAttachmentCount > 0) {
@@ -213,7 +224,7 @@ internal fun MessageActionPanelContent(
             },
             enabled = !isSavingImages,
             onClick = { onAction(MessageAction.SaveImages(message)); onDismiss() },
-            leadingIcon = { Icon(Icons.Default.Download, null) },
+            leadingIcon = { Icon(Icons.Outlined.Download, null) },
         )
     }
     MessageActionRow(
@@ -222,7 +233,7 @@ internal fun MessageActionPanelContent(
         onClick = { onAction(MessageAction.ToggleBookmark(message)); onDismiss() },
         leadingIcon = {
             Icon(
-                if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                if (isBookmarked) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
                 null,
             )
         },
@@ -237,13 +248,13 @@ internal fun MessageActionPanelContent(
         },
         enabled = !isGenerating && canToggleContext,
         onClick = { onAction(MessageAction.SetContextExcluded(message, !isContextExcluded)); onDismiss() },
-        leadingIcon = { Icon(if (isContextExcluded) Icons.Default.AddCircleOutline else Icons.Default.RemoveCircleOutline, null) },
+        leadingIcon = { Icon(if (isContextExcluded) Icons.Outlined.AddCircleOutline else Icons.Outlined.RemoveCircleOutline, null) },
     )
     MessageActionRow(
         modifier = Modifier.fillMaxWidth(),
         text = { Text("朗读本句") },
         onClick = { onAction(MessageAction.Speak(message)); onDismiss() },
-        leadingIcon = { Icon(Icons.AutoMirrored.Filled.VolumeUp, null) },
+        leadingIcon = { Icon(Icons.AutoMirrored.Outlined.VolumeUp, null) },
     )
     HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
     if (canRegenerate) {
@@ -253,7 +264,7 @@ internal fun MessageActionPanelContent(
             supportingText = "为这条回复生成另一个版本",
             enabled = !isGenerating,
             onClick = { onDismiss(); onAction(MessageAction.Regenerate(message)) },
-            leadingIcon = { Icon(Icons.Default.Refresh, null) },
+            leadingIcon = { Icon(Icons.Outlined.Refresh, null) },
         )
     }
     if (canContinueReply) {
@@ -263,7 +274,7 @@ internal fun MessageActionPanelContent(
             supportingText = "接着当前回复继续写",
             enabled = !isGenerating,
             onClick = { onAction(MessageAction.ContinueReply(message)); onDismiss() },
-            leadingIcon = { Icon(Icons.Default.PlayArrow, null) },
+            leadingIcon = { Icon(Icons.Outlined.PlayArrow, null) },
         )
     }
     MessageActionRow(
@@ -272,7 +283,7 @@ internal fun MessageActionPanelContent(
         supportingText = "从这里展开另一条故事线",
         enabled = !isGenerating,
         onClick = { onAction(MessageAction.CreateBranch(message)); onDismiss() },
-        leadingIcon = { Icon(Icons.AutoMirrored.Filled.CallSplit, null) },
+        leadingIcon = { Icon(Icons.AutoMirrored.Outlined.CallSplit, null) },
     )
     HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
     MessageActionRow(
@@ -280,7 +291,7 @@ internal fun MessageActionPanelContent(
         text = { Text("撤回", color = MaterialTheme.colorScheme.error) },
         enabled = !isGenerating,
         onClick = { onAction(MessageAction.Recall(message)); onDismiss() },
-        leadingIcon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
+        leadingIcon = { Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error) },
     )
 }
 
@@ -296,7 +307,7 @@ private fun MessageActionRow(
     Surface(
         onClick = onClick, enabled = enabled,
         modifier = modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-        shape = RoundedCornerShape(14.dp), color = Color.Transparent,
+        shape = MaterialTheme.shapes.small, color = Color.Transparent,
     ) {
         Row(Modifier.heightIn(min = 52.dp).padding(horizontal = 12.dp, vertical = 10.dp)
             .alpha(if (enabled) 1f else 0.38f),
@@ -399,6 +410,7 @@ fun MessageBubble(
             ChatTextSelectionDialog(fullText, onDismiss = closeSelection)
         } else {
             AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
                 onDismissRequest = closeSelection,
                 title = { Text(if (selectionError) "正文准备失败" else "正在准备正文") },
                 text = { Text(if (selectionError) "请重试，消息原文仍保留。" else "长消息正在准备，请稍候") },
@@ -422,7 +434,8 @@ fun MessageBubble(
                 attachment.mimeType.startsWith("image/", ignoreCase = true))
     }
     if (showMenu) {
-        ModalBottomSheet(onDismissRequest = dismissMenu, dragHandle = null,
+        ModalBottomSheet(
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),onDismissRequest = dismissMenu, dragHandle = null,
             containerColor = MaterialTheme.colorScheme.surface,
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
             Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(bottom = 16.dp)) {
@@ -432,7 +445,7 @@ fun MessageBubble(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text("消息操作", style = MaterialTheme.typography.titleMedium)
-                    IconButton(onClick = dismissMenu) { Icon(Icons.Default.Close, "关闭消息操作") }
+                    IconButton(onClick = dismissMenu) { Icon(Icons.Outlined.Close, "关闭消息操作") }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
@@ -559,7 +572,7 @@ fun UserMessageBubble(
     }
     val d = LocalChatDensityMetrics.current
     val labelColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
-    val timeColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+    val timeColor = MaterialTheme.colorScheme.onSurfaceVariant
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -588,7 +601,7 @@ fun UserMessageBubble(
                             Text(
                                 timeText,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = timeColor.copy(alpha = 0.45f),
+                                color = timeColor,
                             )
                             Spacer(Modifier.height(2.dp))
                         }
@@ -623,7 +636,7 @@ fun UserMessageBubble(
                                 val (textLoad, retryText) = rememberBubbleText(message.content, speakerType = "user")
                                 if (textLoad is BubbleTextLoad.Ready) {
                                     textLoad.text.quote?.let { source ->
-                                        Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest,
                                             shape = RoundedCornerShape(8.dp)) {
                                             SearchableMessageText("引用 · $source", modifier = Modifier.padding(10.dp),
                                                 color = MaterialTheme.colorScheme.onSurface,
@@ -724,7 +737,7 @@ private fun CharacterAttachmentChips(
                             }
                         }
                     }) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = "播放语音")
+                        Icon(Icons.Outlined.PlayArrow, contentDescription = "播放语音")
                     }
                     Text("语音片段", style = MaterialTheme.typography.labelMedium)
                 }
@@ -754,7 +767,7 @@ fun CharacterMessageBubble(
     val context = LocalContext.current
     val d = LocalChatDensityMetrics.current
     val labelColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
-    val timeColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+    val timeColor = MaterialTheme.colorScheme.onSurfaceVariant
     val avatarFallback = senderLabel.trim().firstOrNull()?.toString() ?: "角"
     var showCardPreview by remember { mutableStateOf(false) }
     Row(
@@ -838,7 +851,7 @@ fun CharacterMessageBubble(
                         Text(
                             timeText,
                             style = MaterialTheme.typography.labelSmall,
-                            color = timeColor.copy(alpha = 0.45f),
+                            color = timeColor,
                         )
                         Spacer(Modifier.height(2.dp))
                     }
@@ -858,7 +871,7 @@ fun CharacterMessageBubble(
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             SearchableMessageText(
-                    text = "🎭 $body",
+                    text = body,
                                 modifier = Modifier.padding(d.bubbleInnerPadding),
                                 style = d.narrationTextStyle(),
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
@@ -869,7 +882,7 @@ fun CharacterMessageBubble(
                     prepared.thoughts.forEach { body ->
                         if (body.isBlank()) return@forEach
                         SearchableMessageText(
-                    text = "💭 $body",
+                    text = "内心 · $body",
                             modifier = Modifier.padding(horizontal = d.bubbleInnerPadding, vertical = 2.dp),
                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = (d.bodyFontSp - 1f).coerceAtLeast(12f).sp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -880,7 +893,7 @@ fun CharacterMessageBubble(
                         Row(modifier = Modifier.padding(top = 4.dp)) {
                             Surface(
                                 shape = RoundedCornerShape(d.bubbleCornerInner, d.bubbleCornerOuter, d.bubbleCornerOuter, d.bubbleCornerOuter),
-                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                color = MaterialTheme.colorScheme.surfaceContainerLowest,
                                 modifier = Modifier.widthIn(max = d.bubbleMaxWidth),
                             ) {
                                 SearchableMessageText(
@@ -902,7 +915,7 @@ fun CharacterMessageBubble(
                                     d.bubbleCornerOuter,
                                     d.bubbleCornerOuter,
                                 ),
-                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                color = MaterialTheme.colorScheme.surfaceContainerLowest,
                                 modifier = Modifier.widthIn(max = d.bubbleMaxWidth),
                             ) {
                                 SearchableMessageText(
@@ -918,7 +931,7 @@ fun CharacterMessageBubble(
                         if (body.isBlank()) return@forEach
                         Surface(
                             shape = RoundedCornerShape(d.bubbleCornerOuter),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            color = MaterialTheme.colorScheme.primaryContainer,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(top = 6.dp),
@@ -937,7 +950,7 @@ fun CharacterMessageBubble(
                         Row {
                             Surface(
                                 shape = RoundedCornerShape(d.bubbleCornerInner, d.bubbleCornerOuter, d.bubbleCornerOuter, d.bubbleCornerOuter),
-                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                color = MaterialTheme.colorScheme.surfaceContainerLowest,
                                 modifier = Modifier.widthIn(max = d.bubbleMaxWidth),
                             ) {
                                 SearchableMessageText(
@@ -959,6 +972,7 @@ fun CharacterMessageBubble(
     }
     if (showCardPreview && cardImagePath.isNotBlank()) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { showCardPreview = false },
             title = { Text("竖版封面") },
             text = {
@@ -1002,7 +1016,7 @@ fun NarratorMessageBubble(
             val body = textLoad.text.fallbackBody
             if (body.isNotBlank()) {
                 SearchableMessageText(
-                    text = "🎭 $body",
+                    text = body,
                     style = d.narrationTextStyle(),
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
                 )
@@ -1011,7 +1025,7 @@ fun NarratorMessageBubble(
                 if (label.isBlank()) return@forEach
                 Surface(
                     shape = RoundedCornerShape(d.bubbleCornerOuter),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    color = MaterialTheme.colorScheme.primaryContainer,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 6.dp),

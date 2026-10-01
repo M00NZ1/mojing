@@ -1,5 +1,6 @@
 package com.mojing.app.ui.settings
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.*
@@ -105,6 +106,7 @@ internal fun AppUpdateTab(viewModel: AppUpdateViewModel = hiltViewModel()) {
     val apk = release?.apk
     if (state.showPrompt && release != null && apk != null) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = viewModel::dismissPrompt,
             title = { Text("更新至 v${release.version}", style = MaterialTheme.typography.titleLarge) },
             text = {

@@ -44,6 +44,7 @@ fun EmojiPickerBottomSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     if (!visible) return
     ModalBottomSheet(
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),
         onDismissRequest = onDismiss,
         sheetState = sheetState,
     ) {

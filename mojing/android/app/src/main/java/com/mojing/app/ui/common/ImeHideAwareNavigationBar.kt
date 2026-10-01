@@ -48,8 +48,8 @@ fun ImeHideAwareNavigationBar(
             animationSpec = tween(180),
             expandFrom = Alignment.Bottom
         ),
-        exit = fadeOut(animationSpec = tween(140)) + shrinkVertically(
-            animationSpec = tween(140),
+        exit = fadeOut(animationSpec = tween(180)) + shrinkVertically(
+            animationSpec = tween(180),
             shrinkTowards = Alignment.Bottom
         )
     ) {

@@ -3,7 +3,7 @@
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
     <!-- 与 Compose 墨境开屏顶层色一致，系统 Splash 与品牌层无缝衔接 -->
-    <color name="brand_splash_bg">#050507</color>
+    <color name="brand_splash_bg">#141B22</color>
     <color name="brand_teal">#2DD4BF</color>
     <color name="brand_teal_light">#99F6E4</color>
     <color name="brand_ice">#F8FAFC</color>

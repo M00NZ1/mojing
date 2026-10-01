@@ -1,5 +1,21 @@
 package com.mojing.app.ui.encyclopedia
 
+import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import com.mojing.app.ui.common.MoJingFilterChip as FilterChip
+import androidx.compose.material.icons.automirrored.outlined.Article
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Upload
+import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.CloudSync
+import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.Checkbox
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -30,8 +46,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.filled.CloudSync
-import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Surface
@@ -49,34 +63,18 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Article
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.AttachFile
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -226,6 +224,7 @@ fun EncyclopediaDetailScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
+                        expandedHeight = 52.dp,
                 title = {
                     Text(
                         text = state.encyclopedia?.name ?: "百科详情",
@@ -234,7 +233,7 @@ fun EncyclopediaDetailScreen(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回") }
                 },
                 actions = {
                     val genBadge = state.activeGenTasks.size
@@ -254,7 +253,7 @@ fun EncyclopediaDetailScreen(
                             },
                         ) {
                             Icon(
-                                Icons.Filled.CloudSync,
+                                Icons.Outlined.CloudSync,
                                 contentDescription = "查看 AI 生成任务",
                             )
                         }
@@ -273,7 +272,7 @@ fun EncyclopediaDetailScreen(
                             if (state.worldInfoImportBusy || isReadingWorldInfoDocument) {
                                 CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                             } else {
-                                Icon(Icons.Default.MoreVert, contentDescription = "更多")
+                                Icon(Icons.Outlined.MoreVert, contentDescription = "更多")
                             }
                         }
                         DropdownMenu(
@@ -283,7 +282,7 @@ fun EncyclopediaDetailScreen(
                             if (!state.hasPublicLlmKey) {
                                 DropdownMenuItem(
                                     text = { Text("配置 AI 线路") },
-                                    leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                                    leadingIcon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
                                     onClick = {
                                         showEncyclopediaMenu = false
                                         onOpenSettings()
@@ -305,7 +304,7 @@ fun EncyclopediaDetailScreen(
                                         )
                                     }
                                 },
-                                leadingIcon = { Icon(Icons.AutoMirrored.Filled.Article, contentDescription = null) },
+                                leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Article, contentDescription = null) },
                                 enabled = !state.isEncyclopediaMetaFillQueued && state.mainTab == EncyclopediaMainTab.ENTRIES,
                                 onClick = {
                                     showEncyclopediaMenu = false
@@ -325,7 +324,7 @@ fun EncyclopediaDetailScreen(
                                         else "从文件导入设定（WorldInfo / 文本）",
                                     )
                                 },
-                                leadingIcon = { Icon(Icons.Default.AttachFile, contentDescription = null) },
+                                leadingIcon = { Icon(Icons.Outlined.AttachFile, contentDescription = null) },
                                 enabled = !state.worldInfoImportBusy && !isReadingWorldInfoDocument,
                                 onClick = {
                                     showEncyclopediaMenu = false
@@ -334,7 +333,7 @@ fun EncyclopediaDetailScreen(
                             )
                             DropdownMenuItem(
                                 text = { Text("粘贴导入设定") },
-                                leadingIcon = { Icon(Icons.Default.Upload, contentDescription = null) },
+                                leadingIcon = { Icon(Icons.Outlined.Upload, contentDescription = null) },
                                 onClick = {
                                     showEncyclopediaMenu = false
                                     showWorldInfoDialog = true
@@ -349,7 +348,7 @@ fun EncyclopediaDetailScreen(
                             )
                             DropdownMenuItem(
                                 text = { Text("批量新建条目") },
-                                leadingIcon = { Icon(Icons.Default.AutoAwesome, contentDescription = null) },
+                                leadingIcon = { Icon(Icons.Outlined.AutoAwesome, contentDescription = null) },
                                 onClick = {
                                     showEncyclopediaMenu = false
                                     showBatchDialog = true
@@ -373,9 +372,9 @@ fun EncyclopediaDetailScreen(
                         viewModel.clearRelationError()
                         showRelDialog = true
                     }
-                }) { Icon(Icons.Default.Link, "添加关系") }
+                }) { Icon(Icons.Outlined.Link, "添加关系") }
                 EncyclopediaMainTab.ENTRIES -> FloatingActionButton(onClick = { viewModel.clearCreateEntryError(); showCreateDialog = true }) {
-                    Icon(Icons.Default.Add, "新建条目")
+                    Icon(Icons.Outlined.Add, "新建条目")
                 }
                 EncyclopediaMainTab.TIMELINE,
                 EncyclopediaMainTab.SEDIMENT -> Unit
@@ -384,7 +383,7 @@ fun EncyclopediaDetailScreen(
     ) { padding ->
         if (state.loadError != null) {
             EmptyState(
-                icon = Icons.Default.ErrorOutline,
+                icon = Icons.Outlined.ErrorOutline,
                 title = "无法打开百科",
                 message = state.loadError.orEmpty(),
                 actionLabel = "重新加载",
@@ -403,32 +402,15 @@ fun EncyclopediaDetailScreen(
             }
         } else {
         Column(modifier = Modifier.padding(padding)) {
-            ScrollableTabRow(
-                selectedTabIndex = state.mainTab.ordinal,
-                edgePadding = 12.dp,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Tab(
-                    selected = state.mainTab == EncyclopediaMainTab.ENTRIES,
-                    onClick = { viewModel.setMainTab(EncyclopediaMainTab.ENTRIES) },
-                    text = { Text("条目") }
-                )
-                Tab(
-                    selected = state.mainTab == EncyclopediaMainTab.TIMELINE,
-                    onClick = { viewModel.setMainTab(EncyclopediaMainTab.TIMELINE) },
-                    text = { Text("时间线") }
-                )
-                Tab(
-                    selected = state.mainTab == EncyclopediaMainTab.GRAPH,
-                    onClick = { viewModel.setMainTab(EncyclopediaMainTab.GRAPH) },
-                    text = { Text("关系图") }
-                )
-                Tab(
-                    selected = state.mainTab == EncyclopediaMainTab.SEDIMENT,
-                    onClick = { viewModel.setMainTab(EncyclopediaMainTab.SEDIMENT) },
-                    text = { Text("沉积") }
-                )
-            }
+            com.mojing.app.ui.common.MoJingSectionTabs(
+                labels = listOf("条目", "时间线", "关系图", "沉积"),
+                selectedIndex = state.mainTab.ordinal,
+                onSelect = { index ->
+                    viewModel.setMainTab(listOf(EncyclopediaMainTab.ENTRIES,
+                        EncyclopediaMainTab.TIMELINE, EncyclopediaMainTab.GRAPH,
+                        EncyclopediaMainTab.SEDIMENT)[index])
+                },
+            )
 
             if (state.mainTab == EncyclopediaMainTab.ENTRIES) {
                 LazyRow(
@@ -455,7 +437,7 @@ fun EncyclopediaDetailScreen(
                         Spacer(Modifier.weight(1f))
                     } else if (state.entries.isEmpty()) {
                         EmptyState(
-                            icon = Icons.AutoMirrored.Filled.Article,
+                            icon = Icons.AutoMirrored.Outlined.Article,
                             title = if (state.entryCursors.size > 1) "本页暂无条目" else if (state.selectedType.isBlank()) "还没有百科条目" else "当前分类没有条目",
                             message = if (state.entryCursors.size > 1) {
                                 "可返回上一页继续浏览。"
@@ -471,12 +453,12 @@ fun EncyclopediaDetailScreen(
                     } else {
                         key(state.selectedType, state.entryCursors) {
                             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                                val wide = maxWidth >= 720.dp
+                                val wide = maxWidth > 840.dp
                                 if (wide) {
                                     Row(Modifier.fillMaxSize()) {
                                         LazyColumn(
                                             modifier = Modifier
-                                                .weight(0.42f)
+                                                .width(300.dp)
                                                 .fillMaxHeight()
                                         ) {
                                             items(state.entries, key = { it.id }) { entry ->
@@ -538,7 +520,7 @@ fun EncyclopediaDetailScreen(
                                         }
                                     }
                                 } else {
-                                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                                    LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                         items(state.entries, key = { it.id }) { entry ->
                                             EncyclopediaSwipeableEntryRow(
                                                 entry = entry,
@@ -617,7 +599,7 @@ fun EncyclopediaDetailScreen(
                                     enabled = state.timelineHasNext && !state.timelineLoading) { Text("下一页") }
                             }
                         }
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             items(
                                 state.timelineEvents.sortedWith(
                                     compareByDescending<TimelineEventEntity> { it.id in pinnedTimelineIds }
@@ -666,7 +648,7 @@ fun EncyclopediaDetailScreen(
                                                     Text(ev.title, style = MaterialTheme.typography.titleSmall)
                                                     if (ev.id in pinnedTimelineIds) {
                                                         Icon(
-                                                            Icons.Default.Star,
+                                                            Icons.Outlined.Star,
                                                             contentDescription = "本页置顶",
                                                             tint = MaterialTheme.colorScheme.primary,
                                                             modifier = Modifier.padding(start = 6.dp).size(16.dp),
@@ -694,7 +676,7 @@ fun EncyclopediaDetailScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         if (state.relationsLoading && !state.relationsLoaded) item {
                             LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -708,7 +690,7 @@ fun EncyclopediaDetailScreen(
                         } }
                         if (state.relationsLoaded && nodes.isEmpty() && state.relationsLoadError == null) item {
                             EmptyState(
-                                icon = Icons.Default.Link,
+                                icon = Icons.Outlined.Link,
                                 title = "还没有条目关系",
                                 message = if (state.entryCount < 2) {
                                     "至少创建两个条目后，才能建立角色、地点或事件之间的关系。"
@@ -757,7 +739,7 @@ fun EncyclopediaDetailScreen(
                                         viewModel.clearRelationDeleteError()
                                         relationDeleteTarget = r
                                     }, enabled = state.relationDeletingId == null) {
-                                        Icon(Icons.Default.Close, "删除关系", tint = MaterialTheme.colorScheme.error)
+                                        Icon(Icons.Outlined.Close, "删除关系", tint = MaterialTheme.colorScheme.error)
                                     }
                                 }
                             }
@@ -852,7 +834,7 @@ fun EncyclopediaDetailScreen(
                                     modifier = Modifier
                                         .weight(1f)
                                         .fillMaxWidth(),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
                                     items(filteredSediment, key = { it.id }) { entry ->
                                         SwipeRevealListRow(
@@ -942,6 +924,7 @@ fun EncyclopediaDetailScreen(
     if (state.worldInfoReviewText != null) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),
             onDismissRequest = { viewModel.dismissWorldInfoReview() },
             sheetState = sheetState,
         ) {
@@ -976,7 +959,7 @@ fun EncyclopediaDetailScreen(
                         .fillMaxWidth()
                         .padding(top = 12.dp, bottom = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     TextButton(
                         onClick = { viewModel.dismissWorldInfoReview() },
@@ -997,10 +980,11 @@ fun EncyclopediaDetailScreen(
 
     if (showWorldInfoDialog) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { showWorldInfoDialog = false },
             title = { Text("粘贴导入设定") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedButton(
                         onClick = {
                             worldInfoOpenDocLauncher.launch(WorldInfoImportMimeTypes)
@@ -1033,6 +1017,7 @@ fun EncyclopediaDetailScreen(
     if (showRelDialog) {
         val endpointsReady = relFrom != null && relTo != null && relFrom?.id != relTo?.id
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { if (!state.relationSaving) showRelDialog = false },
             title = { Text("添加条目关系") },
             text = {
@@ -1100,6 +1085,7 @@ fun EncyclopediaDetailScreen(
 
     if (showBatchMetaConfirm) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { showBatchMetaConfirm = false },
             title = { Text("批量补全扩展字段（文本）") },
             text = {
@@ -1120,10 +1106,11 @@ fun EncyclopediaDetailScreen(
 
     timelineDeleteTarget?.let { event ->
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { if (state.timelineDeletingId != event.id) timelineDeleteTarget = null },
             title = { Text("确认删除时间线事件") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("确定删除「${event.title.ifBlank { "未命名事件" }}」吗？删除后将无法恢复。")
                     state.timelineDeleteError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 }
@@ -1150,10 +1137,11 @@ fun EncyclopediaDetailScreen(
     relationDeleteTarget?.let { relation ->
         val deleting = state.relationDeletingId == relation.id
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { if (!deleting) relationDeleteTarget = null },
             title = { Text("确认删除关系") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("确定删除「${state.entryTitles[relation.fromEntryId] ?: "资料不可用"} —[${relation.relationType}]→ ${state.entryTitles[relation.toEntryId] ?: "资料不可用"}」吗？")
                     state.relationDeleteError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 }
@@ -1178,12 +1166,13 @@ fun EncyclopediaDetailScreen(
 
     timelineDetailTarget?.let { event ->
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { timelineDetailTarget = null },
             title = { Text(event.title.ifBlank { "时间线事件" }) },
             text = {
                 Column(
                     modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Text("时间：${event.eventTime.ifBlank { "未标注" }}")
                     Text("排序：${event.sortOrder}")
@@ -1213,6 +1202,7 @@ fun EncyclopediaDetailScreen(
 
     deleteEntryTarget?.let { entry ->
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { deleteEntryTarget = null },
             title = { Text("确认删除条目") },
             text = {
@@ -1240,6 +1230,7 @@ fun EncyclopediaDetailScreen(
 
     state.renameDraft?.let { draft ->
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = viewModel::dismissRename,
             title = { Text("重命名百科") },
             text = {
@@ -1268,6 +1259,7 @@ fun EncyclopediaDetailScreen(
 
     if (showCreateDialog) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { if (!state.entryCreating) showCreateDialog = false },
             title = { Text("新建条目") },
             text = {
@@ -1339,24 +1331,24 @@ private fun EncyclopediaSwipeableEntryRow(
                                 entry.title,
                                 modifier = Modifier.weight(1f),
                                 style = MaterialTheme.typography.titleMedium,
-                                maxLines = 2,
+                                maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
                             if (entry.isFeatured) {
                                 Icon(
-                                    Icons.Default.Star,
+                                    Icons.Outlined.Star,
                                     contentDescription = "精选",
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(16.dp),
                                 )
                             }
                         }
-                        Text(entry.entryType, style = MaterialTheme.typography.labelSmall,
+                        Text(ENTRY_TYPES.firstOrNull { it.second == entry.entryType }?.first?.takeIf { it.isNotBlank() } ?: entry.entryType, style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                         if (entry.summary.isNotBlank()) {
                             Text(
                                 entry.summary,
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.bodySmall,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -1,5 +1,9 @@
 package com.mojing.app.ui.character.components
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Remove
 import com.mojing.app.ui.common.MoJingButton as Button
 import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
 
@@ -22,10 +26,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -248,7 +248,7 @@ fun CardImageCropSheet(
                             UsbSessionLog.i("CardImageCrop", "cancel")
                             onDismiss()
                         }) {
-                            Icon(Icons.Default.Close, contentDescription = "关闭")
+                            Icon(Icons.Outlined.Close, contentDescription = "关闭")
                         }
                         Text(
                             "2∶3 封面 · 拖动 / 双指缩放",
@@ -373,10 +373,10 @@ private fun ColumnWithZoom(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         IconButton(onClick = onZoomIn, modifier = Modifier.size(40.dp)) {
-            Icon(Icons.Default.Add, contentDescription = "放大")
+            Icon(Icons.Outlined.Add, contentDescription = "放大")
         }
         IconButton(onClick = onZoomOut, modifier = Modifier.size(40.dp)) {
-            Icon(Icons.Default.Remove, contentDescription = "缩小")
+            Icon(Icons.Outlined.Remove, contentDescription = "缩小")
         }
     }
 }

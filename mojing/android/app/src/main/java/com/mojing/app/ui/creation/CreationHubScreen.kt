@@ -1,21 +1,20 @@
 package com.mojing.app.ui.creation
 
+import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Badge
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.MenuBook
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Badge
-import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,13 +36,13 @@ private data class CreationSection(
 private val storyCreationSection = CreationSection(
     title = "小说创作",
     description = "填写故事背景与开篇走向，并选择角色和世界",
-    icon = Icons.Default.AutoAwesome,
+    icon = Icons.Outlined.AutoAwesome,
     route = Routes.STORY_SIMULATION,
 )
 
 private val creationResourceSections = listOf(
-    CreationSection("角色", "编辑人物设定、形象和对话参数", Icons.Default.Badge, Routes.CHARACTER_LIST),
-    CreationSection("世界", "进入世界百科，整理规则、地点、势力、人物关系与剧情事件", Icons.AutoMirrored.Filled.MenuBook, Routes.ENCYCLOPEDIA_LIST),
+    CreationSection("角色", "编辑人物设定、形象和对话参数", Icons.Outlined.Badge, Routes.CHARACTER_LIST),
+    CreationSection("世界", "整理设定、条目、时间线与人物关系", Icons.AutoMirrored.Outlined.MenuBook, Routes.ENCYCLOPEDIA_LIST),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -52,10 +51,11 @@ fun CreationHubScreen(navController: NavHostController) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("创作空间", style = MaterialTheme.typography.titleLarge) },
+                        expandedHeight = 52.dp,
+                title = { Text("创作", style = MaterialTheme.typography.titleLarge) },
                 navigationIcon = {
                     IconButton(onClick = { navController.returnToSessionHome() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回会话主页")
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回会话主页")
                     }
                 },
                 colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
@@ -84,7 +84,7 @@ internal fun CreationWorkspaceContent(onNavigate: (String) -> Unit, modifier: Mo
         )
         com.mojing.app.ui.common.WorkspaceSectionHeading(
             "故事素材", "人物与世界，共同构成故事。",
-            Modifier.padding(top = 14.dp, bottom = 4.dp),
+            Modifier.padding(top = 8.dp, bottom = 4.dp),
         )
         creationResourceSections.forEachIndexed { index, section ->
             com.mojing.app.ui.common.WorkspaceResourceCard(

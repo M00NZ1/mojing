@@ -1,11 +1,12 @@
 package com.mojing.app.ui.chat
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -32,7 +33,7 @@ internal fun ChatTextSelectionDialog(text: String, onDismiss: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "关闭文字选择") }
+                    IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, "关闭文字选择") }
                     Column(Modifier.weight(1f)) {
                         Text("选择文字", style = MaterialTheme.typography.titleMedium)
                         Text("长按正文，拖动选取需要的段落", style = MaterialTheme.typography.bodySmall,

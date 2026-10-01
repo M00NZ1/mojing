@@ -1,13 +1,8 @@
 package com.mojing.app.ui.chat
 
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,26 +19,16 @@ fun RoundChoicesRow(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(vertical = 4.dp),
     ) {
         Text(
             "可选行动",
+            modifier = Modifier.padding(horizontal = 16.dp),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.primary,
         )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            choices.forEach { choice ->
-                FilterChip(
-                    selected = false,
-                    onClick = { onSelect(choice) },
-                    label = { Text(choice, maxLines = 2) },
-                )
-            }
+        choices.forEach { choice ->
+            ChoiceCard(choice = choice, onClick = { onSelect(choice) })
         }
     }
 }

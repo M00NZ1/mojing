@@ -1,5 +1,6 @@
 package com.mojing.app.ui.settings
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingButton as Button
 import androidx.compose.material.icons.Icons
@@ -241,6 +242,7 @@ fun ModelPlatformsPanel(viewModel: SettingsViewModel, snackbar: SnackbarHostStat
     }
     if (confirmDiscard && draft != null) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { confirmDiscard = false },
             title = { Text("放弃平台修改？") },
             text = { Text("当前填写的配置尚未保存。") },

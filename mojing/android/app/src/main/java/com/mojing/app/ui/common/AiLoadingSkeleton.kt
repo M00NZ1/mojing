@@ -1,10 +1,10 @@
 package com.mojing.app.ui.common
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material3.Icon
 import androidx.compose.ui.semantics.Role
 
 import androidx.compose.animation.core.LinearEasing
@@ -158,7 +158,7 @@ fun LlmKeySetupHintCard(
                 horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("配置模型服务", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface)
-                if (showActionButton) Icon(Icons.AutoMirrored.Filled.ArrowForward,
+                if (showActionButton) Icon(Icons.AutoMirrored.Outlined.ArrowForward,
                     contentDescription = null, tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(20.dp))
             }

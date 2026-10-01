@@ -1,5 +1,7 @@
 package com.mojing.app.ui.character.components
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.Image
 import com.mojing.app.ui.common.MoJingButton as Button
 import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
 
@@ -12,7 +14,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Image
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -109,7 +110,7 @@ fun CardImageEditor(
                     contentScale = ContentScale.Crop
                 )
                 else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.Image, null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f))
+                    Icon(Icons.Outlined.Image, null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f))
                 }
             }
             if (busy) {

@@ -1,10 +1,11 @@
 package com.mojing.app.ui.navigation
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Create
+import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat
-import androidx.compose.material.icons.filled.Create
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Icon
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -114,17 +115,17 @@ fun MainAppBottomNavigation(
         MoJingNavItem(
             selected = selected == MainNavTab.Session,
             onClick = { requestNavigation { navController.returnToSessionHome() } },
-            icon = Icons.AutoMirrored.Filled.Chat, label = "对话",
+            icon = Icons.AutoMirrored.Outlined.Chat, label = "对话",
         )
         MoJingNavItem(
             selected = selected == MainNavTab.Create,
             onClick = { requestNavigation { navController.returnToCreationHub() } },
-            icon = Icons.Default.Create, label = "创作",
+            icon = Icons.Outlined.Create, label = "创作",
         )
         MoJingNavItem(
             selected = selected == MainNavTab.Settings,
             onClick = { requestNavigation { navController.navigateToMainTab(Routes.SETTINGS) } },
-            icon = Icons.Default.Settings, label = "设置",
+            icon = Icons.Outlined.Settings, label = "设置",
         )
     }
 }
@@ -132,18 +133,19 @@ fun MainAppBottomNavigation(
 @Composable
 internal fun RowScope.MoJingNavItem(selected: Boolean, onClick: () -> Unit, icon: ImageVector, label: String) {
     val palette = MaterialTheme.colorScheme
-    val marker by animateColorAsState(if (selected) palette.primary else androidx.compose.ui.graphics.Color.Transparent, label = "tabMarker")
-    val foreground by animateColorAsState(if (selected) palette.primary else palette.onSurfaceVariant, label = "tabInk")
+        val foreground by animateColorAsState(if (selected) palette.primary else if (palette.background == com.mojing.app.ui.theme.MoJingDesignTokens.background) com.mojing.app.ui.theme.MoJingDesignTokens.navUnselected else palette.onSurfaceVariant, label = "tabInk")
     Column(
         Modifier.weight(1f).clip(MaterialTheme.shapes.small)
             .selectable(selected, onClick = onClick, role = Role.Tab)
             .heightIn(min = 56.dp).padding(horizontal = 6.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
+        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
     ) {
-        Box(Modifier.size(width = 20.dp, height = 2.dp).background(marker, MaterialTheme.shapes.small))
-        Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(22.dp))
-        Text(label, color = foreground, style = MaterialTheme.typography.labelMedium,
+        Box(Modifier.size(width = 48.dp, height = 24.dp),
+            contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(22.dp))
+        }
+        Text(label, color = foreground, style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp, lineHeight = 14.sp),
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }

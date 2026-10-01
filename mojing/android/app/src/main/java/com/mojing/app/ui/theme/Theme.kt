@@ -25,21 +25,21 @@ private val DarkColorScheme = darkColorScheme(
     surfaceVariant = DarkSurfaceVariant,
     onBackground = DarkOnBackground,
     onSurface = DarkOnSurface,
-    onSurfaceVariant = Color(0xFFB8C4BF),
+    onSurfaceVariant = Color(0xFFBCCAD5),
     error = DarkError,
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Color(0xFF286B58),
+    primary = MoJingDesignTokens.primary,
     onPrimary = Color.White,
-    secondary = DarkSecondary,
+    secondary = Color(0xFF526D7C),
     background = LightBackground,
     surface = LightSurface,
     surfaceVariant = LightSurfaceVariant,
     onBackground = LightOnBackground,
     onSurface = LightOnSurface,
     onSurfaceVariant = LightOnSurfaceVariant,
-    outline = Color(0xFF6B6B80),
+    outline = MoJingDesignTokens.border,
     error = DarkError,
 )
 
@@ -54,11 +54,11 @@ internal fun ColorScheme.withMoJingSurfaces(isLight: Boolean): ColorScheme {
         surfaceDim = lerp(base, ink, if (isLight) 0.07f else 0.01f),
         surfaceBright = lerp(base, ink, if (isLight) 0f else 0.12f),
         surfaceContainerLowest = if (isLight) Color.White else lerp(base, Color.Black, 0.16f),
-        surfaceContainerLow = lerp(base, ink, 0.025f),
-        surfaceContainer = lerp(base, ink, 0.045f),
+        surfaceContainerLow = if (isLight) lerp(surface, primary, 0.035f) else lerp(base, ink, 0.025f),
+        surfaceContainer = if (isLight) lerp(surface, primary, 0.06f) else lerp(base, ink, 0.045f),
         surfaceContainerHigh = lerp(base, ink, 0.075f),
         surfaceContainerHighest = lerp(base, ink, 0.10f),
-        primaryContainer = lerp(base, primary, if (isLight) 0.14f else 0.23f),
+        primaryContainer = lerp(base, primary, if (isLight) 0.10f else 0.23f),
         onPrimaryContainer = ink,
         secondaryContainer = lerp(base, secondary, 0.12f),
         onSecondaryContainer = ink,
@@ -67,8 +67,8 @@ internal fun ColorScheme.withMoJingSurfaces(isLight: Boolean): ColorScheme {
         tertiaryContainer = lerp(base, primary, 0.10f),
         onTertiaryContainer = ink,
         outline = lerp(base, ink, if (isLight) 0.43f else 0.38f),
-        outlineVariant = lerp(base, ink, if (isLight) 0.17f else 0.16f),
-        onSurfaceVariant = lerp(base, ink, if (isLight) 0.72f else 0.70f),
+        outlineVariant = lerp(base, ink, if (isLight) 0.13f else 0.16f),
+        onSurfaceVariant = lerp(base, ink, if (isLight) 0.78f else 0.76f),
         error = if (isLight) Color(0xFFAF343D) else Color(0xFFFFB3B6),
         onError = if (isLight) Color.White else Color(0xFF5F101D),
         errorContainer = if (isLight) Color(0xFFFFE9E9) else Color(0xFF44282C),
@@ -182,7 +182,26 @@ fun MoJingTheme(
         else -> DarkColorScheme
     }
     val colorScheme = remember(palette, safeMode) {
-        palette.withMoJingSurfaces(safeMode in setOf("light", "blush", "sky"))
+        val semantic = palette.withMoJingSurfaces(safeMode in setOf("light", "blush", "sky"))
+        if (safeMode == "light") semantic.copy(
+            primary = MoJingDesignTokens.primary, onPrimary = Color.White,
+            background = MoJingDesignTokens.background, surface = MoJingDesignTokens.surface,
+            onBackground = MoJingDesignTokens.textPrimary, onSurface = MoJingDesignTokens.textPrimary,
+            onSurfaceVariant = MoJingDesignTokens.textSecondary,
+            surfaceContainerLowest = MoJingDesignTokens.surface,
+            surfaceContainerLow = MoJingDesignTokens.primaryLighter,
+            surfaceContainer = MoJingDesignTokens.surfaceSecondary,
+            surfaceContainerHigh = MoJingDesignTokens.surfaceHover,
+            surfaceContainerHighest = MoJingDesignTokens.surfaceSecondary,
+            primaryContainer = MoJingDesignTokens.primaryLight,
+            onPrimaryContainer = MoJingDesignTokens.primary,
+            secondaryContainer = MoJingDesignTokens.primaryLight,
+            onSecondaryContainer = MoJingDesignTokens.primary,
+            outline = MoJingDesignTokens.border, outlineVariant = MoJingDesignTokens.borderLight,
+            error = MoJingDesignTokens.danger, onError = Color.White,
+            errorContainer = MoJingDesignTokens.dangerBackground,
+            onErrorContainer = MoJingDesignTokens.dangerText, scrim = MoJingDesignTokens.scrim,
+        ) else semantic
     }
     val scale = contentFontScale.coerceIn(0.8f, 1.45f)
     val baseDensity = LocalDensity.current
@@ -197,9 +216,9 @@ fun MoJingTheme(
             colorScheme = colorScheme,
             typography = AppTypography,
             shapes = Shapes(
-                extraSmall = RoundedCornerShape(6.dp), small = RoundedCornerShape(12.dp),
-                medium = RoundedCornerShape(14.dp), large = RoundedCornerShape(20.dp),
-                extraLarge = RoundedCornerShape(24.dp)),
+                extraSmall = RoundedCornerShape(8.dp), small = RoundedCornerShape(10.dp),
+                medium = RoundedCornerShape(12.dp), large = RoundedCornerShape(16.dp),
+                extraLarge = RoundedCornerShape(20.dp)),
             content = content,
         )
     }

@@ -1,9 +1,10 @@
 package com.mojing.app.ui.common
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -30,7 +31,7 @@ fun ModelOptionRow(name: String, selected: Boolean, onClick: () -> Unit, modifie
                         else -> MaterialTheme.colorScheme.onSurface
                     })
                 Box(Modifier.padding(start = 12.dp).size(20.dp), contentAlignment = Alignment.Center) {
-                    if (selected) Icon(Icons.Default.Check, "已选择", Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                    if (selected) Icon(Icons.Outlined.Check, "已选择", Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                 }
             }
             HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)

@@ -1,5 +1,17 @@
 package com.mojing.app.ui.workbench
 
+import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material.icons.automirrored.outlined.ViewList
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.SearchOff
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Construction
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Public
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingButton as Button
 import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
@@ -23,10 +35,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Chat
-import androidx.compose.material.icons.automirrored.filled.ViewList
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -305,13 +313,14 @@ fun WorkbenchScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
+                        expandedHeight = 52.dp,
                 title = { Text("设定工坊") },
                 navigationIcon = {
                     IconButton(onClick = {
                         com.mojing.app.ui.common.hideImeKeyboard(keyboardController, focusManager)
                         requestNavigation { navController.returnToCreationHub() }
                     }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回创作中心")
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回创作中心")
                     }
                 },
                 actions = {
@@ -323,7 +332,7 @@ fun WorkbenchScreen(
                             if (isImportingDocument || exportBusy) {
                                 CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                             } else {
-                                Icon(Icons.Default.MoreVert, "更多")
+                                Icon(Icons.Outlined.MoreVert, "更多")
                             }
                         }
                         DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
@@ -387,9 +396,9 @@ fun WorkbenchScreen(
                         enabled = !generateBusy,
                     ) {
                         if (listLayout == "grid") {
-                            Icon(Icons.AutoMirrored.Filled.ViewList, "切换为列表")
+                            Icon(Icons.AutoMirrored.Outlined.ViewList, "切换为列表")
                         } else {
-                            Icon(Icons.Default.GridView, "切换为网格")
+                            Icon(Icons.Outlined.GridView, "切换为网格")
                         }
                     }
 
@@ -406,34 +415,19 @@ fun WorkbenchScreen(
             if (mainTab == WorkbenchMainTab.TEMPLATES && library.loaded && templates.isNotEmpty() && !isImeKeyboardOpen()) {
                 ExtendedFloatingActionButton(
                     onClick = ::createTemplate,
-                    icon = { Icon(Icons.Default.Add, "新建") },
+                    icon = { Icon(Icons.Outlined.Add, "新建") },
                     text = { Text("新建模板") }
                 )
             }
         }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
-            ScrollableTabRow(
-                selectedTabIndex = mainTab.ordinal,
-                edgePadding = MoJingListTokens.rowStart,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Tab(
-                    selected = mainTab == WorkbenchMainTab.TEMPLATES,
-                    onClick = { selectMainTab(WorkbenchMainTab.TEMPLATES) },
-                    text = { Text("模板") }
-                )
-                Tab(
-                    selected = mainTab == WorkbenchMainTab.TEXT_IMPORT,
-                    onClick = { selectMainTab(WorkbenchMainTab.TEXT_IMPORT) },
-                    text = { Text("文本导入") }
-                )
-                Tab(
-                    selected = mainTab == WorkbenchMainTab.AI_GENERATE,
-                    onClick = { selectMainTab(WorkbenchMainTab.AI_GENERATE) },
-                    text = { Text("智能生成") }
-                )
-            }
+            com.mojing.app.ui.common.MoJingSectionTabs(
+                listOf("模板", "文本导入", "智能生成"), mainTab.ordinal, { index ->
+                    selectMainTab(listOf(WorkbenchMainTab.TEMPLATES,
+                        WorkbenchMainTab.TEXT_IMPORT, WorkbenchMainTab.AI_GENERATE)[index])
+                },
+            )
             when (mainTab) {
                 WorkbenchMainTab.TEMPLATES -> {
                     com.mojing.app.ui.common.SearchBar(
@@ -467,7 +461,7 @@ fun WorkbenchScreen(
                         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                     } else if (!library.loaded && library.error != null) {
                         EmptyState(
-                            icon = Icons.Default.Public,
+                            icon = Icons.Outlined.Public,
                             title = "模板列表暂时无法读取",
                             message = library.error.orEmpty(),
                             actionLabel = "重试",
@@ -476,7 +470,7 @@ fun WorkbenchScreen(
                         )
                     } else if (templates.isEmpty()) {
                         EmptyState(
-                            icon = if (library.query.isBlank()) Icons.Default.Public else Icons.Default.SearchOff,
+                            icon = if (library.query.isBlank()) Icons.Outlined.Public else Icons.Outlined.SearchOff,
                             title = if (library.query.isBlank()) "还没有设定模板" else "没有匹配的模板",
                             message = if (library.query.isBlank()) {
                                 "新建模板，或通过「文本导入」和「智能生成」建立世界设定。"
@@ -497,8 +491,8 @@ fun WorkbenchScreen(
                                 columns = GridCells.Adaptive(156.dp),
                                 modifier = Modifier.weight(1f).fillMaxWidth(),
                                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
                                 lazyGridItems(templates, key = { it.id }) { template ->
                                     SwipeRevealListRow(
@@ -555,7 +549,8 @@ fun WorkbenchScreen(
                         } else {
                             LazyColumn(
                                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                                contentPadding = PaddingValues(bottom = 96.dp),
+                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
                                 itemsIndexed(templates, key = { _, t -> t.id }) { index, template ->
                                     Column(Modifier.fillMaxWidth()) {
@@ -606,12 +601,6 @@ fun WorkbenchScreen(
                                                 template = template,
                                                 canonical = template.id in promotedTemplateIds,
                                                 onStartChat = { onStartChat(template.id) },
-                                            )
-                                        }
-                                        if (index < templates.lastIndex) {
-                                            HorizontalDivider(
-                                                modifier = Modifier.padding(start = MoJingListTokens.dividerInset),
-                                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
                                             )
                                         }
                                     }
@@ -839,7 +828,7 @@ fun WorkbenchScreen(
                                 enabled = genCoreTheme.isNotBlank() && viewModel.hasLlmForWorldGenerate(),
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
-                                Icon(Icons.Default.AutoAwesome, contentDescription = null)
+                                Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
                                 Spacer(Modifier.width(8.dp))
                                 Text("生成并保存世界")
                             }
@@ -857,6 +846,7 @@ fun WorkbenchScreen(
 
     if (showStopAndContinueDialog) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { dismissStopDialog() },
             title = { Text("停止当前生成？") },
             text = { Text("当前世界仍在生成。停止后不会保存未完成的新模板，你填写的内容会继续保留。") },
@@ -883,6 +873,7 @@ fun WorkbenchScreen(
 
     if (showSavingDialog) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { showSavingDialog = false },
             title = { Text("正在保存世界") },
             text = { Text("生成已经完成，正在把模板和设定条目写入本地。保存结束后即可继续操作。") },
@@ -990,7 +981,7 @@ private fun WorkbenchTemplateListRowInner(
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            Icons.Default.Construction,
+                            Icons.Outlined.Construction,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.9f),
                             modifier = Modifier.size(28.dp),
@@ -1028,7 +1019,7 @@ private fun WorkbenchTemplateListRowInner(
         },
         trailingContent = {
             IconButton(onClick = onStartChat) {
-                Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "用此世界开始对话")
+                Icon(Icons.AutoMirrored.Outlined.Chat, contentDescription = "用此世界开始对话")
             }
         },
     )
@@ -1074,7 +1065,7 @@ private fun WorkbenchTemplateGridCard(
                             ) {
                                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                     Icon(
-                                        Icons.Default.Construction,
+                                        Icons.Outlined.Construction,
                                         null,
                                         tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
                                     )

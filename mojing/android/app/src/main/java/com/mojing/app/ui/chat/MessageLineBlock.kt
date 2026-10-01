@@ -1,5 +1,6 @@
 package com.mojing.app.ui.chat
 
+import com.mojing.app.ui.common.MoJingFilterChip as FilterChip
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -13,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -67,7 +67,7 @@ fun MessageLineBlock(
     val headerMsg = line.selectedMessage()
     val isUser = headerMsg.speakerType == "user"
     val labelColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
-    val timeColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+    val timeColor = MaterialTheme.colorScheme.onSurfaceVariant
     val clusterInlineHeader = line.variants.size == 1 &&
         (headerMsg.speakerType == "character" || headerMsg.speakerType == "user")
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -103,7 +103,7 @@ fun MessageLineBlock(
                         .padding(horizontal = d.rowHorizontal, vertical = 0.dp),
                     horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
                 ) {
-                    Text(timeText, style = MaterialTheme.typography.labelSmall, color = timeColor.copy(alpha = 0.45f))
+                    Text(timeText, style = MaterialTheme.typography.labelSmall, color = timeColor)
                 }
                 Spacer(Modifier.height(1.dp))
             }

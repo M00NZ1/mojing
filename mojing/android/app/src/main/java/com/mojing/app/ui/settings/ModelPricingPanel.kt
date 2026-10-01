@@ -1,5 +1,6 @@
 package com.mojing.app.ui.settings
 
+import com.mojing.app.ui.common.MoJingFilterChip as FilterChip
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
@@ -13,7 +14,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -99,7 +99,8 @@ fun ModelPricingPanel(
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { loadError = true }
         }
-        if (!loaded) AlertDialog(onDismissRequest = { editing = null }, title = { Text("模型价格") },
+        if (!loaded) AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),onDismissRequest = { editing = null }, title = { Text("模型价格") },
             text = { Text(if (loadError) "价格读取失败，请重试" else "正在读取价格…") },
             confirmButton = { if (loadError) TextButton(onClick = { revision++ }) { Text("重试") } },
             dismissButton = { TextButton(onClick = { editing = null }) { Text("取消") } })

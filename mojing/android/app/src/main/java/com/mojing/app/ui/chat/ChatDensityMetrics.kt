@@ -50,7 +50,7 @@ fun ChatDensityMode.toMetrics(): ChatDensityMetrics = when (this) {
         bubbleInnerPadding = 12.dp,
         bubbleMaxWidth = 640.dp,
         bodyFontSp = 16f,
-        bubbleCornerOuter = 16.dp,
+        bubbleCornerOuter = 12.dp,
         bubbleCornerInner = 4.dp,
         narratorHorizontal = 24.dp,
         narratorVertical = 6.dp,
@@ -75,16 +75,16 @@ fun ChatDensityMode.toMetrics(): ChatDensityMetrics = when (this) {
     )
     ChatDensityMode.Reader -> ChatDensityMetrics(
         listContentVertical = 12.dp,
-        rowHorizontal = 18.dp,
+        rowHorizontal = 20.dp,
         rowVertical = 6.dp,
         bubbleInnerPadding = 14.dp,
-        bubbleMaxWidth = 720.dp,
+        bubbleMaxWidth = 680.dp,
         bodyFontSp = 17f,
-        bubbleCornerOuter = 18.dp,
+        bubbleCornerOuter = 14.dp,
         bubbleCornerInner = 5.dp,
-        narratorHorizontal = 28.dp,
+        narratorHorizontal = 20.dp,
         narratorVertical = 8.dp,
-        narratorInnerPadding = 16.dp,
+        narratorInnerPadding = 0.dp,
         pagerLabelTop = 4.dp,
         pagerLabelBottom = 6.dp,
     )
@@ -95,13 +95,14 @@ val LocalChatDensityMetrics = compositionLocalOf { ChatDensityMode.Comfortable.t
 @Composable
 @ReadOnlyComposable
 fun ChatDensityMetrics.bodyTextStyle(): TextStyle =
-    MaterialTheme.typography.bodyLarge.copy(fontSize = bodyFontSp.sp, fontFamily = LocalChatReadingStyle.current.fontFamily)
+    MaterialTheme.typography.bodyLarge.copy(fontSize = bodyFontSp.sp, lineHeight = (if (bodyFontSp == 17f) 29f else if (bodyFontSp >= 19f) 32f else 26f).sp, fontFamily = LocalChatReadingStyle.current.fontFamily)
 
 @Composable
 @ReadOnlyComposable
 fun ChatDensityMetrics.narrationTextStyle(): TextStyle =
     MaterialTheme.typography.bodyMedium.copy(
-        fontSize = (bodyFontSp - 1f).coerceAtLeast(12f).sp,
+        fontSize = (if (bodyFontSp == 17f) 17f else bodyFontSp - 1f).coerceAtLeast(12f).sp,
+        lineHeight = (if (bodyFontSp == 17f) 29f else 26f).sp,
         fontFamily = LocalChatReadingStyle.current.fontFamily,
         fontStyle = LocalChatReadingStyle.current.narratorFontStyle,
     )

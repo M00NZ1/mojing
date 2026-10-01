@@ -1,8 +1,21 @@
 package com.mojing.app.ui.session
 
+import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.outlined.PersonAdd
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Clear
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.ui.draw.clip
-import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.Person
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingButton as Button
 import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
@@ -28,7 +41,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.Saver
@@ -40,11 +52,12 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
@@ -58,8 +71,6 @@ import com.mojing.app.data.local.entity.SessionWithListMeta
 import com.mojing.app.data.local.entity.WorldTemplateEntity
 import com.mojing.app.ui.chat.ChatMessageTextFormat
 import com.mojing.app.ui.navigation.MainAppBottomNavigation
-import com.mojing.app.ui.common.LlmKeySetupHintCard
-import com.mojing.app.ui.common.MoJingListTokens
 import com.mojing.app.ui.common.MoJingToggleRow
 import com.mojing.app.ui.common.SwipeRevealListRow
 import com.mojing.app.ui.common.isImeKeyboardOpen
@@ -349,15 +360,10 @@ fun SessionListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                        expandedHeight = 52.dp,
                 title = {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("故事库", style = MaterialTheme.typography.headlineSmall)
-                        Text(
-                            if (sessions.isEmpty()) "对话与长篇创作" else "${sessions.size} 个故事",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    Text("故事库", style = MaterialTheme.typography.titleLarge,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                 },
                 actions = {
                     BadgedBox(
@@ -372,8 +378,19 @@ fun SessionListScreen(
                             }
                         },
                     ) {
-                        IconButton(onClick = onGenerationTasksClick) {
-                            Icon(Icons.Default.AutoAwesome, contentDescription = "生成记录")
+                        TextButton(onClick = onGenerationTasksClick) {
+                            Text("记录", style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
+                    if (isSessionHomeContentReady && sessions.isNotEmpty() && !isImeKeyboardOpen()) {
+                        FilledTonalButton(
+                            onClick = { openNewSessionDialog() },
+                            modifier = Modifier.padding(end = 12.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        ) {
+                            Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("新建", style = MaterialTheme.typography.labelLarge)
                         }
                     }
                 },
@@ -386,16 +403,7 @@ fun SessionListScreen(
         bottomBar = {
             MainAppBottomNavigation(navController)
         },
-        floatingActionButton = {
-            if (isSessionHomeContentReady && sessions.isNotEmpty() && !isImeKeyboardOpen()) {
-                FloatingActionButton(
-                    onClick = { openNewSessionDialog() },
-                    containerColor = MaterialTheme.colorScheme.primary
-                ) {
-                    Icon(Icons.Default.Add, "新建对话")
-                }
-            }
-        }
+
     ) { padding ->
         Column(
             modifier = Modifier
@@ -409,13 +417,15 @@ fun SessionListScreen(
                     onValueChange = { viewModel.updateSearch(it) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
-                    placeholder = { Text("搜索故事标题…") },
-                    leadingIcon = { Icon(Icons.Default.Search, "搜索对话标题") },
+                        .padding(horizontal = 20.dp, vertical = 4.dp),
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    shape = MaterialTheme.shapes.medium,
+                    placeholder = { Text("搜索故事标题", style = MaterialTheme.typography.bodyMedium) },
+                    leadingIcon = { Icon(Icons.Outlined.Search, "搜索对话标题") },
                     trailingIcon = if (searchQuery.isNotBlank()) {
                         {
                             IconButton(onClick = { viewModel.updateSearch("") }) {
-                                Icon(Icons.Default.Clear, contentDescription = "清除标题搜索")
+                                Icon(Icons.Outlined.Clear, contentDescription = "清除标题搜索")
                             }
                         }
                     } else {
@@ -427,10 +437,9 @@ fun SessionListScreen(
                 )
             }
             if (isSessionHomeContentReady && !hasPublicLlmKey) {
-                LlmKeySetupHintCard(
-                    message = "请先在设置填写 API Key",
+                StoryLibraryModelHint(
                     onOpenSettings = onSettingsClick,
-                    modifier = Modifier.padding(horizontal = MoJingListTokens.rowStart, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
                 )
             }
             if (suspendedNewSessionDraft) {
@@ -512,7 +521,7 @@ fun SessionListScreen(
                     verticalArrangement = Arrangement.Center,
                 ) {
                     Icon(
-                        Icons.Default.ErrorOutline,
+                        Icons.Outlined.ErrorOutline,
                         contentDescription = null,
                         modifier = Modifier.size(40.dp),
                         tint = MaterialTheme.colorScheme.error,
@@ -527,7 +536,7 @@ fun SessionListScreen(
                     )
                     Spacer(Modifier.height(16.dp))
                     Button(onClick = viewModel::retrySessionLibrary) {
-                        Icon(Icons.Default.Refresh, contentDescription = null)
+                        Icon(Icons.Outlined.Refresh, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text("重试")
                     }
@@ -565,9 +574,9 @@ fun SessionListScreen(
                             Modifier.fillMaxWidth().padding(top = 4.dp),
                         )
                         com.mojing.app.ui.common.WorkspaceResourceCard(
-                            "角色", "创建或导入人物，自由开启对话", "01", Icons.Default.Person, onCharactersClick)
+                            "角色", "创建或导入人物，自由开启对话", "01", Icons.Outlined.Person, onCharactersClick)
                         com.mojing.app.ui.common.WorkspaceResourceCard(
-                            "世界百科", "补充背景、地点与人物关系", "02", Icons.Default.Public, onEncyclopediaClick)
+                            "世界百科", "补充背景、地点与人物关系", "02", Icons.Outlined.Public, onEncyclopediaClick)
                         TextButton(onClick = { viewModel.dismissQuickStartGuide() }) {
                             Text("不再显示此卡片", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
@@ -585,7 +594,7 @@ fun SessionListScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Button(onClick = { openNewSessionDialog() }) {
-                                Icon(Icons.Default.Add, contentDescription = null)
+                                Icon(Icons.Outlined.Add, contentDescription = null)
                                 Spacer(Modifier.width(8.dp))
                                 Text("新建对话")
                             }
@@ -604,30 +613,14 @@ fun SessionListScreen(
                         .fillMaxWidth(),
                     state = listState,
                     contentPadding = PaddingValues(bottom = 96.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     item(key = "story-library-heading") {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(if (searchQuery.isBlank()) "故事列表" else "搜索结果", style = MaterialTheme.typography.titleMedium)
-                                Text(
-                                    "预览接续上次阅读的故事线；消息数仅统计主线",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Surface(
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.secondaryContainer,
-                            ) {
-                                Text("本页 ${sessions.size} 条", modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
-                                    style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                            }
-                        }
+                        StoryLibrarySectionHeading(
+                            title = if (searchQuery.isBlank()) "最近阅读" else "搜索结果",
+                            count = sessions.size,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                        )
                     }
                     itemsIndexed(sessions, key = { _, r -> r.session.id }) { _, row ->
                         val rememberedBranchId = lastChatBranches?.get(row.session.id) ?: if (lastChatBranches == null) null else "main"
@@ -647,13 +640,8 @@ fun SessionListScreen(
                             renameTargetTitle = row.session.title
                         }
                         Surface(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                            shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerLow,
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
-                            ),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.background,
                         ) {
                             SwipeRevealListRow(
                                 swipeEnabled = true,
@@ -729,6 +717,7 @@ fun SessionListScreen(
         val currentCreating by rememberUpdatedState(isCreatingSession)
         val currentFormEdited by rememberUpdatedState(newSessionFormEdited)
         ModalBottomSheet(
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),
             sheetState = rememberModalBottomSheetState(
                 skipPartiallyExpanded = true,
                 confirmValueChange = { next ->
@@ -742,6 +731,7 @@ fun SessionListScreen(
             onDismissRequest = { requestCloseNewSessionDialog() },
         ) {
             val newSessionScroll = rememberScrollState()
+            val newSessionImeOpen = isImeKeyboardOpen()
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -753,23 +743,23 @@ fun SessionListScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Surface(
+                    if (!newSessionImeOpen) Surface(
                         modifier = Modifier.size(42.dp),
                         shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
                         color = MaterialTheme.colorScheme.primaryContainer,
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.AutoStories, contentDescription = null,
+                            Icon(Icons.Outlined.AutoStories, contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onPrimaryContainer)
                         }
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text("新建对话", style = MaterialTheme.typography.titleLarge)
-                        Text("设定这一幕，然后开始书写", style = MaterialTheme.typography.bodySmall,
+                        if (!newSessionImeOpen) Text("设定这一幕，然后开始书写", style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     IconButton(onClick = { requestCloseNewSessionDialog() }, enabled = !isCreatingSession) {
-                        Icon(Icons.Default.Close, contentDescription = "关闭新建对话")
+                        Icon(Icons.Outlined.Close, contentDescription = "关闭新建对话")
                     }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -835,7 +825,7 @@ fun SessionListScreen(
                             ?: selectedTemplate?.label ?: if (selectedWorldMissing) "原选世界已不存在" else "不绑定世界",
                             maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
-                    Icon(Icons.Default.ExpandMore, contentDescription = "选择世界")
+                    Icon(Icons.Outlined.ExpandMore, contentDescription = "选择世界")
                 }
                 if (selectedWorldMissing) Text(
                     "原选世界已不存在，请重新选择后创建",
@@ -867,7 +857,7 @@ fun SessionListScreen(
                         onClick = { suspendNewSessionForCharacters() },
                         enabled = !isCreatingSession && !isLoadingDialogData,
                     ) {
-                        Icon(Icons.Default.PersonAdd, contentDescription = null)
+                        Icon(Icons.Outlined.PersonAdd, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
                         Text("去创建角色")
                     }
@@ -883,7 +873,7 @@ fun SessionListScreen(
                         Text(if (selectedCharacterIds.isEmpty()) "选择参与角色"
                             else "${selectedCharacterIds.size}/$compatibleCharacterCount 人参与",
                             Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Icon(Icons.Default.ExpandMore, contentDescription = "选择参与角色")
+                        Icon(Icons.Outlined.ExpandMore, contentDescription = "选择参与角色")
                     }
                 }
                 HorizontalDivider(Modifier.padding(top = 2.dp))
@@ -901,7 +891,7 @@ fun SessionListScreen(
                         )
                     }
                     Icon(
-                        if (showConversationOptions) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        if (showConversationOptions) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
                         contentDescription = if (showConversationOptions) "收起对话设置" else "展开对话设置",
                     )
                 }
@@ -1015,7 +1005,7 @@ fun SessionListScreen(
                     modifier = Modifier.weight(1f),
                     enabled = !isCreatingSession && dialogDataReady && characterSummaryReady && !selectedWorldMissing &&
                         compatibleCharacterCount > 0 && selectedCharacterIds.isNotEmpty(),
-                ) { Text(if (isCreatingSession) "创建中…" else "创建并开始") }
+                ) { Text(if (isCreatingSession) "创建中…" else if (newSessionImeOpen) "开始对话" else "创建并开始") }
                 OutlinedButton(
                     onClick = {
                         viewModel.createNewSession(
@@ -1071,6 +1061,7 @@ fun SessionListScreen(
     }
 
     if (confirmDiscardNewSession) AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
         onDismissRequest = { confirmDiscardNewSession = false },
         title = { Text("放弃本次对话设定？") },
         text = { Text("尚未创建对话，当前填写的标题和开局设定将被放弃。") },
@@ -1084,6 +1075,7 @@ fun SessionListScreen(
 
     replacementTemplateId?.let { templateId ->
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { replacementTemplateId = null },
             title = { Text("改用所选世界开始新对话？") },
             text = { Text("当前保留的开局设定将被放弃。也可以继续原设定，稍后在表单里选择世界。") },
@@ -1100,7 +1092,8 @@ fun SessionListScreen(
     }
 
     if (showQuickStartReplay) {
-        ModalBottomSheet(onDismissRequest = { showQuickStartReplay = false }) {
+        ModalBottomSheet(
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),onDismissRequest = { showQuickStartReplay = false }) {
             Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp).padding(bottom = 28.dp)) {
                 Text("开始创作", style = MaterialTheme.typography.titleLarge)
@@ -1130,14 +1123,14 @@ private fun QuickStartGuideSteps(onCharacters: () -> Unit, onCreateSession: () -
         Text("遇见角色，写下属于你的下一幕。", style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         Button(onClick = onCreateSession, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Default.Add, contentDescription = null)
+            Icon(Icons.Outlined.Add, contentDescription = null)
             Spacer(Modifier.width(8.dp))
             Text("开始新对话")
         }
         com.mojing.app.ui.common.WorkspaceResourceCard(
-            "角色", "创建或导入人物，自由开启对话", "01", Icons.Default.Person, onCharacters)
+            "角色", "创建或导入人物，自由开启对话", "01", Icons.Outlined.Person, onCharacters)
         com.mojing.app.ui.common.WorkspaceResourceCard(
-            "世界百科", "补充背景、地点与人物关系", "02", Icons.Default.Public, onEncyclopedia)
+            "世界百科", "补充背景、地点与人物关系", "02", Icons.Outlined.Public, onEncyclopedia)
     }
 }
 
@@ -1162,68 +1155,51 @@ fun SessionListRowInner(
     )
     val previewLabel = if (showingMain) "主线" else branchPreview?.label?.takeIf(String::isNotBlank) ?: "上次故事线"
     val meta = "主线 ${row.messageCount} 条 · ${row.participantCount} 角色"
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 15.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
-        Surface(Modifier.size(50.dp), shape = androidx.compose.foundation.shape.RoundedCornerShape(17.dp),
-            color = MaterialTheme.colorScheme.primaryContainer,
-            tonalElevation = 2.dp) {
-            Box(contentAlignment = Alignment.Center) {
-                Text(session.title.trim().take(1).ifBlank { "墨" }, style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer)
-            }
+    val colors = MaterialTheme.colorScheme
+    Column(
+        Modifier.fillMaxWidth().padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(session.title.ifBlank { "未命名对话" },
+            style = MaterialTheme.typography.titleMedium,
+            color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (!showingMain && rememberedBranchId != null) {
+            Text(previewLabel, style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        if (isGenerating) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = colors.primary)
+                Text("后台生成", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = colors.primary)
+                if (onStop != null) TextButton(onClick = onStop) { Text("停止") }
+            }
+        } else if (backgroundFailure != null) {
+            Text("生成未完成 · $backgroundFailure", maxLines = 2, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyMedium, color = colors.error)
+        } else if (rememberedBranchId == null) {
+            Text("正在读取续聊位置…", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+        } else if (rememberedBranchId != "main" && branchPreview?.error == true) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(session.title.ifBlank { "未命名对话" }, Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (session.pinnedAt > 0) {
-                    Icon(Icons.Default.PushPin, "已置顶", Modifier.padding(start = 6.dp).size(16.dp),
-                        tint = MaterialTheme.colorScheme.primary)
-                }
-                if (onRename != null) {
-                    IconButton(onClick = onRename) {
-                        Icon(Icons.Default.Edit, contentDescription = "重命名${session.title.ifBlank { "对话" }}",
-                            modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
+                Text("故事线预览读取失败", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = colors.error)
+                if (onPreviewRetry != null) TextButton(onClick = onPreviewRetry) { Text("重试") }
             }
-            if (isGenerating) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-                    Row(Modifier.padding(horizontal = 8.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.primary)
-                        Text("后台生成", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                    }
-                }
-                Spacer(Modifier.weight(1f))
-                if (onStop != null) TextButton(onClick = onStop, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) { Text("停止") }
+        } else if (rememberedBranchId != "main" && (branchPreview == null || branchPreview.loading)) {
+            Text("正在读取上次故事线…", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+        } else {
+            Text(preview.ifEmpty { "尚未开始，点开继续。" },
+                style = MaterialTheme.typography.bodySmall, maxLines = 2,
+                overflow = TextOverflow.Ellipsis, color = colors.onSurfaceVariant)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (session.pinnedAt > 0) {
+                Icon(Icons.Outlined.PushPin, "已置顶", Modifier.size(12.dp), tint = colors.onSurfaceVariant)
             }
-            if (!isGenerating && backgroundFailure != null) Text("生成未完成 · $backgroundFailure",
-                maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-            if (!isGenerating && backgroundFailure == null && rememberedBranchId == null) {
-                Text("正在读取续聊位置…", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else if (!isGenerating && backgroundFailure == null && rememberedBranchId != "main" && branchPreview?.error == true) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("故事线预览读取失败", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error)
-                    if (onPreviewRetry != null) TextButton(onClick = onPreviewRetry) { Text("重试") }
-                }
-            } else if (!isGenerating && backgroundFailure == null && rememberedBranchId != "main" && (branchPreview == null || branchPreview.loading)) {
-                Text("正在读取上次故事线…", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else if (!isGenerating && backgroundFailure == null && (preview.isNotEmpty() || rememberedBranchId != "main")) {
-                Text(previewLabel, style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(preview.ifEmpty { "暂无消息" }, style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(meta, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("·", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
-                Text(dateTimeFormat.format(Date(session.updatedAt)), style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("$meta · ${dateTimeFormat.format(Date(session.updatedAt))}",
+                Modifier.weight(1f), style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (onRename != null) TextButton(onClick = onRename,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                Text("重命名", style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
             }
         }
     }

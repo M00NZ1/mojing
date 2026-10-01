@@ -1,5 +1,21 @@
 package com.mojing.app.ui.chat.drawer
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import com.mojing.app.ui.common.MoJingFilterChip as FilterChip
+import androidx.compose.material.icons.outlined.PersonRemove
+import androidx.compose.material.icons.outlined.PersonAdd
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Favorite
+import androidx.compose.material.icons.outlined.DirectionsRun
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Circle
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.Refresh
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingButton as Button
 import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
@@ -11,7 +27,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -164,19 +179,15 @@ fun ChatDrawer(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("会话资料", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), modifier = Modifier.weight(1f))
-            IconButton(onClick = onClose) { Icon(Icons.Default.Close, "关闭") }
+            IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, "关闭") }
         }
         HorizontalDivider()
-        PrimaryScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 12.dp) {
-            tabs.forEachIndexed { index, title ->
-                Tab(selected = selectedTab == index, onClick = {
-                    if (index != selectedTab) {
-                        if (selectedTab == 1 && worldCredentialFieldsDirty) pendingTab = index
-                        else selectedTab = index
-                    }
-                }, text = { Text(title, maxLines = 1) })
+        com.mojing.app.ui.common.MoJingSectionTabs(tabs, selectedTab, { index ->
+            if (index != selectedTab) {
+                if (selectedTab == 1 && worldCredentialFieldsDirty) pendingTab = index
+                else selectedTab = index
             }
-        }
+        })
         if (selectedTab == 2 || selectedTab == 3) {
             if (sourceOpeningId != null) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -284,6 +295,7 @@ fun ChatDrawer(
     }
     pendingTab?.let { target ->
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { pendingTab = null },
             title = { Text("世界配置尚未保存") },
             text = { Text("继续编辑，或放弃本次修改后切换资料。") },
@@ -355,7 +367,7 @@ fun ParticipantsTab(
                     enabled = !isGenerating,
                     modifier = Modifier.fillMaxWidth().padding(8.dp),
                 ) {
-                    Icon(Icons.Default.PersonAdd, null)
+                    Icon(Icons.Outlined.PersonAdd, null)
                     Spacer(Modifier.width(8.dp))
                     Text("添加角色到对话")
                 }
@@ -392,7 +404,7 @@ fun ParticipantsTab(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(Icons.Default.Person, null, modifier = Modifier.size(32.dp))
+                            Icon(Icons.Outlined.Person, null, modifier = Modifier.size(32.dp))
                             Spacer(Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
@@ -438,7 +450,7 @@ fun ParticipantsTab(
                                 modifier = Modifier.size(48.dp),
                             ) {
                                 Icon(
-                                    Icons.Default.PersonRemove,
+                                    Icons.Outlined.PersonRemove,
                                     "从对话移除$name",
                                     modifier = Modifier.size(20.dp),
                                     tint = MaterialTheme.colorScheme.error,
@@ -692,10 +704,10 @@ fun WorldConfigTab(
             onClick = { routeDetailsOpen = !routeDetailsOpen },
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Icon(Icons.Default.Tune, null)
+            Icon(Icons.Outlined.Tune, null)
             Spacer(Modifier.width(8.dp))
             Text("专用线路", modifier = Modifier.weight(1f))
-            Icon(if (routeDetailsOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
+            Icon(if (routeDetailsOpen) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null)
         }
         if (routeDetailsOpen) {
             Text("对话 / 旁白 / 记忆", style = MaterialTheme.typography.labelMedium)
@@ -841,7 +853,7 @@ fun MemoryTab(
                             enabled = !isGenerating && !memoryOperationRunning,
                             modifier = Modifier.heightIn(min = 48.dp),
                         ) {
-                            Icon(Icons.Default.Refresh, contentDescription = "重建当前会话记忆")
+                            Icon(Icons.Outlined.Refresh, contentDescription = "重建当前会话记忆")
                             Spacer(Modifier.width(8.dp))
                             Text("重建记忆")
                         }
@@ -850,7 +862,7 @@ fun MemoryTab(
                             enabled = !isGenerating && !memoryOperationRunning,
                             modifier = Modifier.heightIn(min = 48.dp),
                         ) {
-                            Icon(Icons.Default.DeleteSweep, contentDescription = "清空当前会话记忆")
+                            Icon(Icons.Outlined.DeleteSweep, contentDescription = "清空当前会话记忆")
                             Spacer(Modifier.width(8.dp))
                             Text("清空记忆")
                         }
@@ -1043,7 +1055,7 @@ fun MemoryTab(
                                 enabled = !isGenerating && !memoryOperationRunning,
                                 modifier = Modifier.heightIn(min = 48.dp),
                             ) {
-                                Icon(Icons.Default.Refresh, contentDescription = null)
+                                Icon(Icons.Outlined.Refresh, contentDescription = null)
                                 Spacer(Modifier.width(8.dp))
                                 Text("继续整理")
                             }
@@ -1191,6 +1203,7 @@ fun TimelineTab(
     LaunchedEffect(pendingDelete?.id) { if (pendingDelete == null) deleteTarget = null }
     pendingDelete?.let { event ->
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { if (event.id !in busyIds) deleteTarget = null },
             title = { Text("删除这条事件？") },
             text = {
@@ -1231,7 +1244,7 @@ fun TimelineTab(
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(when (event.eventType) { "action" -> Icons.Default.DirectionsRun; "discovery" -> Icons.Default.Search; "relationship_change" -> Icons.Default.Favorite; else -> Icons.Default.Circle }, null, modifier = Modifier.size(16.dp))
+                            Icon(when (event.eventType) { "action" -> Icons.Outlined.DirectionsRun; "discovery" -> Icons.Outlined.Search; "relationship_change" -> Icons.Outlined.Favorite; else -> Icons.Outlined.Circle }, null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(8.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(event.title, style = MaterialTheme.typography.titleSmall)
@@ -1274,7 +1287,7 @@ fun TimelineTab(
                             }
                             Spacer(Modifier.weight(1f))
                             IconButton(enabled = !busy && !inherited, onClick = { deleteTarget = event.id }) {
-                                Icon(Icons.Default.DeleteOutline, "删除事件")
+                                Icon(Icons.Outlined.DeleteOutline, "删除事件")
                             }
                         }
                     }

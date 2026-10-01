@@ -1,5 +1,6 @@
 package com.mojing.app.ui.encyclopedia
 
+import com.mojing.app.ui.common.MoJingButton as Button
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable

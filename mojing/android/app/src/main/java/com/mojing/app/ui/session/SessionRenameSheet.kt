@@ -1,5 +1,7 @@
 package com.mojing.app.ui.session
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,10 +12,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -52,6 +52,7 @@ fun SessionRenameSheet(
         confirmValueChange = { it != SheetValue.Hidden || !currentSaving },
     )
     ModalBottomSheet(
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),
         onDismissRequest = { if (!saving) onDismiss() },
         sheetState = sheetState,
         dragHandle = null,
@@ -71,7 +72,7 @@ fun SessionRenameSheet(
                     )
                 }
                 IconButton(onClick = onDismiss, enabled = !saving) {
-                    Icon(Icons.Default.Close, contentDescription = "关闭重命名")
+                    Icon(Icons.Outlined.Close, contentDescription = "关闭重命名")
                 }
             }
             MoJingTextField(

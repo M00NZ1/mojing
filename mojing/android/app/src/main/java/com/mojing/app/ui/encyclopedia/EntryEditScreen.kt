@@ -1,5 +1,12 @@
 package com.mojing.app.ui.encyclopedia
 
+import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Toc
+import androidx.compose.material.icons.outlined.ExpandLess
 import com.mojing.app.ui.common.MoJingLongTextField
 
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
@@ -17,8 +24,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -194,17 +199,18 @@ fun EntryEditScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
+                        expandedHeight = 52.dp,
                 title = { Text(if (entryId == 0L && !state.isPersisted) "新建条目" else "编辑条目", style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
                     IconButton(onClick = { requestExit("back") }, enabled = !blockingBusy) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回")
                     }
                 },
                 actions = {
                     if (subTab == EntryEditSubTab.EDIT && state.isLoaded && state.loadError == null) {
                         Box {
                             IconButton(onClick = { sectionMenuOpen = true }) {
-                                Icon(Icons.Default.Toc, "编辑目录")
+                                Icon(Icons.Outlined.Toc, "编辑目录")
                             }
                             DropdownMenu(expanded = sectionMenuOpen, onDismissRequest = { sectionMenuOpen = false }) {
                                 sectionLabels.forEachIndexed { index, label ->
@@ -227,7 +233,7 @@ fun EntryEditScreen(
         },
         bottomBar = {
             if (!isImeOpen && state.isLoaded && state.loadError == null) {
-                Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp, shadowElevation = 2.dp) {
+                Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp, shadowElevation = 0.dp) {
                     Column(Modifier.navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
                         Button(
                             onClick = { viewModel.save() },
@@ -241,7 +247,7 @@ fun EntryEditScreen(
     ) { padding ->
         if (state.loadError != null) {
             EmptyState(
-                icon = Icons.Default.ErrorOutline,
+                icon = Icons.Outlined.ErrorOutline,
                 title = "无法打开词条",
                 message = state.loadError.orEmpty(),
                 actionLabel = "重新加载",
@@ -293,22 +299,12 @@ fun EntryEditScreen(
                     }
                 }
             }
-            ScrollableTabRow(
-                selectedTabIndex = subTab.ordinal,
-                edgePadding = 12.dp,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Tab(
-                    selected = subTab == EntryEditSubTab.EDIT,
-                    onClick = { focusManager.clearFocus(); subTab = EntryEditSubTab.EDIT },
-                    text = { Text("编辑") }
-                )
-                Tab(
-                    selected = subTab == EntryEditSubTab.VERSIONS,
-                    onClick = { focusManager.clearFocus(); subTab = EntryEditSubTab.VERSIONS },
-                    text = { Text("版本") }
-                )
-            }
+            com.mojing.app.ui.common.MoJingSectionTabs(
+                listOf("编辑", "版本"), subTab.ordinal, { index ->
+                    focusManager.clearFocus()
+                    subTab = if (index == 0) EntryEditSubTab.EDIT else EntryEditSubTab.VERSIONS
+                },
+            )
 
             when (subTab) {
                 EntryEditSubTab.EDIT -> Column(
@@ -463,7 +459,7 @@ fun EntryEditScreen(
                     ) {
                         Text(if (advancedOpen) "收起高级设置" else "高级设置")
                         Spacer(Modifier.weight(1f))
-                        Icon(if (advancedOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
+                        Icon(if (advancedOpen) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null)
                     }
 
                     if (advancedOpen) {
@@ -562,6 +558,7 @@ fun EntryEditScreen(
 
     state.pendingVersion?.let { version ->
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = viewModel::dismissVersionReplacement,
             title = { Text("载入 v${version.version}？") },
             text = { Text("当前未保存的修改将被替换。载入后可继续编辑，再保存为新版本。") },
@@ -578,6 +575,7 @@ fun EntryEditScreen(
 
     if (showDiscardDialog && state.recoverableDraft == null && !state.draftUnreadable) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { showDiscardDialog = false },
             title = { Text("放弃未保存的修改？") },
             text = { Text("离开后，本次尚未保存的词条修改不会保留。") },
@@ -596,6 +594,7 @@ fun EntryEditScreen(
     }
     if (state.recoverableDraft != null || state.draftUnreadable) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = {},
             title = { Text(if (state.draftUnreadable) "词条草稿暂时无法读取" else "发现未保存的词条草稿") },
             text = { Text(state.draftError ?: "上次编辑的内容保存在此设备。恢复后请检查资料再保存；丢弃只移除草稿，不改已保存词条。") },

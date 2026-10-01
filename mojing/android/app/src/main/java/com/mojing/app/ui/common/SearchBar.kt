@@ -1,15 +1,15 @@
 package com.mojing.app.ui.common
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Search
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -34,10 +34,10 @@ fun SearchBar(
         onValueChange = onQueryChange,
         modifier = modifier.fillMaxWidth(),
         placeholder = { Text(placeholder) },
-        leadingIcon = { Icon(Icons.Default.Search, searchDescription) },
+        leadingIcon = { Icon(Icons.Outlined.Search, searchDescription) },
         singleLine = true,
         trailingIcon = if (query.isNotEmpty()) ({
-            IconButton(onClick = { onQueryChange("") }) { Icon(Icons.Default.Close, clearDescription) }
+            IconButton(onClick = { onQueryChange("") }) { Icon(Icons.Outlined.Close, clearDescription) }
         }) else null,
         shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),

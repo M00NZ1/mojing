@@ -1,5 +1,9 @@
 package com.mojing.app.ui.settings.usage
 
+import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import com.mojing.app.ui.common.MoJingFilterChip as FilterChip
+import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.FlowRow
@@ -29,20 +33,16 @@ import androidx.compose.material.icons.outlined.Paid
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -83,7 +83,8 @@ fun UsageScreen(
     } else {
         BackHandler { onBack?.invoke() }
         Scaffold(topBar = {
-            TopAppBar(title = { Text(if (level == 1) platformName.ifBlank { "历史平台" } else modelName.orEmpty().ifBlank { "未记录模型" },
+            TopAppBar(
+                        expandedHeight = 52.dp,title = { Text(if (level == 1) platformName.ifBlank { "历史平台" } else modelName.orEmpty().ifBlank { "未记录模型" },
                 maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = { IconButton(onClick = { onBack?.invoke() }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回") } })
         }) { padding ->

@@ -1,5 +1,9 @@
 package com.mojing.app.ui.chat
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Check
+import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -7,9 +11,6 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -47,7 +48,7 @@ fun BranchSelector(
                 com.mojing.app.ui.common.SearchBar(query, { query = it }, placeholder = "搜索故事线")
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedButton(onClick = { onSelect("CREATE_NEW"); onDismiss() }) {
-                        Icon(Icons.Default.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("新建")
+                        Icon(Icons.Outlined.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("新建")
                     }
                     Spacer(Modifier.weight(1f))
                     if (onShowBranchOverview != null) TextButton(onClick = { onDismiss(); onShowBranchOverview() }) { Text("故事线总览") }
@@ -64,7 +65,7 @@ fun BranchSelector(
                             border = BorderStroke(1.dp, if (current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)) {
                             Row(Modifier.heightIn(min = 52.dp).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text(storyLineDisplayLabel(id, label), Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                if (current) Icon(Icons.Default.Check, "当前故事线", Modifier.padding(start = 8.dp).size(20.dp))
+                                if (current) Icon(Icons.Outlined.Check, "当前故事线", Modifier.padding(start = 8.dp).size(20.dp))
                             }
                         }
                     }

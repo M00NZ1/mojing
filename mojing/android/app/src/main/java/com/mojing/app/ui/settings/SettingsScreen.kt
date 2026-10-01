@@ -18,7 +18,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -148,6 +147,7 @@ fun SettingsScreen(
 
     if (showDiscardProfileDialog) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = {
                 showDiscardProfileDialog = false
                 pendingNavigation = null
@@ -197,18 +197,9 @@ private fun PersonalizationTab(
     onProfileSaved: (String, String, String) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        TabRow(
-            selectedTabIndex = selectedSection,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            listOf("我的资料", "外观").forEachIndexed { index, label ->
-                Tab(
-                    selected = selectedSection == index,
-                    onClick = { onSelectSection(index) },
-                    text = { Text(label) },
-                )
-            }
-        }
+        com.mojing.app.ui.common.MoJingSectionTabs(
+            listOf("我的资料", "外观"), selectedSection, onSelectSection,
+        )
         Box(modifier = Modifier.weight(1f)) {
             if (selectedSection == 0) {
                 ProfileTab(

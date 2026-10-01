@@ -1,13 +1,14 @@
 package com.mojing.app.ui.common
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Search
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -36,7 +37,7 @@ internal fun ModelPickerHeader(title: String, query: String, onQueryChange: (Str
     BackHandler(enabled = searching) { collapseSearch() }
     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
         if (searching) {
-            IconButton(onClick = collapseSearch) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "收起搜索") }
+            IconButton(onClick = collapseSearch) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "收起搜索") }
             MoJingTextField(query, onQueryChange,
                 modifier = Modifier.weight(1f).focusRequester(focusRequester).testTag("model-picker-search"),
                 placeholder = { Text("搜索$searchLabel") }, singleLine = true,
@@ -48,8 +49,8 @@ internal fun ModelPickerHeader(title: String, query: String, onQueryChange: (Str
         } else {
             Text(title, Modifier.weight(1f).padding(start = 8.dp),
                 style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            IconButton(onClick = { searching = true }) { Icon(Icons.Default.Search, "搜索$searchLabel") }
+            IconButton(onClick = { searching = true }) { Icon(Icons.Outlined.Search, "搜索$searchLabel") }
         }
-        IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "关闭") }
+        IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, "关闭") }
     }
 }

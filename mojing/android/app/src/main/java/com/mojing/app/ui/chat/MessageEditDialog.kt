@@ -1,8 +1,9 @@
 package com.mojing.app.ui.chat
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -41,6 +42,7 @@ internal fun MessageEditDialog(
         },
     )
     ModalBottomSheet(
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),
         onDismissRequest = requestDismiss,
         sheetState = sheetState,
         sheetMaxWidth = 720.dp,
@@ -52,7 +54,7 @@ internal fun MessageEditDialog(
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("编辑消息", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                IconButton(onClick = requestDismiss, enabled = !saving) { Icon(Icons.Default.Close, "关闭消息编辑") }
+                IconButton(onClick = requestDismiss, enabled = !saving) { Icon(Icons.Outlined.Close, "关闭消息编辑") }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             if (!WindowInsets.isImeVisible) Text(
@@ -82,6 +84,7 @@ internal fun MessageEditDialog(
     }
     if (confirmDiscard) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { confirmDiscard = false },
             title = { Text("放弃这次编辑？") },
             text = { Text("尚未保存的修改将被放弃。") },

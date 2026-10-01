@@ -1,13 +1,13 @@
 package com.mojing.app.ui.common
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -65,7 +65,7 @@ fun ImagePreviewDialog(imageUrl: String, onDismiss: () -> Unit) {
                         .statusBarsPadding()
                         .padding(12.dp),
                 ) {
-                    Icon(Icons.Default.Close, "关闭图片预览", tint = Color.White)
+                    Icon(Icons.Outlined.Close, "关闭图片预览", tint = Color.White)
                 }
             }
         }

@@ -1,5 +1,7 @@
 package com.mojing.app.ui.navigation
 
+import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingIcon as Icon
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 import androidx.compose.animation.fadeIn
@@ -11,13 +13,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.runtime.Composable
@@ -90,6 +90,7 @@ private fun UsageSummaryDestination(
     Scaffold(
         topBar = {
             TopAppBar(
+                        expandedHeight = 52.dp,
                 title = { Text("用量汇总") },
                 navigationIcon = {
                     IconButton(onClick = { navController.navigateToMainTab(Routes.SETTINGS) }) {

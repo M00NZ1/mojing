@@ -1,5 +1,9 @@
 package com.mojing.app.ui.chat
 
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material3.MaterialTheme
@@ -80,16 +84,29 @@ internal fun highlightedMessageText(text: String, ranges: List<IntRange>): Annot
 }
 
 /** The normal chat text renderer, with optional search marking and first-hit positioning. */
+/** Preserve original text and offsets while sizing existing paragraph gaps for reader mode. */
+private fun readerParagraphs(text: AnnotatedString, gapHeight: TextUnit): AnnotatedString = buildAnnotatedString {
+    append(text)
+    Regex("\n\n+").findAll(text.text).forEach { gap ->
+        addStyle(ParagraphStyle(lineHeight = gapHeight), gap.range.first + 1, gap.range.last + 1)
+    }
+}
+
 @Composable
 internal fun SearchableMessageText(
     text: String, modifier: Modifier = Modifier,
     style: TextStyle = MaterialTheme.typography.bodyMedium, color: Color = Color.Unspecified,
     maxLines: Int = Int.MAX_VALUE,
 ) {
+    val reader = LocalChatDensityMetrics.current.bodyFontSp == 17f
+    val paragraphGap = with(LocalDensity.current) { 14.dp.toSp() }
+    val ink = if (reader && MaterialTheme.colorScheme.background == com.mojing.app.ui.theme.MoJingDesignTokens.background)
+        com.mojing.app.ui.theme.MoJingDesignTokens.readerText else color
+    val display = remember(text, reader, paragraphGap) { if (reader) readerParagraphs(AnnotatedString(text), paragraphGap) else AnnotatedString(text) }
     val highlight = LocalMessageSearchHighlight.current
     val query = remember(highlight.query) { MessageSearchTokenizer.normalize(highlight.query.trim()) }
     if (query.isEmpty() || text.isEmpty()) {
-        Text(text, modifier = modifier, style = style, color = color, maxLines = maxLines)
+        Text(display, modifier = modifier, style = style, color = ink, maxLines = maxLines)
         return
     }
     val resultState = remember(text, query) {
@@ -105,11 +122,11 @@ internal fun SearchableMessageText(
     }
     val highlightResult = resultState.value
     if (highlightResult == null) {
-        Text(text, modifier = modifier, style = style, color = color, maxLines = maxLines)
+        Text(display, modifier = modifier, style = style, color = ink, maxLines = maxLines)
         return
     }
     val ranges = highlightResult.ranges
-    val annotated = highlightResult.annotated
+    val annotated = remember(highlightResult, reader, paragraphGap) { if (reader) readerParagraphs(highlightResult.annotated, paragraphGap) else highlightResult.annotated }
     val requester = remember { BringIntoViewRequester() }
     var layout by remember(text, highlightResult) { mutableStateOf<TextLayoutResult?>(null) }
     LaunchedEffect(highlight, highlightResult, layout) {
@@ -119,6 +136,6 @@ internal fun SearchableMessageText(
         val line = result.getLineForOffset(ranges.first().first)
         requester.bringIntoView(Rect(0f, result.getLineTop(line), result.size.width.toFloat(), result.getLineBottom(line)))
     }
-    Text(annotated, modifier.bringIntoViewRequester(requester), style = style, color = color,
+    Text(annotated, modifier.bringIntoViewRequester(requester), style = style, color = ink,
         maxLines = maxLines, onTextLayout = { layout = it })
 }

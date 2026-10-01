@@ -1,13 +1,13 @@
 package com.mojing.app.ui.chat
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -26,7 +26,7 @@ fun ImageGenButton(
         color = MaterialTheme.colorScheme.surfaceVariant
     ) {
         Icon(
-            Icons.Default.Image, "图片生成",
+            Icons.Outlined.Image, "图片生成",
             modifier = Modifier.padding(iconPadding),
             tint = MaterialTheme.colorScheme.onSurface
         )

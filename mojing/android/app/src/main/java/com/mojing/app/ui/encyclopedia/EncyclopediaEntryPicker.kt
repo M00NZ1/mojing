@@ -1,13 +1,12 @@
 package com.mojing.app.ui.encyclopedia
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -46,6 +45,7 @@ internal fun EncyclopediaEntryPicker(encyclopediaId: Long, selectedId: Long?,
     val listState = rememberLazyListState()
     LaunchedEffect(encyclopediaId, query, cursor) { listState.scrollToItem(0) }
     ModalBottomSheet(
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         sheetMaxWidth = 640.dp,
@@ -113,7 +113,7 @@ internal fun EncyclopediaEntryPicker(encyclopediaId: Long, selectedId: Long?,
                                         Text(ENTRY_TYPE_LABELS[entry.entryType] ?: "其他", style = MaterialTheme.typography.labelMedium,
                                             color = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
-                                    if (isSelected) Icon(Icons.Default.Check, "已选", Modifier.size(20.dp))
+                                    if (isSelected) Icon(Icons.Outlined.Check, "已选", Modifier.size(20.dp))
                                 }
                             }
                             HorizontalDivider()

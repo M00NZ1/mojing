@@ -1,10 +1,21 @@
 package com.mojing.app.ui.generation
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.outlined.PersonOutline
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Pause
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.CheckCircleOutline
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -39,9 +50,9 @@ internal fun GenerationTaskCard(
     val hasResult = task.progressDone > 0 || completed
     val colors = MaterialTheme.colorScheme
     val icon = when (task.taskKind) {
-        GenerationTaskKinds.CHARACTER_PERSONA_AI -> Icons.Default.PersonOutline
-        GenerationTaskKinds.WORLD_TEMPLATE_PROMPT_AI -> Icons.Default.Public
-        else -> Icons.Default.MenuBook
+        GenerationTaskKinds.CHARACTER_PERSONA_AI -> Icons.Outlined.PersonOutline
+        GenerationTaskKinds.WORLD_TEMPLATE_PROMPT_AI -> Icons.Outlined.Public
+        else -> Icons.Outlined.MenuBook
     }
     Card(
         onClick = onDetail,
@@ -63,16 +74,16 @@ internal fun GenerationTaskCard(
                 if (task.isActive()) {
                     Box {
                         IconButton(onClick = { menuExpanded = true }) {
-                            Icon(Icons.Default.MoreHoriz, "任务操作")
+                            Icon(Icons.Outlined.MoreHoriz, "任务操作")
                         }
                         DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                             DropdownMenuItem(text = { Text("取消生成") }, enabled = !busy,
                                 onClick = { menuExpanded = false; onCancel() },
-                                leadingIcon = { Icon(Icons.Default.Close, null) })
+                                leadingIcon = { Icon(Icons.Outlined.Close, null) })
                         }
                     }
                 } else {
-                    Icon(Icons.Default.ChevronRight, null, tint = colors.onSurfaceVariant)
+                    Icon(Icons.Outlined.ChevronRight, null, tint = colors.onSurfaceVariant)
                 }
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -97,7 +108,7 @@ internal fun GenerationTaskCard(
                     if (retryable) {
                         MoJingButton(onClick = onRetry, enabled = !busy && !retrying) {
                             if (retrying) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                            else Icon(Icons.Default.Refresh, null, Modifier.size(18.dp))
+                            else Icon(Icons.Outlined.Refresh, null, Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
                             Text(if (retrying) "重新排队中…" else "继续尝试")
                         }
@@ -122,11 +133,11 @@ internal fun GenerationTaskStatusLabel(status: String, finishing: Boolean = fals
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
         Icon(when (status) {
-            GenerationTaskStatus.FAILED -> Icons.Default.ErrorOutline
-            GenerationTaskStatus.COMPLETED -> Icons.Default.CheckCircleOutline
-            GenerationTaskStatus.PAUSED -> Icons.Default.Pause
-            GenerationTaskStatus.CANCELLED -> Icons.Default.Close
-            else -> Icons.Default.Schedule
+            GenerationTaskStatus.FAILED -> Icons.Outlined.ErrorOutline
+            GenerationTaskStatus.COMPLETED -> Icons.Outlined.CheckCircleOutline
+            GenerationTaskStatus.PAUSED -> Icons.Outlined.Pause
+            GenerationTaskStatus.CANCELLED -> Icons.Outlined.Close
+            else -> Icons.Outlined.Schedule
         }, null, Modifier.size(16.dp), tint = tint)
         Text(if (finishing) "正在收尾" else statusLabel(status),
             style = MaterialTheme.typography.labelMedium, color = tint)

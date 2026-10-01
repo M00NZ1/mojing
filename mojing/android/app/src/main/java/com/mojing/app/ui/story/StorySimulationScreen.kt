@@ -1,5 +1,10 @@
 package com.mojing.app.ui.story
 
+import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import com.mojing.app.ui.common.MoJingFilterChip as FilterChip
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.AutoAwesome
 import kotlinx.coroutines.launch
 
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
@@ -25,15 +30,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -41,7 +42,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -146,6 +146,7 @@ fun StorySimulationScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
+                        expandedHeight = 52.dp,
                 title = { Text("小说创作", style = MaterialTheme.typography.titleMedium) },
                 actions = {
                     if (isImeOpen && !isBusy && !state.hasPendingStory && state.savedSessionId == null && !state.isRestoring && state.recoveryError == null) {
@@ -159,7 +160,7 @@ fun StorySimulationScreen(
                             requestNavigation { navController.returnToCreationHub() }
                         },
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回创作中心")
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回创作中心")
                     }
                 },
             )
@@ -194,7 +195,7 @@ fun StorySimulationScreen(
                                         enabled = !isBusy && state.premise.isNotBlank(),
                                         modifier = Modifier.fillMaxWidth(),
                                     ) {
-                                        Icon(Icons.Default.AutoAwesome, contentDescription = null)
+                                        Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
                                         Spacer(Modifier.width(8.dp))
                                         Text("生成小说并开始创作")
                                     }
@@ -230,7 +231,8 @@ fun StorySimulationScreen(
                 onRetryInterrupted = { viewModel.retryInterruptedGeneration(onOpenSession) },
                 onDiscardInterrupted = viewModel::discardInterruptedGeneration)
             if (!state.hasPendingStory && state.savedSessionId == null && !state.isRestoring && state.recoveryError == null) {
-            Text("写下大致故事背景和开篇走向，AI 会结合已选人物直接生成小说正文。完成后自动进入创作会话，可继续输入后续走向或连续续写。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("从一个想法开始，结合人物与世界写下开篇。",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (state.hasInputDraft) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween) {
@@ -255,10 +257,10 @@ fun StorySimulationScreen(
                 value = state.premise,
                 onValueChange = viewModel::updatePremise,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("故事背景与大致设定 *") },
+                label = { Text("故事背景 *") },
                 placeholder = { Text("例如：海边小城每逢大雾就会收到来自未来的信。一名修钟师发现，信中提到的人正逐一失踪。") },
                 supportingText = { Text("否定设定和人物知情范围会作为持续规则，请尽量明确写出。") },
-                minLines = 5,
+                minLines = 4,
                 maxLines = 10,
                 enabled = !isBusy,
             )
@@ -359,6 +361,7 @@ fun StorySimulationScreen(
 
     state.error?.takeIf { state.generationModel == null && !state.hasPendingStory && state.savedSessionId == null }?.let { message ->
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = viewModel::clearError,
             title = { Text("操作未完成") },
             text = { Text(message) },
@@ -368,6 +371,7 @@ fun StorySimulationScreen(
 
     if (showStopAndLeaveDialog) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { dismissStopDialog() },
             title = { Text(if (state.hasPendingStory) "放弃尚未保存的正文？" else "停止生成并离开？") },
             text = { Text(if (state.hasPendingStory) "放弃后将清除这篇待保存正文。可以先返回保存或复制全文。" else "当前小说还在生成。停止后会保留故事设定和已收到的有限预览；完整小说不会保存。若预览暂存失败，将留在此页供你复制或重试。") },
@@ -396,7 +400,8 @@ fun StorySimulationScreen(
     }
 
     if (showDiscardUnreadableDialog) {
-        AlertDialog(onDismissRequest = { showDiscardUnreadableDialog = false },
+        AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),onDismissRequest = { showDiscardUnreadableDialog = false },
             title = { Text("清除无法读取的草稿？") },
             text = { Text("清除后无法继续恢复这篇草稿。可以先返回复制恢复数据。") },
             confirmButton = { TextButton(enabled = !state.isSaving, onClick = { scope.launch {
@@ -406,7 +411,8 @@ fun StorySimulationScreen(
     }
 
     if (showClearInputDialog) {
-        AlertDialog(onDismissRequest = { showClearInputDialog = false },
+        AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),onDismissRequest = { showClearInputDialog = false },
             title = { Text("清空创作设定？") },
             text = { Text("背景、走向、风格及本次选择的世界和角色会从草稿中移除。已保存的会话不受影响。") },
             confirmButton = { TextButton(enabled = !state.isSaving, onClick = { scope.launch {
@@ -417,6 +423,7 @@ fun StorySimulationScreen(
 
     if (showSavingDialog) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { showSavingDialog = false },
             title = { Text("正在保存故事") },
             text = { Text("生成已经完成，正在写入本地会话。保存结束后会自动进入故事，请稍候。") },

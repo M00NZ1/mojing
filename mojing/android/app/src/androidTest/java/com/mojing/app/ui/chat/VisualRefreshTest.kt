@@ -90,7 +90,8 @@ class VisualRefreshTest {
             }
             if (theme == "dark" || theme == "light") capture("controls-$theme")
         }
-        rule.onNodeWithText("角色名称").performTextInput("林汐")
+        rule.onNodeWithText("角色名称").assertExists()
+        rule.onAllNodes(hasSetTextAction()).onFirst().performTextInput("林汐")
         rule.onNodeWithText("林汐").assertExists()
         rule.onNodeWithText("开始对话").performScrollTo().performClick()
         rule.runOnIdle { assertTrue(clicked) }

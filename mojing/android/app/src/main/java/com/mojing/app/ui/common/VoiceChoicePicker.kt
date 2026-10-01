@@ -1,5 +1,11 @@
 package com.mojing.app.ui.common
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import com.mojing.app.ui.common.MoJingFilterChip as FilterChip
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,15 +24,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -233,6 +233,7 @@ fun VoiceChoicePicker(
         confirmValueChange = { value -> value != SheetValue.Hidden || !currentSaving },
     )
     ModalBottomSheet(
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),
         sheetState = sheetState,
         onDismissRequest = { if (!saving) { stopPreview(); onDismiss() } },
         sheetMaxWidth = 640.dp,
@@ -250,10 +251,10 @@ fun VoiceChoicePicker(
             ) {
                 Text("选择朗读音色", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                 IconButton(enabled = !saving, onClick = { loadEngines(); if (selectedEngine != "inherit") load(selectedEngine) }) {
-                    Icon(Icons.Default.Refresh, contentDescription = "刷新引擎和音色")
+                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新引擎和音色")
                 }
                 IconButton(enabled = !saving, onClick = { stopPreview(); onDismiss() }) {
-                    Icon(Icons.Default.Close, contentDescription = "关闭音色选择")
+                    Icon(Icons.Outlined.Close, contentDescription = "关闭音色选择")
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -304,7 +305,7 @@ fun VoiceChoicePicker(
                     Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         Text(inheritLabel, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                        if (inheritSelected) Icon(Icons.Default.Check, "已选跟随设置", Modifier.size(20.dp))
+                        if (inheritSelected) Icon(Icons.Outlined.Check, "已选跟随设置", Modifier.size(20.dp))
                     }
                 }
                 HorizontalDivider()
@@ -389,7 +390,7 @@ fun VoiceChoicePicker(
                             searchExpanded = !searchExpanded
                             if (!searchExpanded) query = ""
                         }) {
-                            Icon(if (searchExpanded) Icons.Default.Close else Icons.Default.Search,
+                            Icon(if (searchExpanded) Icons.Outlined.Close else Icons.Outlined.Search,
                                 if (searchExpanded) "收起音色搜索" else "搜索音色")
                         }
                     }
@@ -438,7 +439,7 @@ fun VoiceChoicePicker(
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
-                                    if (selected) Icon(Icons.Default.Check, "已选音色", Modifier.size(20.dp),
+                                    if (selected) Icon(Icons.Outlined.Check, "已选音色", Modifier.size(20.dp),
                                         tint = MaterialTheme.colorScheme.onSecondaryContainer)
                                     TextButton(enabled = !saving && !loading, onClick = { preview(voice) }) {
                                         Text(if (previewId == voice.id) "停止" else "试听")

@@ -8,23 +8,23 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.navigation.NavBackStackEntry
 
 object NavAnimations {
     fun enterTransition(): AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
-        fadeIn(tween(220)) + slideInHorizontally(tween(240, easing = FastOutSlowInEasing)) { it / 18 }
+        fadeIn(tween(220)) + slideInHorizontally(tween(220, easing = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f))) { it / 18 }
     }
 
     fun exitTransition(): AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
-        fadeOut(tween(140)) + slideOutHorizontally(tween(180, easing = FastOutSlowInEasing)) { -it / 36 }
+        fadeOut(tween(180)) + slideOutHorizontally(tween(180, easing = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f))) { -it / 36 }
     }
 
     fun popEnterTransition(): AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
-        fadeIn(tween(200)) + slideInHorizontally(tween(240, easing = FastOutSlowInEasing)) { -it / 24 }
+        fadeIn(tween(200)) + slideInHorizontally(tween(220, easing = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f))) { -it / 24 }
     }
 
     fun popExitTransition(): AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
-        fadeOut(tween(180)) + slideOutHorizontally(tween(200, easing = FastOutSlowInEasing)) { it / 18 }
+        fadeOut(tween(180)) + slideOutHorizontally(tween(200, easing = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f))) { it / 18 }
     }
 }

@@ -1,5 +1,14 @@
 package com.mojing.app.ui.workbench
 
+import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.AutoFixHigh
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.Refresh
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingButton as Button
 import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
@@ -10,8 +19,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -108,12 +115,13 @@ fun TemplateEditScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
+                        expandedHeight = 52.dp,
                 title = {
                     Text(if (templateId == 0L && !state.isPersisted) "新建设定模板" else "编辑设定模板", style = MaterialTheme.typography.titleMedium)
                 },
                 navigationIcon = {
                     IconButton(onClick = ::requestBack, enabled = !saveBusy) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回")
                     }
                 },
                 actions = {
@@ -122,7 +130,7 @@ fun TemplateEditScreen(
                         enabled = state.isLoaded && canSave && !saveBusy && !state.isAiCompleting,
                     ) {
                         if (state.isSaving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Default.Save, if (state.completionRefreshError != null || state.isRefreshingCompletion) "等待读取补全结果" else if (canSave) "保存修改" else "已保存")
+                        else Icon(Icons.Outlined.Save, if (state.completionRefreshError != null || state.isRefreshingCompletion) "等待读取补全结果" else if (canSave) "保存修改" else "已保存")
                     }
                 }
             )
@@ -164,7 +172,7 @@ fun TemplateEditScreen(
     ) { padding ->
         if (state.loadError != null) {
             EmptyState(
-                icon = Icons.Default.ErrorOutline,
+                icon = Icons.Outlined.ErrorOutline,
                 title = "无法打开模板",
                 message = state.loadError.orEmpty(),
                 actionLabel = if (state.loadErrorCanReturn) "返回工坊" else "重新加载",
@@ -246,7 +254,7 @@ fun TemplateEditScreen(
                                 enabled = !state.isSaving && !state.isAiCompleting,
                             ) {
                                 Icon(
-                                    if (state.saveErrorCanReturn) Icons.AutoMirrored.Filled.ArrowBack else Icons.Default.Refresh,
+                                    if (state.saveErrorCanReturn) Icons.AutoMirrored.Outlined.ArrowBack else Icons.Outlined.Refresh,
                                     contentDescription = null,
                                 )
                                 Spacer(Modifier.width(8.dp))
@@ -346,7 +354,7 @@ fun TemplateEditScreen(
                         Spacer(Modifier.width(8.dp))
                         Text("正在补全世界设定…")
                     } else {
-                        Icon(Icons.Default.AutoFixHigh, contentDescription = null)
+                        Icon(Icons.Outlined.AutoFixHigh, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text("补全世界设定")
                     }
@@ -372,7 +380,7 @@ fun TemplateEditScreen(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                 ) {
                     Icon(
-                        if (moreToolsOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        if (moreToolsOpen) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
                         contentDescription = null,
                     )
                     Spacer(Modifier.width(8.dp))
@@ -492,6 +500,7 @@ fun TemplateEditScreen(
 
     if (showDiscardDialog) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { showDiscardDialog = false },
             title = { Text("放弃未保存的修改？") },
             text = { Text("返回后，本次尚未保存的模板修改不会保留。") },

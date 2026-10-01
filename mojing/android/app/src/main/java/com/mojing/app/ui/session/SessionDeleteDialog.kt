@@ -1,5 +1,6 @@
 package com.mojing.app.ui.session
 
+import com.mojing.app.ui.common.MoJingButton as Button
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.*
@@ -10,6 +11,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 internal fun SessionDeleteDialog(title: String, busy: Boolean, error: String?, onDelete: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
         onDismissRequest = { if (!busy) onDismiss() },
         title = { Text("删除对话？") },
         text = {

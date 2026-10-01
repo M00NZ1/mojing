@@ -1,11 +1,12 @@
 package com.mojing.app.ui.chat
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -37,7 +38,8 @@ fun ChatModelPicker(
         platform?.models.orEmpty().distinct().filter { it.contains(query.trim(), ignoreCase = true) }
     }
     val maxHeight = LocalConfiguration.current.screenHeightDp.dp * 0.78f
-    ModalBottomSheet(onDismissRequest = onDismiss, dragHandle = null,
+    ModalBottomSheet(
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),onDismissRequest = onDismiss, dragHandle = null,
         containerColor = MaterialTheme.colorScheme.surface,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().heightIn(max = maxHeight).padding(horizontal = 12.dp, vertical = 8.dp)) {
@@ -98,7 +100,7 @@ fun ChatModelPicker(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("chat-model-follow-settings")
                         .semantics { selected = selectedModel == null && selectedLabel == "跟随角色与模型设置" }) {
                     Text("跟随角色与模型设置", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-                    if (selectedModel == null && selectedLabel == "跟随角色与模型设置") Icon(Icons.Default.Check, "已选择", Modifier.size(18.dp))
+                    if (selectedModel == null && selectedLabel == "跟随角色与模型设置") Icon(Icons.Outlined.Check, "已选择", Modifier.size(18.dp))
                 }
             }
         }

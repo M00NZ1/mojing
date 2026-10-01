@@ -1,13 +1,16 @@
 package com.mojing.app.ui.world
 
+import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Refresh
+import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -46,14 +49,15 @@ fun WorldSettingsScreen(
         if (imeOpen) hideImeKeyboard(keyboardController, focusManager) else requestBack()
     }
     Scaffold(topBar = {
-        TopAppBar(title = { Text("世界设置", maxLines = 1, overflow = TextOverflow.Ellipsis,
+        TopAppBar(
+                        expandedHeight = 52.dp,title = { Text("世界设置", maxLines = 1, overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.titleMedium) }, navigationIcon = {
-            IconButton(onClick = ::requestBack, enabled = !state.saving) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+            IconButton(onClick = ::requestBack, enabled = !state.saving) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回") }
         }, actions = {
             if (imeOpen) TextButton(onClick = viewModel::save, enabled = canSave) { Text(if (state.saving) "保存中…" else "保存") }
         })
     }, bottomBar = {
-        if (!imeOpen && !state.loading && state.error == null) Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp, shadowElevation = 2.dp) {
+        if (!imeOpen && !state.loading && state.error == null) Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp, shadowElevation = 0.dp) {
             Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp)) {
                 com.mojing.app.ui.common.MoJingButton(onClick = viewModel::save, enabled = canSave,
                     modifier = Modifier.fillMaxWidth()) {
@@ -64,7 +68,7 @@ fun WorldSettingsScreen(
     }) { padding ->
         when {
             state.loading -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = androidx.compose.ui.Alignment.Center) { CircularProgressIndicator() }
-            state.error != null -> Column(Modifier.fillMaxSize().padding(padding).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { Text(state.error!!, color = MaterialTheme.colorScheme.error); OutlinedButton(onClick = viewModel::retry) { Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text("重试") } }
+            state.error != null -> Column(Modifier.fillMaxSize().padding(padding).padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { Text(state.error!!, color = MaterialTheme.colorScheme.error); OutlinedButton(onClick = viewModel::retry) { Icon(Icons.Outlined.Refresh, null); Spacer(Modifier.width(6.dp)); Text("重试") } }
             else -> Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(padding).consumeWindowInsets(padding).imePadding()) {
                 state.saveError?.let { message ->
                     Surface(color = MaterialTheme.colorScheme.errorContainer) {
@@ -104,6 +108,8 @@ fun WorldSettingsScreen(
             }
         }
     }
-    if (showDiscard) AlertDialog(onDismissRequest = { showDiscard = false }, title = { Text("离开世界编辑？") }, text = { Text(if (state.draftError != null) "最新修改未能暂存，离开可能丢失输入。可继续编辑并重试保存。" else "修改已保留为本地草稿，下次打开可以恢复。") }, confirmButton = { TextButton(onClick = onBack) { Text(if (state.draftError != null) "仍然离开" else "保留草稿并离开") } }, dismissButton = { TextButton(onClick = { showDiscard = false }) { Text("继续编辑") } })
-    if (discardStoredDraft) AlertDialog(onDismissRequest = { discardStoredDraft = false }, title = { Text("丢弃世界草稿？") }, text = { Text("将移除未保存的修改，已保存的世界资料不变。") }, confirmButton = { TextButton(onClick = { viewModel.discardDraft(); discardStoredDraft = false }) { Text("丢弃") } }, dismissButton = { TextButton(onClick = { discardStoredDraft = false }) { Text("取消") } })
+    if (showDiscard) AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),onDismissRequest = { showDiscard = false }, title = { Text("离开世界编辑？") }, text = { Text(if (state.draftError != null) "最新修改未能暂存，离开可能丢失输入。可继续编辑并重试保存。" else "修改已保留为本地草稿，下次打开可以恢复。") }, confirmButton = { TextButton(onClick = onBack) { Text(if (state.draftError != null) "仍然离开" else "保留草稿并离开") } }, dismissButton = { TextButton(onClick = { showDiscard = false }) { Text("继续编辑") } })
+    if (discardStoredDraft) AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),onDismissRequest = { discardStoredDraft = false }, title = { Text("丢弃世界草稿？") }, text = { Text("将移除未保存的修改，已保存的世界资料不变。") }, confirmButton = { TextButton(onClick = { viewModel.discardDraft(); discardStoredDraft = false }) { Text("丢弃") } }, dismissButton = { TextButton(onClick = { discardStoredDraft = false }) { Text("取消") } })
 }

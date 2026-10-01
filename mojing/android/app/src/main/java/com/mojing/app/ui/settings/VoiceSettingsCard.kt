@@ -1,5 +1,9 @@
 package com.mojing.app.ui.settings
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.VolumeUp
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,10 +14,6 @@ import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material3.Icon
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -82,7 +82,7 @@ fun VoiceSettingsCard(
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     OutlinedButton(onClick = { pickerVisible = true }, enabled = !saving, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Default.VolumeUp, null)
+                        Icon(Icons.Outlined.VolumeUp, null)
                         Spacer(Modifier.width(8.dp))
                         Text("选择引擎与音色")
                     }
@@ -104,7 +104,7 @@ fun VoiceSettingsCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 TextButton(onClick = { azureExpanded = !azureExpanded }, enabled = !saving) {
-                    Icon(if (azureExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
+                    Icon(if (azureExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null)
                     Spacer(Modifier.width(8.dp))
                     Text(if (azureExpanded) "收起连接设置" else "查看连接设置")
                 }

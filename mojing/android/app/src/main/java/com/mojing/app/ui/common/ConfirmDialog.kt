@@ -21,6 +21,7 @@ fun ConfirmDialog(
     dismissText: String = "取消"
 ) {
     AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
         onDismissRequest = onDismiss,
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         title = { Text(title, style = MaterialTheme.typography.titleLarge) },

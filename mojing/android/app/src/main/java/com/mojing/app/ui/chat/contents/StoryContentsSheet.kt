@@ -1,11 +1,12 @@
 package com.mojing.app.ui.chat.contents
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -146,13 +147,14 @@ fun StoryContentsSheet(
             }
         }
     }
-    ModalBottomSheet(sheetState = sheetState, onDismissRequest = { if (!saving) onDismiss() },
+    ModalBottomSheet(
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),sheetState = sheetState, onDismissRequest = { if (!saving) onDismiss() },
         dragHandle = null, containerColor = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.9f)) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("小说目录", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                    IconButton(onClick = onDismiss, enabled = !saving) { Icon(Icons.Default.Close, "关闭小说目录") }
+                    IconButton(onClick = onDismiss, enabled = !saving) { Icon(Icons.Outlined.Close, "关闭小说目录") }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 if (state.refreshingId != null) LinearProgressIndicator(Modifier.fillMaxWidth())

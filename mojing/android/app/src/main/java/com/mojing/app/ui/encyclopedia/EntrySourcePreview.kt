@@ -1,13 +1,14 @@
 package com.mojing.app.ui.encyclopedia
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
@@ -30,6 +31,7 @@ internal fun EntrySourcePreview(
     onOpenConversation: (() -> Unit)? = null,
 ) {
     ModalBottomSheet(
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),
         onDismissRequest = onClose,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = MaterialTheme.colorScheme.surface,
@@ -41,7 +43,7 @@ internal fun EntrySourcePreview(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("对话原文", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                IconButton(onClick = onClose) { Icon(Icons.Default.Close, "关闭原文") }
+                IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, "关闭原文") }
             }
             HorizontalDivider()
             key(sourceIndex) {
@@ -78,13 +80,13 @@ internal fun EntrySourcePreview(
                     if (sourceCount > 1) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = { onSourceChange(sourceIndex - 1) }, enabled = !loading && sourceIndex > 0) {
-                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "上一条原文")
+                                Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, "上一条原文")
                             }
                             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                                 Text("${sourceIndex + 1} / $sourceCount", style = MaterialTheme.typography.labelLarge)
                             }
                             IconButton(onClick = { onSourceChange(sourceIndex + 1) }, enabled = !loading && sourceIndex < sourceCount - 1) {
-                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "下一条原文")
+                                Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, "下一条原文")
                             }
                         }
                     }

@@ -64,6 +64,7 @@ internal fun AddParticipantDialog(
     }
 
     AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
         onDismissRequest = { if (!isSubmitting) onDismiss() },
         title = { Text("添加参与角色") },
         text = {

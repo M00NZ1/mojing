@@ -43,6 +43,7 @@ internal fun RecallMessageDialog(
         }
     }
     AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
         onDismissRequest = { if (!deleting) onDismiss() },
         title = { Text("撤回这条消息？") },
         text = {

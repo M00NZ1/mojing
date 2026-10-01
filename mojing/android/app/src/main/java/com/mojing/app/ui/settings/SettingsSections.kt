@@ -1,13 +1,17 @@
 package com.mojing.app.ui.settings
 
+import androidx.compose.foundation.border
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.automirrored.outlined.ArrowForward
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.outlined.DataUsage
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.SystemUpdate
@@ -43,18 +47,18 @@ internal fun SettingsSections(
     }
     val sections = listOf(
         SettingsSection("平台与模型", "连接平台、管理模型与单价", Icons.Outlined.Forum),
-        SettingsSection("创作偏好", "新故事与角色的默认设置", Icons.AutoMirrored.Filled.MenuBook),
+        SettingsSection("创作偏好", "新故事与角色的默认设置", Icons.AutoMirrored.Outlined.MenuBook),
         SettingsSection("个性化", "我的资料、主题与阅读显示", Icons.Outlined.Tune),
         SettingsSection("用量与费用", "平台、模型与单次请求", Icons.Outlined.DataUsage),
         SettingsSection("关于与更新", "当前版本与检查更新", Icons.Outlined.SystemUpdate),
     )
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(horizontal = 8.dp),
+        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = {
                 if (selectedTab >= 0) requestNavigation { selectedTab = -1 } else onBack()
             }) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, if (selectedTab >= 0) "返回设置" else "返回故事库")
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, if (selectedTab >= 0) "返回设置" else "返回故事库")
             }
             Text(sections.getOrNull(selectedTab)?.title ?: "设置",
                 style = MaterialTheme.typography.titleLarge,
@@ -63,7 +67,8 @@ internal fun SettingsSections(
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Box(Modifier.weight(1f)) {
             if (selectedTab < 0) {
-                LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp)) {
+                LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     sections.forEachIndexed { index, section ->
                         if (index == 0 || index == 2 || index == 4) item(key = "section-$index") {
                             Text(when (index) { 0 -> "连接与创作"; 2 -> "个人与记录"; else -> "应用" },
@@ -72,21 +77,23 @@ internal fun SettingsSections(
                                 modifier = Modifier.padding(top = if (index == 0) 8.dp else 24.dp, bottom = 8.dp))
                         }
                         item(key = section.title) {
-                            Row(Modifier.fillMaxWidth().clickable(role = Role.Button) {
+                            Row(Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small).clip(MaterialTheme.shapes.small)
+                                .background(MaterialTheme.colorScheme.surfaceContainerLowest).clickable(role = Role.Button) {
                                 requestNavigation { selectedTab = index }
-                            }.padding(vertical = 18.dp),
+                            }.padding(horizontal = 14.dp, vertical = 16.dp),
                                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
-                                Icon(section.icon, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.primaryContainer) {
+                                    Icon(section.icon, null, Modifier.padding(10.dp).size(22.dp), tint = MaterialTheme.colorScheme.primary)
+                                }
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text(section.title, style = MaterialTheme.typography.titleMedium)
                                     Text(section.summary, style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(18.dp),
+                                Icon(Icons.AutoMirrored.Outlined.ArrowForward, null, Modifier.size(18.dp),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         }
                     }
                 }

@@ -1,9 +1,10 @@
 package com.mojing.app.ui.chat
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -26,7 +27,7 @@ internal fun QuoteDraftPreview(text: String, speakerLabel: String = "", onCancel
                 Text(text.ifBlank { "（无文字内容）" }, style = MaterialTheme.typography.bodySmall,
                     maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
-            IconButton(onClick = onCancel) { Icon(Icons.Default.Close, contentDescription = "取消引用") }
+            IconButton(onClick = onCancel) { Icon(Icons.Outlined.Close, contentDescription = "取消引用") }
         }
     }
 }

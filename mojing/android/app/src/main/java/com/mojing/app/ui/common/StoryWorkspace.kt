@@ -1,17 +1,13 @@
 package com.mojing.app.ui.common
 
-import androidx.compose.foundation.Canvas
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -27,56 +23,38 @@ fun StoryFeatureCard(
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
-    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp),
-        color = colors.surfaceContainerLow, contentColor = colors.onSurface,
+    Surface(modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
+        color = colors.surface, contentColor = colors.onSurface,
         border = androidx.compose.foundation.BorderStroke(1.dp, colors.outlineVariant)) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(eyebrow, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(title, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
-                StoryLandscape(Modifier.size(44.dp))
             }
             Text(description, style = MaterialTheme.typography.bodyMedium)
             MoJingButton(onClick) {
                 Text(action)
                 Spacer(Modifier.width(8.dp))
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
+                Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null)
             }
         }
-    }
-}
-
-@Composable
-private fun StoryLandscape(modifier: Modifier) {
-    val ink = MaterialTheme.colorScheme.onPrimaryContainer
-    Canvas(modifier) {
-        val w = size.width
-        val h = size.height
-        drawCircle(ink.copy(alpha = 0.16f), w * .35f, Offset(w * .60f, h * .38f))
-        val ridge = Path().apply {
-            moveTo(0f, h * .75f)
-            cubicTo(w * .18f, h * .75f, w * .28f, h * .20f, w * .45f, h * .45f)
-            cubicTo(w * .60f, h * .72f, w * .68f, h * .42f, w, h * .68f)
-        }
-        drawPath(ridge, ink, style = Stroke(2.dp.toPx()))
-        drawLine(ink.copy(alpha = .4f), Offset(w * .2f, h * .90f), Offset(w * .8f, h * .90f), 1.dp.toPx())
     }
 }
 
 @Composable
 fun StoryLaunchCard(title: String, description: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
-    Surface(onClick = onClick, modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp),
-        color = colors.surfaceContainerLow, contentColor = colors.onSurface,
+    Surface(onClick = onClick, modifier = modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
+        color = colors.surface, contentColor = colors.onSurface,
         border = androidx.compose.foundation.BorderStroke(1.dp, colors.outlineVariant)) {
-        Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically,
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(title, style = MaterialTheme.typography.headlineSmall)
+                Text(title, style = MaterialTheme.typography.titleLarge)
                 Text(description, style = MaterialTheme.typography.bodyMedium)
             }
-            Surface(shape = RoundedCornerShape(12.dp), color = colors.primary, contentColor = colors.onPrimary) {
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.padding(12.dp).size(24.dp))
+            Surface(shape = MaterialTheme.shapes.small, color = colors.primaryContainer, contentColor = colors.onPrimaryContainer) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowForward, null, Modifier.padding(12.dp).size(24.dp))
             }
         }
     }
@@ -89,26 +67,28 @@ fun WorkspaceResourceCard(
 ) {
     val colors = MaterialTheme.colorScheme
     Surface(onClick = onClick, modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp), color = colors.surfaceContainerLowest,
+        shape = MaterialTheme.shapes.small, color = colors.surfaceContainerLowest,
         border = androidx.compose.foundation.BorderStroke(1.dp, colors.outlineVariant)) {
-        Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Icon(icon, null, Modifier.size(24.dp), tint = colors.onSurfaceVariant)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Surface(shape = MaterialTheme.shapes.small, color = colors.primaryContainer) {
+                Icon(icon, null, Modifier.padding(10.dp).size(22.dp), tint = colors.primary)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                 }
                 Text(description, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             }
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(18.dp), tint = colors.onSurfaceVariant)
+            Icon(Icons.AutoMirrored.Outlined.ArrowForward, null, Modifier.size(18.dp), tint = colors.onSurfaceVariant)
         }
     }
 }
 
 @Composable
 fun WorkspaceSectionHeading(title: String, subtitle: String, modifier: Modifier = Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

@@ -1,5 +1,10 @@
 package com.mojing.app.ui.settings
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import com.mojing.app.ui.common.MoJingFilterChip as FilterChip
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.ViewAgenda
+import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -16,7 +21,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Surface
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -24,14 +28,9 @@ import com.mojing.app.ui.theme.MoJingTheme
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.TextFields
-import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
@@ -83,7 +82,7 @@ fun AppearanceTab(
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Card(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("对话字体", style = MaterialTheme.typography.titleMedium)
@@ -104,13 +103,13 @@ fun AppearanceTab(
         }
         Card(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
         ) {
             Column(Modifier.padding(bottom = 8.dp)) {
                 ListItem(
                     headlineContent = { Text("界面字体") },
                     leadingContent = {
-                        Icon(Icons.Default.TextFields, contentDescription = null)
+                        Icon(Icons.Outlined.TextFields, contentDescription = null)
                     },
                     trailingContent = {
                         Text(
@@ -119,7 +118,7 @@ fun AppearanceTab(
                             color = MaterialTheme.colorScheme.primary,
                         )
                     },
-                    colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
                 )
                 Slider(
                     value = uiFontScale,
@@ -152,14 +151,14 @@ fun AppearanceTab(
 
         Card(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
         ) {
             Column(Modifier.padding(vertical = 4.dp)) {
                 ListItem(
                     headlineContent = { Text("聊天显示密度") },
                     supportingContent = { Text("统一管理对话内容的间距与阅读宽度") },
-                    leadingContent = { Icon(Icons.Default.ViewAgenda, contentDescription = null) },
-                    colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    leadingContent = { Icon(Icons.Outlined.ViewAgenda, contentDescription = null) },
+                    colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
                 )
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                 FlowRow(
@@ -207,7 +206,7 @@ private fun ThemePreviewOption(id: String, active: Boolean, onSelect: () -> Unit
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(AppThemes.label(id), Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-                    if (active) Icon(Icons.Default.Check, "已选择", Modifier.size(18.dp))
+                    if (active) Icon(Icons.Outlined.Check, "已选择", Modifier.size(18.dp))
                 }
             }
         }

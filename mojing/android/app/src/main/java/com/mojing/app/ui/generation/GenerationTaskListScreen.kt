@@ -1,5 +1,9 @@
 package com.mojing.app.ui.generation
 
+import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Close
 import com.mojing.app.ui.common.MoJingButton as Button
 import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
 
@@ -14,8 +18,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -68,8 +70,9 @@ fun GenerationTaskListScreen(
     val visible = tasks.filter { when (filter) { 1 -> it.isActive(); 2 -> it.status == GenerationTaskStatus.FAILED; else -> true } }
     GenerationTaskFeedback(message, snackbar, viewModel::consumeSnackbar)
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }, topBar = {
-        TopAppBar(title = { Text(if (browsingHistory) "全部记录" else "生成记录", maxLines = 1, overflow = TextOverflow.Ellipsis) }, navigationIcon = {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+        TopAppBar(
+                        expandedHeight = 52.dp,title = { Text(if (browsingHistory) "全部记录" else "生成记录", maxLines = 1, overflow = TextOverflow.Ellipsis) }, navigationIcon = {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回") }
         }, actions = {
             TextButton(onClick = { if (browsingHistory) viewModel.showRecent() else viewModel.showHistory() }) {
                 Text(if (browsingHistory) "近期记录" else "全部记录")
@@ -248,7 +251,8 @@ internal fun GenerationTaskCancelConfirmation(
         if (targetId != null && task == null) onDismiss()
     }
     if (task != null) {
-        AlertDialog(onDismissRequest = { if (!busy) onDismiss() }, title = { Text("取消这次生成？") },
+        AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),onDismissRequest = { if (!busy) onDismiss() }, title = { Text("取消这次生成？") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("${task.title}\n\n已保存 ${task.progressDone} 项内容会保留，剩余部分不再继续。")
@@ -278,14 +282,15 @@ internal fun GenerationTaskDetailSheet(
 ) {
     val detailScroll = rememberScrollState()
     LaunchedEffect(openError, retryError) { if (openError != null || retryError != null) detailScroll.scrollTo(0) }
-    ModalBottomSheet(onDismissRequest = onDismiss, dragHandle = null,
+    ModalBottomSheet(
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),onDismissRequest = onDismiss, dragHandle = null,
         containerColor = MaterialTheme.colorScheme.surface,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Box(Modifier.fillMaxWidth().fillMaxHeight(0.9f).padding(horizontal = 24.dp)) {
             Column(Modifier.fillMaxSize()) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("生成详情", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "关闭生成详情") }
+                IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, "关闭生成详情") }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Column(Modifier.weight(1f).verticalScroll(detailScroll).padding(vertical = 16.dp),

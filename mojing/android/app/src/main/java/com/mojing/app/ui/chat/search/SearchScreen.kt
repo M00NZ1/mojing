@@ -1,5 +1,13 @@
 package com.mojing.app.ui.chat.search
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import com.mojing.app.ui.common.MoJingFilterChip as FilterChip
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,16 +30,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material.icons.filled.History
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -117,11 +117,11 @@ fun SearchScreen(
             LazyColumn(Modifier.fillMaxWidth().weight(1f), state = listState) {
                 items(state.history, key = { it }) { query ->
                     Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.History, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(Icons.Outlined.History, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(query, Modifier.weight(1f).clickable { vm.setQuery(query); submit() }
                             .heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 14.dp),
                             style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        IconButton({ vm.removeHistory(sessionId, query) }) { Icon(Icons.Default.Close, "删除历史：$query") }
+                        IconButton({ vm.removeHistory(sessionId, query) }) { Icon(Icons.Outlined.Close, "删除历史：$query") }
                     }
                     HorizontalDivider(Modifier.padding(start = 52.dp, end = 20.dp), color = MaterialTheme.colorScheme.outlineVariant)
                 }
@@ -200,7 +200,7 @@ fun SearchScreen(
 @Composable private fun SearchEmptyState(title: String, description: String) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(32.dp), tint = MaterialTheme.colorScheme.primary)
+        Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(32.dp), tint = MaterialTheme.colorScheme.primary)
         Text(title, style = MaterialTheme.typography.titleMedium)
         Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center)
@@ -232,13 +232,13 @@ fun SearchScreen(
     onSearch: () -> Unit, enabled: Boolean,
 ) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回") }
         OutlinedTextField(query, onQuery, Modifier.weight(1f), shape = RoundedCornerShape(12.dp),
             singleLine = true, placeholder = { Text("搜索消息") },
-            trailingIcon = { if (query.isNotEmpty()) IconButton({ onQuery("") }) { Icon(Icons.Default.Close, "清除关键词") } },
+            trailingIcon = { if (query.isNotEmpty()) IconButton({ onQuery("") }) { Icon(Icons.Outlined.Close, "清除关键词") } },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { if (enabled && query.isNotBlank()) onSearch() }))
-        IconButton(onClick = onSearch, enabled = enabled && query.isNotBlank()) { Icon(Icons.Default.Search, "搜索") }
+        IconButton(onClick = onSearch, enabled = enabled && query.isNotBlank()) { Icon(Icons.Outlined.Search, "搜索") }
     }
 }
 
@@ -343,10 +343,10 @@ fun SearchScreen(
         }
         Column(Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 80.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 3.dp) {
-                IconButton(enabled = index >= 0 && (index > 0 || state.hasNewer) && !state.searching, onClick = { vm.navigateHit(sessionId, branchId, -1) }) { Icon(Icons.Default.KeyboardArrowUp, "上一个") }
+                IconButton(enabled = index >= 0 && (index > 0 || state.hasNewer) && !state.searching, onClick = { vm.navigateHit(sessionId, branchId, -1) }) { Icon(Icons.Outlined.KeyboardArrowUp, "上一个") }
             }
             Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 3.dp) {
-                IconButton(enabled = index >= 0 && (index < state.hits.lastIndex || state.hasOlder) && !state.searching, onClick = { vm.navigateHit(sessionId, branchId, 1) }) { Icon(Icons.Default.KeyboardArrowDown, "下一个") }
+                IconButton(enabled = index >= 0 && (index < state.hits.lastIndex || state.hasOlder) && !state.searching, onClick = { vm.navigateHit(sessionId, branchId, 1) }) { Icon(Icons.Outlined.KeyboardArrowDown, "下一个") }
             }
         }
         Surface(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),

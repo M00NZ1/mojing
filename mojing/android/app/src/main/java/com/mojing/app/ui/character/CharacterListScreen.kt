@@ -1,5 +1,20 @@
 package com.mojing.app.ui.character
 
+import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import com.mojing.app.ui.common.MoJingFilterChip as FilterChip
+import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material.icons.automirrored.outlined.ViewList
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.PersonAdd
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.Public
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingTonalButton as FilledTonalButton
 
@@ -18,10 +33,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Chat
-import androidx.compose.material.icons.automirrored.filled.ViewList
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -188,13 +199,14 @@ fun CharacterListScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
+                        expandedHeight = 52.dp,
                 title = { Text("角色") },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                 ),
                 navigationIcon = {
                     IconButton(onClick = { navController.returnToCreationHub() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回创作中心")
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回创作中心")
                     }
                 },
                 actions = {
@@ -206,7 +218,7 @@ fun CharacterListScreen(
                             if (isImportingDocument || exportBusy) {
                                 CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                             } else {
-                                Icon(Icons.Default.MoreVert, "更多")
+                                Icon(Icons.Outlined.MoreVert, "更多")
                             }
                         }
                         DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
@@ -239,9 +251,9 @@ fun CharacterListScreen(
                         onClick = { viewModel.toggleCharacterListLayout() }
                     ) {
                         if (listLayout == "grid") {
-                            Icon(Icons.AutoMirrored.Filled.ViewList, "切换为列表")
+                            Icon(Icons.AutoMirrored.Outlined.ViewList, "切换为列表")
                         } else {
-                            Icon(Icons.Default.GridView, "切换为网格")
+                            Icon(Icons.Outlined.GridView, "切换为网格")
                         }
                     }
                 },
@@ -254,7 +266,7 @@ fun CharacterListScreen(
             if (characters.isNotEmpty() || filterEnc != null || page.loading || page.error != null) {
                 FloatingActionButton(onClick = { launchCreateCharacter() }) {
                     if (creatingCharacter) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Default.Add, "新建角色")
+                    else Icon(Icons.Outlined.Add, "新建角色")
                 }
             }
         }
@@ -279,11 +291,11 @@ fun CharacterListScreen(
                 ) {
                     Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 14.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Icon(Icons.Default.Public, "按百科筛选", Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(Icons.Outlined.Public, "按百科筛选", Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(if (filterEnc == null) "全部角色" else selectedFilterName?.ifBlank { null } ?: "百科 $filterEnc",
                             Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Icon(Icons.Default.KeyboardArrowDown, "打开百科筛选", Modifier.size(20.dp),
+                        Icon(Icons.Outlined.KeyboardArrowDown, "打开百科筛选", Modifier.size(20.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -319,7 +331,7 @@ fun CharacterListScreen(
                                     else MaterialTheme.colorScheme.onSurface,
                             )
                             IconButton(onClick = { importResult = null }) {
-                                Icon(Icons.Default.Close, "关闭导入结果")
+                                Icon(Icons.Outlined.Close, "关闭导入结果")
                             }
                         }
                         result.importedIds.lastOrNull()?.let { importedId ->
@@ -341,12 +353,12 @@ fun CharacterListScreen(
                 if (characters.isEmpty() && page.loading) {
                     CircularProgressIndicator(Modifier.align(Alignment.Center))
                 } else if (characters.isEmpty() && page.error != null) {
-                    EmptyState(icon = Icons.Default.ErrorOutline, title = "角色加载失败", message = page.error.orEmpty(),
+                    EmptyState(icon = Icons.Outlined.ErrorOutline, title = "角色加载失败", message = page.error.orEmpty(),
                         actionLabel = "重试", onAction = viewModel::retryPage, modifier = Modifier.fillMaxSize())
                 } else if (characters.isEmpty()) {
                     val selectedEncyclopedia = selectedFilterName
                     EmptyState(
-                        icon = Icons.Default.PersonAdd,
+                        icon = Icons.Outlined.PersonAdd,
                         title = if (filterEnc == null) "还没有角色" else "这个百科还没有角色",
                         message = if (filterEnc == null) {
                             "创建角色档案后，可以在这里编辑人设、形象和对话参数。"
@@ -396,7 +408,8 @@ fun CharacterListScreen(
                 } else {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(vertical = 0.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         itemsIndexed(characters, key = { _, c -> c.id }) { index, character ->
                             Column(Modifier.fillMaxWidth()) {
@@ -419,12 +432,6 @@ fun CharacterListScreen(
                                         startEnabled = startingCharacterId == null,
                                         isStarting = startingCharacterId == character.id,
                                         onStartChat = { startChat(character) },
-                                    )
-                                }
-                                if (index < characters.lastIndex) {
-                                    HorizontalDivider(
-                                        modifier = Modifier.padding(start = MoJingListTokens.dividerInset),
-                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
                                     )
                                 }
                             }
@@ -461,6 +468,7 @@ fun CharacterListScreen(
     deleteTarget?.let { c ->
         val deleting = deletingCharacterId == c.id
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { if (!deleting) deleteTarget = null },
             title = { Text("确认删除") },
             text = {
@@ -502,13 +510,14 @@ private fun CharacterListRowInner(
     onStartChat: () -> Unit,
 ) {
     val context = LocalContext.current
+    val listImagePath = character.avatarImagePath.ifBlank { character.cardImagePath }
     ListItem(
         modifier = Modifier.fillMaxWidth(),
         colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
         leadingContent = {
-            if (character.avatarImagePath.isNotBlank()) {
+            if (listImagePath.isNotBlank()) {
                 AsyncImage(
-                    model = avatarImageModel(context, character.avatarImagePath),
+                    model = avatarImageModel(context, listImagePath),
                     contentDescription = "头像",
                     modifier = Modifier
                         .size(MoJingListTokens.avatar)
@@ -547,7 +556,7 @@ private fun CharacterListRowInner(
                 )
                 if (character.favorite) {
                     Spacer(Modifier.width(6.dp))
-                    Icon(Icons.Default.Star, "收藏", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Outlined.Star, "收藏", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                 }
             }
         },
@@ -557,7 +566,8 @@ private fun CharacterListRowInner(
                     Text(
                         "所属百科：${encyclopediaLabel ?: "百科 ${character.boundEncyclopediaId}"}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                 } else {
                     Text(
@@ -569,7 +579,7 @@ private fun CharacterListRowInner(
                 Text(
                     character.personaPreview.ifEmpty { "未设定人设" },
                     style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -581,7 +591,7 @@ private fun CharacterListRowInner(
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                 } else {
                     Icon(
-                        Icons.AutoMirrored.Filled.Chat,
+                        Icons.AutoMirrored.Outlined.Chat,
                         contentDescription = "开始对话",
                     )
                 }
@@ -603,16 +613,16 @@ private fun CharacterGridCard(
     Card(
         modifier = Modifier
             .fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Column {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(4f / 5f)
-                    .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                    .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
             ) {
                 when {
                     mainPath.isNotEmpty() -> AsyncImage(
@@ -624,7 +634,7 @@ private fun CharacterGridCard(
                     else -> Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)),
+                            .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)),
                         contentAlignment = Alignment.Center
                     ) {
                         Surface(
@@ -639,7 +649,7 @@ private fun CharacterGridCard(
                 }
                 if (character.favorite) {
                     Icon(
-                        Icons.Default.Star,
+                        Icons.Outlined.Star,
                         "收藏",
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier

@@ -1,6 +1,65 @@
+## 1.2.2 发布验证（2026-10-01）
+
+本轮用户重新授权构建及上传至现有私有 GitHub 仓库，替代下方历史暂停安排。1.2.2 / 10202 包含23节视觉标准纠偏，无新增封面模型、数据库迁移、依赖或测试。
+
+- 最新源码 Debug 与正式 Release（R8/资源收缩）构建成功。聚焦导航 JVM 测试8项通过；未在本机运行950项全量测试。
+- 10项已有设备用例初次8通过、2失败：危险浅底正文对比度4.35，以及聊天头像36dp不符合40dp约束。两处应用源码修正后，仅复跑失败的2项，均通过；未放宽断言。此前输入定位的单项修正属于测试选择器调整，不能混为本轮应用修复。
+- 新源码在专用只读模拟器合成资料下观察故事库、创作、设置、角色、世界条目/短下划线Tab、聊天、阅读和资料。320dp/150%字号+键盘发现新建页标题挤压表单，已用现有IME接口收起辅助标题及装饰，并复查字段可输入、操作可见。
+- 正式Universal包在独立只读Android 35副本完成1.2.1→1.2.2覆盖升级、冷启动及核心导航；测试故事保留，无AndroidRuntime错误。用户已有设备/数据没有清理或卸载。
+- 包名`com.mojing.app`，正式证书SHA256为`180dbdd9bc649476f9a33486e78fbcf743a9b8260f08eefe41a974ee5078a104`，与既有正式1.2.1一致。APK不含debuggable标记。
+- Universal：28,292,771字节，SHA256 `a57651b16b9d742a4cf44a351ce05b1bf7b92053db0b5f785357d0c1a52d2f71`。本地交付：`outputs/android-visual-standard-20261001/MoJing-1.2.2-universal-release.apk`，其余ABI及SHA256SUMS同目录。
+
+运行检查是有限核心路径验证，不能宣称全部页面像素验收。待验证：真机、真实供应商/朗读/配图、所有浮层和状态、图片URI与裁切、长历史/旋转/分屏、所有主题每页及完整大字号覆盖。故事封面字段未实施；角色/世界测试数据无配图不表示有图状态已验收。23节映射见`mojing/docs/ANDROID_VISUAL_STANDARD_MAPPING.md`。
+
+## 历史阶段记录（以下状态保留当时语境）
+
+## 原标准修正批次（2026-09-30 UTC）
+
+用户否定上一版视觉后，已读取并保存“生成App原型图片”会话23节工程标准原文；见 `mojing/docs/ANDROID_VISUAL_STANDARD_SOURCE.md`。本轮修正与真实缺口详见 `mojing/docs/ANDROID_VISUAL_STANDARD_MAPPING.md`。共用滑动列表、核心列表卡片、浅色token、无衬线字体、下划线Tab、Outlined图标、共享字段/按钮、导航与阅读布局已写源码；不改数据库或业务回调。
+
+**本批未编译、未运行、未重打包、未视觉验收。下方旧构建/Release运行/截图证据仅对应上一版，不能证明本次修正。** 故事封面模型未实施；其他生成状态覆盖、阅读大小字号档位、部分浮层规格与全页像素仍有对应表列出的缺口。
+
+## Release 运行核验与截图纠正（2026-09-30）
+
+已将同一正式签名 Universal Release 安装到独立 Android 35 只读模拟器临时副本（5582），该副本安装前无本应用，不卸载/清除现有应用数据。冷启动成功（1148ms）；故事库、新建空白对话、聊天、阅读、资料、创作、小说、角色/世界空状态、设置及平台/偏好/外观导航实际运行，无 AndroidRuntime 错误日志。此检查排除已走通路径的明显 Release/R8 崩溃，不代表所有功能路径或真机覆盖升级已验证。
+
+原汇总图中“设置”实际误用了故事库截图，撤销其设置证据；现以新导航后核对 XML 与像素的 Release 设置截图替换。其他汇总截图为本轮 Debug，已明确标注来源。角色 avatarImagePath、世界 coverImagePath 在合成测试库中为空，源码支持配图，但有图状态未验证。故事库当前列表与会话模型未接入封面显示，属于与参考图的实际差距；不能把当前无图状态称作完整参考视觉还原。未修改应用源码、未重打包。
+
 # 墨境项目状态
 
 更新日期：2026-09-30
+
+## 本轮打包与运行证据（2026-09-30）
+
+- 用户明确授权后，Debug、AndroidTest、正式签名 Release 集中构建成功（3 分 41 秒）。导航相关两组 JVM 测试共 8 项通过，没有跑 950 项全量测试。
+
+- 设备聚焦回归共 10 个已有用例：首次 9 通过、1 失败。失败是 VisualRefreshTest 用固定标签定位输入框的旧断言；改为有 SetText 语义的真实输入框后，仅重建测试包并单独复跑该用例，通过。没有新增测试；应用 Release 不因测试修改重新打包。
+
+- Android 35 专用只读模拟器运行本次 Debug 包：实际检查故事库、浅色切换/外观、设置分类、聊天/阅读/资料/键盘、创作、小说表单、角色列表/编辑、世界列表、条目列表/编辑/版本、时间线/关系/沉积空状态。411dp 标准字号；另外 320dp、1.4 系统字号检查故事库、新建及聊天键盘；深色故事库也已观察。运行期间未见 AndroidRuntime 崩溃日志。
+
+- 八套主题的共用控件、输入/按钮交互及语义色对比度在设备测试中检查通过。未据此宣称八套主题每一业务页面均已逐页视觉验收。
+
+- 实际截图使用合成故事/角色/世界，未接触正式用户数据。原始 AVD 以只读方式启动，改动位于临时副本。参考图不是实现截图；此前对比图不作为本轮证据。
+
+- APK：`com.mojing.app`，`1.2.1` / `10201`，Universal Release，28,276,391 字节；签名校验通过，与此前本地正式 APK 证书一致，新旧 APK SHA256 不同。此次未改版本或签名凭证。
+
+- APK SHA256：`8f6c57cfe70ae7f9406539c92bad37164a3fe8aecfb605df9e3089839958233f`。
+
+- 本地交付：`outputs/android-visual-refresh-20260930/MoJing-1.2.1-visual-refresh-universal-release.apk`。Library：`libfile_48a644885bfc8191ba23def819d386fe`。
+
+未运行 / 待验证：真实设备的覆盖安装与运行、真实供应商生成/朗读/配图、权限与文件导入/裁剪、所有弹层的全部状态、工坊/模板编辑/世界设置/生成记录/费用深链的逐页截图、资料五个内页与长历史/旋转/分屏。上述入口已源码审查并接入体系，但不能宣称“绝对零遗漏”或完整视觉验收。世界列表条目仍显示已有类型原始标识（例如 location），属于尚未统一的显示细节，记录后续优化，不伪称已修复。
+
+## 历史记录（以下验证状态不代表本轮）
+
+用户最新授权：核对全部现有页面后编译、验证并打包本地 APK。此前四图这一轮确未编译；本次按实际 17 个导航 destination 与可达 Sheet/Dialog 审计，补齐个性化/条目版本/工坊标签、编辑保存栏、外观与费用控件、聊天时间、列表操作和开屏。完整逐入口源码覆盖见 UI_COVERAGE.md，不能据此宣称全部状态实机验收或绝对零遗漏。沿用现有 1.2.1 / 10201 与本机正式签名；已核对签名配置存在，旧 Release 签名有效，待新包完成后比较证书和 SHA256。仅使用专用模拟器只读副本，正式用户数据不变。下文暂停编译记录是历史，当前构建已获得用户新授权。
+
+最新批准的四张参考图（image(7)–image(10)）已在 Windows 本机物化并读取像素。本批 Android 视觉源码转为柔白/雾灰、深蓝灰文字、低饱和青蓝操作及轻冷色面板：统一语义主题、字号与圆角、表单按钮、三项底栏；调整故事库、角色气泡与输入/选择、五项资料胶囊、创作素材与小说进度、角色网格、世界封面与四项标签、设置分类。编辑页及阅读模式通过既有共用控件和主题继承，未逐页实机检查。保留所有主题选择、业务回调、导航及用户数据，没有新增依赖、测试或真实示例数据。同步 ANDROID_DESIGN.md、ANDROID.md、UI_COVERAGE.md。设置折叠区同步薄白表面，行动选项改为全宽可换行按钮，避免窄屏横向寻找长选项。
+
+**本批仅完成源码与静态差异审查，未编译、未运行，视觉验收待用户通知。** 下方旧版故事库截图、构建及 950 单测结果均为历史证据，不能证明最新四图改版有效；本批不提交、不推送、不部署。
+
+用户最新明确要求暂停编译、打包和全量测试，等待再次通知。本批后续 Android 故事库源码进一步转向现代简洁布局：取消书脊首字与重复卡片边框，改为开放式列表、无衬线标题、单行高可读预览和轻量元信息；顶部提供可见的“记录 / 新建”文字操作，重命名也使用文字入口。未新增依赖、测试或业务数据改动；仅完成静态源码及差异检查，尚未编译和渲染，不沿用下方上一版截图与通过结果作为新布局证据。现有 950 项 JVM 测试为任务前已有，本次新增 0 项；只读审计发现创作工作区设备测试仍期待已移除的工坊回调，另有部分表单用例重叠与精确像素尺寸断言，暂未删除或修改测试。
+
+Android 故事库视觉更新：基于本地 1.2.1 实际渲染，将模型配置降为轻量提示行，取消重复列表说明与大统计徽标；故事卡采用小书脊标记、两行衬线标题、整卡宽度正文预览和底部编辑区，统计与时间可换行。新建入口固定在顶部，避免悬浮按钮遮挡小屏正文。沿用现有主题、导航、分页、故事线预览与业务数据路径。专用 Android 35 模拟器只读副本使用隔离测试故事，检查 411dp / 320dp、标准字号 / 1.4 倍字号及浅色主题；新建、重命名与搜索入口已实际打开。Debug 与 AndroidTest 构建、950 项 JVM 单元测试、4 项故事库相关设备 UI 回归通过；Kotlin 增量缓存曾解析失败，临时禁用增量后成功，未改工程配置。未运行 Release 构建、真机或真实供应商调用，未提交、推送、合并或发布，未改正式用户数据。对比图保存在本次任务工作区并已存入 Library。
 
 Android 搜索结果此前对正文命中一律读取完整消息，再在后台生成约 120 字摘要；一页多个长篇章节命中会带来大量正文传输和临时字符串。现对可在普通原文中直接定位的关键词，数据库只返回命中附近最多 2048 字；姓名独立命中仍只取开头，结构化正文、大小写或 Unicode 规范化后才命中的文本保留全读取路径，避免隐藏标签或较晚命中被截断。点开结果仍按消息 ID 读取完整原文。隔离 SQLite 定向检查 3 项通过，覆盖主线/分支晚段命中、结构化与规范化回退、姓名与分页；未运行 Gradle／打包，设备上的大章节耗时与内存仍待测量。
 
@@ -487,14 +546,23 @@ Android 设置新增“关于与更新”，展示当前安装版本，手动检
 世界编辑 6 项定向 JVM 测试通过，覆盖草稿恢复与保存冲突、已保存后的清除失败、暂存失败重试、丢弃失败、世界隔离和无效编号；未执行 APK 打包。
 
 | 项目 | 当前配置 |
+
 |---|---|
+
 | 产品 | 墨境 MoJing |
+
 | 项目路径 | `F:\PYthon_Project\work\DeepSeek_Project` |
+
 | 正式源码 | `mojing/` |
+
 | Web | React、TypeScript、Vite；本机 FastAPI、SQLAlchemy、SQLite |
+
 | Android | Kotlin、Jetpack Compose、Room |
+
 | Android 应用标识 | `com.mojing.app` |
+
 | Android 版本 | 1.2.0 / 10200 |
+
 | Room schema | 22 |
 
 ## 对话阅读与搜索
@@ -676,100 +744,191 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 百科确认状态位于正文前，列表与编辑页统一将自动沉淀显示为“对话推断”；选择“已确认”后通过现有保存入口提交，保留来源与失败重试草稿。沉淀资料提供全部、待核对、已确认筛选及数量，切换筛选从列表顶部开始浏览；卡片使用主题语义色与统一留白。编辑返回同一百科时保留主标签与条目分类，重新读取内容；已删除条目的预览自动清除。
 
 - **角色与世界**：初始目录包含“雾港来信”世界资料与沈照、林汐两个角色。角色可以不绑定百科直接开聊；百科支持重命名。新开局统一选择世界，已有组合设定可预览。
+
 - **Android 视觉与导航**：留白山形与流动墨线图标覆盖 Android 启动图标、单色图标及 Web 安装图标；搜索增加清空操作，按钮加入按压反馈，底部导航采用独立选中面板。八套主题使用统一控件、文字和表面层级；首页、悬浮导航、页面过渡、应用图标和启动页已更新。启动标语保持“以墨为界，入境如梦。”。系统栏明暗随当前页面变化，小屏大字号保留主要操作入口。角色人设与百科正文采用有限高度的长文本输入框，支持展开、收起与框内滚动。
+
 - **模型配置与切换**：平台独立保存 Key、地址和模型列表。预设为 DeepSeek、OpenAI、硅基流动、Anthropic 和自定义；支持发现与手动填写模型。聊天选择从下次发送生效，当前轮使用固定线路。Android 面板展示下次发送和最近请求，支持搜索、保存状态与失败重试。
+
 - **对话与记忆**：引用使用独立预览，头像保留固定空间。记忆、事件和用户纠正按当前故事线刷新，长文本按需展开；定位原文请求未被接受时保留入口。Web 编辑失败保留草稿，离开页面后的旧返回不会激活错误故事线。Web 支持独立排除和恢复消息上下文。
+
 - **创作与生成记录**：单章生成兼容章节对象；旁白接入事件整理与百科沉淀。生成记录区分加载、空与错误状态，支持暂停、继续和保留进度的重试。Android 取消失败保留确认框；结果读取失败保留详情，关闭或离开后取消查询。
+
 - **Web 控件**：按钮提供主题对应的默认、悬停、按下、禁用与键盘焦点状态。确认弹窗长说明独立滚动，底部操作保持可达；中文选词不误关弹窗。新确认替换旧请求时，旧请求按取消结束。
 
 ## 验证记录
 
 | 范围 | 源码与结果 | 入口或证据 |
+
 |---|---|---|
+
 | Android 创作输入归属 | 20 项 ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 4 项生成卡片用例通过，覆盖长预览、停止、失败重试和保存入口 | `StorySimulationViewModelTest`、`StoryGenerationProgressCardTest`；`.codex-work/story-input-owner-20260913/` |
+
 | Android 开篇重启恢复 | 621 项 JVM 测试、Debug 应用及测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 13 项数据库和界面测试通过；两次独立 instrumentation 之间强制结束进程，重进创作页后完成长正文读取、复制与会话保存，两个阶段通过；完成恢复及已保存页面截图检查 | `StoryOpeningRecoveryInstrumentedTest`、`StoryRecoveryCardTest`、`StoryRecoveryProcessTest`；`.codex-work/story-recovery-20260912/` |
+
 | Android 开篇保存恢复 | 618 项 JVM 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 7 项数据库事务及创作卡片用例通过，覆盖章节写入失败回滚、完整保存、复制全文、重试保存与重新打开 | `SessionCreationTransactionInstrumentedTest`、`StorySimulationViewModelTest`、`StoryGenerationProgressCardTest`；`.codex-work/story-save-20260912/` |
+
 | Android 开篇与记忆请求 | 616 项 JVM 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 4 项创作卡片和记忆面板用例通过；两平台真实接口流程完成，字段兼容修正后两平台记忆专项复测通过 | `RealProviderStoryTest`、`StoryGenerationProgressCardTest`、`MemoryPanelPresentationTest`；`.codex-work/generation-20260912/` |
+
 | 界面组件与页面改版 | Android Debug、测试 APK 与 Web 生产构建通过；584 项 JVM 测试通过；Android 35、320dp 普通及 1.4 倍字号下 13 项界面用例通过，最终布局补测 8 项通过；Web 五组浏览器回归通过；完成首页、创作页、表单与弹窗截图检查 | `WorkspaceDesignTest`、`VisualRefreshTest`；`.codex-work/visual-20260912/` |
+
 | Web 消息操作状态 | Web 构建、桌面与 320px 消息操作回归通过；编辑、删除及上下文调整集成回归通过，覆盖生成中禁用、只读入口、结束后恢复和移动端分支操作 | `test-message-generation-actions.mjs`、`test-message-deletion.mjs`，本地 API 模拟 |
+
 | Web 开局角色校验 | 8 项后端定向测试、Chrome 开局回归与 Web 构建通过，覆盖失效角色零会话写入、角色顺序与去重、人数返回、刷新后保留有效选择并重试 | `test_session_opening_flags.py`、`test-opening-options.mjs` |
+
 | Web 开局设置 | 14 项后端测试与 Web 构建通过；Chrome 320px 回归覆盖默认开关、显式关闭请求、失败保留、重试创建及折叠区完整高度；截图检查通过 | `test_session_opening_flags.py`、`test_starter_catalog.py`、`test-opening-options.mjs` |
+
 | 开局角色选择 | Android 3 项选择策略与 8 项创建会话测试通过，Debug 与 Web 构建通过；多角色默认手选，百科切换保留兼容选择，两端补充模板和百科用途说明 | `OpeningCharacterSelectionTest`、`CreateSessionUseCaseTest` |
+
 | Android 消息阅读对比度 | Debug 与测试 APK 构建通过；Android 35 下八套主题、40 个正文与剧情文字样本的实际绘制检查通过；心声使用主题次级正文色 | `MessageReadingContrastTest` |
+
 | Web 消息阅读对比度 | 七套主题、两类气泡的正文、引用、链接、代码和表格样本检查通过，最低对比度 7.73；深浅主题截图检查、消息操作回归和生产构建通过 | `test-message-contrast.mjs`；`.codex-work/message-contrast-20260911/` |
+
 | 引用预览布局 | Web 与 Android Debug 构建通过；Chrome 320px 截图检查与消息操作回归通过；Android 35、320dp 下长名字和长原文取消操作测试通过 | `test-message-deletion.mjs`、`QuoteDraftPreviewTest`；`.codex-work/quote-preview-20260911/quote-draft-320.png` |
+
 | Web 发送中草稿保护 | Chrome 模拟延迟响应复现并修复同文新草稿被清空；模型与消息操作回归、Web 构建通过，覆盖新草稿本地保留及未编辑草稿正常清理 | `test-model-platforms.mjs`、`test-message-deletion.mjs` |
+
 | Web 引用草稿恢复 | Web 构建与 Chrome 模拟 API 回归通过，覆盖刷新、会话隔离、取消、长原文片段限制、失败保留及消息保存后清理 | `test-message-deletion.mjs`、`test-model-platforms.mjs` |
+
 | Android 引用草稿恢复 | 98 项 ChatViewModel 测试、Debug 构建通过；Android 35 下 3 项草稿存储测试通过，覆盖引用独立保存、重建读取、旧格式兼容、无效引用、取消和发送交接 | `ChatViewModelTest`、`ChatDraftStoreInstrumentedTest` |
+
 | Android 生成中引用 | 定向 ViewModel 测试通过，覆盖生成中选择引用、停止后保留草稿及再次发送引用原文；Debug 与测试 APK 构建通过；Android 35、320dp 下 3 项消息面板测试通过 | `ChatViewModelTest.quoteChosenDuringGenerationRemainsAvailableForNextSend`、`MessageActionPanelTest` |
+
 | Android 消息操作布局 | Debug 应用与测试 APK 构建通过；Android 35、320dp 下 3 项消息面板测试通过，覆盖生成中禁用、图片保存状态、短面板滚动及引用、分支、撤回操作分发 | `MessageActionPanelTest` |
+
 | Web 人设补全参考 | Web 构建与 Chrome 回归通过，覆盖手动草稿保护、320px 参考结果展开复制、失败重试、取消与角色切换；世界记录共用阅读器回归通过 | `test-character-ai-completion.mjs`、`test-world-history.mjs`，本地 API 模拟 |
+
 | Android 人设补全恢复 | 12 项角色编辑状态测试与 Debug 构建通过，覆盖生成期间手动编辑、生成基线、重进页面、读取失败重试、保存保护和旧读取结果隔离 | `CharacterEditViewModelTest` |
+
 | Android 角色保存恢复 | 10 项角色编辑状态测试与 Debug 构建通过，覆盖重复提交、首次保存回读失败、记录 ID 复用、后续编辑与重试 | `CharacterEditViewModelTest` |
+
 | Android 1.0.22 本地安装包 | Release 构建通过，APK 应用标识为 `com.mojing.app`，版本为 1.0.22 / 10022，沿用上一版签名 | `assembleRelease`、`aapt`、`apksigner` |
+
 | Web 生成记录布局 | Web 生产构建、Chrome 桌面与 390/320px 回归通过，覆盖卡片布局、44px 操作区、分页、暂停失败重试、结果读取与保存、深链和管理跳转；完成桌面与窄屏截图检查 | `test-world-history.mjs`，本地 API 模拟 |
+
 | Android 生成详情操作 | 9 项 ViewModel 测试及 Debug 应用、测试 APK 构建通过；Android 35 窄屏下 11 项详情测试通过，另通过短窗口长反馈与操作区滚动测试 | `GenerationTaskListViewModelTest`、`GenerationTaskDetailTest` |
+
 | Android 生成记录卡片 | Debug 应用与测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 11 项卡片与详情测试通过，覆盖长标题和错误、重试、查看已保存内容、整卡详情、取消菜单与忙碌状态；完成卡片截图检查 | `GenerationTaskCardTest`、`GenerationTaskDetailTest` |
+
 | Android 补全结果恢复 | 10 项模板 ViewModel 测试及 Debug 构建通过，覆盖读取失败、草稿保留、重复重试、后续任务观察、重进页面和旧读取结果隔离 | `TemplateEditViewModelTest` |
+
 | Android 世界编辑与补全 | 7 项模板 ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下长文本控件测试通过，覆盖手动摘要与正文保留、生成字段更新、脏状态、重复保存及失败重试 | `TemplateEditViewModelTest`、`MoJingLongTextFieldTest` |
+
 | Web 世界完整度检查 | Web 生产构建与 Chrome 浏览器回归通过，覆盖未保存世界、已保存世界关联资料、输入快照、报告过期、失败重试、切换世界和窄屏操作 | `test-world-quality-review.mjs`，本地 API 模拟 |
+
 | Web 工坊世界编辑 | Web 生产构建与 Chrome 浏览器回归通过，覆盖保存期间新编辑、切换世界、首次创建后更新、保存失败、删除其他世界及 320px 长设定展开 | `test-world-template-save.mjs`，本地 API 模拟 |
+
 | Web 百科保存期间编辑 | Web 生产构建与 Chrome 浏览器回归通过，覆盖条目与百科库的保存后新编辑保留、创建 ID 复用、失败重试及封面生成与保存互斥 | `test-encyclopedia-save-races.mjs`、`test-encyclopedia-covers.mjs`，本地 API 模拟 |
+
 | Web 百科封面流程 | Web 生产构建与 Chrome 浏览器回归通过，覆盖取消旧草稿、切换已保存条目、失败重试、请求快照、生成期间编辑及 320px 长描述展开收起 | `test-encyclopedia-covers.mjs`，本地 API 模拟 |
+
 | Android 已保存配图恢复 | 93 项 Chat ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下提示卡测试通过，覆盖保存后刷新失败、重复读取保护、读取失败重试与原消息定位，生成和消息插入各执行一次 | `ChatViewModelTest`、`SavedImageNoticeCardTest` |
+
 | Android 配图输入与草稿 | 92 项 Chat ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 3 项草稿和配图面板测试通过，横向窗口下配图面板测试通过，覆盖长输入、空白与忙碌状态、成功提交、失败、取消及新编辑保护 | `ChatViewModelTest`、`ChatDraftStoreInstrumentedTest`、`ImagePromptDialogTest` |
+
 | Android 旁白方向草稿 | 90 项 Chat ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 5 项草稿、输入栏与旁白界面测试通过；覆盖旧草稿读取、会话隔离、恢复、预检失败保留、写入完成清空与等待期间改写保护 | `ChatViewModelTest`、`ChatDraftStoreInstrumentedTest` |
+
 | Android 旁白操作面板 | Debug 应用与测试 APK 构建通过；Android 35、320dp 窄屏下 3 项旁白与输入栏测试通过，横向窗口下旁白测试通过，覆盖空白方向、长输入、两种生成请求和返回操作 | `NarratorRequestDialogTest`、`InputBarAttachmentStateTest` |
+
 | Android 百科主列表分页 | 19 项百科 ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 3 项 Room 与分页控件测试通过，覆盖 205 条分类遍历、分页恢复、失败重试、重复翻页与批量补全全分类 ID | `EncyclopediaDetailViewModelTest`、`SedimentConfirmationDaoTest`、`SedimentPageControlsTest` |
+
 | Android 关系条目选择 | 17 项百科 ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 4 项 Room 与选择面板测试通过，覆盖精简字段分页、中文查询、标点按原文匹配、第二页、搜索失败重试、选择及关闭取消读取 | `EncyclopediaDetailViewModelTest`、`SedimentConfirmationDaoTest`、`EncyclopediaEntryPickerTest` |
+
 | Android 沉淀资料分页 | 17 项百科 ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 3 项 Room 与分页控件测试通过，覆盖 205 条分类遍历、每页上限、重复翻页保护、失败重试、筛选切换及同百科重载保留页码 | `EncyclopediaDetailViewModelTest`、`SedimentConfirmationDaoTest`、`SedimentPageControlsTest` |
+
 | Android 个人资料保存 | 12 项设置与存储测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 3 项保存反馈与设置分类界面测试通过，覆盖失败重试、重复提交保护、单次写入、成功回调及旧错误提示隐藏 | `SettingsViewModelTest`、`ProfileStorageTest`、`ProfileSaveActionsTest`、`SettingsSectionsTest` |
+
 | Android 设置分类恢复 | Debug 应用与测试 APK 构建通过；Android 35、320dp 下 2 项界面测试通过，覆盖保存状态恢复、未保存修改拦截、一次性入口消费，以及实际 NavHost 保存并恢复设置后打开模型分类 | `SettingsSectionsTest` |
+
 | Android 最近请求线路 | 88 项聊天 ViewModel 测试、Debug 应用与测试 APK 构建通过；Android 35、320dp 下 5 项模型面板测试通过，覆盖请求参数与平台名称匹配、下次发送与最近请求分离、长名称与搜索入口 | `ChatViewModelTest`、`ChatModelPickerTest` |
+
 | Android 模型配置入口 | Debug 应用与测试 APK 构建通过；Android 35、320dp 下 5 项视觉测试通过，横向窗口专项测试通过；覆盖完整说明、整卡点击与无操作提示状态 | `VisualRefreshTest`；`.codex-work/ui-refresh-20260910/model-setup.png` |
+
 | 墨中山境图标 | Android Debug 与 Web 生产构建通过；检查 48px、512px 图形；Android 自适应前景、单色图标与 Web 图标共用矢量路径 | `frontend/scripts/generate-brand-assets.mjs` |
+
 | 公共视觉与品牌资源 | Android Debug 与测试 APK、Web 生产构建通过；Android 35、320dp 与横向窗口分别通过 4 项视觉测试，覆盖控件、搜索、导航、长确认说明和启动标语；长文本编辑测试通过；Web 七套主题对比度、确认弹窗、模型配置与长文本回归通过 | `VisualRefreshTest`、`MoJingLongTextFieldTest`；`.codex-work/ui-refresh-20260910/` |
+
 | Android 生成记录浏览状态 | Debug 构建与 9 项 ViewModel 测试通过；覆盖 SavedStateHandle 恢复分类和第二页游标、筛选与游标原子更新、返回近期模式及既有失败重试 | `GenerationTaskListViewModelTest` |
+
 | Android 全部生成记录 | 8 项 ViewModel 测试、Debug 构建通过；Android 35、320dp 下 12 项 Room 与界面测试通过，覆盖 205 条记录游标遍历、查询前筛选、每页上限、重复翻页保护、失败后切换与翻页位置复位 | `GenerationTaskListViewModelTest`、`GenerationTaskDaoTest`、`GenerationTaskDetailTest` |
+
 | Android 生成详情错误布局 | Debug 应用与测试 APK 构建通过；Android 35、320dp 竖屏下 9 项界面测试通过，另通过 1440×840 横向窗口专项测试，覆盖长标题、100 段展开反馈与重试、关闭操作 | `GenerationTaskDetailTest` |
+
 | Android 生成记录筛选与位置 | Debug 应用与测试 APK 构建通过；Android 35、320dp 下 8 项界面测试通过，150 条测试记录覆盖深处吸顶筛选、保存状态恢复及切换分类回到开头 | `GenerationTaskDetailTest`；`.codex-work/android-ui-20260910/filter-scroll.png` |
+
 | Android 生成详情状态恢复 | Debug 应用与测试 APK 构建通过；Android 35、320dp 下 7 项界面测试通过，包含 Compose 保存状态恢复、列表重载、最新进度与结果操作、关闭后不重开 | `GenerationTaskDetailTest` |
+
 | Android 生成反馈阅读 | Debug 应用与测试 APK 构建通过；Android 35、320dp 下 6 项界面测试通过，覆盖长反馈展开收起、内容更新复位、结果入口、关闭与取消重试 | `GenerationTaskDetailTest` |
+
 | Web 生成结果读取取消 | 生产构建与桌面、390px Chrome 模拟 API 回归通过；浏览器请求事件确认详情读取中返回、保存成功后取消过期读取均触发 `ABORTED`；重进、保存及重试流程通过 | `test-world-history.mjs` |
+
 | Web 生成结果保存状态 | 生产构建与桌面、390px Chrome 模拟 API 回归通过；覆盖保存失败后切页重进、保存中返回再打开、重复提交禁用，以及保存成功后旧详情响应返回 | `test-world-history.mjs` |
+
 | Web 生成结果长文阅读 | 生产构建与桌面、390px Chrome 模拟 API 回归通过；200 段正文覆盖预览、展开高度、键盘滚动、收起复位、复制失败重试与全文一致性；结果保存及重进流程通过 | `test-world-history.mjs`；`.codex-work/world-result-reader/` |
+
 | Web 生成记录操作与布局 | 生产构建与桌面、390px Chrome 模拟 API 回归通过；覆盖暂停提交禁用、失败重试、暂停后继续入口、长错误展开滚动、翻页及结果保存；修复长列表底部操作被导航遮挡 | `test-world-history.mjs`；`.codex-work/world-history-actions/` |
+
 | Web 沉淀资料详情返回 | 生产构建与 Chrome 模拟 API 回归通过；覆盖组件卸载重进、第二页筛选与焦点恢复，以及实际百科页面正常详情、失败重试后的返回入口 | `test-sediment-review.mjs` |
+
 | Web 沉淀资料分页 | 9 项后端测试与生产构建通过；1,200 条测试资料覆盖筛选与完整遍历、边界删除及新增资料；Chrome 模拟 API 回归覆盖前后翻页、每页 100 张卡片、加载失败重试、选择清理及 320px 布局 | `test_sediment_batch_confirmation.py`、`test-sediment-review.mjs`；`.codex-work/sediment-pagination.png` |
+
 | Web 沉淀资料批量核对 | 7 项后端测试与生产构建通过；Chrome 模拟 API 回归覆盖筛选、100 条上限、失败保留选择、重试、保存锁定及刷新；320px 截图检查通过 | `test_sediment_batch_confirmation.py`、`test-sediment-review.mjs`；`.codex-work/sediment-review.png` |
+
 | Android 沉淀资料批量确认 | 16 项百科详情 ViewModel 测试通过；Android 35、320dp 下通过 Room 内存数据库测试与批量操作组件测试，覆盖百科隔离、重复确认、正文与来源保留、失败重试、跨页旧返回、选择计数和保存禁用；Debug 应用与测试 APK 构建通过 | `EncyclopediaDetailViewModelTest`、`SedimentConfirmationDaoTest`、`SedimentBatchControlsTest`；`.codex-work/android-ui-20260910/sediment-confirm-tests.txt` |
+
 | Web 默认模型选择组件 | 生产构建与 Chrome 模拟 API 回归通过；5000 模型下验证每页十项、翻页、搜索末项、空结果恢复、键盘展开/关闭和焦点返回；移动端组件截图检查通过 | `test-model-platforms.mjs`；`.codex-work/web-default-model-20260910/default-model-picker.png` |
+
 | Web 模型列表键盘导航 | 生产构建与 Chrome 模拟 API 回归通过；5000 模型下验证跨窗口连续导航、首尾定位、跳过缺少 Key 项、Enter 选择、输入法保护及有界 DOM | `test-model-platforms.mjs` |
+
 | Web 模型面板布局与反馈 | 生产构建及 Chrome 模拟 API 回归通过，覆盖 5000 模型虚拟列表、320×480 固定入口、选中状态、恢复默认、保存中关闭保护、失败重试与输入法保护；390px 截图检查通过 | `test-model-platforms.mjs`；`.codex-work/web-model-panel-20260910/model-picker-mobile.png` |
+
 | Android 恢复默认模型配置 | 88 项聊天 ViewModel 与 7 项平台存储测试通过，覆盖恢复失败重试、会话隔离、重复恢复与重新读取；Android 35、320dp 下 5 项模型面板测试通过；Debug 应用与测试 APK 构建通过 | `ChatViewModelTest`、`ModelPlatformsTest`、`ChatModelPickerTest`；`.codex-work/android-ui-20260910/model-follow-tests.txt` |
+
 | Android 模型选择显示 | 87 项聊天 ViewModel 测试通过；Android 35、320dp 下 4 项模型面板测试通过，覆盖同名平台选择、搜索空状态恢复、缺少 Key 禁用、保存失败重试与长线路说明；Debug 应用与测试 APK 构建通过 | `ChatViewModelTest`、`ChatModelPickerTest`；`.codex-work/android-ui-20260910/model-label-tests.txt` |
+
 | Android 消息编辑保存反馈 | 87 项聊天 ViewModel 测试通过，覆盖写入前失败与已提交后加载失败的结果区分；Android 35、320dp 下 3 项编辑界面测试通过，覆盖保存锁定、失败重试、草稿保留与已提交禁用；Debug 应用与测试 APK 构建通过 | `ChatViewModelTest`、`MessageEditDialogTest`；`.codex-work/android-ui-20260910/edit-saving-tests.txt` |
+
 | Android 消息编辑面板 | Debug 应用与测试 APK 构建通过；Android 35、320dp、1.4 倍字号下 2 项界面测试通过，覆盖 200 段长文编辑、未修改禁用、放弃确认与草稿保留；键盘截图检查通过 | `MessageEditDialogTest`；`.codex-work/android-ui-20260910/message-editor-tests.txt`、`message-editor.png` |
+
 | Android 消息预览语义 | 14 项文本格式测试、Android 35 模拟器 320dp 宽度下 5 项界面测试通过；覆盖用户标签原文、操作面板滚动、撤回影响读取与失败重试；Debug 应用与测试 APK 构建通过 | `ChatMessageTextFormatTest`、`RecallMessageDialogTest`、`MessageActionSheetTest`；`.codex-work/android-ui-20260910/literal-preview-tests.txt` |
+
 | Android 消息操作面板 | Debug 应用与测试 APK 构建通过；Android 35、320dp 宽度下 3 项界面测试通过，覆盖固定预览与关闭入口、列表滚动、原消息操作、生成中禁用和图片保存状态 | `MessageActionSheetTest`、`MessageActionPanelTest`；`.codex-work/android-ui-20260910/message-sheet-tests.txt` |
+
 | Web 消息操作面板 | 生产构建与 Chrome 模拟 API 回归通过；覆盖桌面键盘菜单、移动端所选消息预览、320×480 独立滚动与固定关闭入口、输入法保护及消息操作 | `test-message-deletion.mjs`；`.codex-work/web-message-sheet-20260910/message-actions-390.png` |
+
 | Web 角色图片更新 | 生产构建通过；Chrome 模拟图片 API 测试覆盖上传状态、失败重试、并发文字编辑及头像和立绘的跨角色隔离 | `test-character-images.mjs` |
+
 | Web 角色补全与保存 | 生产构建通过；实际角色页的 Chrome 模拟 API 测试覆盖并发编辑、人设冲突、停止重试、保存期间输入、再次保存及旧页面响应隔离 | `test-character-ai-completion.mjs` |
+
 | Web 长文本编辑 | 生产构建通过；Chrome 桌面及 320px 窄屏验证高度限制、键盘展开、ARIA 关联、草稿保留与表单提交边界 | `test-expandable-textarea.mjs` |
+
 | Android 角色采样参数输入 | 8 项角色 ViewModel 测试通过；Android 35、320dp 宽度下 2 项界面测试通过，覆盖清空、连续负小数输入、错误恢复和键盘完成；Debug 应用与测试 APK 构建通过 | `CharacterEditViewModelTest`、`SamplingParameterFieldTest`；`.codex-work/android-ui-20260910/sampling-input-tests.txt` |
+
 | Android 长文本输入 | Debug 应用与测试 APK 构建通过；Android 35 默认尺寸、320dp 宽度各通过 1 项界面测试，覆盖 200 段文本、展开收起与编辑保留 | `MoJingLongTextFieldTest`；`.codex-work/android-ui-20260910/long-field-tests.txt`、`long-field-small-tests.txt` |
+
 | Android 百科浏览与刷新 | 14 项详情 ViewModel 测试通过，覆盖返回标签、确认后刷新、分类往返、旧查询晚到、删除预览与百科隔离 | `EncyclopediaDetailViewModelTest` |
+
 | Android 沉淀列表筛选与样式 | Kotlin 主源码编译通过；本批界面未单独运行 | `gradlew.bat compileDebugKotlin` |
+
 | Android 百科确认状态 | 14 项百科 ViewModel 测试、1 项 Android 35 选择器界面测试通过；Debug 应用与测试 APK 构建通过 | `EntryEditViewModelTest`；`.codex-work/android-ui-20260910/entry-confidence-tests.txt` |
+
 | Android 百科多条来源 | 15 项 JVM 测试、Android 35 模拟器 320dp 宽度下 2 项预览界面测试通过；Debug 应用与测试 APK 构建通过 | `EntryEditViewModelTest`、`EncyclopediaSourceReferencesTest`；`.codex-work/android-ui-20260910/source-pages-tests.txt` |
+
 | Android 百科来源故事线 | 本批 87 项聊天 ViewModel 测试通过，覆盖定位等待、失败重试、消息缺失和历史操作；主源码与界面测试源码编译通过。`108e7784` 批次 97 项聊天与百科测试、2 项 Android 35 路由与预览测试及 Debug 构建通过 | `ChatViewModelTest`、`EntryEditViewModelTest`；`.codex-work/android-ui-20260910/source-route-tests.txt` |
+
 | Android JVM 全量 | 2026-09-10 采样参数输入批次：95 个测试类，551 项通过，失败、错误、跳过均为 0；耗时 32 秒 | `gradlew.bat testDebugUnitTest`；`mojing/android/app/build/test-results/testDebugUnitTest/` |
+
 | Web 浏览器回归 | `b1c67e6a`：七套主题主按钮默认与悬停对比度达到 4.5:1；确认替换、中止、长说明、小屏和输入法通过；对话编辑、删除、上下文参与及历史定位回归通过 | `test-control-states.mjs`、`test-confirm-dialog.mjs`、`test-message-deletion.mjs` |
+
 | Web 生产构建 | `b1c67e6a` 对应源码构建通过 | `npm run build` |
+
 | Android Debug 构建 | `4c6ea007` 对应源码的应用与测试 APK 构建通过 | `gradlew.bat assembleDebug assembleDebugAndroidTest` |
+
 | Android 视觉交互 | `e8883b2c` 批次 Android 35 模拟器通过 32 项界面测试 | `.codex-work/android-ui-20260910/redesign-ui-final.txt` |
+
 | Android 系统栏 | `e3f50776` 批次通过开屏退出及八套主题切换测试 | `.codex-work/android-ui-20260910/system-bars-tests.txt` |
+
 | Android 生成详情 | `4c6ea007` 批次通过 5 项界面测试，覆盖取消状态、长反馈、结果读取与重试 | `.codex-work/android-ui-20260910/result-detail-tests.txt` |
+
 | Android 小屏 | `2566beb9` 批次在 840 × 1440、420 dpi、1.4 倍字号下确认首页开始入口无遮挡，角色与百科可滚动到达 | `.codex-work/android-ui-20260910/large-type-home-fixed.png` |
 
 浏览器接口回归使用隔离测试响应。模拟器记录按批次保留，未合并表述为当前源码的全量设备验收。真机反馈来自用户使用的 1.0.21。
@@ -777,9 +936,13 @@ Android 百科编辑提供“查看对话原文”，支持滚动、复制和失
 ## 反馈与后续重点
 
 - 用户报告切换模型后仍使用原模型。角色与旁白的定向回归已覆盖同平台和跨平台线路参数；继续对照实际使用入口与供应商请求。
+
 - 用户报告单章生成出现英文异常，现有章节对象样本已修复；继续跟进实际生成反馈。
+
 - Android 消息上下文排除已独立于回复版本并提供恢复入口；待设备验证迁移、长篇会话交互和跨故事线记忆重整。
+
 - Android 已支持沉淀条目批量确认；继续完善跨端核对、来源范围与编辑，以及大型历史的增量摘要整理。
+
 - 大型历史目标是累计几十万至上百万 Token 后的打开、阅读、搜索、编辑与继续对话；单轮模型上下文单独预算。
 
 完整排序见[优化目标](PRODUCT_GAP_MAP.md)。

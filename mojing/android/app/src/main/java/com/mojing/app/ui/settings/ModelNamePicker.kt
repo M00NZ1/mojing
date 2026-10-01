@@ -5,7 +5,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -20,7 +19,8 @@ internal fun ModelNamePicker(names: List<String>, selected: String, onSelect: (S
     var search by rememberSaveable { mutableStateOf("") }
     val matches = remember(names, search) { names.distinct().filter { it.contains(search.trim(), ignoreCase = true) } }
     val maxHeight = LocalConfiguration.current.screenHeightDp.dp * 0.72f
-    ModalBottomSheet(onDismissRequest = onDismiss, dragHandle = null,
+    ModalBottomSheet(
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),onDismissRequest = onDismiss, dragHandle = null,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().heightIn(max = maxHeight).padding(horizontal = 12.dp, vertical = 8.dp)) {
             ModelPickerHeader("默认模型", search, { search = it }, onDismiss)

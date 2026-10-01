@@ -1,9 +1,10 @@
 package com.mojing.app.ui.chat
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -23,7 +24,7 @@ internal fun ChatModelTitle(title: String, model: String, generating: Boolean, o
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Icon(Icons.Default.KeyboardArrowDown, contentDescription = "切换模型", modifier = Modifier.size(20.dp))
+            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "切换模型", modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -37,7 +38,7 @@ internal fun ChatInputModelSelector(model: String, generating: Boolean, onClick:
             Text((if (generating) "下次 · " else "") + model, modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Icon(Icons.Default.KeyboardArrowDown, "切换平台和模型", modifier = Modifier.size(18.dp))
+            Icon(Icons.Outlined.KeyboardArrowDown, "切换平台和模型", modifier = Modifier.size(18.dp))
         }
     }
 }

@@ -1,5 +1,16 @@
 package com.mojing.app.ui.encyclopedia
 
+import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.automirrored.outlined.ViewList
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.CloudSync
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.MoreVert
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 
 import androidx.compose.foundation.clickable
@@ -17,10 +28,6 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.MenuBook
-import androidx.compose.material.icons.automirrored.filled.ViewList
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -222,6 +229,7 @@ fun EncyclopediaScreen(
 
     if (documentImport.running) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = viewModel::cancelDocumentImport,
             title = { Text(if (documentImport.cancelling) "正在取消导入" else "正在导入百科") },
             text = {
@@ -249,6 +257,7 @@ fun EncyclopediaScreen(
         )
     } else if (documentImport.result != null) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = viewModel::dismissDocumentImportResult,
             title = {
                 Text(when (documentImport.outcome) {
@@ -268,10 +277,11 @@ fun EncyclopediaScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
+                        expandedHeight = 52.dp,
                 title = { Text("世界") },
                 navigationIcon = {
                     IconButton(onClick = { navController.returnToCreationHub() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回创作中心")
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回创作中心")
                     }
                 },
                 actions = {
@@ -290,7 +300,7 @@ fun EncyclopediaScreen(
                             },
                         ) {
                             Icon(
-                                Icons.Filled.CloudSync,
+                                Icons.Outlined.CloudSync,
                                 contentDescription = "AI 生成任务",
                             )
                         }
@@ -303,7 +313,7 @@ fun EncyclopediaScreen(
                             if (isImportingDocument || exportBusy) {
                                 CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                             } else {
-                                Icon(Icons.Default.MoreVert, "更多")
+                                Icon(Icons.Outlined.MoreVert, "更多")
                             }
                         }
                         DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
@@ -332,9 +342,9 @@ fun EncyclopediaScreen(
                     }
                     IconButton(onClick = { viewModel.toggleEncyclopediaListLayout() }) {
                         if (listLayout == "grid") {
-                            Icon(Icons.AutoMirrored.Filled.ViewList, "切换为列表")
+                            Icon(Icons.AutoMirrored.Outlined.ViewList, "切换为列表")
                         } else {
-                            Icon(Icons.Default.GridView, "切换为网格")
+                            Icon(Icons.Outlined.GridView, "切换为网格")
                         }
                     }
                 },
@@ -349,7 +359,7 @@ fun EncyclopediaScreen(
                     if (isCreating) {
                         CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                     } else {
-                        Icon(Icons.Default.Add, "新建百科")
+                        Icon(Icons.Outlined.Add, "新建百科")
                     }
                 }
             }
@@ -365,11 +375,11 @@ fun EncyclopediaScreen(
                 value = searchDraft,
                 onValueChange = { searchDraft = it },
                 label = { Text("搜索世界名称") },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
                 trailingIcon = {
                     if (searchDraft.isNotEmpty()) {
                         IconButton(onClick = { searchDraft = "" }) {
-                            Icon(Icons.Default.Close, contentDescription = "清除搜索")
+                            Icon(Icons.Outlined.Close, contentDescription = "清除搜索")
                         }
                     }
                 },
@@ -402,7 +412,7 @@ fun EncyclopediaScreen(
                 }
             } else if (library.error != null && !library.loaded) {
                 EmptyState(
-                    icon = Icons.AutoMirrored.Filled.MenuBook,
+                    icon = Icons.AutoMirrored.Outlined.MenuBook,
                     title = "世界列表暂时无法读取",
                     message = library.error.orEmpty(),
                     actionLabel = "重试",
@@ -411,7 +421,7 @@ fun EncyclopediaScreen(
                 )
             } else if (encyclopedias.isEmpty()) {
                 EmptyState(
-                    icon = Icons.AutoMirrored.Filled.MenuBook,
+                    icon = Icons.AutoMirrored.Outlined.MenuBook,
                     title = if (library.query.isBlank()) "还没有世界百科" else "没有找到世界",
                     message = if (library.query.isBlank()) "创建百科后，可以整理世界规则、地点、势力、事件和人物关系。" else "试试其他名称，或清除搜索条件。",
                     actionLabel = if (library.query.isBlank()) (if (isCreating) "正在创建…" else "新建百科") else "清除搜索",
@@ -511,7 +521,8 @@ fun EncyclopediaScreen(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth(),
-                        contentPadding = PaddingValues(bottom = 88.dp),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 88.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                     itemsIndexed(encyclopedias, key = { _, e -> e.id }) { index, enc ->
                         Column(Modifier.fillMaxWidth()) {
@@ -538,12 +549,6 @@ fun EncyclopediaScreen(
                                 },
                             ) {
                                 EncyclopediaListRowInner(enc = enc)
-                            }
-                            if (index < encyclopedias.lastIndex) {
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(start = MoJingListTokens.dividerInset),
-                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                                )
                             }
                         }
                     }
@@ -589,6 +594,7 @@ fun EncyclopediaScreen(
 
     renameTarget?.let { enc ->
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { if (!renaming) renameTarget = null },
             title = { Text("重命名百科") },
             text = {
@@ -615,6 +621,7 @@ fun EncyclopediaScreen(
 
     deleteTarget?.let { enc ->
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { deleteTarget = null },
             title = { Text("确认删除") },
             text = {
@@ -652,19 +659,19 @@ private fun EncyclopediaListRowInner(enc: EncyclopediaLibraryItem) {
                     model = avatarImageModel(context, enc.coverImagePath),
                     contentDescription = null,
                     modifier = Modifier
-                        .size(MoJingListTokens.avatar)
+                        .size(MoJingListTokens.worldCover)
                         .clip(RoundedCornerShape(10.dp)),
                     contentScale = ContentScale.Crop,
                 )
             } else {
                 Surface(
-                    modifier = Modifier.size(MoJingListTokens.avatar),
+                    modifier = Modifier.size(MoJingListTokens.worldCover),
                     shape = RoundedCornerShape(10.dp),
                     color = MaterialTheme.colorScheme.secondaryContainer,
                 ) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Icon(
-                            Icons.AutoMirrored.Filled.MenuBook,
+                            Icons.AutoMirrored.Outlined.MenuBook,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.85f),
                             modifier = Modifier.size(28.dp),
@@ -713,7 +720,7 @@ private fun EncyclopediaGridCard(enc: EncyclopediaLibraryItem) {
     Card(
         modifier = Modifier
             .fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
@@ -721,7 +728,7 @@ private fun EncyclopediaGridCard(enc: EncyclopediaLibraryItem) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(4f / 5f),
+                    .aspectRatio(3f / 2f),
             ) {
                 if (enc.coverImagePath.isNotBlank()) {
                     AsyncImage(
@@ -743,7 +750,7 @@ private fun EncyclopediaGridCard(enc: EncyclopediaLibraryItem) {
                         ) {
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 Icon(
-                                    Icons.AutoMirrored.Filled.MenuBook,
+                                    Icons.AutoMirrored.Outlined.MenuBook,
                                     null,
                                     tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
                                 )

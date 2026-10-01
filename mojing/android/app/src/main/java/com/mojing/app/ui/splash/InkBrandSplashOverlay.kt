@@ -53,58 +53,14 @@ import com.mojing.app.R
 import com.mojing.app.ui.theme.MoJingTheme
 import kotlinx.coroutines.delay
 
-private val InkTop = Color(0xFF050507)
-private val InkMid = Color(0xFF10211D)
-private val InkDeep = Color(0xFF18312A)
-private val InkFloor = Color(0xFF0F1916)
-private val RicePaper = Color(0xFFEAE6DC)
-private val RicePaperMuted = Color(0xFFB8B2A8)
-private val SealLine = Color(0xFF6B5344)
+private val InkTop = Color(0xFF141B22)
+private val RicePaper = Color(0xFFE6EDF3)
+private val RicePaperMuted = Color(0xFFBCCAD5)
 
 @Composable
 private fun InkBrandSplashBackdrop(modifier: Modifier = Modifier) {
-    BoxWithConstraints(modifier.fillMaxSize()) {
-        val w = constraints.maxWidth.toFloat()
-        val h = constraints.maxHeight.toFloat()
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colorStops = arrayOf(
-                            0f to InkTop,
-                            0.38f to InkMid,
-                            0.78f to InkDeep,
-                            1f to InkFloor,
-                        ),
-                    ),
-                ),
-        )
-        Box(Modifier.align(Alignment.Center).size(250.dp).blur(64.dp, BlurredEdgeTreatment.Unbounded)
-            .background(Color(0x2291D4BF), CircleShape))
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(Color.Transparent, Color(0x66000000)),
-                        center = Offset(w * 0.5f, h * 0.42f),
-                        radius = maxOf(w, h) * 0.72f,
-                    ),
-                ),
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.linearGradient(
-                        colors = listOf(Color(0x08F5F0E6), Color.Transparent, Color(0x061A1510)),
-                        start = Offset(0f, 0f),
-                        end = Offset(w, h * 0.35f),
-                    ),
-                ),
-        )
-    }
+    Box(modifier.fillMaxSize().background(InkTop))
+
 }
 
 @Composable
@@ -145,7 +101,7 @@ private fun InkBrandSplashTextBlock(
                 .width((24f * lineFrac).dp)
                 .alpha(0.88f),
             thickness = 0.5.dp,
-            color = Color(0xFF91D4BF).copy(alpha = 0.5f),
+            color = Color(0xFF9EC7D6).copy(alpha = 0.5f),
         )
         Spacer(Modifier.height(24.dp))
         Text(

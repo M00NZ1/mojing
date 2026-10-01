@@ -1,8 +1,9 @@
 package com.mojing.app.ui.chat
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -22,7 +23,8 @@ internal fun ChatPromptSheet(
     dismissEnabled: Boolean = true,
 ) {
     val canDismiss by rememberUpdatedState(dismissEnabled)
-    ModalBottomSheet(onDismissRequest = { if (canDismiss) onDismiss() },
+    ModalBottomSheet(
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),onDismissRequest = { if (canDismiss) onDismiss() },
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true,
             confirmValueChange = { it != SheetValue.Hidden || canDismiss }),
         sheetMaxWidth = 640.dp, dragHandle = null,
@@ -36,7 +38,7 @@ internal fun ChatPromptSheet(
                     verticalAlignment = Alignment.CenterVertically) {
                     Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge,
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    IconButton(onClick = onDismiss, enabled = dismissEnabled) { Icon(Icons.Default.Close, "关闭$title") }
+                    IconButton(onClick = onDismiss, enabled = dismissEnabled) { Icon(Icons.Outlined.Close, "关闭$title") }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), content = editor)

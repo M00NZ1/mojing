@@ -1,5 +1,11 @@
 package com.mojing.app.ui.character
 
+import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.ExpandLess
 import com.mojing.app.ui.common.MoJingLongTextField
 
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
@@ -33,8 +39,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -203,8 +207,8 @@ fun CharacterEditScreen(
             if (state.isLoaded && state.loadError == null && !isImeOpen) {
                 Surface(
                     color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 3.dp,
-                    shadowElevation = 2.dp,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
                 ) {
                     Column(
                         modifier = Modifier.fillMaxWidth().navigationBarsPadding()
@@ -250,10 +254,11 @@ fun CharacterEditScreen(
         },
         topBar = {
             TopAppBar(
+                        expandedHeight = 52.dp,
                 title = { Text(if (characterId == 0L && !state.isPersisted) "新建角色" else "编辑角色", style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
                     IconButton(onClick = { requestExit("back") }, enabled = !pageBusy) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回")
                     }
                 },
                 actions = {
@@ -275,7 +280,7 @@ fun CharacterEditScreen(
     ) { padding ->
         if (state.loadError != null) {
             EmptyState(
-                icon = Icons.Default.ErrorOutline,
+                icon = Icons.Outlined.ErrorOutline,
                 title = "无法打开角色",
                 message = state.loadError.orEmpty(),
                 actionLabel = "重新加载",
@@ -777,7 +782,8 @@ fun CharacterEditScreen(
             onPickPreset = { viewModel.applyBuiltinCardFromPreset(it) },
         )
         if (showMacroSheet) {
-            ModalBottomSheet(onDismissRequest = { showMacroSheet = false }) {
+            ModalBottomSheet(
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),onDismissRequest = { showMacroSheet = false }) {
                 Text(
                     "插入宏变量",
                     style = MaterialTheme.typography.titleMedium,
@@ -823,6 +829,7 @@ fun CharacterEditScreen(
 
     pendingExit?.takeIf { state.recoverableDraft == null && !state.draftUnreadable }?.let { destination ->
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { pendingExit = null },
             title = { Text("保存角色修改？") },
             text = { Text("离开编辑页前，可以保存本次修改，也可以放弃修改。") },
@@ -851,6 +858,7 @@ fun CharacterEditScreen(
     }
     if (state.recoverableDraft != null || state.draftUnreadable) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = {},
             title = { Text(if (state.draftUnreadable) "角色草稿暂时无法读取" else "发现未保存的角色草稿") },
             text = { Text(state.draftError ?: "上次编辑的内容保存在此设备。恢复后请检查资料再保存；丢弃只移除草稿，不改已保存角色。") },
@@ -910,7 +918,7 @@ private fun CharacterEditorSectionHeader(
                 Text(title, style = MaterialTheme.typography.titleMedium)
                 Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
+            Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null)
         }
     }
 }

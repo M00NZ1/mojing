@@ -1,5 +1,21 @@
 package com.mojing.app.ui.chat
 
+import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import com.mojing.app.ui.common.MoJingFilterChip as FilterChip
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.outlined.AccountTree
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.FileDownload
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.FormatListBulleted
+import androidx.compose.material.icons.outlined.FileUpload
+import androidx.compose.material.icons.outlined.VolumeUp
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.foundation.layout.widthIn
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingButton as Button
 
@@ -37,19 +53,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AccountTree
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.FileDownload
-import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.MenuBook
-import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.foundation.layout.Spacer
@@ -61,8 +65,6 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
@@ -74,7 +76,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
@@ -845,6 +846,7 @@ fun ChatScreen(
                 val compactHeader = LocalConfiguration.current.screenWidthDp < 400
                 Column(Modifier.fillMaxWidth()) {
                     TopAppBar(
+                        expandedHeight = 52.dp,
                         title = {
                             Column {
                                 Text(stableSessionTitle.ifBlank { "对话" }, maxLines = 1,
@@ -862,17 +864,17 @@ fun ChatScreen(
                                 dismissKeyboard()
                                 requestLeave()
                             }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, backLabel)
+                                Icon(Icons.AutoMirrored.Outlined.ArrowBack, backLabel)
                             }
                         },
                         actions = {
                             IconButton(onClick = { dismissKeyboard(); readingMode = !readingMode }) {
-                                Icon(if (readingMode) Icons.Default.Edit else Icons.Default.MenuBook,
+                                Icon(if (readingMode) Icons.Outlined.Edit else Icons.Outlined.MenuBook,
                                     if (readingMode) "退出阅读模式" else "阅读模式")
                             }
                             if (!compactHeader && state.world?.gameplayMode == "小说创作") {
                                 IconButton(onClick = { dismissKeyboard(); showContents = true }) {
-                                    Icon(Icons.Default.FormatListBulleted, "小说目录")
+                                    Icon(Icons.Outlined.FormatListBulleted, "小说目录")
                                 }
                             }
                             Box {
@@ -904,7 +906,7 @@ fun ChatScreen(
                                     dismissKeyboard()
                                     topActionsMenuExpanded = true
                                 }) {
-                                    Icon(Icons.Default.MoreVert, contentDescription = "会话菜单")
+                                    Icon(Icons.Outlined.MoreVert, contentDescription = "会话菜单")
                                 }
                                 DropdownMenu(
                                     expanded = topActionsMenuExpanded,
@@ -912,7 +914,7 @@ fun ChatScreen(
                                 ) {
                                     if (compactHeader && state.world?.gameplayMode == "小说创作") {
                                         DropdownMenuItem(
-                                            leadingIcon = { Icon(Icons.Default.FormatListBulleted, null) },
+                                            leadingIcon = { Icon(Icons.Outlined.FormatListBulleted, null) },
                                             text = { Text("小说目录") },
                                             onClick = {
                                                 topActionsMenuExpanded = false
@@ -922,7 +924,7 @@ fun ChatScreen(
                                         )
                                     }
                                     DropdownMenuItem(
-                                        leadingIcon = { Icon(Icons.Default.Edit, null) },
+                                        leadingIcon = { Icon(Icons.Outlined.Edit, null) },
                                         text = { Text(if (state.world?.gameplayMode == "小说创作") "修改小说标题" else "重命名对话") },
                                         onClick = {
                                             topActionsMenuExpanded = false
@@ -933,7 +935,7 @@ fun ChatScreen(
                                     )
                                     DropdownMenuItem(
                                         text = { Text(state.branchNavigationLabel ?: "故事线") },
-                                        leadingIcon = { Icon(Icons.Default.AccountTree, null) },
+                                        leadingIcon = { Icon(Icons.Outlined.AccountTree, null) },
                                         enabled = state.branchNavigationLabel == null && !isImportingChat,
                                         onClick = {
                                             topActionsMenuExpanded = false
@@ -942,7 +944,7 @@ fun ChatScreen(
                                         },
                                     )
                                     DropdownMenuItem(
-                                        leadingIcon = { Icon(Icons.Default.Search, null) },
+                                        leadingIcon = { Icon(Icons.Outlined.Search, null) },
                                         text = { Text("搜索消息") },
                                         onClick = {
                                             topActionsMenuExpanded = false
@@ -955,7 +957,7 @@ fun ChatScreen(
                                     })
                                     HorizontalDivider()
                                     DropdownMenuItem(
-                                        leadingIcon = { Icon(Icons.Default.FileDownload, null) },
+                                        leadingIcon = { Icon(Icons.Outlined.FileDownload, null) },
                                         text = {
                                             Text(
                                                 when {
@@ -978,7 +980,7 @@ fun ChatScreen(
                                         },
                                     )
                                     DropdownMenuItem(
-                                        leadingIcon = { Icon(Icons.Default.FileUpload, null) },
+                                        leadingIcon = { Icon(Icons.Outlined.FileUpload, null) },
                                         text = { Text(if (exportBusy) "正在导出文件…" else "导出主线聊天记录…") },
                                         enabled = !exportBusy && !isImportingChat,
                                         onClick = {
@@ -999,7 +1001,7 @@ fun ChatScreen(
                                     if (drawerState.isClosed) drawerState.open() else drawerState.close()
                                 }
                             }) {
-                                Icon(Icons.Default.Tune, "会话设置与资料")
+                                Icon(Icons.Outlined.Tune, "会话设置与资料")
                             }
                         }
                     )
@@ -1010,7 +1012,7 @@ fun ChatScreen(
                                     .padding(start = 16.dp, end = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Icon(Icons.Default.VolumeUp, contentDescription = null,
+                                Icon(Icons.Outlined.VolumeUp, contentDescription = null,
                                     tint = MaterialTheme.colorScheme.onSecondaryContainer)
                                 Text(
                                     state.speechVoiceRequestLabel.ifBlank { "正在准备或播放朗读" },
@@ -1250,7 +1252,7 @@ fun ChatScreen(
             }
         ) { padding ->
             val densityMetrics = if (readingMode) ChatDensityMode.Reader.toMetrics().copy(
-                rowHorizontal = 12.dp, narratorHorizontal = 12.dp, bubbleMaxWidth = 720.dp,
+                rowHorizontal = 20.dp, narratorHorizontal = 20.dp, bubbleMaxWidth = 680.dp,
             ) else ChatDensityMode.fromStorage(state.chatDensity).toMetrics()
             CompositionLocalProvider(LocalChatDensityMetrics provides densityMetrics, LocalBillingCurrencyState provides billingState,
                 LocalReplyUsageLookup provides remember(billingViewModel) { { id -> billingViewModel.observeRecord(id) } }) {
@@ -1324,7 +1326,7 @@ fun ChatScreen(
                 Box(Modifier.fillMaxSize().padding(padding)) {
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxSize().nestedScroll(manualScrollConnection),
+                        modifier = Modifier.align(Alignment.TopCenter).widthIn(max = if (readingMode) 680.dp else androidx.compose.ui.unit.Dp.Infinity).fillMaxSize().nestedScroll(manualScrollConnection),
                         contentPadding = PaddingValues(vertical = densityMetrics.listContentVertical)
                     ) {
                     if (state.hasOlderMessages) {
@@ -1537,14 +1539,14 @@ fun ChatScreen(
                                 latestRequested = true
                             },
                             modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
-                            icon = { Icon(Icons.Default.KeyboardArrowDown, null) },
+                            icon = { Icon(Icons.Outlined.KeyboardArrowDown, null) },
                             text = { Text(if (state.isLoadingHistory) "加载中" else "回到最新") },
                         )
                     }
                     if (readingMode) {
                         FilledTonalIconButton(onClick = { readingMode = false },
                             modifier = Modifier.align(Alignment.BottomStart).padding(12.dp)) {
-                            Icon(Icons.Default.Edit, "继续对话")
+                            Icon(Icons.Outlined.Edit, "继续对话")
                         }
                     }
 
@@ -1596,6 +1598,7 @@ fun ChatScreen(
 
     if (showUnsavedWorldDialog) {
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { showUnsavedWorldDialog = false },
             title = { Text("本场线路未保存") },
             text = {
@@ -1643,6 +1646,7 @@ fun ChatScreen(
             else -> state.branches.firstOrNull { it.branchId == message.branchId }?.label ?: "原故事线"
         }
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = viewModel::closeBookmarkedReadOnlyMessage,
             title = { Text("收藏原文 · 只读") },
             text = {
@@ -1733,6 +1737,7 @@ fun ChatScreen(
 
     correctionPendingDelete?.let { correction ->
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { correctionPendingDelete = null },
             title = { Text("删除用户纠正？") },
             text = { Text("删除后不会影响自动摘要，也不会清空其他记忆。") },
@@ -1756,6 +1761,7 @@ fun ChatScreen(
             editPreparingMessage = null
         }
         AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = cancelPreparation,
             title = { Text("正在打开编辑器") },
             text = { Text("长消息正在准备，请稍候") },

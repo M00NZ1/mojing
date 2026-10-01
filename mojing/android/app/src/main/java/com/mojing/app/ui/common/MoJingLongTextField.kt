@@ -1,5 +1,7 @@
 package com.mojing.app.ui.common
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,11 +13,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -76,7 +76,7 @@ fun MoJingLongTextField(
                 Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { hideImeKeyboard(keyboard, focus); expanded = false }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回编辑表单")
+                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回编辑表单")
                         }
                         Text(label, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f),
                             maxLines = 2, overflow = TextOverflow.Ellipsis)

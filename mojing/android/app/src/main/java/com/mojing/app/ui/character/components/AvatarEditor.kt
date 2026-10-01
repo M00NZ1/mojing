@@ -1,5 +1,7 @@
 package com.mojing.app.ui.character.components
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.CameraAlt
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -9,7 +11,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -80,7 +81,7 @@ fun AvatarEditor(
                     ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.CameraAlt, "上传头像", tint = Color.White.copy(alpha = 0.7f))
+                    Icon(Icons.Outlined.CameraAlt, "上传头像", tint = Color.White.copy(alpha = 0.7f))
                 }
             }
             if (isImporting) {

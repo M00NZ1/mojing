@@ -1,8 +1,11 @@
 package com.mojing.app.ui.chat
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.AccountTree
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.foundation.layout.*
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -24,10 +27,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountTree
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
@@ -99,7 +99,8 @@ fun BranchOverviewBottomSheet(
         }
     }
     val showMain = query.isBlank() || "主线剧情 最初的故事线".contains(query.trim(), ignoreCase = true)
-    ModalBottomSheet(onDismissRequest = onDismiss, dragHandle = null,
+    ModalBottomSheet(
+        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),onDismissRequest = onDismiss, dragHandle = null,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = MaterialTheme.colorScheme.surface) {
         Column(
@@ -108,9 +109,9 @@ fun BranchOverviewBottomSheet(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("故事线", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                 IconButton(onClick = { searching = !searching; if (!searching) query = ""; selectionError = null }) {
-                    Icon(Icons.Default.Search, if (searching) "收起故事线搜索" else "搜索故事线")
+                    Icon(Icons.Outlined.Search, if (searching) "收起故事线搜索" else "搜索故事线")
                 }
-                IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "关闭故事线") }
+                IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, "关闭故事线") }
             }
             if (searching) com.mojing.app.ui.common.SearchBar(
                 query = query, onQueryChange = { query = it; selectionError = null }, modifier = Modifier.fillMaxWidth(),
@@ -173,7 +174,7 @@ fun BranchOverviewBottomSheet(
                     },
                     leadingContent = {
                         Icon(
-                            if (isCurrent) Icons.Default.CheckCircle else Icons.Default.AccountTree,
+                            if (isCurrent) Icons.Outlined.CheckCircle else Icons.Outlined.AccountTree,
                             contentDescription = null,
                             tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -248,7 +249,7 @@ fun BranchOverviewBottomSheet(
                     },
                     leadingContent = {
                         Icon(
-                            if (isCurrent) Icons.Default.CheckCircle else Icons.Default.AccountTree,
+                            if (isCurrent) Icons.Outlined.CheckCircle else Icons.Outlined.AccountTree,
                             contentDescription = null,
                             tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )

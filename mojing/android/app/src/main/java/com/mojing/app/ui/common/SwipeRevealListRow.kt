@@ -1,5 +1,11 @@
 package com.mojing.app.ui.common
 
+import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -22,13 +28,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -38,7 +40,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.unit.IntOffset
@@ -69,20 +70,21 @@ fun SwipeRevealListRow(
     var offsetPx by remember { mutableStateOf(0f) }
     LaunchedEffect(swipeEnabled) { if (!swipeEnabled) offsetPx = 0f }
 
-    val pinBg = Color(0xFF3D4FA8)
-    val delBg = Color(0xFFC62828)
+    val cardShape = MaterialTheme.shapes.small
+    val pinBg = MaterialTheme.colorScheme.primary
+    val delBg = MaterialTheme.colorScheme.errorContainer
 
     BoxWithConstraints(
         modifier
             .fillMaxWidth()
-            .heightIn(min = 56.dp),
+            .heightIn(min = 72.dp),
     ) {
         val rowWidth = maxWidth
         val actionW = remember(maxWidth) {
             (maxWidth * 0.22f).coerceIn(68.dp, 96.dp)
         }
         val revealWidth = with(LocalDensity.current) { (actionW * if (showPinAction) 2 else 1).toPx() }
-        Box(Modifier.fillMaxWidth().clipToBounds()) {
+        Box(Modifier.fillMaxWidth().heightIn(min = 72.dp).border(1.dp, MaterialTheme.colorScheme.outlineVariant, cardShape).clip(cardShape)) {
                 Row(
                     modifier = Modifier
                         .matchParentSize()
@@ -104,10 +106,10 @@ fun SwipeRevealListRow(
                             contentAlignment = Alignment.Center,
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(4.dp)) {
-                                Icon(Icons.Default.PushPin, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                                Icon(Icons.Outlined.PushPin, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(22.dp))
                                 Text(
                                     if (isPinned) "取消置顶" else "置顶",
-                                    color = Color.White,
+                                    color = MaterialTheme.colorScheme.onPrimary,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Medium,
                                     maxLines = 1,
@@ -128,8 +130,8 @@ fun SwipeRevealListRow(
                         contentAlignment = Alignment.Center,
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(4.dp)) {
-                            Icon(Icons.Default.Delete, null, tint = Color.White, modifier = Modifier.size(22.dp))
-                            Text("删除", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                            Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.size(22.dp))
+                            Text("删除", color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 10.sp, fontWeight = FontWeight.Medium, maxLines = 1)
                         }
                     }
                 }
@@ -137,6 +139,7 @@ fun SwipeRevealListRow(
                     modifier = Modifier
                         .offset { IntOffset(offsetPx.roundToInt(), 0) }
                         .width(rowWidth)
+                        .heightIn(min = 72.dp)
                         .draggable(
                             orientation = Orientation.Horizontal,
                             enabled = swipeEnabled,
@@ -152,7 +155,8 @@ fun SwipeRevealListRow(
                                 }
                             },
                         )
-                        .background(MaterialTheme.colorScheme.surface)
+                        .clip(cardShape)
+                        .background(MaterialTheme.colorScheme.surface, cardShape)
                         .combinedClickable(
                             onClick = {
                                 if (offsetPx != 0f) {
@@ -186,7 +190,7 @@ fun SwipeRevealListRow(
             if (onRename != null) {
                 DropdownMenuItem(
                     text = { Text("重命名") },
-                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                    leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
                     onClick = {
                         menuExpanded = false
                         offsetPx = 0f
