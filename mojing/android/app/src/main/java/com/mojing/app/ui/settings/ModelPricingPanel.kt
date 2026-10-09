@@ -48,11 +48,11 @@ fun ModelPricingPanel(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("模型价格（每百万 Token）", style = MaterialTheme.typography.titleSmall)
         Text(
-            "平台没有报价时可手动填写；未配置的模型不会估算费用。",
+            "未设单价时，费用显示未知",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 280.dp)) {
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 320.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         items(platform.models, key = { it }) { model ->
             val priceResult by androidx.compose.runtime.produceState<Result<ModelPricing?>?>(null, platform.id, model, revision) {
                 value = try { Result.success(prices.price(platform.id, model)) }
@@ -60,7 +60,8 @@ fun ModelPricingPanel(
                     catch (failure: Exception) { Result.failure(failure) }
             }
             val result = priceResult
-            androidx.compose.material3.Surface(modifier = Modifier.fillMaxWidth(),
+            androidx.compose.material3.Surface(modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.small,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 color = MaterialTheme.colorScheme.surface) {
             Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -84,7 +85,6 @@ fun ModelPricingPanel(
                 TextButton(onClick = { editing = model }) { Text(if (result?.isFailure == true) "重试" else "编辑") }
             }
             }
-            androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
         }
         if (platform.models.isEmpty()) Text("请先添加模型名称。", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -162,9 +162,9 @@ private fun PricingEditor(
                     FilterChip(enabled = !saving, selected = currency == "CNY", onClick = { currency = "CNY" }, label = { Text("￥ CNY") })
                     FilterChip(enabled = !saving, selected = currency == "USD", onClick = { currency = "USD" }, label = { Text("$ USD") })
                 }
-                RateField(input, { input = it }, "输入价格 / 百万 Token", !saving)
-                RateField(output, { output = it }, "输出价格 / 百万 Token", !saving)
-                RateField(cached, { cached = it }, "缓存输入价格 / 百万（可选）", !saving)
+                RateField(input, { input = it }, "输入单价", !saving)
+                RateField(output, { output = it }, "输出单价", !saving)
+                RateField(cached, { cached = it }, "缓存单价（可选）", !saving)
                 MoJingOutlinedButton(
                     enabled = !saving && apiKey.isNotBlank() && baseUrl.isNotBlank(),
                     onClick = {
@@ -202,7 +202,7 @@ private fun PricingEditor(
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text(if (fetching) "取消获取价格" else "通过平台接口获取价格") }
+                ) { Text(if (fetching) "取消获取价格" else "获取平台报价") }
                 fetchNotice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 androidx.compose.material3.HorizontalDivider()
                 if (existing != null || hasPricedHistory) {
@@ -215,7 +215,7 @@ private fun PricingEditor(
                     }
                 }
                 Text(if (syncHistory) "已计价和未计价的历史记录均按新单价重算。" else if (!hasPricedHistory)
-                    "保存后自动补算当前平台、此模型尚未计价的历史记录。" else "历史费用保持不变，新单价用于之后开始的请求。",
+                    "将补算该模型尚未计价的历史记录。" else "新单价用于之后的请求，历史费用不变。",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (existing != null) TextButton(enabled = !saving, onClick = {
                     saving = true
@@ -256,7 +256,7 @@ private fun PricingEditor(
 
 @Composable
 private fun RateField(value: String, onValueChange: (String) -> Unit, label: String, enabled: Boolean = true) {
-    MoJingTextField(value, onValueChange, label = { Text(label) }, modifier = Modifier.fillMaxWidth(), singleLine = true, enabled = enabled,
+    MoJingTextField(value, onValueChange, label = { Text(label) }, placeholder = { Text("0.00") }, modifier = Modifier.fillMaxWidth(), singleLine = true, enabled = enabled,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
 }
 

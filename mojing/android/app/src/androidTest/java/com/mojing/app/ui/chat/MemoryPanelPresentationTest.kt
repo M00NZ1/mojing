@@ -26,7 +26,7 @@ class MemoryPanelPresentationTest {
                         segments = listOf(SessionMemorySegmentEntity(id = 1L, sessionId = 1L, summary = "码头相遇")),
                         corrections = listOf(SessionMemoryCorrectionEntity(id = 1L, sessionId = 1L, content = "角色不知道秘密")),
                         promptTrace = null, currentBranchId = "main", isGenerating = false,
-                        onRebuildContextMemory = {}, onClearContextMemory = {}, onJumpToSource = {},
+                        onRebuildContextMemory = {}, onClearContextMemory = { _ -> }, onJumpToSource = {},
                         onAddCorrection = { _, _ -> }, onEditCorrection = {}, onDeleteCorrection = {},
                         onContinueStorySummary = {}, onStopStorySummary = {},
                     )
@@ -36,8 +36,8 @@ class MemoryPanelPresentationTest {
         rule.onNodeWithText("用户纠正 1").performScrollTo().performClick()
         rule.onNodeWithText("角色不知道秘密").assertIsDisplayed()
         rule.onNodeWithText("本故事线尚未构造可追踪的角色或旁白请求").assertDoesNotExist()
-        rule.onNodeWithText("自动摘要 1").performScrollTo().performClick()
-        rule.onNodeWithText("码头相遇").assertIsDisplayed()
+        rule.onNodeWithText("自动摘要").performScrollTo().performClick()
+        rule.onNodeWithText("码头相遇").performScrollTo().assertIsDisplayed()
         rule.onNodeWithText("纠正这段记忆").assertExists()
         rule.onNodeWithText("角色不知道秘密").assertDoesNotExist()
         rule.onNodeWithText("长期记忆", useUnmergedTree = true).performScrollTo().performClick()

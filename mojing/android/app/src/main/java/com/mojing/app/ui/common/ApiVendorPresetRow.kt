@@ -71,6 +71,7 @@ fun ApiVendorPresetRow(
                 value = display,
                 onValueChange = {},
                 label = { Text("常用线路") },
+                leadingIcon = { ProviderLogo(currentBaseUrl) },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                 colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
             )
@@ -83,6 +84,7 @@ fun ApiVendorPresetRow(
                 val voiceSection = modelHint == ApiVendorModelHint.VOICE_TTS
                 presetLines.forEach { line ->
                     DropdownMenuItem(
+                        leadingIcon = { ProviderLogo(line.baseUrl) },
                         text = {
                             Column(Modifier.fillMaxWidth()) {
                                 Text(line.label, style = MaterialTheme.typography.bodyLarge)

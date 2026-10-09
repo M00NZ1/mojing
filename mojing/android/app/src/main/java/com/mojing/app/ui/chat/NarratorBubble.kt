@@ -20,10 +20,10 @@ import androidx.compose.ui.unit.dp
 fun NarratorBubble(narration: String) {
     Surface(
         shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 6.dp)
+        color = androidx.compose.ui.graphics.Color.Transparent,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
     ) {
-        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
+        Row(modifier = Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.Top) {
             Icon(Icons.Outlined.TheaterComedy, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
             Text(
                 text = " $narration",

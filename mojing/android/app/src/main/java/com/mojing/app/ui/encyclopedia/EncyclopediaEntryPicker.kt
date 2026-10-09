@@ -96,7 +96,7 @@ internal fun EncyclopediaEntryPicker(encyclopediaId: Long, selectedId: Long?,
                     ) {
                         items(rows!!.take(50), key = { it.id }) { entry ->
                             val isSelected = entry.id == selectedId
-                            Surface(
+                            Surface(shape = MaterialTheme.shapes.small,
                                 onClick = { onSelect(entry) },
                                 color = if (isSelected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
                                 modifier = Modifier.fillMaxWidth().testTag("entry-option:${entry.id}")

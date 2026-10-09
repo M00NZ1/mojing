@@ -37,7 +37,8 @@ class CharacterSnapshotExtractor @Inject constructor(
         apiKey: String,
         baseUrl: String,
         model: String,
-        triggerInterval: Int = CharacterSnapshotCadence.INTERVAL
+        triggerInterval: Int = CharacterSnapshotCadence.INTERVAL,
+        contextWindow: Int? = null,
     ): CharacterSnapshot? {
         if (messages.isEmpty()) return null
         
@@ -70,6 +71,7 @@ class CharacterSnapshotExtractor @Inject constructor(
                 ),
                 temperature = 0.3f,
                 maxTokens = 2000,
+                contextWindow = contextWindow,
             )
             val json = extractJson(result)
             gson.fromJson(json, CharacterSnapshot::class.java)

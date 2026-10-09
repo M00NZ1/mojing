@@ -49,6 +49,8 @@ internal fun GenerationTaskCard(
     val retryable = failed && isRetryableKind(task.taskKind)
     val hasResult = task.progressDone > 0 || completed
     val colors = MaterialTheme.colorScheme
+    val snapshotLabel = remember(task.status, task.taskKind, task.resultJson, task.resultAppliedAt) { task.snapshotApplicationLabel() }
+    val pendingSnapshot = snapshotLabel != null && task.resultAppliedAt == null
     val icon = when (task.taskKind) {
         GenerationTaskKinds.CHARACTER_PERSONA_AI -> Icons.Outlined.PersonOutline
         GenerationTaskKinds.WORLD_TEMPLATE_PROMPT_AI -> Icons.Outlined.Public
@@ -103,6 +105,9 @@ internal fun GenerationTaskCard(
                 Text(task.errorMessage, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodySmall, color = if (failed) colors.error else colors.onSurfaceVariant)
             }
+            snapshotLabel?.let { label ->
+                Text(label, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+            }
             if (retryable || hasResult) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (retryable) {
@@ -114,8 +119,10 @@ internal fun GenerationTaskCard(
                         }
                     }
                     if (hasResult) {
-                        val label = if (opening) "正在打开…" else if (completed) "查看生成内容" else "查看已保存内容"
-                        TextButton(onClick = onOpen, enabled = canOpen && !opening) { Text(label) }
+                        val label = if (opening) "正在打开…" else if (pendingSnapshot) "查看结果快照"
+                            else if (snapshotLabel != null) task.currentSnapshotTargetLabel()
+                            else if (completed) "查看生成内容" else "查看已保存内容"
+                        TextButton(onClick = if (pendingSnapshot) onDetail else onOpen, enabled = canOpen && !opening) { Text(label) }
                     }
                 }
             }

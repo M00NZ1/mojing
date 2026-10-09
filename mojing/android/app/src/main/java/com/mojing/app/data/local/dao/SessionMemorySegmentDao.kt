@@ -59,6 +59,9 @@ private const val VISIBLE_MEMORY_SEGMENTS_QUERY = """
 
 @Dao
 interface SessionMemorySegmentDao {
+    @Query("$VISIBLE_MEMORY_SEGMENTS_QUERY AND memory.id = :segmentId LIMIT 1")
+    suspend fun getVisibleById(sessionId: Long, branchId: String, segmentId: Long): SessionMemorySegmentEntity?
+
     @Query(
         "SELECT * FROM session_memory_segments WHERE sessionId = :sessionId AND branchId = 'main' " +
             "ORDER BY endMessageId DESC, id DESC LIMIT :limit",
@@ -125,6 +128,9 @@ interface SessionMemorySegmentDao {
     @Query("SELECT * FROM session_memory_segments WHERE sessionId = :sessionId AND branchId = :branchId ORDER BY segmentIndex ASC")
     suspend fun getBySessionAndBranch(sessionId: Long, branchId: String): List<SessionMemorySegmentEntity>
 
+    @Query("SELECT * FROM session_memory_segments WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Long): SessionMemorySegmentEntity?
+
     @Query(
         "SELECT COALESCE(MAX(segmentIndex), -1) + 1 FROM session_memory_segments " +
             "WHERE sessionId = :sessionId AND branchId = :branchId",
@@ -136,4 +142,24 @@ interface SessionMemorySegmentDao {
 
     @Insert
     suspend fun insertCompacted(entity: SessionMemorySegmentEntity): Long
+
+    /** Updates only the summary captured by the editor. A changed row means another writer won. */
+    @Query("""
+        UPDATE session_memory_segments
+        SET summary = :summary
+        WHERE id = :id AND sessionId = :sessionId AND branchId = :branchId AND summary = :expectedSummary
+    """)
+    suspend fun updateSummaryIfUnchanged(
+        id: Long,
+        sessionId: Long,
+        branchId: String,
+        expectedSummary: String,
+        summary: String,
+    ): Int
+
+    @Query("DELETE FROM session_memory_segments WHERE id = :id AND sessionId = :sessionId AND branchId = :branchId AND summary = :expectedSummary")
+    suspend fun deleteOwnedIfUnchanged(id: Long, sessionId: Long, branchId: String, expectedSummary: String): Int
+
+    @Query("DELETE FROM session_memory_segments WHERE sessionId = :sessionId AND branchId = :branchId AND endMessageId > :endMessageId")
+    suspend fun deleteFollowing(sessionId: Long, branchId: String, endMessageId: Long): Int
 }

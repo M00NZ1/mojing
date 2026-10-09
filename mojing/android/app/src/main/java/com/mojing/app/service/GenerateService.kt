@@ -21,6 +21,11 @@ class GenerateService : Service() {
                 if (ids.isNotEmpty()) {
                     getSystemService(android.app.NotificationManager::class.java).notify(1001,
                         notificationHelper.createGenerateNotification("墨境 · ${ids.size} 个对话处理中", 0, ids.first()))
+                } else {
+                    // Fast completion may precede onStartCommand. Promote first, then stop here;
+                    // stopping externally while foreground promotion is pending crashes Android.
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
                 }
             }
         }

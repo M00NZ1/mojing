@@ -6,7 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.mojing.app.ui.common.MoJingButton
-import com.mojing.app.ui.common.MoJingTextField
+import com.mojing.app.ui.common.MoJingWritingField
 
 @Composable
 internal fun NarratorRequestDialog(
@@ -20,13 +20,12 @@ internal fun NarratorRequestDialog(
         onDismiss = onDismiss,
         title = "生成旁白",
         editor = {
-            MoJingTextField(
+            MoJingWritingField(
                 value = guidance,
                 onValueChange = onGuidanceChange,
                 modifier = Modifier.fillMaxWidth().weight(1f),
-                label = { Text("剧情方向（可选）") },
-                placeholder = { Text("例如：推进到夜晚，让众人发现屋外的异响") },
-                minLines = 3,
+                label = "剧情方向（可选）",
+                placeholder = "剧情方向（可选），例如：推进到夜晚，屋外传来异响",
             )
         },
         actions = {

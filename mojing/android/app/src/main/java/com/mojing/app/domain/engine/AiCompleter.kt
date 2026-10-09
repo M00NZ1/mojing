@@ -16,7 +16,8 @@ class AiCompleter @Inject constructor(
         val targetType: String,
         val entryType: String? = null,
         val currentData: Map<String, Any> = emptyMap(),
-        val extraContext: String = ""
+        val extraContext: String = "",
+        val contextWindow: Int? = null,
     )
 
     suspend fun complete(
@@ -56,6 +57,7 @@ class AiCompleter @Inject constructor(
             messages = messages,
             temperature = 0.7f,
             maxTokens = maxTokens,
+            contextWindow = request.contextWindow,
         )
         if (request.targetType == "world_template") {
             UsbSessionLog.i(

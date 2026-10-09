@@ -1,11 +1,27 @@
 package com.mojing.app.media
 
+import com.mojing.app.media.newmedia.SpeechPlaybackControl
 import org.junit.Assert.*
 import org.junit.Test
 import javax.xml.parsers.DocumentBuilderFactory
 import java.io.ByteArrayInputStream
 
 class AzureSpeechTest {
+    @Test fun controlCloseInvalidatesAzurePreparationBinding() {
+        val control = SpeechPlaybackControl()
+        val lease = control.bind({}, {})!!
+        control.updateIfOwned(lease) {
+            it.copy(
+                phase = SpeechPlaybackControl.Phase.PREPARING,
+                segmentIndex = 1,
+                segmentCount = 2,
+            )
+        }
+        control.close()
+        control.updateIfOwned(lease) { it.copy(phase = SpeechPlaybackControl.Phase.PLAYING) }
+        assertEquals(SpeechPlaybackControl.Snapshot(), control.snapshot.value)
+    }
+
     @Test fun speechFailuresKeepActionableCategoryWithoutRawProviderText() {
         val unauthorized = AzureSpeech.failureMessage(com.mojing.app.data.remote.LlmHttpException(401))
         assertTrue(unauthorized.contains("Speech Key"))

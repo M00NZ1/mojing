@@ -50,6 +50,40 @@ class CharacterEncyclopediaSyncTest {
     }
 
     @Test
+    fun createsAndUpdatesMirrorWithCompletePersonaBeyond8000Characters() = runTest {
+        val persona = longPersona()
+        assertTrue(persona.length > 8000)
+        val saved = slot<EncyclopediaEntryEntity>()
+        val existing = mirror(id = 12, linkedCharacterId = 5, content = "旧镜像")
+        coEvery { entryDao.getCharacterMirrorMetadataPage(9, 0, 128) } returns
+            listOf(CharacterMirrorMetadata(existing.id, existing.metaJson))
+        coEvery { entryDao.getById(existing.id) } returns existing
+        coEvery { entryDao.upsert(capture(saved)) } returns existing.id
+
+        CharacterEncyclopediaSync.syncCharacterToEntry(
+            entryDao,
+            CharacterEntity(id = 5, name = "长人设", personaPrompt = persona, boundEncyclopediaId = 9),
+        )
+
+        assertEquals(persona, saved.captured.content)
+        assertTrue(saved.captured.content.length > 8000)
+        assertEquals(persona.length, saved.captured.content.length)
+
+        val newEntryDao = mockk<EncyclopediaEntryDao>(relaxed = true)
+        val newSaved = slot<EncyclopediaEntryEntity>()
+        coEvery { newEntryDao.getCharacterMirrorMetadataPage(9, 0, 128) } returns emptyList()
+        coEvery { newEntryDao.upsert(capture(newSaved)) } returns 13
+        CharacterEncyclopediaSync.syncCharacterToEntry(
+            newEntryDao,
+            CharacterEntity(id = 6, name = "新长人设", personaPrompt = persona, boundEncyclopediaId = 9),
+        )
+
+        assertEquals(persona, newSaved.captured.content)
+        assertTrue(newSaved.captured.content.length > 8000)
+        assertEquals(6L, CharacterEncyclopediaSync.readLinkedCharacterId(newSaved.captured.metaJson))
+    }
+
+    @Test
     fun updatesFirstMirrorAndDeletesDuplicates() = runTest {
         val first = mirror(id = 12, linkedCharacterId = 5, metaJson = "{\"linkedCharacterId\":5,\"keep\":true}")
         val duplicate = mirror(id = 13, linkedCharacterId = 5)
@@ -101,11 +135,20 @@ class CharacterEncyclopediaSyncTest {
         coVerify(exactly = 0) { entryDao.getByType(any(), any()) }
     }
 
-    private fun mirror(id: Long, linkedCharacterId: Long, metaJson: String? = null) =
+    private fun mirror(
+        id: Long,
+        linkedCharacterId: Long,
+        metaJson: String? = null,
+        content: String = "",
+    ) =
         EncyclopediaEntryEntity(
             id = id,
             encyclopediaId = 9,
             entryType = "character",
             metaJson = metaJson ?: "{\"linkedCharacterId\":$linkedCharacterId}",
+            content = content,
         )
+
+    private fun longPersona(): String =
+        ("角色长人设片段：冷静、敏锐、持续保留原文。\n").repeat(800) + "尾部仍然属于角色正文。"
 }

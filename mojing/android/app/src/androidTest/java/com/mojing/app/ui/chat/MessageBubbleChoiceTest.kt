@@ -85,7 +85,7 @@ class MessageBubbleChoiceTest {
     }
 
     @Test
-    fun bottomChoiceRowDispatchesCurrentSelectionWhileImeIsOpen() {
+    fun inlineSuggestionDispatchesOnlyAnExplicitSelection() {
         var selectedChoice: String? = null
         val reply = StructuredParser.parse(
             """
@@ -101,7 +101,7 @@ class MessageBubbleChoiceTest {
 
         composeRule.setContent {
             MaterialTheme {
-                if (shouldShowRoundChoices(isImeOpen = true, choices = reply.choices, isGenerating = false)) {
+                if (shouldShowRoundChoices(isImeOpen = false, choices = reply.choices, isGenerating = false)) {
                     RoundChoicesRow(
                         choices = reply.choices,
                         onSelect = { selectedChoice = it },
@@ -110,7 +110,7 @@ class MessageBubbleChoiceTest {
             }
         }
 
-        composeRule.onNodeWithText("推门进入").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("1.   推门进入").assertIsDisplayed().performClick()
         composeRule.runOnIdle {
             assertEquals("推门进入", selectedChoice)
         }

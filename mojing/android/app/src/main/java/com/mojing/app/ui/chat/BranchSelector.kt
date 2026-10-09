@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.selected
@@ -30,17 +31,17 @@ fun BranchSelector(
     onShowBranchOverview: (() -> Unit)? = null,
 ) {
     if (!expanded) return
-    var query by remember { mutableStateOf("") }
+    var query by rememberSaveable { mutableStateOf("") }
     val choices = remember(branches, query) {
         val needle = query.trim()
         branches.distinctBy { it.first }.filter { (id, label) ->
             needle.isEmpty() || storyLineDisplayLabel(id, label).contains(needle, ignoreCase = true)
         }
     }
-    val listState = remember(query, currentBranch) {
+    val listState = rememberSaveable(query, currentBranch, saver = LazyListState.Saver) {
         LazyListState(choices.indexOfFirst { it.first == currentBranch }.coerceAtLeast(0))
     }
-    AlertDialog(
+    com.mojing.app.ui.common.MoJingFormDialog(
         onDismissRequest = onDismiss,
         title = { Text("选择故事线", style = MaterialTheme.typography.titleLarge) },
         text = {

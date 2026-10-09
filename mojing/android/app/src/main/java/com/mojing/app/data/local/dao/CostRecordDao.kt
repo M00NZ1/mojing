@@ -24,8 +24,29 @@ data class PlatformUsageSummary(val platformId: String, val platformName: String
 data class ModelChannelUsageSummary(val modelName: String, val totalCalls: Long,
     val failedCalls: Long, val totalTokens: Long)
 
+data class DailyUsageSummary(val day: String, val currency: String, val costKnownAmount: Double,
+    val unknownCalls: Long, val tokens: Long, val totalCalls: Long)
+
+data class MonthlyPlatformUsage(val platformId: String, val platformName: String, val currency: String,
+    val costKnownAmount: Double, val tokens: Long, val totalCalls: Long, val unknownCalls: Long, val failedCalls: Long)
+
 @Dao
 interface CostRecordDao {
+    @Query("""SELECT platformId, MAX(platformName) AS platformName, currency,
+        COALESCE(SUM(CASE WHEN costKnown=1 THEN estimatedCost ELSE 0 END),0.0) AS costKnownAmount,
+        COALESCE(SUM(totalTokens),0) AS tokens, COUNT(*) AS totalCalls,
+        SUM(CASE WHEN costKnown=0 THEN 1 ELSE 0 END) AS unknownCalls,
+        SUM(CASE WHEN success=0 THEN 1 ELSE 0 END) AS failedCalls
+        FROM llm_cost_records WHERE createdAt>=:fromMillis AND createdAt<:toMillis
+        GROUP BY platformId,currency ORDER BY platformId,currency""")
+    suspend fun monthlyPlatformUsage(fromMillis: Long, toMillis: Long): List<MonthlyPlatformUsage>
+    @Query("""SELECT date(createdAt / 1000, 'unixepoch', 'localtime') AS day, currency,
+        COALESCE(SUM(CASE WHEN costKnown=1 THEN estimatedCost ELSE 0 END),0.0) AS costKnownAmount,
+        SUM(CASE WHEN costKnown=0 THEN 1 ELSE 0 END) AS unknownCalls,
+        COALESCE(SUM(totalTokens),0) AS tokens, COUNT(*) AS totalCalls
+        FROM llm_cost_records WHERE createdAt>=:fromMillis AND createdAt<:toMillis
+        GROUP BY day,currency ORDER BY day,currency""")
+    suspend fun dailyUsage(fromMillis: Long, toMillis: Long): List<DailyUsageSummary>
     @Query("SELECT valueJson FROM app_config WHERE `key`=:key")
     suspend fun storedPrice(key: String): String?
 

@@ -44,4 +44,17 @@ class TtsPlayerTest {
             assertFalse(secondFile.exists())
         } finally { firstFile.delete(); secondFile.delete() }
     }
+
+    @Test fun pauseWhilePreparingDefersStartUntilResume() {
+        val file = createTempFile("mojing-voice-paused").toFile()
+        try {
+            val handle = TtsPlayer.playOwned(file, deleteWhenFinished = true, initialPaused = true)!!
+            prepared.last().onPrepared(mockk(relaxed = true))
+            verify(exactly = 0) { anyConstructed<MediaPlayer>().start() }
+            TtsPlayer.resume(handle)
+            verify(exactly = 1) { anyConstructed<MediaPlayer>().start() }
+            TtsPlayer.pause(handle)
+            verify(exactly = 1) { anyConstructed<MediaPlayer>().pause() }
+        } finally { file.delete() }
+    }
 }

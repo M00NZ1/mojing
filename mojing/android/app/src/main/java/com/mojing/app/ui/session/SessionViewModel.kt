@@ -83,6 +83,9 @@ internal data class SessionRenameState(
     val error: String? = null,
 )
 
+// Each failed attempt is distinct so an immediate retry can show the same message again.
+internal class SessionPinFailure(val sessionId: Long, val pinned: Boolean, val message: String)
+
 @HiltViewModel
 class SessionViewModel @Inject constructor(
     private val sessionDao: SessionDao,
@@ -97,7 +100,19 @@ class SessionViewModel @Inject constructor(
     private val generationTaskDao: GenerationTaskDao,
     private val secureStorage: SecureStorage,
     private val uiPreferencesRepository: UiPreferencesRepository,
+    private val sessionSetupDraftStore: com.mojing.app.data.SessionSetupDraftStore,
 ) : ViewModel() {
+    suspend fun loadSessionSetupDraft() = sessionSetupDraftStore.load()
+    suspend fun saveSessionSetupDraft(draft: com.mojing.app.data.SessionSetupDraft) = sessionSetupDraftStore.save(draft)
+    suspend fun createdSessionForSetup(requestId: String) = sessionDao.getByCreationRequestId(requestId)?.id
+    fun clearSessionSetupDraft(requestId: String, onFailed: () -> Unit) {
+        viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            try { sessionSetupDraftStore.clear(requestId) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { onFailed() }
+        }
+    }
+
     val quickStartGuideDismissed: StateFlow<Boolean?> = uiPreferencesRepository.quickStartGuideDismissed
         .map<Boolean, Boolean?> { it }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
@@ -118,6 +133,20 @@ class SessionViewModel @Inject constructor(
     internal val sessionLibraryState: StateFlow<SessionLibraryUiState> = _sessionLibraryState.asStateFlow()
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+    private val _pinnedOnly = MutableStateFlow(false)
+    val pinnedOnly: StateFlow<Boolean> = _pinnedOnly.asStateFlow()
+    private val _recentFirst = MutableStateFlow(false)
+    val recentFirst: StateFlow<Boolean> = _recentFirst.asStateFlow()
+
+    fun setLibraryOptions(pinnedOnly: Boolean = _pinnedOnly.value, recentFirst: Boolean = _recentFirst.value) {
+        if (pinnedOnly == _pinnedOnly.value && recentFirst == _recentFirst.value) return
+        _pinnedOnly.value = pinnedOnly
+        _recentFirst.value = recentFirst
+        sessionPageCursors.clear()
+        sessionPageCursors.add(null)
+        _sessionLibraryState.value = SessionLibraryUiState.Loading
+        observeSessionLibrary()
+    }
     private var sessionLibraryJob: Job? = null
     private val sessionPageCursors = mutableListOf<SessionPageCursor?>(null)
     private var pendingSessionPage: Pair<Int, SessionPageCursor?>? = null
@@ -147,7 +176,7 @@ class SessionViewModel @Inject constructor(
         val loaded = _sessionLibraryState.value as? SessionLibraryUiState.Loaded ?: return
         if (loaded.refreshing || !loaded.hasMore || loaded.sessions.isEmpty()) return
         val last = loaded.sessions.last().session
-        observeSessionLibrary(loaded.pageIndex + 1, SessionPageCursor(last.pinnedAt, last.updatedAt, last.id), loaded.query)
+        observeSessionLibrary(loaded.pageIndex + 1, SessionPageCursor(if (_recentFirst.value) 0 else last.pinnedAt, last.updatedAt, last.id), loaded.query)
     }
 
     internal fun previousSessionLibraryPage() {
@@ -235,6 +264,7 @@ class SessionViewModel @Inject constructor(
             try {
                 sessionDao.observeListPageWithMeta(
                     query, cursor?.pinnedAt, cursor?.updatedAt, cursor?.id, SESSION_LIBRARY_PAGE_SIZE + 1,
+                    pinnedOnly = _pinnedOnly.value, recentFirst = _recentFirst.value,
                 ).collect { rows ->
                     val sessions = rows.take(SESSION_LIBRARY_PAGE_SIZE)
                     if (pageIndex == sessionPageCursors.size) sessionPageCursors.add(cursor)
@@ -292,6 +322,7 @@ class SessionViewModel @Inject constructor(
         onFailed: (String) -> Unit = {},
         onCreatedButNotOpened: (Long) -> Unit = { onFailed("对话已创建，但未能打开，请从故事库进入") },
         creationRequestId: String? = null,
+        setupDraft: com.mojing.app.data.SessionSetupDraft? = null,
     ) {
         if (!_isCreatingSession.compareAndSet(expect = false, update = true)) {
             onFailed(SESSION_CREATION_BUSY_MESSAGE)
@@ -300,6 +331,7 @@ class SessionViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val result = try {
+                    if (setupDraft != null) sessionSetupDraftStore.save(setupDraft)
                     createSessionUseCase.createBlank(creationRequestId = creationRequestId)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -443,6 +475,7 @@ class SessionViewModel @Inject constructor(
         onBlocked: (String) -> Unit = {},
         onCreatedButNotOpened: (Long) -> Unit = { onBlocked("对话已创建，但未能打开，请从故事库进入") },
         creationRequestId: String? = null,
+        setupDraft: com.mojing.app.data.SessionSetupDraft? = null,
     ) {
         if (!_isCreatingSession.compareAndSet(expect = false, update = true)) {
             onBlocked(SESSION_CREATION_BUSY_MESSAGE)
@@ -451,6 +484,7 @@ class SessionViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val result = try {
+                    if (setupDraft != null) sessionSetupDraftStore.save(setupDraft)
                     createSessionUseCase.create(
                         title = title,
                         template = template,
@@ -547,13 +581,33 @@ class SessionViewModel @Inject constructor(
     }
 
     fun setSessionPinned(id: Long, pinned: Boolean) {
+        if (id in _pinningSessionIds.value) return
+        _pinningSessionIds.value = _pinningSessionIds.value + id
+        _pinFailure.value = null
         viewModelScope.launch {
-            val s = sessionDao.getById(id) ?: return@launch
-            sessionDao.update(
-                s.copy(pinnedAt = if (pinned) System.currentTimeMillis() else 0L),
-            )
-            resetLibraryPageAfterReorder()
+            try {
+                if (sessionDao.updatePinnedAt(id, if (pinned) System.currentTimeMillis() else 0L) == 0) {
+                    _pinFailure.value = SessionPinFailure(id, pinned, "对话已不存在，请刷新列表")
+                } else {
+                    resetLibraryPageAfterReorder()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _pinFailure.value = SessionPinFailure(id, pinned, "置顶状态保存失败，请重试")
+            } finally {
+                _pinningSessionIds.value = _pinningSessionIds.value - id
+            }
         }
+    }
+
+    private val _pinningSessionIds = MutableStateFlow<Set<Long>>(emptySet())
+    internal val pinningSessionIds = _pinningSessionIds.asStateFlow()
+    private val _pinFailure = MutableStateFlow<SessionPinFailure?>(null)
+    internal val pinFailure = _pinFailure.asStateFlow()
+
+    internal fun clearPinFailure(expected: SessionPinFailure) {
+        _pinFailure.compareAndSet(expected, null)
     }
 
     private companion object {

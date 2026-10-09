@@ -15,10 +15,11 @@ object Routes {
     const val CREATION_HUB = "create"
     const val CHARACTER_LIST = "characters"
     const val CHARACTER_EDIT = "characters/edit/{characterId}"
+    const val CHARACTER_DETAIL = "characters/detail/{characterId}"
     const val ENCYCLOPEDIA_LIST = "encyclopedias"
-    const val ENCYCLOPEDIA_DETAIL = "encyclopedias/{encId}"
+    const val ENCYCLOPEDIA_DETAIL = "encyclopedias/{encId}?relationEntryId={relationEntryId}"
     const val WORLD_SETTINGS = "worlds/{worldId}/settings"
-    const val ENTRY_EDIT = "encyclopedias/{encId}/entries/{entryId}"
+    const val ENTRY_EDIT = "encyclopedias/{encId}/entries/{entryId}?showSource={showSource}"
     const val WORKBENCH = "workbench"
     const val TEMPLATE_EDIT = "workbench/edit/{templateId}"
     const val SETTINGS = "settings"
@@ -29,9 +30,12 @@ object Routes {
     fun chatSource(sessionId: Long, messageId: Long, branchId: String) =
         "chat/$sessionId?sourceMessageId=$messageId&sourceBranchId=${android.net.Uri.encode(branchId)}"
     fun characterEdit(id: Long) = "characters/edit/$id"
+    fun characterDetail(id: Long) = "characters/detail/$id"
     fun encyclopediaDetail(encId: Long) = "encyclopedias/$encId"
+    fun entryRelations(encId: Long, entryId: Long) = "encyclopedias/$encId?relationEntryId=$entryId"
     fun worldSettings(worldId: Long) = "worlds/$worldId/settings"
     fun entryEdit(encId: Long, entryId: Long) = "encyclopedias/$encId/entries/$entryId"
+    fun entrySourcePreview(encId: Long, entryId: Long) = "${entryEdit(encId, entryId)}?showSource=true"
     fun templateEdit(templateId: Long) = "workbench/edit/$templateId"
 }
 

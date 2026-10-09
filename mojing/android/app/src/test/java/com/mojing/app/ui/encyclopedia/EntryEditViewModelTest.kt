@@ -8,8 +8,10 @@ import com.mojing.app.data.local.dao.EncyclopediaEntryDao
 import com.mojing.app.data.local.dao.EntryVersionDao
 import com.mojing.app.data.local.entity.EncyclopediaEntity
 import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
+import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.repository.ImageRepository
 import com.mojing.app.domain.engine.AiCompleter
+import com.mojing.app.domain.encyclopedia.messageSourceFingerprint
 import com.mojing.app.domain.usecase.SaveCharacterEntryUseCase
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -33,6 +35,69 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class EntryEditViewModelTest {
+    private fun edge(id: Long) = com.mojing.app.data.local.dao.EntryRelatedItem(id, 8L, id + 100L,
+        "守护", "备注", id + 100L, "条目$id", "location")
+
+    @Test fun relatedPagesRetainOnly24AndRetryTheFailedCursor() = runTest(dispatcher) {
+        val entries = mockk<EncyclopediaEntryDao> { coEvery { getById(8L) } returns EncyclopediaEntryEntity(id = 8L, encyclopediaId = 3L) }
+        val relations = mockk<com.mojing.app.data.local.dao.EntryRelationDao>()
+        coEvery { relations.getEntryPage(3L, 8L, Long.MAX_VALUE, 25) } returns (50L downTo 26L).map(::edge)
+        coEvery { relations.getEntryPage(3L, 8L, 27L, 25) } throws IllegalStateException("read")
+        val vm = createViewModel(encyclopediaDao(), entries, relationDao = relations)
+        vm.load(3L, 8L); vm.refreshRelatedEntries(); advanceUntilIdle()
+        assertEquals(24, vm.state.value.relatedEntries.size); assertTrue(vm.state.value.relatedHasNext)
+        vm.nextRelatedPage(); advanceUntilIdle()
+        assertEquals(0, vm.state.value.relatedPageIndex); assertNotNull(vm.state.value.relatedError)
+        coEvery { relations.getEntryPage(3L, 8L, 27L, 25) } returns listOf(edge(26L))
+        vm.retryRelatedPage(); advanceUntilIdle()
+        assertEquals(listOf(26L), vm.state.value.relatedEntries.map { it.id }); assertEquals(1, vm.state.value.relatedPageIndex)
+        assertFalse(vm.state.value.relatedHasNext)
+        vm.previousRelatedPage(); advanceUntilIdle(); assertEquals(24, vm.state.value.relatedEntries.size)
+    }
+
+    @Test fun relatedBoundaryCountsAndZeroEntryNeverQueryRelations() = runTest(dispatcher) {
+        val entries = mockk<EncyclopediaEntryDao> { coEvery { getById(8L) } returns EncyclopediaEntryEntity(id = 8L, encyclopediaId = 3L) }
+        val relations = mockk<com.mojing.app.data.local.dao.EntryRelationDao>(relaxed = true)
+        val vm = createViewModel(encyclopediaDao(), entries, relationDao = relations)
+        vm.load(3L, 0L); vm.refreshRelatedEntries(); advanceUntilIdle()
+        coVerify(exactly = 0) { relations.getEntryPage(any(), any(), any(), any()) }
+        vm.load(3L, 8L)
+        for (count in listOf(0, 1, 23, 24, 25)) {
+            coEvery { relations.getEntryPage(3L, 8L, Long.MAX_VALUE, 25) } returns (1L..count.toLong()).map(::edge)
+            vm.refreshRelatedEntries(); advanceUntilIdle()
+            assertEquals(count.coerceAtMost(24), vm.state.value.relatedEntries.size)
+            assertEquals(count > 24, vm.state.value.relatedHasNext)
+        }
+    }
+
+    @Test fun lateRelationsCannotReplaceAnotherEntry() = runTest(dispatcher) {
+        val entries = mockk<EncyclopediaEntryDao> {
+            coEvery { getById(any()) } answers { EncyclopediaEntryEntity(id = firstArg(), encyclopediaId = 3L) }
+        }
+        val deferred = CompletableDeferred<List<com.mojing.app.data.local.dao.EntryRelatedItem>>()
+        val relations = mockk<com.mojing.app.data.local.dao.EntryRelationDao>()
+        coEvery { relations.getEntryPage(3L, 8L, any(), 25) } coAnswers {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { deferred.await() }
+        }
+        coEvery { relations.getEntryPage(3L, 9L, any(), 25) } returns listOf(edge(9L))
+        val vm = createViewModel(encyclopediaDao(), entries, relationDao = relations)
+        vm.load(3L, 8L);vm.refreshRelatedEntries()
+        vm.load(3L, 9L);vm.refreshRelatedEntries()
+        deferred.complete(listOf(edge(8L)));advanceUntilIdle()
+        assertEquals(9L, vm.state.value.persistedEntryId)
+        assertEquals(listOf(9L), vm.state.value.relatedEntries.map { it.id })
+    }
+
+    @Test fun discardedEditorCanReturnFromManagementWithoutStaleDirtyOrBusyState() = runTest(dispatcher) {
+        val entries = mockk<EncyclopediaEntryDao> { coEvery { getById(8L) } returns EncyclopediaEntryEntity(id = 8L, encyclopediaId = 3L, content = "已保存正文") }
+        val vm = createViewModel(encyclopediaDao(), entries)
+        vm.load(3L, 8L);vm.updateContent("应放弃正文")
+        var left = false;vm.discardChangesAndLeave { left = true };advanceUntilIdle()
+        assertTrue(left);assertEquals("已保存正文", vm.state.value.content)
+        assertFalse(vm.state.value.isDirty);assertFalse(vm.state.value.isDiscardingDraft)
+        vm.updateContent("回来继续编辑");assertTrue(vm.state.value.isDirty)
+    }
+
     @Test fun directNewEntryRestoresDraftBeforeAcceptingInput() = runTest(dispatcher) {
         val store = mockk<EntryEditDraftStore>(relaxed = true) {
             coEvery { load(3L, 0L) } returns EntryDraftSnapshot(title = "旧开篇", content = "未保存正文")
@@ -90,12 +155,15 @@ class EntryEditViewModelTest {
         vm.updateTitle("潮汐钟")
         vm.save()
         vm.updateContent("保存期间新写的正文")
+        vm.updateCoverPromptHint("保存期间的新生图提示")
         gate.complete(Unit)
         advanceUntilIdle()
         assertTrue(vm.state.value.isDirty)
         assertEquals(12L, vm.state.value.persistedEntryId)
         assertEquals("保存期间新写的正文", vm.state.value.content)
-        coVerify { store.syncAfterFirstSave(3L, 12L, match { it.content == "保存期间新写的正文" }) }
+        coVerify { store.syncAfterFirstSave(3L, 12L, match {
+            it.content == "保存期间新写的正文" && it.coverPromptHint == "保存期间的新生图提示"
+        }) }
     }
 
     @Test fun waitsForRecoveryChoiceBeforeEditing() = runTest(dispatcher) {
@@ -215,6 +283,50 @@ class EntryEditViewModelTest {
         assertFalse(vm.state.value.sourcePreviewOpen)
     }
 
+    @Test fun versionedSourcePreviewMarksCurrentContent() = runTest(dispatcher) {
+        val message = MessageEntity(id = 6, sessionId = 42, content = "当前原文")
+        val fingerprint = messageSourceFingerprint(message)
+        val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, sourceSessionId = 42, sourceMessageId = 6,
+            metaJson = """{"source_message_ids":[6],"source_branch_id":"main","source_fingerprint_version":1,"source_message_fingerprints":[{"message_id":6,"fingerprint":"$fingerprint"}]}""")
+        val entries = mockk<EncyclopediaEntryDao> { coEvery { getById(8) } returns entry }
+        val messages = mockk<com.mojing.app.data.local.dao.MessageDao>(relaxed = true)
+        coEvery { messages.getMainEventSources(42, listOf(6)) } returns listOf(message)
+        val vm = createViewModel(encyclopediaDao(), entries, messageDao = messages)
+        vm.preparationDispatcher = dispatcher
+        vm.load(3, 8); vm.openSourcePreview(); advanceUntilIdle()
+        assertEquals(EntrySourceVerification.CURRENT, vm.state.value.sourceVerification)
+        coVerify(exactly = 0) { messages.getByIdInSession(6, 42) }
+    }
+
+    @Test fun versionedSourcePreviewMarksChangedContent() = runTest(dispatcher) {
+        val original = MessageEntity(id = 6, sessionId = 42, content = "原始版本")
+        val current = original.copy(content = "已编辑版本")
+        val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, sourceSessionId = 42, sourceMessageId = 6,
+            metaJson = """{"source_message_ids":[6],"source_fingerprint_version":1,"source_message_fingerprints":[{"message_id":6,"fingerprint":"${messageSourceFingerprint(original)}"}]}""")
+        val entries = mockk<EncyclopediaEntryDao> { coEvery { getById(8) } returns entry }
+        val messages = mockk<com.mojing.app.data.local.dao.MessageDao>(relaxed = true)
+        coEvery { messages.getMainEventSources(42, listOf(6)) } returns listOf(current)
+        val vm = createViewModel(encyclopediaDao(), entries, messageDao = messages)
+        vm.preparationDispatcher = dispatcher
+        vm.load(3, 8); vm.openSourcePreview(); advanceUntilIdle()
+        assertEquals(EntrySourceVerification.CHANGED, vm.state.value.sourceVerification)
+    }
+
+    @Test fun versionedSourcePreviewMarksMessageOutsideCurrentContext() = runTest(dispatcher) {
+        val message = MessageEntity(id = 6, sessionId = 42, content = "分支原文")
+        val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, sourceSessionId = 42, sourceMessageId = 6,
+            metaJson = """{"source_message_ids":[6],"source_branch_id":"story","source_fingerprint_version":1,"source_message_fingerprints":[{"message_id":6,"fingerprint":"${messageSourceFingerprint(message)}"}]}""")
+        val entries = mockk<EncyclopediaEntryDao> { coEvery { getById(8) } returns entry }
+        val messages = mockk<com.mojing.app.data.local.dao.MessageDao>(relaxed = true)
+        coEvery { messages.getVisibleEventSources(42, "story", listOf(6)) } returns emptyList()
+        coEvery { messages.getByIdInSession(6, 42) } returns message
+        val vm = createViewModel(encyclopediaDao(), entries, messageDao = messages)
+        vm.preparationDispatcher = dispatcher
+        vm.load(3, 8); vm.openSourcePreview(); advanceUntilIdle()
+        assertEquals(EntrySourceVerification.NOT_IN_ORIGINAL_LINE, vm.state.value.sourceVerification)
+        assertEquals(null, vm.state.value.sourceError)
+    }
+
     @Test fun sourcePreviewKeepsDraftAndAllowsRetry() = runTest(dispatcher) {
         val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, sourceSessionId = 42, sourceMessageId = 6,
             metaJson = """{"source_branch_id":"story-2"}""")
@@ -263,8 +375,11 @@ class EntryEditViewModelTest {
 
     @Test
     fun loadingVersionRequiresDraftReplacementAndRejectsOtherEntries() = runTest(dispatcher) {
-        val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, title = "当前正文")
-        val version = com.mojing.app.data.local.entity.EntryVersionEntity(id = 6, entryId = 8, title = "历史正文")
+        val entry = EncyclopediaEntryEntity(id = 8, encyclopediaId = 3, title = "当前正文",
+            entryType = "location", confidence = "pending", isFeatured = true, coverImagePath = "current-cover.png")
+        val version = com.mojing.app.data.local.entity.EntryVersionEntity(id = 6, entryId = 8,
+            title = "历史正文", summary = "历史摘要", content = "历史全文", tags = "历史标签",
+            metaSnapshotJson = "{\"region\":\"旧港\"}")
         val dao = mockk<EncyclopediaEntryDao> { coEvery { getById(8) } returns entry }
         val versions = mockk<EntryVersionDao> { coEvery { getPage(8, any(), 11) } returns listOf(version) }
         val viewModel = createViewModel(encyclopediaDao(), dao, versions)
@@ -278,6 +393,14 @@ class EntryEditViewModelTest {
         assertFalse(viewModel.applyVersionToForm(version.copy(entryId = 99), true))
         assertTrue(viewModel.applyVersionToForm(version, true))
         assertEquals("历史正文", viewModel.state.value.title)
+        assertEquals(version.summary, viewModel.state.value.summary)
+        assertEquals(version.content, viewModel.state.value.content)
+        assertEquals(version.tags, viewModel.state.value.tags)
+        assertEquals(version.metaSnapshotJson, viewModel.state.value.metaJson)
+        assertEquals(entry.entryType, viewModel.state.value.entryType)
+        assertEquals(entry.confidence, viewModel.state.value.confidence)
+        assertEquals(entry.isFeatured, viewModel.state.value.isFeatured)
+        assertEquals(entry.coverImagePath, viewModel.state.value.coverImagePath)
         assertTrue(viewModel.state.value.isDirty)
         assertEquals(null, viewModel.state.value.pendingVersion)
     }
@@ -372,13 +495,14 @@ class EntryEditViewModelTest {
         saveEntry: SaveCharacterEntryUseCase = mockk(relaxed = true),
         aiCompleter: AiCompleter = mockk(relaxed = true),
         publicKey: String = "",
+        storage: SecureStorage? = null,
         messageDao: com.mojing.app.data.local.dao.MessageDao = mockk(relaxed = true),
         draftStore: EntryEditDraftStore = mockk(relaxed = true) {
             coEvery { load(any(), any()) } returns null
         },
+        relationDao: com.mojing.app.data.local.dao.EntryRelationDao = mockk(relaxed = true),
     ): EntryEditViewModel {
-        val secureStorage = mockk<SecureStorage>(relaxed = true)
-        every { secureStorage.publicApiKey } returns publicKey
+        val secureStorage = storage ?: mockk<SecureStorage>(relaxed = true).also { every { it.publicApiKey } returns publicKey }
         return EntryEditViewModel(
             entryDao = entryDao,
             saveCharacterEntry = saveEntry,
@@ -389,6 +513,7 @@ class EntryEditViewModelTest {
             imageRepository = mockk<ImageRepository>(relaxed = true),
             messageDao = messageDao,
             draftStore = draftStore,
+            relationDao = relationDao,
         )
     }
 
@@ -597,4 +722,113 @@ class EntryEditViewModelTest {
         viewModel.aiComplete()
         assertEquals("用户写下的正文", viewModel.state.value.content)
     }
+
+    @Test
+    fun coverPromptHintParticipatesInDraftDirtyAndRecovery() = runTest(dispatcher) {
+        val store = mockk<EntryEditDraftStore>(relaxed = true) {
+            coEvery { load(3L, 0L) } returns null
+        }
+        val vm = createViewModel(encyclopediaDao(), mockk(relaxed = true), draftStore = store)
+        vm.load(3L, 0L)
+        vm.updateCoverPromptHint("冷色月光，避免文字")
+        advanceUntilIdle()
+
+        assertTrue(vm.state.value.isDirty)
+        coVerify { store.save(3L, 0L, match { it.coverPromptHint == "冷色月光，避免文字" }) }
+
+        val recoveredStore = mockk<EntryEditDraftStore>(relaxed = true) {
+            coEvery { load(3L, 0L) } returns EntryDraftSnapshot(coverPromptHint = "冷色月光，避免文字")
+        }
+        val recovered = createViewModel(encyclopediaDao(), mockk(relaxed = true), draftStore = recoveredStore)
+        recovered.load(3L, 0L)
+        assertEquals("", recovered.state.value.coverPromptHint)
+        assertTrue(recovered.state.value.recoverableDraft?.coverPromptHint == "冷色月光，避免文字")
+        recovered.restoreDraft()
+        assertEquals("冷色月光，避免文字", recovered.state.value.coverPromptHint)
+    }
+
+    @Test
+    fun saveDraftAndLeaveWaitsForDraftWriteBeforeLeaving() = runTest(dispatcher) {
+        val write = CompletableDeferred<Unit>()
+        val store = mockk<EntryEditDraftStore>(relaxed = true) {
+            coEvery { load(3L, 0L) } returns null
+            coEvery { save(any(), any(), any()) } coAnswers { write.await() }
+        }
+        val vm = createViewModel(encyclopediaDao(), mockk(relaxed = true), draftStore = store)
+        vm.load(3L, 0L)
+        vm.updateCoverPromptHint("保留这条提示")
+        var left = false
+        vm.saveDraftAndLeave { left = true }
+        assertFalse(left)
+        write.complete(Unit)
+        advanceUntilIdle()
+
+        assertTrue(left)
+        assertFalse(vm.state.value.isDiscardingDraft)
+        coVerify { store.save(3L, 0L, match { it.coverPromptHint == "保留这条提示" }) }
+    }
+    @Test fun capacityFailureKeepsDraftAndRetryCapturesNewSettings() = runTest(dispatcher) {
+        val ai = mockk<AiCompleter>(relaxed = true)
+        val storage = mockk<SecureStorage>(relaxed = true)
+        var capacity = 2000
+        every { storage.publicApiKey } returns "key"
+        every { storage.publicBaseUrl } returns "https://one.test/v1"
+        every { storage.publicModel } returns "model"
+        every { storage.modelPlatforms() } answers { listOf(com.mojing.app.data.ModelPlatform(
+            "one", "one", "https://one.test/v1", "key", listOf("model"), "model", mapOf("model" to capacity))) }
+        coEvery { ai.complete(any(), any(), any(), any()) } coAnswers {
+            val request = arg<AiCompleter.CompleteRequest>(3)
+            if (request.contextWindow == 2000) throw com.mojing.app.domain.engine.RequestContextLimitException(
+                com.mojing.app.domain.engine.RequestContextBudget.Result.TooLarge(4000, 3000, 2000))
+            emptyMap()
+        }
+        val store = mockk<EntryEditDraftStore>(relaxed = true) { coEvery { load(any(), any()) } returns null }
+        val vm = createViewModel(encyclopediaDao(), mockk(relaxed = true), aiCompleter = ai, storage = storage, draftStore = store)
+        vm.load(3L, 0L); vm.updateTitle("完整标题"); vm.updateContent("完整草稿正文")
+        vm.aiComplete(); advanceUntilIdle()
+        assertFalse(vm.state.value.isAiCompleting)
+        assertTrue(vm.state.value.snackbar!!.contains("未发送请求"))
+        assertFalse(vm.state.value.snackbar!!.startsWith("请求失败"))
+        assertEquals("完整草稿正文", vm.state.value.content)
+        assertTrue(vm.state.value.isDirty)
+        coVerify { store.save(3L, 0L, match { it.content == "完整草稿正文" }) }
+        capacity = 20000
+        vm.aiComplete(); advanceUntilIdle()
+        coVerify(exactly = 1) { ai.complete("key", "https://one.test/v1", "model", match { it.contextWindow == 20000 && it.currentData["content"] == "完整草稿正文" }) }
+        assertEquals("完整草稿正文", vm.state.value.content)
+    }
+
+    @Test fun duplicateCompletionIsRejectedAndCancelKeepsEditsForSaveAndLeave() = runTest(dispatcher) {
+        val gate = CompletableDeferred<Map<String, Any>>()
+        val ai = mockk<AiCompleter>(relaxed = true) { coEvery { complete(any(), any(), any(), any()) } coAnswers { gate.await() } }
+        val store = mockk<EntryEditDraftStore>(relaxed = true) { coEvery { load(any(), any()) } returns null }
+        val vm = createViewModel(encyclopediaDao(), mockk(relaxed = true), aiCompleter = ai, publicKey = "key", draftStore = store)
+        vm.load(3L, 0L); vm.updateTitle("潮生"); vm.updateContent("原文")
+        vm.aiComplete(); vm.aiComplete()
+        assertTrue(vm.state.value.isAiCompleting)
+        coVerify(exactly = 1) { ai.complete(any(), any(), any(), any()) }
+        vm.cancelAiComplete(); gate.complete(mapOf("content" to "过期生成")); advanceUntilIdle()
+        assertFalse(vm.state.value.isAiCompleting)
+        assertEquals("原文", vm.state.value.content)
+        vm.updateContent("取消后的编辑")
+        var left = false
+        vm.saveDraftAndLeave { left = true }; advanceUntilIdle()
+        assertTrue(left)
+        coVerify { store.save(3L, 0L, match { it.content == "取消后的编辑" }) }
+    }
+
+    @Test fun completionCannotWriteIntoAnotherLoadedEntry() = runTest(dispatcher) {
+        val gate = CompletableDeferred<Map<String, Any>>()
+        val ai = mockk<AiCompleter>(relaxed = true) { coEvery { complete(any(), any(), any(), any()) } coAnswers { gate.await() } }
+        val entries = mockk<EncyclopediaEntryDao>(relaxed = true) {
+            coEvery { getById(9L) } returns EncyclopediaEntryEntity(id = 9L, encyclopediaId = 3L, title = "另一个目标", content = "另一个正文")
+        }
+        val vm = createViewModel(encyclopediaDao(), entries, aiCompleter = ai, publicKey = "key")
+        vm.load(3L, 0L); vm.updateTitle("旧目标"); vm.aiComplete()
+        vm.load(3L, 9L); gate.complete(mapOf("content" to "旧目标返回")); advanceUntilIdle()
+        assertEquals("另一个目标", vm.state.value.title)
+        assertEquals("另一个正文", vm.state.value.content)
+        assertFalse(vm.state.value.isAiCompleting)
+    }
+
 }

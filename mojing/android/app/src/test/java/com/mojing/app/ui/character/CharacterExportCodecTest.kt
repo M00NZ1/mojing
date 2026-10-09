@@ -11,6 +11,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CharacterExportCodecTest {
+    @Test fun standardImportRejectsInvalidOutputLimitAndPreservesValidLargeValue() {
+        fun json(value: String) = """{"version":2,"type":"characters","data":[{"name":"合成角色","maxTokens":$value}]}"""
+        listOf("0", "-1", "1.5", "2147483648").forEach { value ->
+            try { CharacterExportCodec.fromJson(json(value)); org.junit.Assert.fail("invalid limit accepted") }
+            catch (_: IllegalArgumentException) { }
+        }
+        assertEquals(32768, CharacterExportCodec.fromJson(json("32768")).single().maxTokens)
+        assertEquals(1200, CharacterExportCodec.fromJson(json("null")).single().maxTokens)
+    }
     @Test
     fun streamedCharactersKeepTheVersionTwoEnvelopeAndPortableFields() {
         val characters = (1L..33L).map { id ->

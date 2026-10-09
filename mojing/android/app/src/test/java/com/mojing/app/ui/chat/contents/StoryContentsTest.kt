@@ -6,6 +6,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StoryContentsTest {
+    @Test fun inheritedDirectoryEntryRetainsActualSourceBranch() {
+        assertEquals("parent", projection("{}", "北塔").copy(branchId = "parent").toContentsEntry().sourceBranchId)
+        assertEquals("main", projection("{}", "北塔").toContentsEntry().sourceBranchId)
+    }
+    @Test fun queryUnderstandsNumbersWithoutMisreadingTitlesOrZero() {
+        listOf("12", " 十二 ", "第十二章", "第 12 章").forEach { assertEquals(it, 12, contentsQueryChapterNumber(it)) }
+        listOf("0", "第零章", "雾港12号", "第十百章", "%_").forEach { assertEquals(it, null, contentsQueryChapterNumber(it)) }
+    }
+
     @Test
     fun metadataTitleAndChapterNumberArePreferred() {
         val entry = projection("{\"chapter_number\":2,\"chapter_title\":\"雾中的钟声\"}", "正文").toContentsEntry()
@@ -19,6 +28,11 @@ class StoryContentsTest {
         assertEquals("第十二章 远方来信", entry.title)
         assertEquals(12, entry.chapterNumber)
         assertTrue(entry.preview.startsWith("#"))
+    }
+
+    @Test
+    fun markdownTitleWithoutSpaceIsTheSameTitleUsedByRename() {
+        assertEquals("夜雨", projection("{}", "#夜雨\n正文").toContentsEntry().title)
     }
 
     @Test

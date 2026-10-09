@@ -72,23 +72,26 @@ fun SearchScreen(
     sessionId: Long,
     branchId: String = "main",
     onBack: () -> Unit,
-    onOpenInChat: (Long, (Boolean) -> Unit) -> Boolean,
+    onOpenInChat: (String, Long, (Boolean) -> Unit) -> Boolean,
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val billing: com.mojing.app.ui.settings.usage.BillingDisplayViewModel = hiltViewModel()
     val currency by billing.state.collectAsStateWithLifecycle()
-    val resultListState = rememberLazyListState()
-    LaunchedEffect(sessionId, branchId) { viewModel.initialize(sessionId, branchId) }
-    LaunchedEffect(sessionId, branchId, state.resultRevision) {
-        resultListState.scrollToItem(0)
-    }
+    // Opening a result may switch the chat branch before its completion callback.
+    // Keep this search's origin stable until it closes, so that callback is not disposed.
+    val searchBranchId = remember(sessionId) { branchId }
+    LaunchedEffect(sessionId, searchBranchId) { viewModel.initialize(sessionId, searchBranchId) }
+    val resultListState = androidx.compose.runtime.saveable.rememberSaveable(
+        sessionId, searchBranchId, state.resultRevision,
+        saver = androidx.compose.foundation.lazy.LazyListState.Saver,
+    ) { androidx.compose.foundation.lazy.LazyListState() }
     BackHandler { if (state.selectedMessageId != null) viewModel.closeHit() else onBack() }
     CompositionLocalProvider(LocalBillingCurrencyState provides currency,
         LocalReplyUsageLookup provides remember(billing) { { id -> billing.observeRecord(id) } }) {
     Surface(Modifier.fillMaxSize().systemBarsPadding()) {
-        if (state.selectedMessageId != null) SearchContextScreen(state, viewModel, sessionId, branchId, onBack, onOpenInChat)
-        else SearchResultsScreen(state, viewModel, sessionId, branchId, onBack, resultListState)
+        if (state.selectedMessageId != null) SearchContextScreen(state, viewModel, sessionId, searchBranchId, onBack, onOpenInChat)
+        else SearchResultsScreen(state, viewModel, sessionId, searchBranchId, onBack, resultListState)
     }
     }
 }
@@ -99,12 +102,15 @@ fun SearchScreen(
     Column(Modifier.fillMaxSize().imePadding()) {
         SearchQueryToolbar(state.query, vm::setQuery, onBack, ::submit, !state.searching)
         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            FilterChip(selected = state.scope == SearchScope.ALL, onClick = {
+                vm.setScope(if (state.scope == SearchScope.ALL) SearchScope.CURRENT else SearchScope.ALL)
+                if (state.completedQuery.isNotBlank()) submit()
+            }, label = { Text("全部故事线") })
             FilterChip(selected = state.exactMatch, onClick = {
                 val repeatSearch = state.completedQuery.isNotBlank()
                 vm.setExact(!state.exactMatch)
                 if (repeatSearch) submit()
             }, label = { Text("精确匹配") })
-            Text(if (state.query.isBlank()) "搜索历史" else "当前故事线", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (state.indexing) {
             SearchIndexingState(state.visibilityIndexing)
@@ -165,7 +171,7 @@ fun SearchScreen(
                         Text(if (state.searching) "正在加载…" else "加载较新结果")
                     }
                 }
-                items(state.hits, key = { it.message.id }) { hit -> SearchResultCard(hit, state.completedQuery, !state.searching) { focus.clearFocus(); vm.openHit(sessionId, branchId, hit.message.id) } }
+                items(state.hits, key = { "${it.branchId}:${it.message.id}" }) { hit -> SearchResultCard(hit, state.completedQuery, !state.searching) { focus.clearFocus(); vm.openHit(sessionId, hit.branchId, hit.message.id) } }
                 if (state.hasOlder && state.error == null) item(key = "load_older") {
                     TextButton(enabled = !state.searching, onClick = { vm.loadOlder(sessionId, branchId) }, modifier = Modifier.fillMaxWidth()) {
                         Text(if (state.searching) "正在加载…" else "加载更早结果")
@@ -212,7 +218,7 @@ fun SearchScreen(
     val highlightedSpeaker = remember(speaker, query) {
         highlightedMessageText(speaker, messageSearchRanges(speaker, query))
     }
-    Surface(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
+    Surface(shape = MaterialTheme.shapes.small, onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(highlightedSpeaker,
@@ -221,6 +227,8 @@ fun SearchScreen(
                 Text(formatDate(hit.message.createdAt), Modifier.padding(start = 12.dp),
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            if (hit.branchLabel.isNotBlank()) Text(hit.branchLabel, style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary)
             HighlightedText(hit.snippet, query)
         }
     }
@@ -244,9 +252,10 @@ fun SearchScreen(
 
 @Composable private fun SearchContextScreen(
     state: SearchState, vm: SearchViewModel, sessionId: Long, branchId: String,
-    onBack: () -> Unit, onOpenInChat: (Long, (Boolean) -> Unit) -> Boolean,
+    onBack: () -> Unit, onOpenInChat: (String, Long, (Boolean) -> Unit) -> Boolean,
 ) {
-    val index = state.hits.indexOfFirst { it.message.id == state.selectedMessageId }
+    val targetBranchId = state.selectedBranchId ?: branchId
+    val index = state.hits.indexOfFirst { it.message.id == state.selectedMessageId && it.branchId == targetBranchId }
     val current = (state.firstHitOffset + index + 1).coerceAtLeast(1)
     val selectedHit = state.hits.getOrNull(index)
     val matchingSpeaker = remember(selectedHit, state.completedQuery, state.exactMatch) {
@@ -275,30 +284,37 @@ fun SearchScreen(
             if ((state.searching && state.contextMessages.isEmpty()) || state.contextLoadingBefore || state.contextLoadingAfter) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (!state.searching && state.contextMessages.isEmpty()) {
                 Text(state.error ?: "找不到这条消息", Modifier.padding(20.dp), color = if (state.error == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
-                if (state.error != null) Text("重试", Modifier.clickable { state.selectedMessageId?.let { vm.openHit(sessionId, branchId, it) } }.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.primary)
+                if (state.error != null) Text("重试", Modifier.clickable { state.selectedMessageId?.let { vm.openHit(sessionId, targetBranchId, it) } }.padding(horizontal = 20.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.primary)
             }
             if (state.error != null && state.contextMessages.isNotEmpty()) {
                 if (state.contextFailedBefore || state.contextFailedAfter) {
                     TextButton(enabled = !state.contextLoadingBefore && !state.contextLoadingAfter,
-                        onClick = { vm.retryContext(sessionId, branchId) }) { Text("${state.error} · 重试") }
+                        onClick = { vm.retryContext(sessionId, targetBranchId) }) { Text("${state.error} · 重试") }
                 } else {
-                    TextButton(onClick = { vm.navigateHit(sessionId, branchId,
+                    TextButton(onClick = { vm.navigateHit(sessionId, targetBranchId,
                         if (state.failedPage == SearchPageDirection.NEWER) -1 else 1) }) { Text(state.error) }
                 }
             }
             if (state.contextMessages.isNotEmpty() && (state.contextBeforeHasMore || state.contextFailedBefore || state.contextLoadingBefore)) {
                 TextButton(enabled = !state.contextLoadingBefore && !state.contextLoadingAfter,
-                    onClick = { vm.loadMoreContext(sessionId, branchId, SearchContextDirection.BEFORE) },
+                    onClick = { vm.loadMoreContext(sessionId, targetBranchId, SearchContextDirection.BEFORE) },
                     modifier = Modifier.fillMaxWidth()) {
                     Text(if (state.contextLoadingBefore) "正在加载上文…" else "加载更多上文")
                 }
             }
             val listState = rememberLazyListState()
-            var positionedId by remember(state.selectedMessageId, state.completedQuery) { mutableStateOf<Long?>(null) }
+            var positionedId by androidx.compose.runtime.saveable.rememberSaveable(
+                sessionId, targetBranchId, state.selectedMessageId, state.completedQuery,
+            ) { mutableStateOf<Long?>(null) }
+            var matchFocusClaimed by androidx.compose.runtime.saveable.rememberSaveable(
+                sessionId, targetBranchId, state.selectedMessageId, state.completedQuery,
+            ) { mutableStateOf(false) }
             val targetPresent = state.selectedMessageId != null && state.contextMessages.any { it.id == state.selectedMessageId }
             LaunchedEffect(state.selectedMessageId, targetPresent) {
                 val i = state.contextMessages.indexOfFirst { it.id == state.selectedMessageId }
-                if (i >= 0) { listState.scrollToItem(i); positionedId = state.selectedMessageId }
+                if (i >= 0 && positionedId != state.selectedMessageId) {
+                    listState.scrollToItem(i); positionedId = state.selectedMessageId
+                }
             }
             val presentation = state.presentation
             val lines = remember(state.contextMessages, presentation) {
@@ -313,7 +329,10 @@ fun SearchScreen(
                         val message = meta.line.selectedMessage()
                         val focused = message.id == state.selectedMessageId
                         val highlight = remember(message.id, state.completedQuery, positionedId) {
-                            MessageSearchHighlight(state.completedQuery, focused && positionedId == message.id)
+                            MessageSearchHighlight(state.completedQuery, focused && positionedId == message.id,
+                                onFocusClaimed = { matchFocusClaimed = true }).also {
+                                it.focusClaimed = focused && matchFocusClaimed
+                            }
                         }
                         val character = presentation.characters[message.characterId]
                         Column(Modifier.fillMaxWidth()) {
@@ -333,7 +352,7 @@ fun SearchScreen(
                     }
                     if (state.contextMessages.isNotEmpty() && (state.contextAfterHasMore || state.contextFailedAfter || state.contextLoadingAfter)) item(key = "load_more_context_after") {
                         TextButton(enabled = !state.contextLoadingBefore && !state.contextLoadingAfter,
-                            onClick = { vm.loadMoreContext(sessionId, branchId, SearchContextDirection.AFTER) },
+                            onClick = { vm.loadMoreContext(sessionId, targetBranchId, SearchContextDirection.AFTER) },
                             modifier = Modifier.fillMaxWidth()) {
                             Text(if (state.contextLoadingAfter) "正在加载下文…" else "加载更多下文")
                         }
@@ -343,10 +362,10 @@ fun SearchScreen(
         }
         Column(Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 80.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 3.dp) {
-                IconButton(enabled = index >= 0 && (index > 0 || state.hasNewer) && !state.searching, onClick = { vm.navigateHit(sessionId, branchId, -1) }) { Icon(Icons.Outlined.KeyboardArrowUp, "上一个") }
+                IconButton(enabled = index >= 0 && (index > 0 || state.hasNewer) && !state.searching, onClick = { vm.navigateHit(sessionId, targetBranchId, -1) }) { Icon(Icons.Outlined.KeyboardArrowUp, "上一个") }
             }
             Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 3.dp) {
-                IconButton(enabled = index >= 0 && (index < state.hits.lastIndex || state.hasOlder) && !state.searching, onClick = { vm.navigateHit(sessionId, branchId, 1) }) { Icon(Icons.Outlined.KeyboardArrowDown, "下一个") }
+                IconButton(enabled = index >= 0 && (index < state.hits.lastIndex || state.hasOlder) && !state.searching, onClick = { vm.navigateHit(sessionId, targetBranchId, 1) }) { Icon(Icons.Outlined.KeyboardArrowDown, "下一个") }
             }
         }
         Surface(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
@@ -368,7 +387,7 @@ fun SearchScreen(
                             val messageId = state.selectedMessageId ?: return@TextButton
                             openInChatError = null
                             openingInChat = true
-                            if (!onOpenInChat(messageId, result@{ opened ->
+                            if (!onOpenInChat(targetBranchId, messageId, result@{ opened ->
                                     if (!currentHitActive) return@result
                                     openingInChat = false
                                     if (opened) onBack()

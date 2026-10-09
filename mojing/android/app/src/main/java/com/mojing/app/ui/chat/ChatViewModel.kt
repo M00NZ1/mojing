@@ -19,6 +19,8 @@ import com.mojing.app.data.local.dao.BookmarkDao
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.NewSessionCharacterOption
 import com.mojing.app.data.local.dao.MessageDao
+import com.mojing.app.data.local.AutoImageMetadata
+import com.mojing.app.data.local.AutoVoiceMetadata
 import com.mojing.app.data.local.dao.ReplyRecoveryMetadata
 import com.mojing.app.data.local.dao.ParticipantDao
 import com.mojing.app.data.local.dao.SessionDao
@@ -39,6 +41,7 @@ import com.mojing.app.data.local.dao.CharacterStateDao
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.SessionWorldEntity
 import com.mojing.app.data.local.entity.SessionMemoryCorrectionEntity
+import com.mojing.app.data.local.entity.SessionMemorySegmentEntity
 import com.mojing.app.domain.config.ApiKeyResolver
 import com.mojing.app.domain.config.ImageBasePromote
 import com.mojing.app.domain.config.ImageGenResolved
@@ -46,6 +49,7 @@ import com.mojing.app.domain.config.VoiceTtsParams
 import com.mojing.app.data.local.entity.SessionWorldCredentialDraft
 import com.mojing.app.data.local.entity.MessageBookmarkEntity
 import com.mojing.app.data.local.entity.MessageEntity
+import com.mojing.app.data.local.entity.SessionEventNodeEntity
 import com.mojing.app.data.local.entity.contextSelectionKey
 import com.mojing.app.data.local.entity.SessionBranchEntity
 import com.mojing.app.data.local.entity.SessionParticipantEntity
@@ -61,6 +65,8 @@ import com.mojing.app.domain.engine.SlidingWindowBuilder
 import com.mojing.app.domain.engine.CharacterSnapshotExtractor
 import com.mojing.app.domain.engine.CharacterSnapshotCadence
 import com.mojing.app.domain.engine.MemoryCompactor
+import com.mojing.app.domain.engine.SummaryMaintenanceResult
+import com.mojing.app.domain.engine.SummaryMaintenanceUseCase
 import com.mojing.app.domain.engine.ContextBuilder
 import com.mojing.app.domain.engine.SedimentEngine
 import com.mojing.app.domain.engine.NarratorEngine
@@ -72,11 +78,15 @@ import com.mojing.app.domain.story.StoryCanon
 import com.mojing.app.domain.chat.MainBranchChatExportWriter
 import com.mojing.app.domain.chat.TavernChatImportParser
 import com.mojing.app.domain.usecase.MessageSubmissionTransaction
+import com.mojing.app.domain.usecase.MainBranchMediaBundleUseCase
+import com.mojing.app.util.ContentDocumentWriter
+import android.net.Uri
 import com.mojing.app.ui.util.UserFacingStrings
 import com.mojing.app.util.ApiRootLines
 import com.mojing.app.util.ChatAttachmentFiles
 import com.mojing.app.util.UsbSessionLog
 import com.mojing.app.media.AndroidTts
+import com.mojing.app.media.newmedia.SpeechPlaybackControl
 import com.mojing.app.media.HttpTts
 import com.mojing.app.media.TtsSpeakText
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -85,12 +95,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -108,6 +120,7 @@ private data class CharacterUiMaps(
     val colors: Map<Long, String>,
     val cardImages: Map<Long, String>,
     val thinkMaxEnabledIds: Set<Long>,
+    val summaries: Map<Long, String>,
 )
 
 internal data class AddParticipantPage(val rows: List<NewSessionCharacterOption>, val hasMore: Boolean)
@@ -121,6 +134,7 @@ internal fun estimateLoadedContextTokens(messages: List<MessageEntity>, excluded
 
 private class GenerationContext(
     val branchId: String,
+    val modelPlatforms: List<com.mojing.app.data.ModelPlatform> = emptyList(),
     val expectedTailMessageId: Long? = null,
     val draftSubmissionId: String? = null,
     var swipeGroupId: String? = null,
@@ -139,6 +153,13 @@ data class TavernChatImportResult(
     val importedCount: Int,
     val duplicate: Boolean,
     val refreshFailed: Boolean = false,
+)
+
+data class MediaBundleProgress(
+    val kind: String,
+    val stage: String,
+    val count: Int = 0,
+    val stopping: Boolean = false,
 )
 
 data class GalleryImageSaveResult(
@@ -166,7 +187,7 @@ internal suspend fun saveGalleryImageAttachments(
 
 @HiltViewModel
 class ChatViewModel @Inject constructor(
-    savedStateHandle: SavedStateHandle,
+    private val savedStateHandle: SavedStateHandle,
     private val messageDao: MessageDao,
     private val sessionDao: SessionDao,
     private val characterDao: CharacterDao,
@@ -182,6 +203,7 @@ class ChatViewModel @Inject constructor(
     private val secureStorage: SecureStorage,
     private val promptBuilder: PromptBuilder,
     private val memoryCompactor: MemoryCompactor,
+    private val summaryMaintenance: SummaryMaintenanceUseCase,
     private val contextBuilder: ContextBuilder,
     private val tokenBudgetManager: TokenBudgetManager,
     private val slidingWindowBuilder: SlidingWindowBuilder,
@@ -199,7 +221,8 @@ class ChatViewModel @Inject constructor(
     private val uiPreferencesRepository: UiPreferencesRepository,
     private val narratorEngine: NarratorEngine,
     private val chatDraftStore: ChatDraftStore,
-    @param:ApplicationContext private val appContext: Context
+    @param:ApplicationContext private val appContext: Context,
+    private val mediaBundleDatabase: com.mojing.app.data.local.AppDatabase? = null,
 ) : ViewModel() {
 
     private companion object {
@@ -207,17 +230,34 @@ class ChatViewModel @Inject constructor(
         const val MESSAGE_PAGE_SIZE = 40
         const val BOOKMARK_PAGE_SIZE = 40
         const val MEMORY_SEGMENT_PAGE_SIZE = 16
+        // Long derived text: five pages; DAO reads at most 81 rows including lookahead.
+        const val MEMORY_SEGMENT_WINDOW_SIZE = MEMORY_SEGMENT_PAGE_SIZE * 5
         const val MAX_MESSAGE_WINDOW_SIZE = 200
         const val MODEL_CONTEXT_MESSAGE_LIMIT = 400
         const val DRAFT_SUBMISSION_JSON_KEY = "draftSubmissionId"
+        const val MAX_BOOKMARK_NOTE_LENGTH = 2_000
     }
 
     private val sessionId: Long = savedStateHandle["sessionId"] ?: 0L
     private val sourceMessageId: Long = savedStateHandle["sourceMessageId"] ?: 0L
     private val sourceBranchId: String = savedStateHandle["sourceBranchId"] ?: ""
-    private val _state = MutableStateFlow(ChatContract.State(sessionId = sessionId))
+    private val _state = MutableStateFlow(
+        ChatContract.State(
+            sessionId = sessionId,
+            bookmarkNoteDrafts = restoreBookmarkNoteDrafts(),
+            bookmarkQuery = savedStateHandle["bookmark_query_$sessionId"] ?: "",
+            bookmarkReadOnlyId = savedStateHandle.get<Long>("bookmark_reader_id_$sessionId")?.takeIf { it > 0L },
+            bookmarkReadOnlyBranchId = savedStateHandle.get<String>("bookmark_reader_branch_$sessionId"),
+            bookmarkReadOnlyLoading = savedStateHandle.get<Long>("bookmark_reader_id_$sessionId")?.let { it > 0L } == true,
+        ),
+    )
     private val bookmarkMutex = Mutex()
+    private val characterStateMutex = Mutex()
     private var bookmarkInitialLoadJob: Job? = null
+    private val bookmarkRefreshRevision = java.util.concurrent.atomic.AtomicLong()
+    private var bookmarkReadOnlyRevision = 0L
+    // A reference to the existing locating/branch-transition job, never a second task owner.
+    private var bookmarkReadOnlyJob: Job? = null
     private val messageWindowRevision = java.util.concurrent.atomic.AtomicLong()
     internal var tokenEstimateDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Default
     internal var preparationDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Default
@@ -231,6 +271,123 @@ class ChatViewModel @Inject constructor(
     private val encyclopediaFoundationRevision = java.util.concurrent.atomic.AtomicLong()
     private var manualCompactionJob: Job? = null
     val state: StateFlow<ChatContract.State> = _state.asStateFlow()
+    private var mediaBundleJob: Job? = null
+    private val _mediaBundleProgress = MutableStateFlow<MediaBundleProgress?>(null)
+    val mediaBundleProgress: StateFlow<MediaBundleProgress?> = _mediaBundleProgress.asStateFlow()
+    private val _mediaBundleNotice = MutableStateFlow<String?>(null)
+    val mediaBundleNotice: StateFlow<String?> = _mediaBundleNotice.asStateFlow()
+
+    fun clearMediaBundleNotice(expected: String? = null) {
+        _mediaBundleNotice.update { current -> if (expected == null || current == expected) null else current }
+    }
+
+    fun cancelMediaBundle() {
+        if (mediaBundleJob?.isActive == true) {
+            _mediaBundleProgress.update { it?.copy(stopping = true) }
+            mediaBundleJob?.cancel()
+        }
+    }
+
+    suspend fun stopMediaBundleAndJoin() {
+        val owner = mediaBundleJob
+        cancelMediaBundle()
+        owner?.join()
+    }
+
+    private fun rejectDuringMediaBundle(): Boolean {
+        if (mediaBundleJob == null) return false
+        _state.update { it.copy(error = "请先完成或停止主线媒体包操作") }
+        return true
+    }
+
+    fun importMainBranchMediaBundle(uri: Uri, expectedBranchId: String): Boolean =
+        launchMediaBundle("import", expectedBranchId) { useCase, ensureOwner, progress ->
+            val result = useCase.importBundle(
+                sessionId, expectedBranchId,
+                openInput = { appContext.contentResolver.openInputStream(uri)
+                    ?: throw IllegalStateException("无法读取媒体包，请重新选择文件") },
+                ensureOwner = ensureOwner,
+                onProgress = progress,
+            )
+            if (result.duplicate) "该主线媒体包已导入当前故事线，未重复写入"
+            else {
+                val refreshFailed = withContext(NonCancellable) {
+                    runCatching {
+                        sessionDao.bumpUpdatedAt(sessionId)
+                        refreshMessagesUi(expectedBranchId)
+                    }.isFailure
+                }
+                "已导入 ${result.messageCount} 条记录和 ${result.mediaCount} 个媒体" +
+                    if (refreshFailed) "，请重新打开对话刷新列表" else ""
+            }
+        }
+
+    fun exportMainBranchMediaBundle(uri: Uri, expectedBranchId: String): Boolean =
+        launchMediaBundle("export", expectedBranchId) { useCase, ensureOwner, progress ->
+            val count = ContentDocumentWriter.writeStream(appContext, uri) { output ->
+                useCase.exportBundle(output, sessionId, ensureOwner, progress)
+            }
+            "已导出主线记录与媒体（$count 条记录）"
+        }
+
+    private fun launchMediaBundle(
+        kind: String,
+        expectedBranchId: String,
+        block: suspend (MainBranchMediaBundleUseCase, suspend () -> Unit, suspend (String, Int) -> Unit) -> String,
+    ): Boolean {
+        if (rejectDuringMediaBundle()) return false
+        if (!_state.value.isReady || _state.value.sessionNotFound || currentBranchId() != expectedBranchId ||
+            activeGeneration != null || branchTransitionJob?.isActive == true || initializationJob?.isActive == true) {
+            _state.update { it.copy(error = "会话或故事线已变化，请等待载入与生成完成后重新选择文件") }
+            return false
+        }
+        _mediaBundleNotice.value = null
+        _mediaBundleProgress.value = MediaBundleProgress(kind, "正在检查文件")
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            val owner = coroutineContext[Job]
+            val useCase = MainBranchMediaBundleUseCase(appContext, messageDao, attachmentDao,
+                characterDao, participantDao, sessionDao, sessionBranchDao, database = mediaBundleDatabase)
+            val ensureOwner: suspend () -> Unit = {
+                withContext(Dispatchers.Main.immediate) {
+                    check(mediaBundleJob === owner && owner?.isActive == true &&
+                        currentBranchId() == expectedBranchId && activeGeneration == null &&
+                        branchTransitionJob?.isActive != true && !_state.value.sessionNotFound) {
+                        "会话或故事线已变化，本次操作已停止"
+                    }
+                }
+            }
+            try {
+                val notice = block(useCase, ensureOwner) { stage, count ->
+                    withContext(Dispatchers.Main.immediate) {
+                        if (mediaBundleJob === owner) _mediaBundleProgress.update { it?.copy(stage = stage, count = count) }
+                    }
+                }
+                if (mediaBundleJob === owner) _mediaBundleNotice.value = notice
+            } catch (_: CancellationException) {
+                val saved = useCase.committedImportResult
+                if (saved != null) withContext(NonCancellable) {
+                    runCatching { sessionDao.bumpUpdatedAt(sessionId); refreshMessagesUi(expectedBranchId) }
+                }
+                if (mediaBundleJob === owner) _mediaBundleNotice.value =
+                    if (saved != null) "已导入 ${saved.messageCount} 条记录和 ${saved.mediaCount} 个媒体"
+                    else if (kind == "import" && useCase.commitOutcomeUnknown) "操作已停止，暂时无法确认保存结果；请重新打开会话检查"
+                    else if (kind == "import") "媒体包导入已停止，未提交内容已撤销"
+                    else "媒体包导出已停止，目标文件可能不完整，请重新导出"
+            } catch (e: Exception) {
+                if (mediaBundleJob === owner) _mediaBundleNotice.value = e.message
+                    ?.takeIf { message -> message.any { it in '\u4e00'..'\u9fff' } }
+                    ?: "媒体包操作失败，请检查文件及可用空间后重试"
+            } finally {
+                if (mediaBundleJob === owner) {
+                    mediaBundleJob = null
+                    _mediaBundleProgress.value = null
+                }
+            }
+        }
+        mediaBundleJob = job
+        job.start()
+        return true
+    }
     private var roundPlatform: com.mojing.app.data.ModelPlatform? = null
     private val _modelSelectionLabel = MutableStateFlow(currentModelLabel())
     val modelSelectionLabel: StateFlow<String> = _modelSelectionLabel.asStateFlow()
@@ -289,8 +446,8 @@ class ChatViewModel @Inject constructor(
 
     private fun requestPlatform(): com.mojing.app.data.ModelPlatform? =
         if (activeGeneration != null) roundPlatform else selectedPlatform()
-    private fun chatConnection(world: SessionWorldEntity?, character: CharacterEntity? = null): com.mojing.app.domain.config.ChatConnection {
-        requestPlatform()?.let {
+    private fun chatConnection(world: SessionWorldEntity?, character: CharacterEntity? = null, platform: com.mojing.app.data.ModelPlatform? = requestPlatform()): com.mojing.app.domain.config.ChatConnection {
+        platform?.let {
             return com.mojing.app.domain.config.ChatConnectionResolver.complete("所选平台", it.apiKey, it.baseUrl)
         }
         return com.mojing.app.domain.config.ChatConnectionResolver.resolve(
@@ -302,7 +459,12 @@ class ChatViewModel @Inject constructor(
 
     /** All AI generation entry points share one Job to prevent concurrent writes. */
     private var generationJob: Job? = null
+    private var autoNarratorJob: Job? = null
     private var activeGeneration: GenerationContext? = null
+    /** Single owner for automatic snapshot deletion; closing the sheet never releases it. */
+    private var characterStateClearJob: Job? = null
+    private var characterStateReadJob: Job? = null
+    private var characterStateReadRevision = 0L
     private var pendingReplyRecovery: ReplyRecoverySnapshot? = null
     private var unreadableReplyRecovery: String? = null
     private var branchTransitionJob: Job? = null
@@ -377,7 +539,13 @@ class ChatViewModel @Inject constructor(
         draftSubmissionId: String? = null,
         block: suspend (GenerationContext) -> Unit,
     ): Boolean {
+        if (rejectDuringMediaBundle()) return false
+        if (!_state.value.isReady || rejectPendingReplyRecovery()) return false
         if (activeGeneration != null || branchTransitionJob?.isActive == true) return false
+        if (characterStateClearJob?.isActive == true) {
+            _state.update { it.copy(error = "角色状态正在清除，请稍后再生成回复") }
+            return false
+        }
         if (_state.value.memoryOperationRunning) {
             _state.update { it.copy(error = "记忆整理中，请稍候再生成回复") }
             return false
@@ -386,15 +554,27 @@ class ChatViewModel @Inject constructor(
             _state.update { it.copy(error = "模型选择正在保存，请稍候再发送") }
             return false
         }
+        if (_state.value.sessionThinkMaxSaving) {
+            _state.update { it.copy(error = "思考/Max 设置正在保存，请稍候再发送") }
+            return false
+        }
+        if (rejectPendingWorldWrite()) return false
+        cancelPendingAutoNarrator()
         roundPlatform = try { selectedPlatform() } catch (_: Exception) {
             _state.update { it.copy(error = "所选平台或模型已变更，请重新选择后发送") }
             return false
         }
+        val modelPlatforms = try { roundPlatform?.let { listOf(it) } ?: secureStorage.modelPlatforms() } catch (_: Exception) {
+            _state.update { it.copy(error = "平台配置暂时无法读取，原数据已保留") }
+            return false
+        }
+        clearImageRetry()
         historyLoadJob?.cancel()
         historyLoadJob = null
-        _state.update { it.copy(isLoadingHistory = false) }
+        _state.update { it.copy(isLoadingHistory = false, contextBudgetError = null) }
         val generation = GenerationContext(
             branchId = currentBranchId(),
+            modelPlatforms = modelPlatforms,
             expectedTailMessageId = expectedTailMessageId,
             draftSubmissionId = draftSubmissionId,
         )
@@ -446,7 +626,9 @@ class ChatViewModel @Inject constructor(
             speakerPlanSummary = null,
             error = null,
         )
-        RetainedChatSessions.retainGeneration(sessionId, job, appContext) { _state.value.error }
+        RetainedChatSessions.retainGeneration(sessionId, job, appContext) {
+            _state.value.error ?: _state.value.imageRetryNotice?.message
+        }
         job.start()
         return true
     }
@@ -492,16 +674,27 @@ class ChatViewModel @Inject constructor(
         return false
     }
 
+    private fun rejectPendingWorldWrite(): Boolean {
+        if (!_state.value.worldSettingSaving && !_state.value.worldCredentialsSaving) return false
+        _state.update { it.copy(error = "本场设置正在保存，请稍候再发送") }
+        return true
+    }
+
     private fun launchBranchTransition(
         onSuccess: (() -> Unit)? = null,
         navigationLabel: String? = null,
+        invalidateSpeech: Boolean = false,
         block: suspend () -> Unit,
     ): Boolean {
+        if (rejectDuringMediaBundle()) return false
         if (activeGeneration != null || branchTransitionJob?.isActive == true) return false
         if (_state.value.replyRecovery != null) {
             _state.update { it.copy(error = "请先保留、复制或丢弃上次中断的回复") }
             return false
         }
+        if (invalidateSpeech) stopSpeaking()
+        cancelPendingAutoNarrator()
+        clearImageRetry()
         // 故事线或原文可能改变，取消本轮整理后由提交时的来源校验保护正式摘要。
         manualCompactionJob?.cancel()
         historyLoadJob?.cancel()
@@ -543,8 +736,8 @@ class ChatViewModel @Inject constructor(
      * 角色未配置 API Key、且未单独指定非占位服务根地址时，实际走的是设置/会话里的线路，
      * 此时应优先用「设置里的公共模型」，避免角色卡默认的 `deepseek-chat` 等与 SiliconFlow 等网关不匹配导致 400。
      */
-    private fun resolveMainChatModelId(character: CharacterEntity, connection: com.mojing.app.domain.config.ChatConnection): String {
-        requestPlatform()?.let { return it.selectedModel }
+    private fun resolveMainChatModelId(character: CharacterEntity, connection: com.mojing.app.domain.config.ChatConnection, platform: com.mojing.app.data.ModelPlatform? = requestPlatform()): String {
+        platform?.let { return it.selectedModel }
         return connection.model(character.modelName, secureStorage.publicModel)
     }
 
@@ -554,8 +747,8 @@ class ChatViewModel @Inject constructor(
      * - 开启思考/Max：仍用主模型，除非用户在「思考模型覆盖」或设置里填了可选覆盖；**不会**在客户端把模型名改成其它 id。
      *   若当前模型不支持思考/Max，由接口拒绝，再通过 [streamErrorThinkMaxRoute] 提示。
      */
-    private fun resolveChatLlmModel(character: CharacterEntity, sessionThinkMax: Boolean, connection: com.mojing.app.domain.config.ChatConnection): String? {
-        requestPlatform()?.let { return it.selectedModel }
+    private fun resolveChatLlmModel(character: CharacterEntity, sessionThinkMax: Boolean, connection: com.mojing.app.domain.config.ChatConnection, platform: com.mojing.app.data.ModelPlatform? = requestPlatform()): String? {
+        platform?.let { return it.selectedModel }
         return connection.model(character.modelName, secureStorage.publicModel,
             effectiveThinkMax(character, sessionThinkMax), character.thinkMaxModelName,
             secureStorage.thinkMaxModel).ifBlank { null }
@@ -695,6 +888,12 @@ class ChatViewModel @Inject constructor(
         val succeededOnPublicRetry: Boolean,
     )
 
+    private data class AutoImageAttemptLease(
+        val messageId: Long,
+        val branchId: String,
+        val attemptToken: String,
+    )
+
     /** 世界开关开启时：解析 `<GEN_IMAGE>` / `<GEN_SPEECH>` 并插入占位消息与附件。 */
     private suspend fun runAutoCharacterMediaJobs(
         generation: GenerationContext,
@@ -706,83 +905,233 @@ class ChatViewModel @Inject constructor(
         val w = world ?: return
         if (w.autoCharacterImageGen && parsed.imagePrompts.isNotEmpty()) {
             for (prompt in parsed.imagePrompts.take(1)) {
-                var pendingId: Long? = null
-                var generatedPath: String? = null
-                var finalized = false
-                try {
-                    generation.ensureCurrent()
-                    withContext(NonCancellable) {
-                        pendingId = messageDao.insert(
-                            MessageEntity(
-                                sessionId = sessionId,
-                                speakerType = "character",
-                                characterId = character.id,
-                                content = "🖼 配图生成中…",
-                                structuredContentJson = """{"derived_media_version":1,"derived_media_kind":"image"}""",
-                                branchId = generation.branchId,
-                                parentMessageId = sourceReplyMessageId,
-                                includeInContext = false,
-                            ),
-                        )
-                    }
-                    val insertedId = requireNotNull(pendingId)
-                    refreshMessagesUi()
-                    val primary = ApiKeyResolver.resolveImageGenPrimaryResolved(character, w, secureStorage)
-                    if (primary.apiKey.isBlank()) {
-                        UsbSessionLog.w(
-                            "ChatImageGen",
-                            "auto char image: missing key sid=$sessionId char=${character.id}",
-                        )
-                        messageDao.updateContent(insertedId, "🖼 未配置生图 Key")
-                        finalized = true
-                        refreshMessagesUi()
-                        continue
-                    }
-                    val attempt = generateImageWithPublicFallback(prompt, character, w, character.id)
-                    generation.ensureCurrent()
-                    attempt.result.fold(
-                        onSuccess = { urlOrB64 ->
-                            val local = imageRepository.saveGeneratedImageForSession(urlOrB64, sessionId)
-                            generatedPath = local
-                            generation.ensureCurrent()
-                            if (local != null) {
-                                messageDao.updateContent(insertedId, "")
-                                attachmentDao.insert(
-                                    MessageAttachmentEntity(
-                                        messageId = insertedId,
-                                        assetType = "image",
-                                        fileName = java.io.File(local).name,
-                                        mimeType = "image/png",
-                                        storagePath = local,
-                                        generationPrompt = prompt,
-                                        generationModel = attempt.modelUsed,
-                                    ),
-                                )
-                                if (attempt.succeededOnPublicRetry) {
-                                    UsbSessionLog.i("ChatImageGen", "auto char image succeeded on public retry sid=$sessionId")
-                                }
-                            } else {
-                                messageDao.updateContent(insertedId, "🖼 配图保存失败")
-                            }
-                        },
-                        onFailure = { e ->
-                            UsbSessionLog.e(
-                                "ChatImageGen",
-                                "auto char image failed sid=$sessionId model=${attempt.modelUsed} type=${e.javaClass.simpleName}",
-                            )
-                            messageDao.updateContent(insertedId, "🖼 配图生成失败")
-                        },
-                    )
-                    finalized = true
-                    refreshMessagesUi()
-                } finally {
-                    if (!finalized) rollbackPendingMedia(pendingId, generatedPath)
+                generation.ensureCurrent()
+                val attemptToken = UUID.randomUUID().toString()
+                runAutoImageAttempt(
+                    generation = generation,
+                    prompt = prompt,
+                    characterId = character.id,
+                    characterOverride = character,
+                    worldOverride = w,
+                    attemptToken = attemptToken,
+                ) {
+                    messageDao.insert(MessageEntity(
+                        sessionId = sessionId,
+                        speakerType = "character",
+                        characterId = character.id,
+                        content = "🖼 配图生成中…",
+                        structuredContentJson = AutoImageMetadata.create(
+                            prompt, AutoImageMetadata.STATE_RUNNING, attemptToken,
+                        ),
+                        branchId = generation.branchId,
+                        parentMessageId = sourceReplyMessageId,
+                        includeInContext = false,
+                    )).takeIf { it > 0L }
                 }
             }
         }
         if (w.autoCharacterSpeech && parsed.speechTexts.isNotEmpty()) {
+            for (text in parsed.speechTexts.take(2)) {
+                generation.ensureCurrent()
+                val token = UUID.randomUUID().toString()
+                runAutoVoiceAttempt(generation, text, character.id, token, character) {
+                    messageDao.insert(MessageEntity(
+                        sessionId = sessionId, speakerType = "character", characterId = character.id,
+                        content = "配音生成中…",
+                        structuredContentJson = AutoVoiceMetadata.create(text, AutoVoiceMetadata.STATE_RUNNING, token),
+                        branchId = generation.branchId, parentMessageId = sourceReplyMessageId, includeInContext = false,
+                    )).takeIf { it > 0L }
+                }
+            }
+        }
+    }
+
+    private suspend fun runAutoVoiceAttempt(
+        generation: GenerationContext,
+        text: String,
+        characterId: Long,
+        token: String,
+        characterOverride: CharacterEntity? = null,
+        acquire: suspend () -> Long?,
+    ) {
+        var messageId: Long? = null
+        var files = emptyList<com.mojing.app.media.SynthesizedSpeechFile>()
+        try {
+            val id = withContext(NonCancellable) { acquire()?.also { messageId = it } } ?: return
+            refreshMessagesUi(generation.branchId)
             generation.ensureCurrent()
-            speakMessage(parsed.speechTexts.take(2).joinToString("\n"), character.id)
+            val character = requireNotNull(characterOverride ?: characterDao.getById(characterId)) { "配音角色已不存在" }
+            val preferences = com.mojing.app.data.VoicePreferences(appContext)
+            val (choice, region, key) = withContext(Dispatchers.IO) {
+                val selected = preferences.sessionSelection(sessionId)
+                val fallback = selected.takeUnless { it.engineId == "inherit" } ?: preferences.global()
+                val resolved = com.mojing.app.data.resolveVoiceChoice(character.voiceProvider, character.voiceModel, fallback)
+                Triple(resolved, if (resolved.engineId == "azure") preferences.azureRegion else "", if (resolved.engineId == "azure") preferences.azureKey else "")
+            }
+            generation.ensureCurrent()
+            val directory = withContext(Dispatchers.IO) {
+                java.io.File(appContext.filesDir, "attachments/$sessionId").canonicalFile.also {
+                    require(it.isDirectory || it.mkdirs()) { "配音目录不可用" }
+                }
+            }
+            generation.ensureCurrent()
+            files = if (choice.engineId == "azure") {
+                com.mojing.app.media.AzureSpeech.synthesizeToFiles(text, region, key, choice.voiceId, directory, token)
+            } else AndroidTts.synthesizeToFiles(appContext, text, choice, directory, token)
+            generation.ensureCurrent()
+            require(files.isNotEmpty()) { "配音没有生成音频" }
+            val attachments = withContext(Dispatchers.IO) {
+                files.map { part ->
+                    require(part.file.isFile && part.file.length() > 0L && part.file.canonicalFile.parentFile == directory && part.mimeType.startsWith("audio/")) { "配音文件无效" }
+                    MessageAttachmentEntity(messageId = id, assetType = "voice", fileName = part.file.name,
+                        mimeType = part.mimeType, storagePath = part.file.absolutePath,
+                        generationPrompt = text, generationModel = choice.engineId + ":" + choice.voiceId)
+                }
+            }
+            generation.ensureCurrent()
+            val committed = withContext(NonCancellable) {
+                messageDao.completeAutoVoiceGeneration(id, sessionId, generation.branchId, token, attachments).also {
+                    if (it) files = emptyList()
+                }
+            }
+            if (!committed) throw IllegalStateException("配音消息已改变")
+            refreshMessagesUi(generation.branchId)
+        } catch (cancelled: CancellationException) {
+            withContext(NonCancellable) {
+                messageId?.let { runCatching { messageDao.failAutoVoiceGeneration(it, sessionId, generation.branchId, token, interrupted = true) } }
+                withContext(Dispatchers.IO) { files.forEach { it.file.delete() } }
+                if (currentBranchId() == generation.branchId) runCatching { refreshMessagesUi(generation.branchId) }
+            }
+            throw cancelled
+        } catch (error: Exception) {
+            UsbSessionLog.e("ChatVoiceGen", "auto voice failed sid=$sessionId type=${error.javaClass.simpleName}")
+            withContext(NonCancellable) {
+                messageId?.let { runCatching { messageDao.failAutoVoiceGeneration(it, sessionId, generation.branchId, token, interrupted = false) } }
+                withContext(Dispatchers.IO) { files.forEach { it.file.delete() } }
+                if (currentBranchId() == generation.branchId) runCatching { refreshMessagesUi(generation.branchId) }
+            }
+        }
+    }
+
+    fun retryAutoCharacterVoice(messageId: Long): Boolean {
+        val message = _state.value.messages.firstOrNull { it.id == messageId } ?: return false
+        if (message.branchId != currentBranchId() || message.speakerType != "character" || message.includeInContext || message.parentMessageId == null) return false
+        val metadata = AutoVoiceMetadata.parse(message.structuredContentJson)?.takeIf { it.retryable } ?: return false
+        val characterId = message.characterId ?: return false
+        val text = metadata.text ?: return false
+        val expectedToken = metadata.attemptToken ?: return false
+        return launchSingleGeneration { generation ->
+            val token = UUID.randomUUID().toString()
+            runAutoVoiceAttempt(generation, text, characterId, token) {
+                messageDao.claimAutoVoiceGeneration(messageId, sessionId, generation.branchId, expectedToken, token)
+                    .let { if (it) messageId else null }
+            }
+        }
+    }
+
+    private suspend fun runAutoImageAttempt(
+        generation: GenerationContext,
+        prompt: String,
+        characterId: Long,
+        characterOverride: CharacterEntity? = null,
+        worldOverride: SessionWorldEntity? = null,
+        attemptToken: String,
+        acquire: suspend () -> Long?,
+    ) {
+        var lease: AutoImageAttemptLease? = null
+        var generatedPath: String? = null
+        try {
+            val messageId = withContext(NonCancellable) {
+                acquire()?.also {
+                    lease = AutoImageAttemptLease(it, generation.branchId, attemptToken)
+                }
+            } ?: return
+            refreshMessagesUi(generation.branchId)
+            generation.ensureCurrent()
+            val character = characterOverride ?: characterDao.getById(characterId)
+            val world = worldOverride ?: sessionWorldDao.getBySession(sessionId)
+            requireNotNull(character) { "角色不存在，无法生成配图" }
+            requireNotNull(world) { "故事线配置不存在，无法生成配图" }
+            val primary = ApiKeyResolver.resolveImageGenPrimaryResolved(character, world, secureStorage)
+            require(primary.apiKey.isNotBlank()) { "图片服务未配置密钥" }
+            val attempt = generateImageWithPublicFallback(prompt, character, world, character.id)
+            generation.ensureCurrent()
+            if (currentBranchId() != generation.branchId) return
+            val urlOrB64 = attempt.result.getOrElse { throw it }
+            generatedPath = imageRepository.saveGeneratedImageForSession(urlOrB64, sessionId)
+            val local = requireNotNull(generatedPath) { "配图保存失败" }
+            generation.ensureCurrent()
+            if (currentBranchId() != generation.branchId) {
+                java.io.File(local).delete()
+                generatedPath = null
+                return
+            }
+            val committed = withContext(NonCancellable) {
+                val result = messageDao.completeAutoImageGeneration(
+                    messageId, sessionId, generation.branchId, attemptToken,
+                    MessageAttachmentEntity(
+                        messageId = messageId,
+                        assetType = "image",
+                        fileName = java.io.File(local).name,
+                        mimeType = "image/png",
+                        storagePath = local,
+                        generationPrompt = prompt,
+                        generationModel = attempt.modelUsed,
+                    ),
+                )
+                if (result) generatedPath = null
+                result
+            }
+            if (!committed) java.io.File(local).delete()
+            refreshMessagesUi(generation.branchId)
+        } catch (cancelled: CancellationException) {
+            withContext(NonCancellable) {
+                lease?.takeIf { currentBranchId() == it.branchId }?.let {
+                    runCatching {
+                        messageDao.failAutoImageGeneration(it.messageId, sessionId, it.branchId, it.attemptToken, interrupted = true)
+                    }
+                }
+                generatedPath?.let { java.io.File(it).delete() }
+                if (currentBranchId() == generation.branchId) runCatching { refreshMessagesUi(generation.branchId) }
+            }
+            throw cancelled
+        } catch (error: Exception) {
+            UsbSessionLog.e("ChatImageGen", "auto char image exception sid=$sessionId type=${error.javaClass.simpleName}")
+            withContext(NonCancellable) {
+                lease?.takeIf { currentBranchId() == it.branchId }?.let {
+                    runCatching {
+                        messageDao.failAutoImageGeneration(it.messageId, sessionId, it.branchId, it.attemptToken, interrupted = false)
+                    }
+                    runCatching { refreshMessagesUi(it.branchId) }
+                }
+                generatedPath?.let { java.io.File(it).delete() }
+            }
+        }
+    }
+
+    fun retryAutoCharacterImage(messageId: Long): Boolean {
+        val message = _state.value.messages.firstOrNull { it.id == messageId } ?: return false
+        if (message.branchId != currentBranchId()) return false
+        val metadata = AutoImageMetadata.parse(message.structuredContentJson) ?: return false
+        if (!metadata.retryable || message.speakerType != "character" || message.includeInContext || message.parentMessageId == null) return false
+        val prompt = metadata.prompt ?: run {
+            _state.update { it.copy(error = "这条配图缺少原始提示，无法精确重试") }
+            return false
+        }
+        val characterId = message.characterId ?: return false
+        val expectedToken = metadata.attemptToken ?: return false
+        return launchSingleGeneration { generation ->
+            if (generation.branchId != message.branchId) return@launchSingleGeneration
+            val freshToken = UUID.randomUUID().toString()
+            runAutoImageAttempt(
+                generation = generation,
+                prompt = prompt,
+                characterId = characterId,
+                attemptToken = freshToken,
+                acquire = { messageDao.claimAutoImageGeneration(
+                    messageId, sessionId, generation.branchId, expectedToken, freshToken,
+                ).let { if (it) messageId else null } },
+            )
         }
     }
 
@@ -814,6 +1163,11 @@ class ChatViewModel @Inject constructor(
         memorySummaryListRevision.incrementAndGet()
         contextMemoryDisplayRevision.incrementAndGet()
         encyclopediaFoundationRevision.incrementAndGet()
+        bookmarkRefreshRevision.incrementAndGet()
+        ++bookmarkReadOnlyRevision
+        bookmarkReadOnlyJob?.cancel()
+        bookmarkReadOnlyJob = null
+        _state.update { it.copy(bookmarkReadOnlyMessage = null, bookmarkReadOnlyLoading = it.bookmarkReadOnlyId != null) }
         bookmarkInitialLoadJob?.cancel()
         bookmarkInitialLoadJob = null
         _state.update {
@@ -914,23 +1268,71 @@ class ChatViewModel @Inject constructor(
         val rememberedBranchId = runCatching {
             uiPreferencesRepository.getLastChatBranch(sessionId)
         }.getOrDefault("main")
-        if (sourceMessageId > 0L && sourceBranchId.isNotBlank() && sourceBranchId != "main" && branches.none { it.branchId == sourceBranchId }) {
+        val openInitialSource = sourceMessageId > 0L &&
+            savedStateHandle.get<Boolean>("history_navigation_consumed_$sessionId") != true
+        if (openInitialSource && sourceBranchId.isNotBlank() && sourceBranchId != "main" && branches.none { it.branchId == sourceBranchId }) {
             _state.update { it.copy(isReady = false, initialLoadError = "来源故事线已不存在，请返回百科查看保留的资料。") }
             return
         }
-        val requestedBranchId = if (sourceMessageId > 0L && sourceBranchId.isNotBlank()) sourceBranchId else rememberedBranchId
+        val requestedBranchId = if (openInitialSource && sourceBranchId.isNotBlank()) sourceBranchId
+            else if (sourceMessageId > 0L) savedStateHandle.get<String>("history_navigation_branch_$sessionId") ?: rememberedBranchId
+            else rememberedBranchId
         val initialBranchId = requestedBranchId.takeIf { branchId ->
             branchId == "main" || branches.any { it.branchId == branchId }
         } ?: "main"
+        // Restore only after the actual initial line is known; startup temporarily reports main.
+        val restoreEventCriteria = savedStateHandle.get<String>("event_criteria_branch_$sessionId") == initialBranchId
+        val restoredEventQuery = if (restoreEventCriteria)
+            savedStateHandle.get<String>("event_query_$sessionId").orEmpty().take(200) else ""
+        val restoredEventFilter = if (restoreEventCriteria)
+            savedStateHandle.get<Boolean>("event_resolved_$sessionId") else null
+        val savedEventWindowSize = savedStateHandle.get<Int>("event_window_size_$sessionId")
+        val savedEventBeforeAt = savedStateHandle.get<Long>("event_window_before_at_$sessionId")
+        val savedEventBeforeId = savedStateHandle.get<Long>("event_window_before_id_$sessionId")
+        val restoreEventWindow = restoreEventCriteria &&
+            savedEventWindowSize in listOf(EVENT_NODE_PAGE_SIZE, EVENT_NODE_PAGE_SIZE * 2, EVENT_NODE_WINDOW_SIZE) &&
+            ((savedEventBeforeAt == null && savedEventBeforeId == null) ||
+                (savedEventBeforeAt != null && savedEventBeforeId != null && savedEventBeforeId > 0L))
+        val summaryWindowSize = savedStateHandle.get<Int>("summary_window_size_$sessionId")
+        val summaryBeforeEnd = savedStateHandle.get<Long>("summary_window_before_end_$sessionId")
+        val summaryBeforeId = savedStateHandle.get<Long>("summary_window_before_id_$sessionId")
+        val restoreSummaryWindow = savedStateHandle.get<String>("summary_window_branch_$sessionId") == initialBranchId &&
+            summaryWindowSize in (MEMORY_SEGMENT_PAGE_SIZE..MEMORY_SEGMENT_WINDOW_SIZE step MEMORY_SEGMENT_PAGE_SIZE) &&
+            ((summaryBeforeEnd == null && summaryBeforeId == null) ||
+                (summaryBeforeEnd != null && summaryBeforeEnd >= 0L && summaryBeforeId != null && summaryBeforeId > 0L))
+        // Bookmarks belong to the whole session, including messages from other lines.
+        val bookmarkWindowSize = savedStateHandle.get<Int>("bookmark_window_size_$sessionId")
+        val bookmarkBeforeAt = savedStateHandle.get<Long>("bookmark_window_before_at_$sessionId")
+        val bookmarkBeforeId = savedStateHandle.get<Long>("bookmark_window_before_id_$sessionId")
+        val restoreBookmarkWindow = savedStateHandle.get<String>("bookmark_window_query_$sessionId") == _state.value.bookmarkQuery &&
+            bookmarkWindowSize in (BOOKMARK_PAGE_SIZE..BOOKMARK_WINDOW_SIZE step BOOKMARK_PAGE_SIZE) &&
+            ((bookmarkBeforeAt == null && bookmarkBeforeId == null) ||
+                (bookmarkBeforeAt != null && bookmarkBeforeAt >= 0L && bookmarkBeforeId != null && bookmarkBeforeId > 0L))
         val invalidRememberedBranch = sourceMessageId <= 0L && rememberedBranchId != "main" && initialBranchId == "main"
         if (invalidRememberedBranch) {
             runCatching { uiPreferencesRepository.clearLastChatBranch(sessionId) }
         }
-        val initialRows = getMessageTailForBranch(initialBranchId, INITIAL_MESSAGE_WINDOW_SIZE + 1)
-        val hasOlderMessages = initialRows.size > INITIAL_MESSAGE_WINDOW_SIZE
-        val msgs = initialRows.take(INITIAL_MESSAGE_WINDOW_SIZE).asReversed()
+        val savedHistoryEnd = savedStateHandle.get<Long>("history_window_end_$sessionId")
+        val savedHistorySize = savedStateHandle.get<Int>("history_window_size_$sessionId")
+        val savedHistoryAnchor = savedStateHandle.get<Long>("history_window_anchor_$sessionId")
+        val anchor = savedHistoryAnchor?.let { getVisibleMessage(initialBranchId, it) }
+        val historyEnd = savedHistoryEnd?.takeIf { it in 1 until Long.MAX_VALUE }
+            ?.let { getVisibleMessage(initialBranchId, it) }
+        val restoreHistory = savedStateHandle.get<String>("history_window_branch_$sessionId") == initialBranchId &&
+            savedHistorySize != null && savedHistorySize in 1..MAX_MESSAGE_WINDOW_SIZE &&
+            savedHistoryEnd != null && savedHistoryEnd in 1 until Long.MAX_VALUE &&
+            historyEnd?.sessionId == sessionId &&
+            (savedHistoryAnchor == null || (anchor != null && anchor.sessionId == sessionId && !isInactiveBookmarkedVariant(initialBranchId, anchor)))
+        if (!restoreHistory) clearHistoryWindowIntent()
+        val initialCapacity = if (restoreHistory) savedHistorySize!! else INITIAL_MESSAGE_WINDOW_SIZE
+        val initialRows = if (restoreHistory) getMessagesBefore(initialBranchId, savedHistoryEnd!! + 1, initialCapacity + 1)
+            else getMessageTailForBranch(initialBranchId, initialCapacity + 1)
+        val hasOlderMessages = initialRows.size > initialCapacity
+        val restoredHasNewer = restoreHistory && getMessagesAfter(initialBranchId, savedHistoryEnd!!, 1).isNotEmpty()
+        val rawInitialMsgs = initialRows.take(initialCapacity).asReversed()
+        val msgs = recoverAutoImageMessages(rawInitialMsgs, initialBranchId)
         val excludedKeys = excludedKeysForWindow(initialBranchId, msgs)
-        val maps = buildCharacterPresentationMaps(participants)
+        val maps = buildCharacterPresentationMaps(participants, msgs)
 
         val displayCap = session.displayContextTokenLimit.takeIf { it > 0 } ?: 1_000_000
         val attMap = attachmentsForMessages(msgs)
@@ -946,7 +1348,10 @@ class ChatViewModel @Inject constructor(
             messages = msgs,
             displayLines = displayLines,
             hasOlderMessages = hasOlderMessages,
-            hasNewerMessages = false,
+            hasNewerMessages = restoredHasNewer,
+            historyWindowRestored = restoreHistory,
+            focusedMessageId = if (restoreHistory) savedStateHandle.get<Long>("history_window_focus_$sessionId")
+                ?.takeIf { id -> msgs.any { it.id == id } } else null,
             isLoadingHistory = false,
             messageAttachments = attMap,
             participants = participants, world = world,
@@ -959,17 +1364,24 @@ class ChatViewModel @Inject constructor(
             contextMemoryLoading = false,
             contextMemoryLoadError = null,
             memorySegments = emptyList(),
+            memorySegmentsWindowSize = if (restoreSummaryWindow) summaryWindowSize!! else MEMORY_SEGMENT_PAGE_SIZE,
+            memorySegmentsBeforeEndId = if (restoreSummaryWindow) summaryBeforeEnd else null,
+            memorySegmentsBeforeId = if (restoreSummaryWindow) summaryBeforeId else null,
             memorySegmentsLoaded = false,
             memorySegmentsLoading = false,
             memorySegmentsHasMore = false,
             memorySegmentsLoadingMore = false,
             memorySegmentsLoadError = null,
             eventNodes = emptyList(),
+            eventQuery = restoredEventQuery,
+            eventResolvedFilter = restoredEventFilter,
+            eventNodesBeforeCreatedAt = if (restoreEventWindow) savedEventBeforeAt else null,
+            eventNodesBeforeId = if (restoreEventWindow) savedEventBeforeId else null,
             eventNodesLoaded = false,
-            eventNodesWindowSize = EVENT_NODE_PAGE_SIZE,
+            eventNodesWindowSize = if (restoreEventWindow) savedEventWindowSize!! else EVENT_NODE_PAGE_SIZE,
             eventNodesHasMore = false,
             eventNodesLoadingMore = false,
-            eventNodesLoadError = null,
+            eventNodesRefreshFailed = false, eventNodesLoadError = null,
             branches = branches,
             branchAnchorsByMessageId = branchAnchors,
             memoryCorrections = emptyList(),
@@ -986,13 +1398,17 @@ class ChatViewModel @Inject constructor(
             branchSourcePreviewsError = null,
             characterNames = maps.names,
             characterAvatars = maps.avatars,
+                characterSummaries = maps.summaries,
             characterCardImages = maps.cardImages,
             characterColors = maps.colors,
             bookmarks = emptyList(),
+            bookmarksWindowSize = if (restoreBookmarkWindow) bookmarkWindowSize!! else BOOKMARK_PAGE_SIZE,
+            bookmarksBeforeCreatedAt = if (restoreBookmarkWindow) bookmarkBeforeAt else null,
+            bookmarksBeforeId = if (restoreBookmarkWindow) bookmarkBeforeId else null,
             bookmarksLoaded = false,
             bookmarksHasMore = false,
             bookmarksLoadingMore = false,
-            bookmarksLoadError = null,
+            bookmarksRefreshFailed = false, bookmarksLoadError = null,
             bookmarkedMessageIds = bookmarkIds,
             excludedContextKeys = excludedKeys,
             bookmarkPreviews = emptyMap(),
@@ -1032,16 +1448,24 @@ class ChatViewModel @Inject constructor(
                     add("上次打开的故事线已不存在，已返回主线")
                 }
             }.joinToString("；").ifBlank { null },
-            isReady = sourceMessageId <= 0L,
+            isReady = false,
             initialLoadError = null,
         )
         reconcileReplyRecovery()
-        if (sourceMessageId > 0L) {
+        if (openInitialSource) {
             val located = loadMessageWindow(initialBranchId, sourceMessageId)
             _state.update { it.copy(isReady = located,
                 initialLoadError = if (located) null else "来源消息已删除或不在来源故事线，请返回百科。") }
         } else {
+            _state.update { it.copy(isReady = true) }
             scheduleConversationTokenEstimate(msgs, excludedKeys, initialBranchId, messageWindowRevision.get())
+        }
+        if (_state.value.isReady) {
+            if (sourceMessageId > 0L) {
+                savedStateHandle["history_navigation_branch_$sessionId"] = currentBranchId()
+                savedStateHandle["history_navigation_consumed_$sessionId"] = true
+            }
+            retryBookmarkedReadOnlyMessage()
         }
     }
 
@@ -1073,18 +1497,22 @@ class ChatViewModel @Inject constructor(
     }
 
     private suspend fun buildCharacterPresentationMaps(
-        participants: List<SessionParticipantEntity>
+        participants: List<SessionParticipantEntity>,
+        messages: List<MessageEntity> = _state.value.messages,
     ): CharacterUiMaps {
         val names = mutableMapOf<Long, String>()
         val avatars = mutableMapOf<Long, String>()
         val colors = mutableMapOf<Long, String>()
         val cardImages = mutableMapOf<Long, String>()
-        val participantIds = participants.map { it.characterId }.distinct()
-        val rows = participantIds.chunked(500).flatMap { ids ->
+        // Removing a speaker from future rounds must not erase their historical identity.
+        // Only the bounded message window contributes historical authors.
+        val displayIds = (participants.map { it.characterId } + messages.mapNotNull { it.characterId })
+            .filter { it > 0L }.distinct()
+        val rows = displayIds.chunked(500).flatMap { ids ->
             characterDao.getChatPresentationByIds(ids)
         }
         val rowsById = rows.associateBy { it.id }
-        participantIds.forEach { id ->
+        displayIds.forEach { id ->
             val row = rowsById[id] ?: return@forEach
             names[row.id] = row.name
             avatars[row.id] = row.avatarImagePath
@@ -1093,7 +1521,8 @@ class ChatViewModel @Inject constructor(
             if (card.isNotEmpty()) cardImages[row.id] = card
         }
         return CharacterUiMaps(names, avatars, colors, cardImages,
-            rows.asSequence().filter { it.thinkMaxEnabled }.map { it.id }.toSet())
+            rows.asSequence().filter { it.thinkMaxEnabled }.map { it.id }.toSet(),
+            rows.associate { it.id to it.personaPreview })
     }
 
     private suspend fun attachmentsForMessages(
@@ -1149,7 +1578,7 @@ class ChatViewModel @Inject constructor(
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
                 if (branchSourcePreviewJob === owner) {
-                    _state.update { it.copy(branchSourcePreviewsError = "分叉摘要加载失败，可重试；仍可按名称选择故事线") }
+                    _state.update { it.copy(branchSourcePreviewsError = "来源片段加载失败，可重试；仍可按名称选择故事线") }
                 }
             } finally {
                 if (branchSourcePreviewJob === owner) {
@@ -1369,16 +1798,23 @@ class ChatViewModel @Inject constructor(
         return if (ids.isEmpty()) emptySet() else bookmarkDao.getBookmarkedMessageIds(sessionId, ids).toSet()
     }
 
-    /** 从数据库重新拉取参与者对应角色的头像/名称（编辑角色后返回聊天页时调用） */
+    /** Refresh current participants and visible historical authors after character edits. */
     fun refreshParticipantCharacterMeta() {
         viewModelScope.launch {
+            val branchId = currentBranchId()
+            val windowRevision = messageWindowRevision.get()
+            val messages = _state.value.messages
             val participants = participantDao.getBySession(sessionId)
-            val maps = buildCharacterPresentationMaps(participants)
+            val maps = buildCharacterPresentationMaps(participants, messages)
             val sess = sessionDao.getById(sessionId)
+            // A history transition already loaded the presentation for its own window.
+            if (currentBranchId() != branchId || messageWindowRevision.get() != windowRevision ||
+                _state.value.messages != messages) return@launch
             _state.value = _state.value.copy(
                 participants = participants,
                 characterNames = maps.names,
                 characterAvatars = maps.avatars,
+                characterSummaries = maps.summaries,
                 characterCardImages = maps.cardImages,
                 characterColors = maps.colors,
                 userDisplayName = secureStorage.userName,
@@ -1393,16 +1829,157 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun openCharacterState(characterId: Long, expectedBranchId: String = currentBranchId()) {
+        if (expectedBranchId != currentBranchId()) return
+        characterStateReadRevision++
+        characterStateReadJob?.cancel()
+        val readRevision = characterStateReadRevision
+        val label = _state.value.branches.firstOrNull { it.branchId == expectedBranchId }?.label
+            ?: if (expectedBranchId == "main") "主线" else expectedBranchId
+        val previous = _state.value.characterStatePanel
+        val sameTarget = previous?.sessionId == sessionId && previous.characterId == characterId &&
+            previous.branchId == expectedBranchId
+        val clearingOwner = characterStateClearJob?.takeIf { it.isActive }
+        val target = if (sameTarget) previous!!.copy(loading = true, error = null, clearing = clearingOwner != null)
+        else CharacterStatePanel(sessionId, characterId, expectedBranchId, label)
+        _state.update { it.copy(characterStatePanel = target) }
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                // A same-scope reload must read after the pending deletion, including
+                // when the sheet was closed and reopened before Room returned.
+                clearingOwner?.join()
+                // Room's suspend queries already run on its query executor.
+                val entity = if (participantDao.getBySession(sessionId).none { it.characterId == characterId }) null
+                    else characterStateDao.getBySessionAndCharacter(sessionId, characterId, expectedBranchId)
+                val panel = withContext(preparationDispatcher) {
+                    parseCharacterStatePanel(entity, sessionId, characterId, expectedBranchId, label)
+                }
+                val current = _state.value.characterStatePanel
+                if (characterStateReadRevision != readRevision || current?.sessionId != sessionId ||
+                    current.characterId != characterId || current.branchId != expectedBranchId ||
+                    currentBranchId() != expectedBranchId) return@launch
+                _state.update {
+                    it.copy(characterStatePanel = panel)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                val current = _state.value.characterStatePanel
+                if (characterStateReadRevision == readRevision && current?.sessionId == sessionId &&
+                    current.characterId == characterId && current.branchId == expectedBranchId) {
+                    _state.update { it.copy(characterStatePanel = current.copy(
+                        loading = false, error = "读取角色状态失败，内容已保留，请重试",
+                    )) }
+                }
+            }
+        }
+        characterStateReadJob = job
+        // A clear's readback is part of its completion, even if the last screen
+        // releases the store between the deletion and the Room query.
+        if (clearingOwner != null && RetainedChatSessions.stores.contains(sessionId)) {
+            RetainedChatSessions.stores.retainJob(sessionId, job, reportRunning = false)
+        }
+        job.start()
+    }
+
+    fun closeCharacterState() {
+        characterStateReadRevision++
+        characterStateReadJob?.cancel()
+        characterStateReadJob = null
+        _state.update { it.copy(characterStatePanel = null) }
+    }
+
+    fun clearCharacterState() {
+        val target = _state.value.characterStatePanel ?: return
+        if (target.loading || target.clearing) return
+        if (activeGeneration != null || branchTransitionJob?.isActive == true || _state.value.isGenerating) {
+            _state.update { it.copy(characterStatePanel = target.copy(error = "回复生成或故事线切换期间暂不可清除，请稍后重试")) }
+            return
+        }
+        if (characterStateClearJob?.isActive == true) {
+            _state.update { it.copy(characterStatePanel = target.copy(error = "已有清除操作正在进行，请稍后重试")) }
+            return
+        }
+        characterStateReadRevision++
+        characterStateReadJob?.cancel()
+        _state.update { it.copy(characterStatePanel = target.copy(clearing = true, error = null)) }
+        val clearJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            val owner = currentCoroutineContext()[Job]
+            try {
+                characterStateMutex.withLock {
+                val participantStillPresent = participantDao.getBySession(sessionId).any { it.characterId == target.characterId }
+                val sameScopeBeforeDelete = currentBranchId() == target.branchId && activeGeneration == null &&
+                    branchTransitionJob?.isActive != true && !_state.value.isGenerating && participantStillPresent
+                if (!sameScopeBeforeDelete) {
+                    val current = _state.value.characterStatePanel
+                    if (current?.characterId == target.characterId && current.branchId == target.branchId) {
+                        _state.update { it.copy(characterStatePanel = current.copy(clearing = false, error = "当前故事线或参与角色已变化，未清除状态，请重新打开")) }
+                    }
+                    return@withLock
+                }
+                val sameScopeAtDelete = currentBranchId() == target.branchId && activeGeneration == null &&
+                    branchTransitionJob?.isActive != true && !_state.value.isGenerating
+                if (!sameScopeAtDelete) {
+                    val current = _state.value.characterStatePanel
+                    if (current?.characterId == target.characterId && current.branchId == target.branchId) {
+                        _state.update { it.copy(characterStatePanel = current.copy(clearing = false, error = "当前故事线或参与角色已变化，未清除状态，请重新打开")) }
+                    }
+                    return@withLock
+                }
+                val deleted = try {
+                    characterStateDao.deleteBySessionCharacterBranch(sessionId, target.characterId, target.branchId)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    val current = _state.value.characterStatePanel
+                    if (current?.characterId == target.characterId && current.branchId == target.branchId) {
+                        _state.update { it.copy(characterStatePanel = current.copy(clearing = false, error = "清除失败，内容已保留，请重试")) }
+                    }
+                    return@withLock
+                }
+                val current = _state.value.characterStatePanel
+                if (current?.characterId == target.characterId && current.branchId == target.branchId) {
+                    if (deleted > 0) openCharacterState(target.characterId, target.branchId)
+                    else _state.update { it.copy(characterStatePanel = current.copy(
+                        loading = false, clearing = false, error = "当前没有可清除的自动状态",
+                    )) }
+                }
+                }
+            } finally {
+                if (characterStateClearJob === owner) characterStateClearJob = null
+            }
+        }
+        characterStateClearJob = clearJob
+        if (RetainedChatSessions.stores.contains(sessionId)) {
+            RetainedChatSessions.stores.retainJob(sessionId, clearJob, reportRunning = false)
+        }
+        clearJob.start()
+    }
+
     fun setSessionThinkMax(enabled: Boolean, onMessage: (String) -> Unit) {
+        if (_state.value.sessionThinkMaxSaving) return
         if (!canMutateRoundConfiguration()) return
         if (enabled && !secureStorage.allowSessionThinkMax) {
             onMessage("请先在「设置 → 联网与模型」中开启「允许对话页思考/Max」")
             return
         }
-        viewModelScope.launch {
-            sessionDao.updateThinkMax(sessionId, enabled)
-            _state.value = _state.value.copy(sessionThinkMaxEnabled = enabled)
+        _state.update { it.copy(sessionThinkMaxSaving = true, sessionThinkMaxSaveError = null) }
+        val writeJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                sessionDao.updateThinkMax(sessionId, enabled)
+                _state.update { it.copy(sessionThinkMaxEnabled = enabled) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                _state.update { it.copy(sessionThinkMaxSaveError = "思考/Max 设置未保存，请重试") }
+            } finally {
+                _state.update { it.copy(sessionThinkMaxSaving = false) }
+            }
         }
+        if (RetainedChatSessions.stores.contains(sessionId)) {
+            RetainedChatSessions.stores.retainJob(sessionId, writeJob, reportRunning = false)
+        }
+        writeJob.start()
     }
 
     fun updateNarratorGuidance(text: String) {
@@ -1421,6 +1998,12 @@ class ChatViewModel @Inject constructor(
         return false
     }
 
+    private fun rejectPendingReplyRecovery(): Boolean {
+        if (_state.value.replyRecovery == null && !_state.value.replyRecoveryBusy) return false
+        _state.update { it.copy(error = "请先保留、复制或丢弃上次中断的回复") }
+        return true
+    }
+
     fun submitNarratorGuidance(guidance: String): Boolean {
         if (!canContinueFromCurrentWindow()) return false
         val revision = narratorDraftRevision
@@ -1431,10 +2014,12 @@ class ChatViewModel @Inject constructor(
         })
     }
 
-    fun updateInput(text: String) {
+    fun updateInput(text: String, expectedBranchId: String? = null): Boolean {
+        if (expectedBranchId != null && currentBranchId() != expectedBranchId) return false
         if (text != _state.value.inputText) activeDraftSubmissionId = null
         _state.value = _state.value.copy(inputText = text)
         persistCurrentDraft()
+        return true
     }
 
     /** Snackbar 展示后调用，避免同一 error 在重组时重复弹出。 */
@@ -1442,22 +2027,32 @@ class ChatViewModel @Inject constructor(
         _state.update { it.copy(error = null) }
     }
 
-    fun appendVoiceText(text: String) {
+    fun clearContextBudgetError(expected: String) {
+        _state.update { if (it.contextBudgetError == expected) it.copy(contextBudgetError = null) else it }
+    }
+
+    fun appendVoiceText(text: String, expectedBranchId: String? = null): Boolean {
+        if (expectedBranchId != null && currentBranchId() != expectedBranchId) return false
         val t = text.trim()
-        if (t.isEmpty()) return
+        if (t.isEmpty()) return false
         activeDraftSubmissionId = null
         val cur = _state.value.inputText
         val sep = if (cur.isBlank() || cur.endsWith("\n")) "" else " "
         _state.value = _state.value.copy(inputText = cur + sep + t)
         persistCurrentDraft()
+        return true
     }
 
-    fun queueLocalImageAttachment(path: String) {
-        if (path.isBlank()) return
+    fun isCurrentChatBranch(expectedBranchId: String): Boolean = currentBranchId() == expectedBranchId
+
+    fun queueLocalImageAttachment(path: String, expectedBranchId: String? = null): Boolean {
+        if (path.isBlank()) return false
+        if (expectedBranchId != null && currentBranchId() != expectedBranchId) return false
         _state.value = _state.value.copy(
             pendingLocalImagePaths = (_state.value.pendingLocalImagePaths + path).distinct()
         )
         persistCurrentDraft()
+        return true
     }
 
     fun clearPendingAttachments(onCleared: (() -> Unit)? = null) {
@@ -1497,6 +2092,7 @@ class ChatViewModel @Inject constructor(
         openReader: () -> java.io.Reader,
         onProgress: (String, Int) -> Unit = { _, _ -> },
     ): TavernChatImportResult {
+        check(mediaBundleJob == null) { "请先完成或停止主线媒体包操作" }
         if (activeGeneration != null || branchTransitionJob?.isActive == true) {
             throw IllegalStateException("请等待当前生成或故事线切换完成后再导入")
         }
@@ -1700,23 +2296,27 @@ class ChatViewModel @Inject constructor(
         requestedBranchId: String = currentBranchId(),
         anchorMessageId: Long? = null,
         switchBranchOnSuccess: Boolean = false,
-    ) {
+        requireSourceAnchor: Boolean = false,
+    ): Boolean {
         val startingBranchId = currentBranchId()
-        if (!switchBranchOnSuccess && requestedBranchId != startingBranchId) return
+        if (!switchBranchOnSuccess && requestedBranchId != startingBranchId) return false
         // Navigation owns the window until its refresh finishes; background writers may still finish their writes.
-        if (branchTransitionJob?.isActive == true && currentCoroutineContext()[Job] !== branchTransitionJob) return
+        if (branchTransitionJob?.isActive == true && currentCoroutineContext()[Job] !== branchTransitionJob) return false
         val windowRevision = messageWindowRevision.incrementAndGet()
         val branches = sessionBranchDao.getBySession(sessionId)
+        if (requireSourceAnchor && requestedBranchId != "main" && branches.none { it.branchId == requestedBranchId }) return false
         val branchId = if (
             requestedBranchId == "main" || branches.any { it.branchId == requestedBranchId }
         ) requestedBranchId else "main"
         val refreshEventPage = switchBranchOnSuccess ||
             (eventPanelRequestedBranchId == branchId && _state.value.eventNodesLoaded)
+        val eventRequest = _state.value.takeIf { it.currentBranchId == branchId }
         val eventRevision = if (refreshEventPage) eventRefreshRevision.incrementAndGet()
             else eventRefreshRevision.get()
         val refreshSummaryPage = !switchBranchOnSuccess && _state.value.let {
             it.currentBranchId == branchId && it.memorySegmentsLoaded
         }
+        val summaryRequest = _state.value
         val summaryRevision = if (refreshSummaryPage) memorySummaryListRevision.incrementAndGet()
             else memorySummaryListRevision.get()
         val refreshContextMemory = !switchBranchOnSuccess && _state.value.let {
@@ -1733,6 +2333,7 @@ class ChatViewModel @Inject constructor(
                 state.copy(memorySegmentsLoadingMore = false) else state }
         }
         val anchor = anchorMessageId?.let { getVisibleMessage(branchId, it) }
+        if (requireSourceAnchor && anchor == null) return false
         val historyWindow = _state.value.takeIf { current ->
             !switchBranchOnSuccess && anchorMessageId == null && current.currentBranchId == branchId &&
                 current.hasNewerMessages && current.messages.isNotEmpty()
@@ -1757,11 +2358,12 @@ class ChatViewModel @Inject constructor(
             anchor != null -> radius
             else -> INITIAL_MESSAGE_WINDOW_SIZE
         }
-        val msgs = when {
+        val rawMsgs = when {
             preserveHistory -> pageRows.take(historySize).asReversed()
             anchor != null -> pageRows.take(radius).asReversed() + anchor + afterRows.take(radius)
             else -> pageRows.take(INITIAL_MESSAGE_WINDOW_SIZE).asReversed()
         }
+        val msgs = recoverAutoImageMessages(rawMsgs, branchId)
         val hasNewerMessages = if (preserveHistory) afterRows.isNotEmpty()
             else anchor != null && afterRows.size > radius
         val focusedMessageId = when {
@@ -1775,13 +2377,11 @@ class ChatViewModel @Inject constructor(
         val displayLines = visibleDisplayLines(msgs, map)
         val sess = sessionDao.getById(sessionId)
         val participants = participantDao.getBySession(sessionId)
-        val firstCharacterId = participants.firstOrNull()?.characterId
-        val firstCharacterForcesThinkMax = firstCharacterId?.let { id ->
-            characterDao.getChatPresentationByIds(listOf(id)).firstOrNull()?.thinkMaxEnabled
-        } == true
+        val presentation = buildCharacterPresentationMaps(participants, msgs)
+        val firstCharacterForcesThinkMax = participants.firstOrNull()?.characterId in presentation.thinkMaxEnabledIds
         val displayCap = sess?.displayContextTokenLimit?.takeIf { it > 0 } ?: 1_000_000
         val memoryPage = if (refreshSummaryPage) try {
-            memorySegmentDao.getRecentForBranch(sessionId, branchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
+            readMemorySummaryWindow(branchId, summaryRequest)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -1814,10 +2414,10 @@ class ChatViewModel @Inject constructor(
         val roundChoices = if (hasNewerMessages) RoundChoiceSnapshot() else withContext(preparationDispatcher) {
             buildRoundChoiceSnapshot(world, msgs.filterNot { it.contextSelectionKey() in excludedKeys })
         }
-        val eventWindowSize = _state.value.takeIf { it.currentBranchId == branchId }
-            ?.eventNodesWindowSize ?: EVENT_NODE_PAGE_SIZE
+        val eventWindowSize = eventRequest?.eventNodesWindowSize ?: EVENT_NODE_PAGE_SIZE
         val eventPage = if (refreshEventPage) try {
-            eventNodeDao.getPageForBranch(sessionId = sessionId, branchId = branchId, limit = eventWindowSize + 1)
+            readEventPage(branchId, eventRequest?.eventQuery.orEmpty(), eventRequest?.eventResolvedFilter,
+                eventRequest?.eventNodesBeforeCreatedAt, eventRequest?.eventNodesBeforeId, eventWindowSize + 1)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -1832,6 +2432,7 @@ class ChatViewModel @Inject constructor(
             if (currentBranchId() != startingBranchId || messageWindowRevision.get() != windowRevision) {
                 return@withLock
             }
+            if (startingBranchId != branchId && _state.value.bookmarkReadOnlyId != null) closeBookmarkedReadOnlyMessage()
             _state.update { current ->
                 // A slower read must not replace a newer refresh or history navigation.
                 if (current.currentBranchId != startingBranchId ||
@@ -1855,11 +2456,17 @@ class ChatViewModel @Inject constructor(
                     (eventRefreshRevision.get() == eventRevision && current.eventNodesWindowSize == eventWindowSize))
                 current.copy(
                     messages = msgs,
+                    characterNames = presentation.names,
+                    characterAvatars = presentation.avatars,
+                    characterSummaries = presentation.summaries,
+                    characterCardImages = presentation.cardImages,
+                    characterColors = presentation.colors,
                     excludedContextKeys = excludedKeys,
                     displayLines = displayLines,
                     hasOlderMessages = hasOlderMessages,
                     hasNewerMessages = hasNewerMessages,
                     isLoadingHistory = false,
+                    historyWindowRestored = false,
                     focusedMessageId = focusedMessageId,
                     messageAttachments = map,
                     bookmarkedMessageIds = bookmarkIds,
@@ -1872,6 +2479,7 @@ class ChatViewModel @Inject constructor(
                     contextMemoryLoadError = if (switchingBranch || applyContextMemory) null
                         else if (contextMemoryReadFailed) "长期记忆读取失败，请重试"
                         else current.contextMemoryLoadError,
+                    contextMemoryClearError = if (switchingBranch) null else current.contextMemoryClearError,
                     contextMemoryStatus = if (current.currentBranchId == branchId) current.contextMemoryStatus else ContextMemoryStatus.IDLE,
                     encyclopediaFoundation = if (world?.encyclopediaId == null) "" else if (applyFoundation)
                         encyclopediaFoundation!! else if (foundationChanged) "" else current.encyclopediaFoundation,
@@ -1884,11 +2492,14 @@ class ChatViewModel @Inject constructor(
                         else if (foundationReadFailed) "百科基础设定读取失败，请重试"
                         else if (foundationChanged) null else current.encyclopediaFoundationLoadError,
                     memorySegments = if (switchingBranch) emptyList() else if (applySummaryPage)
-                        memoryPage!!.take(MEMORY_SEGMENT_PAGE_SIZE) else current.memorySegments,
+                        memoryPage!!.take(summaryRequest.memorySegmentsWindowSize) else current.memorySegments,
+                    memorySegmentsWindowSize = if (switchingBranch) MEMORY_SEGMENT_PAGE_SIZE else current.memorySegmentsWindowSize,
+                    memorySegmentsBeforeEndId = if (switchingBranch) null else current.memorySegmentsBeforeEndId,
+                    memorySegmentsBeforeId = if (switchingBranch) null else current.memorySegmentsBeforeId,
                     memorySegmentsLoaded = if (switchingBranch) false else current.memorySegmentsLoaded,
                     memorySegmentsLoading = if (switchingBranch) false else current.memorySegmentsLoading,
                     memorySegmentsHasMore = if (switchingBranch) false else if (applySummaryPage)
-                        memoryPage!!.size > MEMORY_SEGMENT_PAGE_SIZE else if (summaryReadFailed)
+                        memoryPage!!.size > summaryRequest.memorySegmentsWindowSize else if (summaryReadFailed)
                         false else current.memorySegmentsHasMore,
                     memorySegmentsLoadingMore = if (switchingBranch || applySummaryPage) false
                         else current.memorySegmentsLoadingMore,
@@ -1906,6 +2517,10 @@ class ChatViewModel @Inject constructor(
                     roundChoiceOptions = roundChoices.options,
                     roundChoiceMessageId = roundChoices.sourceMessageId,
                     branchAnchorsByMessageId = anchors,
+                    eventQuery = if (switchingBranch) "" else current.eventQuery,
+                    eventResolvedFilter = if (switchingBranch) null else current.eventResolvedFilter,
+                    eventNodesBeforeCreatedAt = if (switchingBranch) null else current.eventNodesBeforeCreatedAt,
+                    eventNodesBeforeId = if (switchingBranch) null else current.eventNodesBeforeId,
                     eventNodes = if (applyEventPage) eventPage!!.take(eventWindowSize)
                         else if (switchingBranch) emptyList() else current.eventNodes,
                     eventNodesLoaded = if (applyEventPage) true else if (switchingBranch) false else current.eventNodesLoaded,
@@ -1914,6 +2529,7 @@ class ChatViewModel @Inject constructor(
                     eventNodesHasMore = if (applyEventPage) eventPage!!.size > eventWindowSize
                         else if (switchingBranch) false else current.eventNodesHasMore,
                     eventNodesLoadingMore = if (applyEventPage || switchingBranch) false else current.eventNodesLoadingMore,
+                    eventNodesRefreshFailed = if (applyEventPage || switchingBranch) false else current.eventNodesRefreshFailed,
                     eventNodesLoadError = if (applyEventPage || switchingBranch) null else current.eventNodesLoadError,
                     allowSessionThinkMax = secureStorage.allowSessionThinkMax,
                     sessionThinkMaxEnabled = sess?.thinkMaxEnabled == true,
@@ -1925,16 +2541,87 @@ class ChatViewModel @Inject constructor(
         }
         if (switchBranchOnSuccess && currentBranchId() == branchId &&
             messageWindowRevision.get() == windowRevision) {
+            // Successful navigation already resets criteria. Save that reset so recreation
+            // cannot resurrect the previous line's search; failed navigation keeps its intent.
+            val current = _state.value
+            if (branchId == startingBranchId && current.eventNodesLoaded) saveEventWindow(current)
+            else saveEventCriteria(branchId, current.eventQuery, current.eventResolvedFilter)
             eventPanelRequestedBranchId = branchId
             if (branchId != startingBranchId) {
                 correctionRefreshRevision.incrementAndGet()
                 memorySummaryListRevision.incrementAndGet()
+                saveMemorySummaryWindow(current)
                 contextMemoryDisplayRevision.incrementAndGet()
             }
         }
         if (_state.value.messages == msgs && currentBranchId() == branchId &&
             messageWindowRevision.get() == windowRevision) {
+            saveHistoryWindowIntent(_state.value, focusedMessageId)
             scheduleConversationTokenEstimate(msgs, excludedKeys, branchId, windowRevision)
+        }
+        return currentBranchId() == branchId && messageWindowRevision.get() == windowRevision &&
+            (!requireSourceAnchor || _state.value.focusedMessageId == anchorMessageId)
+    }
+
+    private suspend fun recoverAutoImageMessages(
+        messages: List<MessageEntity>,
+        branchId: String,
+    ): List<MessageEntity> {
+        if (messages.isEmpty() || activeGeneration != null) return messages
+        val imageRecovered = messages.map { message ->
+            val metadata = AutoImageMetadata.parse(message.structuredContentJson)
+            if (metadata != null &&
+                (metadata.state == AutoImageMetadata.STATE_RUNNING ||
+                    (metadata.state.isBlank() &&
+                        (message.content.contains("配图生成中") || message.content.isBlank()))) &&
+                message.branchId == branchId &&
+                message.parentMessageId != null &&
+                messageDao.markAutoImageRunningInterrupted(message.id, sessionId, branchId)
+            ) {
+                val recoverable = metadata.prompt?.isNotBlank() == true
+                message.copy(
+                    content = if (recoverable) "🖼 配图生成中断，可重试" else "🖼 配图已中断",
+                    structuredContentJson = AutoImageMetadata.update(
+                        message.structuredContentJson,
+                        AutoImageMetadata.STATE_INTERRUPTED,
+                    ),
+                )
+            } else message
+        }
+        return imageRecovered.map { message ->
+            val metadata = AutoVoiceMetadata.parse(message.structuredContentJson)
+            val running = metadata?.state == AutoVoiceMetadata.STATE_RUNNING ||
+                (metadata?.state.orEmpty().isBlank() && metadata?.text == null &&
+                    (AutoVoiceMetadata.isLegacyRunningContent(message.content) || (metadata != null && message.content.isBlank())))
+            if (running && message.branchId == branchId && message.parentMessageId != null &&
+                messageDao.markAutoVoiceRunningInterrupted(message.id, sessionId, branchId, metadata?.attemptToken)) {
+                try {
+                    cleanupInterruptedVoiceFiles(metadata?.attemptToken)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    UsbSessionLog.w("ChatVoiceGen", "orphan cleanup failed type=${failure.javaClass.simpleName}")
+                }
+                message.copy(content = if (metadata?.retryable == true || !metadata?.text.isNullOrBlank()) "配音生成中断，可重试" else "配音已中断",
+                    structuredContentJson = AutoVoiceMetadata.update(message.structuredContentJson, AutoVoiceMetadata.STATE_INTERRUPTED))
+            } else message
+        }
+    }
+
+    private suspend fun cleanupInterruptedVoiceFiles(token: String?) {
+        if (token == null || runCatching { UUID.fromString(token).toString() == token }.getOrDefault(false).not()) return
+        withContext(Dispatchers.IO) {
+            val directory = java.io.File(appContext.filesDir, "attachments/$sessionId").canonicalFile
+            if (!directory.isDirectory) return@withContext
+            java.nio.file.Files.newDirectoryStream(directory.toPath(), "gen_voice_${token}_*").use { paths ->
+                for (path in paths) {
+                    if (java.nio.file.Files.isSymbolicLink(path)) continue
+                    val file = path.toFile().canonicalFile
+                    if (file.parentFile == directory && file.isFile &&
+                        file.name.matches(Regex("gen_voice_${Regex.escape(token)}_[0-9]+\\.(wav|mp3)")) &&
+                        attachmentDao.countByStoragePath(file.absolutePath) == 0) file.delete()
+                }
+            }
         }
     }
 
@@ -1977,6 +2664,7 @@ class ChatViewModel @Inject constructor(
         hasNewerMessages: Boolean,
         focusedMessageId: Long? = null,
         windowRevision: Long = messageWindowRevision.get(),
+        resetReadingIntent: Boolean = false,
     ): Boolean {
         if (currentBranchId() != branchId || messageWindowRevision.get() != windowRevision) return false
         val normalized = withEffectiveSwipeSelections(
@@ -1986,6 +2674,7 @@ class ChatViewModel @Inject constructor(
         val excludedKeys = excludedKeysForWindow(branchId, normalized)
         val attachments = attachmentsForMessages(normalized)
         val displayLines = visibleDisplayLines(normalized, attachments)
+        val presentation = buildCharacterPresentationMaps(_state.value.participants, normalized)
         val applied = withContext(preparationDispatcher) {
             bookmarkMutex.withLock {
                 if (currentBranchId() != branchId || messageWindowRevision.get() != windowRevision) {
@@ -2005,6 +2694,11 @@ class ChatViewModel @Inject constructor(
                     }
                     current.copy(
                         messages = normalized,
+                        characterNames = presentation.names,
+                        characterAvatars = presentation.avatars,
+                        characterSummaries = presentation.summaries,
+                        characterCardImages = presentation.cardImages,
+                        characterColors = presentation.colors,
                         excludedContextKeys = excludedKeys,
                         displayLines = displayLines,
                         hasOlderMessages = hasOlderMessages,
@@ -2012,6 +2706,7 @@ class ChatViewModel @Inject constructor(
                         messageAttachments = attachments,
                         bookmarkedMessageIds = bookmarkIds,
                         focusedMessageId = focusedMessageId,
+                        historyWindowRestored = false,
                         roundChoiceOptions = roundChoices.options,
                         roundChoiceMessageId = roundChoices.sourceMessageId,
                         conversationTokenEstimate = null,
@@ -2022,6 +2717,8 @@ class ChatViewModel @Inject constructor(
         }
         if (applied && _state.value.messages == normalized && currentBranchId() == branchId &&
             messageWindowRevision.get() == windowRevision) {
+            if (resetReadingIntent) clearHistoryWindowIntent()
+            saveHistoryWindowIntent(_state.value, focusedMessageId)
             scheduleConversationTokenEstimate(normalized, excludedKeys, branchId, windowRevision)
         }
         return applied
@@ -2078,6 +2775,7 @@ class ChatViewModel @Inject constructor(
                 hasOlderMessages = rows.size > INITIAL_MESSAGE_WINDOW_SIZE,
                 hasNewerMessages = false,
                 windowRevision = windowRevision,
+                resetReadingIntent = true,
             )
         }
 
@@ -2104,9 +2802,51 @@ class ChatViewModel @Inject constructor(
             }
         }
 
+    /** Opens a search hit after validating and switching to its owning story line. */
+    fun openMessageInHistoryInBranch(branchId: String, messageId: Long, onResult: (Boolean) -> Unit): Boolean {
+        if (_state.value.isGenerating || branchId.isBlank()) return false
+        if (currentBranchId() == branchId) return openMessageInHistoryWithResult(messageId, onResult)
+        return openResolvedSourceInHistory(messageId, onResult) { branchId }
+    }
+
+    /** A correction's scope may be wider than its source line. Keep inherited visible originals in this line. */
+    fun openMemorySourceInHistory(messageId: Long, onResult: (Boolean) -> Unit): Boolean {
+        if (_state.value.isGenerating) return false
+        return openResolvedSourceInHistory(messageId, onResult) {
+            val currentBranch = currentBranchId()
+            if (getVisibleMessage(currentBranch, messageId) != null) currentBranch
+            else messageDao.getByIdInSession(messageId, sessionId)?.branchId
+        }
+    }
+
+    private fun openResolvedSourceInHistory(
+        messageId: Long,
+        onResult: (Boolean) -> Unit,
+        resolveBranch: suspend () -> String?,
+    ): Boolean {
+        return launchBranchTransition(navigationLabel = "正在定位原文…", invalidateSpeech = true) {
+            var opened = false
+            try {
+                branchVisibilityIndexManager.ensureReady()
+                val branchId = resolveBranch()?.takeIf { it.isNotBlank() } ?: return@launchBranchTransition
+                if (branchId != "main" && sessionBranchDao.getByBranch(sessionId, branchId) == null) return@launchBranchTransition
+                if (getVisibleMessage(branchId, messageId) == null) return@launchBranchTransition
+                opened = refreshMessagesUi(branchId, anchorMessageId = messageId,
+                    switchBranchOnSuccess = branchId != currentBranchId(), requireSourceAnchor = true) &&
+                    currentBranchId() == branchId && _state.value.focusedMessageId == messageId
+                if (opened) persistCurrentBranchSelection()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { }
+            finally { onResult(opened) }
+        }
+    }
+
     fun openBookmarkedMessage(messageId: Long, onOpened: () -> Unit = {}) {
         if (!_state.value.isReady) return
-        val launched = launchBranchTransition {
+        val launched = launchBranchTransition(invalidateSpeech = true) {
+            val revision = ++bookmarkReadOnlyRevision
+            clearBookmarkReadOnlyIntent()
+            val readingBranch = currentBranchId()
             _state.update { it.copy(bookmarkLocatingId = messageId) }
             var opened = false
             try {
@@ -2114,7 +2854,8 @@ class ChatViewModel @Inject constructor(
                 val visible = getVisibleMessage(currentBranch, messageId)
                 if (visible != null) {
                     if (isInactiveBookmarkedVariant(currentBranch, visible)) {
-                        _state.update { it.copy(bookmarkReadOnlyMessage = visible) }
+                        if (bookmarkReadOnlyRevision != revision) return@launchBranchTransition
+                        showBookmarkReadOnlyMessage(visible, readingBranch)
                         opened = true
                     } else {
                         opened = loadMessageWindow(currentBranch, messageId)
@@ -2126,7 +2867,8 @@ class ChatViewModel @Inject constructor(
                         val sourceAvailable = (target.branchId == "main" || branches.any { it.branchId == target.branchId }) &&
                             getVisibleMessage(target.branchId, messageId) != null
                         if (!sourceAvailable || isInactiveBookmarkedVariant(target.branchId, target)) {
-                            _state.update { it.copy(bookmarkReadOnlyMessage = target) }
+                            if (bookmarkReadOnlyRevision != revision) return@launchBranchTransition
+                            showBookmarkReadOnlyMessage(target, readingBranch)
                             opened = true
                         } else {
                             refreshMessagesUi(target.branchId, anchorMessageId = messageId, switchBranchOnSuccess = true)
@@ -2135,15 +2877,15 @@ class ChatViewModel @Inject constructor(
                         }
                     }
                 }
-                if (!opened) _state.update { it.copy(error = "收藏原文已删除或所在故事线已不可用") }
+                if (!opened && bookmarkReadOnlyRevision == revision) _state.update { it.copy(error = "收藏原文已删除或所在故事线已不可用") }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                _state.update { it.copy(error = "收藏原文定位失败，请重试") }
+                if (bookmarkReadOnlyRevision == revision) _state.update { it.copy(error = "收藏原文定位失败，请重试") }
             } finally {
-                _state.update { it.copy(bookmarkLocatingId = null) }
+                if (_state.value.bookmarkLocatingId == messageId) _state.update { it.copy(bookmarkLocatingId = null) }
             }
-            if (opened) onOpened()
+            if (opened && bookmarkReadOnlyRevision == revision) onOpened()
         }
         if (!launched) _state.update { it.copy(error = "当前正在生成或切换故事线，请稍后再定位收藏") }
     }
@@ -2155,8 +2897,64 @@ class ChatViewModel @Inject constructor(
         return selectedId != message.id
     }
 
+    private fun showBookmarkReadOnlyMessage(message: MessageEntity, readingBranch: String) {
+        savedStateHandle["bookmark_reader_id_$sessionId"] = message.id
+        savedStateHandle["bookmark_reader_branch_$sessionId"] = readingBranch
+        _state.update { it.copy(bookmarkReadOnlyId = message.id, bookmarkReadOnlyBranchId = readingBranch,
+            bookmarkReadOnlyMessage = message, bookmarkReadOnlyLoading = false, bookmarkReadOnlyError = null) }
+    }
+
+    private fun clearBookmarkReadOnlyIntent() {
+        savedStateHandle.remove<Long>("bookmark_reader_id_$sessionId")
+        savedStateHandle.remove<String>("bookmark_reader_branch_$sessionId")
+        _state.update { it.copy(bookmarkReadOnlyId = null, bookmarkReadOnlyBranchId = null,
+            bookmarkLocatingId = if (it.bookmarkLocatingId == it.bookmarkReadOnlyId) null else it.bookmarkLocatingId,
+            bookmarkReadOnlyMessage = null, bookmarkReadOnlyLoading = false, bookmarkReadOnlyError = null) }
+    }
+
     fun closeBookmarkedReadOnlyMessage() {
-        _state.update { it.copy(bookmarkReadOnlyMessage = null) }
+        ++bookmarkReadOnlyRevision
+        bookmarkReadOnlyJob?.cancel()
+        bookmarkReadOnlyJob = null
+        clearBookmarkReadOnlyIntent()
+    }
+
+    fun retryBookmarkedReadOnlyMessage() {
+        val current = _state.value
+        val id = current.bookmarkReadOnlyId ?: return
+        if (!current.isReady) return
+        val branch = current.bookmarkReadOnlyBranchId
+        if (branch.isNullOrBlank() || branch != currentBranchId()) {
+            closeBookmarkedReadOnlyMessage()
+            return
+        }
+        if (bookmarkReadOnlyJob?.isActive == true) return
+        val revision = ++bookmarkReadOnlyRevision
+        val launched = launchBranchTransition {
+            _state.update { it.copy(bookmarkReadOnlyLoading = true, bookmarkReadOnlyError = null, bookmarkLocatingId = id) }
+            fun isCurrent() = bookmarkReadOnlyRevision == revision && _state.value.isReady &&
+                _state.value.bookmarkReadOnlyId == id && currentBranchId() == branch
+            try {
+                // Restoration is always a session-scoped read. Ordinary bookmark navigation can switch lines.
+                val message = messageDao.getByIdInSession(id, sessionId)
+                if (!isCurrent()) return@launchBranchTransition
+                if (message == null || message.sessionId != sessionId) {
+                    clearBookmarkReadOnlyIntent()
+                    _state.update { it.copy(error = "收藏原文已删除，阅读已关闭") }
+                } else {
+                    _state.update { it.copy(bookmarkReadOnlyMessage = message) }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (isCurrent()) _state.update { it.copy(bookmarkReadOnlyError = "收藏原文读取失败，请重试") }
+            } finally {
+                if (bookmarkReadOnlyRevision == revision) _state.update { it.copy(bookmarkReadOnlyLoading = false,
+                    bookmarkLocatingId = if (it.bookmarkLocatingId == id) null else it.bookmarkLocatingId) }
+            }
+        }
+        if (launched) bookmarkReadOnlyJob = branchTransitionJob
+        else _state.update { it.copy(bookmarkReadOnlyLoading = false,
+            bookmarkReadOnlyError = "当前正在生成或切换故事线，请稍后重试") }
     }
 
     private suspend fun loadMessageWindow(
@@ -2179,7 +2977,52 @@ class ChatViewModel @Inject constructor(
     }
 
     fun clearFocusedMessage() {
+        savedStateHandle.remove<Long>("history_window_focus_$sessionId")
         _state.update { it.copy(focusedMessageId = null) }
+    }
+
+    fun rememberMessageReadingPosition(branchId: String, endId: Long?, size: Int, anchorId: Long) {
+        val current = _state.value
+        if (!current.isReady || current.isLoadingHistory || branchTransitionJob?.isActive == true ||
+            current.currentBranchId != branchId || current.messages.lastOrNull()?.id != endId ||
+            current.messages.size != size || current.messages.none { it.id == anchorId }) return
+        saveHistoryWindowIntent(current, anchorId)
+    }
+
+    // The window is a bounded read intent, separate from the one-shot focus command.
+    // No message bodies enter SavedStateHandle; paging replaces this cursor and capacity.
+    private fun saveHistoryWindowIntent(current: ChatContract.State, requestedAnchorId: Long? = current.focusedMessageId) {
+        if (sourceMessageId > 0L) savedStateHandle["history_navigation_branch_$sessionId"] = current.currentBranchId
+        val end = current.messages.lastOrNull()?.id
+        val sameBranch = savedStateHandle.get<String>("history_window_branch_$sessionId") == current.currentBranchId
+        val anchor = requestedAnchorId ?: if (sameBranch)
+            savedStateHandle.get<Long>("history_window_anchor_$sessionId") else null
+        val retainedAnchor = anchor?.takeIf { id -> current.messages.any { it.id == id } }
+        if (end == null || end == Long.MAX_VALUE ||
+            (!current.hasNewerMessages && current.messages.size <= INITIAL_MESSAGE_WINDOW_SIZE && retainedAnchor == null)) {
+            clearHistoryWindowIntent()
+            return
+        }
+        savedStateHandle["history_window_branch_$sessionId"] = current.currentBranchId
+        savedStateHandle["history_window_end_$sessionId"] = end
+        savedStateHandle["history_window_size_$sessionId"] = current.messages.size.coerceAtMost(MAX_MESSAGE_WINDOW_SIZE)
+        if (retainedAnchor != null && current.messages.any { it.id == retainedAnchor &&
+                !it.swipeGroupId.isNullOrBlank() && !it.includeInContext }) {
+            clearHistoryWindowIntent()
+            return
+        }
+        if (retainedAnchor != null) savedStateHandle["history_window_anchor_$sessionId"] = retainedAnchor
+        else savedStateHandle.remove<Long>("history_window_anchor_$sessionId")
+        if (current.focusedMessageId != null) savedStateHandle["history_window_focus_$sessionId"] = current.focusedMessageId
+        else savedStateHandle.remove<Long>("history_window_focus_$sessionId")
+    }
+
+    private fun clearHistoryWindowIntent() {
+        savedStateHandle.remove<String>("history_window_branch_$sessionId")
+        savedStateHandle.remove<Long>("history_window_end_$sessionId")
+        savedStateHandle.remove<Int>("history_window_size_$sessionId")
+        savedStateHandle.remove<Long>("history_window_anchor_$sessionId")
+        savedStateHandle.remove<Long>("history_window_focus_$sessionId")
     }
 
     fun showSavedImage(): Boolean {
@@ -2202,23 +3045,71 @@ class ChatViewModel @Inject constructor(
         persistCurrentDraft()
     }
 
+    private data class ImageRetrySnapshot(
+        val token: String,
+        val prompt: String,
+        val branchId: String,
+        val draftRevision: Long,
+        val targetsResolved: Boolean = false,
+        val characterId: Long? = null,
+        val worldId: Long? = null,
+        val encyclopediaId: Long? = null,
+    )
+
+    private var imageRetrySnapshot: ImageRetrySnapshot? = null
+
+    private fun clearImageRetry() {
+        imageRetrySnapshot = null
+        _state.update { it.copy(imageRetryNotice = null) }
+    }
+
+    fun dismissImageRetry(token: String) {
+        if (_state.value.imageRetryNotice?.token == token && imageRetrySnapshot?.token == token) clearImageRetry()
+    }
+
+    fun retryFailedImage(token: String): Boolean {
+        val snapshot = imageRetrySnapshot ?: return false
+        if (_state.value.imageRetryNotice?.token != token || snapshot.token != token ||
+            snapshot.branchId != currentBranchId()) return false
+        return generateManualImage(snapshot)
+    }
+
+    private fun failManualImage(snapshot: ImageRetrySnapshot, message: String) {
+        if (imageRetrySnapshot?.token != snapshot.token || currentBranchId() != snapshot.branchId) return
+        _state.update { it.copy(error = null, imageRetryNotice = ImageRetryNotice(snapshot.token, message)) }
+    }
+
     fun generateAndAttachUserMessage(prompt: String): Boolean {
         if (prompt.isBlank()) return false
-        val draftRevision = imageDraftRevision
+        return generateManualImage(ImageRetrySnapshot(UUID.randomUUID().toString(), prompt, currentBranchId(), imageDraftRevision))
+    }
+
+    private fun generateManualImage(original: ImageRetrySnapshot): Boolean {
+        val prompt = original.prompt
+        val draftRevision = original.draftRevision
         return launchSingleGeneration imageGeneration@{ generation ->
+            var snapshot = original.copy(token = UUID.randomUUID().toString())
+            imageRetrySnapshot = snapshot
             try {
                 val firstParticipant = participantDao.getBySession(sessionId).firstOrNull()
                 val char = firstParticipant?.characterId?.let { characterDao.getById(it) }
                 val world = sessionWorldDao.getBySession(sessionId)
+                generation.ensureCurrent()
+                if (original.targetsResolved && (original.characterId != char?.id || original.worldId != world?.id ||
+                    original.encyclopediaId != world?.encyclopediaId)) {
+                    clearImageRetry()
+                    _state.update { it.copy(error = "配图对象已改变，请重新生成") }
+                    return@imageGeneration
+                }
+                snapshot = snapshot.copy(targetsResolved = true, characterId = char?.id, worldId = world?.id, encyclopediaId = world?.encyclopediaId)
+                imageRetrySnapshot = snapshot
                 val primary = ApiKeyResolver.resolveImageGenPrimaryResolved(char, world, secureStorage)
                 if (primary.apiKey.isBlank()) {
                     UsbSessionLog.w(
                         "ChatImageGen",
                         "user image gen: missing key sid=$sessionId model=${primary.model}",
                     )
-                    _state.value = _state.value.copy(
-                        error = UserFacingStrings.imageGenKeyMissing()
-                    )
+                    failManualImage(snapshot, UserFacingStrings.imageGenKeyMissing())
                     return@imageGeneration
                 }
                 val attempt = generateImageWithPublicFallback(
@@ -2239,7 +3130,7 @@ class ChatViewModel @Inject constructor(
                             generation.ensureCurrent()
                             if (local == null) {
                                 UsbSessionLog.w("ChatImageGen", "user image gen: save to session failed sid=$sessionId")
-                                _state.value = _state.value.copy(error = UserFacingStrings.imageSaveFailed())
+                                failManualImage(snapshot, UserFacingStrings.imageSaveFailed())
                                 return@fold
                             }
                             withContext(NonCancellable) {
@@ -2264,6 +3155,7 @@ class ChatViewModel @Inject constructor(
                                     )
                                 )
                                 committed = true
+                                clearImageRetry()
                                 if (draftRevision == imageDraftRevision && _state.value.imagePrompt.trim() == prompt.trim()) {
                                     updateImagePrompt("")
                                 }
@@ -2290,18 +3182,19 @@ class ChatViewModel @Inject constructor(
                                 "ChatImageGen",
                                 "user image gen failed sid=$sessionId model=${attempt.modelUsed} type=${e.javaClass.simpleName}",
                             )
-                            _state.value = _state.value.copy(error = UserFacingStrings.streamErrorDetail(e.message))
+                            failManualImage(snapshot, UserFacingStrings.streamErrorDetail(e.message))
                         }
                     )
                 } finally {
                     if (!committed) rollbackPendingMedia(insertedMessageId, generatedPath)
                 }
             } catch (e: CancellationException) {
+                if (imageRetrySnapshot?.token == snapshot.token) clearImageRetry()
                 throw e
             } catch (e: Exception) {
                 UsbSessionLog.e("ChatImageGen", "user image gen exception sid=$sessionId type=${e.javaClass.simpleName}")
                 generation.ensureCurrent()
-                _state.value = _state.value.copy(error = UserFacingStrings.streamErrorDetail(e.message))
+                failManualImage(snapshot, UserFacingStrings.streamErrorDetail(e.message))
             }
         }
     }
@@ -2323,17 +3216,86 @@ class ChatViewModel @Inject constructor(
 
     private var speechJob: Job? = null
     private var speechRevision = 0L
+    private var speechScreenAttached = false
+
+    fun attachSpeechScreen() {
+        speechScreenAttached = true
+    }
+
+    fun detachSpeechScreen() {
+        speechScreenAttached = false
+        stopSpeaking()
+    }
+
+    private fun canStartSpeech(): Boolean = speechScreenAttached &&
+        branchTransitionJob?.isActive != true && !_state.value.voiceSelectionSaving
+    private data class SpeechRequest(
+        val revision: Long,
+        val token: String,
+        val text: String,
+        val sessionId: Long,
+        val branchId: String,
+        val characterId: Long?,
+        val control: SpeechPlaybackControl = SpeechPlaybackControl(),
+    )
+    private data class SpeechRetrySnapshot(
+        val token: String,
+        val text: String,
+        val sessionId: Long,
+        val branchId: String,
+        val characterId: Long?,
+        val choice: com.mojing.app.data.VoiceChoice,
+        val source: String,
+        val attachmentMessageId: Long? = null,
+    )
+    private var speechRetrySnapshot: SpeechRetrySnapshot? = null
     private val _speechActive = MutableStateFlow(false)
     val speechActive: StateFlow<Boolean> = _speechActive.asStateFlow()
+    private var speechControl: SpeechPlaybackControl? = null
+    private val _speechPlayback = MutableStateFlow(SpeechPlaybackControl.Snapshot())
+    val speechPlayback: StateFlow<SpeechPlaybackControl.Snapshot> = _speechPlayback.asStateFlow()
 
-    fun stopSpeaking() {
+    fun pauseSpeaking() {
+        if (canStartSpeech() && speechJob?.isActive == true) speechControl?.pause()
+    }
+
+    fun resumeSpeaking() {
+        if (canStartSpeech() && speechJob?.isActive == true) speechControl?.resume()
+    }
+
+    fun stopSpeaking(interruptAutomaticSynthesis: Boolean = false) {
+        val ownsManualPlayback = speechJob != null || speechControl != null || _speechActive.value
         speechRevision++
+        speechControl?.close()
+        speechControl = null
+        _speechPlayback.value = SpeechPlaybackControl.Snapshot()
         speechJob?.cancel()
         speechJob = null
         _speechActive.value = false
-        _state.update { it.copy(speechVoiceRequestLabel = "") }
-        AndroidTts.stop()
-        com.mojing.app.media.TtsPlayer.stop()
+        speechRetrySnapshot = null
+        _state.update { it.copy(speechVoiceRequestLabel = "", speechRetryNotice = null) }
+        if (ownsManualPlayback || interruptAutomaticSynthesis) {
+            AndroidTts.stop()
+            com.mojing.app.media.TtsPlayer.stop()
+        }
+    }
+
+    fun dismissSpeechRetry(token: String) {
+        val notice = _state.value.speechRetryNotice
+        if (notice?.token == token && speechRetrySnapshot?.token == notice.snapshotToken) {
+            speechRetrySnapshot = null
+            _state.update { it.copy(speechRetryNotice = null) }
+        }
+    }
+
+    fun retryFailedSpeech(token: String) {
+        if (!canStartSpeech()) return
+        val snapshot = speechRetrySnapshot ?: return
+        val notice = _state.value.speechRetryNotice ?: return
+        if (notice.token != token || notice.snapshotToken != snapshot.token ||
+            snapshot.sessionId != sessionId || snapshot.branchId != currentBranchId()) return
+        if (speechJob?.isActive == true || _speechActive.value) return
+        speakSnapshot(snapshot)
     }
 
     fun currentVoiceChoice(): com.mojing.app.data.VoiceChoice =
@@ -2341,11 +3303,11 @@ class ChatViewModel @Inject constructor(
 
     fun selectVoiceChoice(choice: com.mojing.app.data.VoiceChoice, onSaved: () -> Unit) {
         if (_state.value.voiceSelectionSaving) return
+        stopSpeaking()
         _state.update { it.copy(voiceSelectionSaving = true, voiceSelectionError = null) }
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) { com.mojing.app.data.VoicePreferences(appContext).saveSession(sessionId, choice) }
-                stopSpeaking()
                 onSaved()
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) { _state.update { it.copy(voiceSelectionError = "语音选择未保存，请重试") } }
@@ -2354,54 +3316,63 @@ class ChatViewModel @Inject constructor(
     }
 
     fun speakMessage(text: String, characterId: Long? = null) {
-        stopSpeaking()
-        val revision = ++speechRevision
+        if (!canStartSpeech()) return
+        stopSpeaking(interruptAutomaticSynthesis = true)
+        val request = SpeechRequest(
+            revision = ++speechRevision,
+            token = UUID.randomUUID().toString(),
+            text = text,
+            sessionId = sessionId,
+            branchId = currentBranchId(),
+            characterId = characterId,
+        )
+        speechControl = request.control
+        _speechPlayback.value = SpeechPlaybackControl.Snapshot(phase = SpeechPlaybackControl.Phase.PREPARING)
         _speechActive.value = true
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
-                val cleaned = withContext(preparationDispatcher) { TtsSpeakText.normalizeForSpeech(text) }
-                if (cleaned.isBlank()) {
-                    _state.update { it.copy(error = UserFacingStrings.ttsContentEmptyAfterClean()) }
-                    return@launch
-                }
-                val char = characterId?.let { characterDao.getById(it) }
-                val preferences = com.mojing.app.data.VoicePreferences(appContext)
-                val sessionSelection = preferences.sessionSelection(sessionId)
-                val sessionChoice = sessionSelection.takeUnless { it.engineId == "inherit" } ?: preferences.global()
-                val choice = com.mojing.app.data.resolveVoiceChoice(char?.voiceProvider, char?.voiceModel, sessionChoice)
-                val source = when {
-                    com.mojing.app.data.characterHasOwnVoice(char?.voiceProvider) -> "角色设置"
-                    sessionSelection.engineId != "inherit" -> "对话设置"
-                    else -> "全局设置"
-                }
-                if (speechRevision == revision) {
-                    _state.update { it.copy(speechVoiceRequestLabel = "已请求$source：${choice.label()}") }
-                }
-                if (choice.engineId == "azure") {
-                    val (region, key) = withContext(Dispatchers.IO) { preferences.azureRegion to preferences.azureKey }
-                    val ok = com.mojing.app.media.AzureSpeech.speak(appContext, cleaned, region, key, choice.voiceId)
-                    if (!ok) _state.update { it.copy(error = "语音播放未完成，请重新朗读") }
-                } else {
-                    var reportedFailure = false
-                    val ok = try {
-                        AndroidTts.speakAwaitCompletion(appContext, cleaned, choice)
-                    } catch (error: IllegalStateException) {
-                        reportedFailure = true
-                        _state.update { it.copy(error = error.message ?: "系统朗读失败，请重试") }
-                        false
+                withSpeechPlayback(request) {
+                    val cleaned = withContext(preparationDispatcher) { TtsSpeakText.normalizeForSpeech(request.text) }
+                    if (!isCurrentSpeechRequest(request)) return@withSpeechPlayback
+                    if (cleaned.isBlank()) {
+                        _state.update { it.copy(error = UserFacingStrings.ttsContentEmptyAfterClean()) }
+                        return@withSpeechPlayback
                     }
-                    if (!ok && !reportedFailure) {
-                        _state.update { it.copy(error = "系统朗读未完成，请重新朗读") }
+                    val char = characterId?.let { characterDao.getById(it) }
+                    if (!isCurrentSpeechRequest(request)) return@withSpeechPlayback
+                    val preferences = com.mojing.app.data.VoicePreferences(appContext)
+                    val sessionSelection = preferences.sessionSelection(sessionId)
+                    val sessionChoice = sessionSelection.takeUnless { it.engineId == "inherit" } ?: preferences.global()
+                    val choice = com.mojing.app.data.resolveVoiceChoice(char?.voiceProvider, char?.voiceModel, sessionChoice)
+                    val source = when {
+                        com.mojing.app.data.characterHasOwnVoice(char?.voiceProvider) -> "角色设置"
+                        sessionSelection.engineId != "inherit" -> "对话设置"
+                        else -> "全局设置"
                     }
+                    val snapshot = SpeechRetrySnapshot(
+                        token = request.token,
+                        text = cleaned,
+                        sessionId = request.sessionId,
+                        branchId = request.branchId,
+                        characterId = request.characterId,
+                        choice = choice,
+                        source = source,
+                    )
+                    if (!isCurrentSpeechRequest(request)) return@withSpeechPlayback
+                    speechRetrySnapshot = snapshot
+                    playSpeech(request, snapshot)
                 }
             } catch (e: CancellationException) { throw e }
-            catch (e: com.mojing.app.media.AzureSpeech.SpeechException) {
-                _state.update { it.copy(error = com.mojing.app.media.AzureSpeech.failureMessage(e)) }
+            catch (e: Exception) {
+                if (isCurrentSpeechRequest(request)) {
+                    _state.update { it.copy(error = UserFacingStrings.remoteRequestFailed(e)) }
+                }
             }
-            catch (e: Exception) { _state.update { it.copy(error = UserFacingStrings.remoteRequestFailed(e)) } }
             finally {
-                if (speechRevision == revision) {
+                if (speechJob === coroutineContext[Job]) {
                     speechJob = null
+                    speechControl = null
+                    _speechPlayback.value = SpeechPlaybackControl.Snapshot()
                     _speechActive.value = false
                     _state.update { it.copy(speechVoiceRequestLabel = "") }
                 }
@@ -2409,6 +3380,155 @@ class ChatViewModel @Inject constructor(
         }
         speechJob = job
         job.start()
+    }
+
+    private fun speakSnapshot(snapshot: SpeechRetrySnapshot) {
+        stopSpeaking(interruptAutomaticSynthesis = true)
+        val request = SpeechRequest(
+            revision = ++speechRevision,
+            token = snapshot.token,
+            text = snapshot.text,
+            sessionId = snapshot.sessionId,
+            branchId = snapshot.branchId,
+            characterId = snapshot.characterId,
+        )
+        speechRetrySnapshot = snapshot
+        speechControl = request.control
+        _speechPlayback.value = SpeechPlaybackControl.Snapshot(phase = SpeechPlaybackControl.Phase.PREPARING)
+        _speechActive.value = true
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                withSpeechPlayback(request) { playSpeech(request, snapshot) }
+            } catch (e: CancellationException) { throw e }
+            finally {
+                if (speechJob === coroutineContext[Job]) {
+                    speechJob = null
+                    speechControl = null
+                    _speechPlayback.value = SpeechPlaybackControl.Snapshot()
+                    _speechActive.value = false
+                    _state.update { it.copy(speechVoiceRequestLabel = "") }
+                }
+            }
+        }
+        speechJob = job
+        job.start()
+    }
+
+    private fun isCurrentSpeechRequest(request: SpeechRequest): Boolean =
+        canStartSpeech() && speechRevision == request.revision &&
+            request.sessionId == sessionId &&
+            request.branchId == currentBranchId()
+
+    /** Progress collection is a child of the existing speech job, never a second playback owner. */
+    private suspend fun withSpeechPlayback(request: SpeechRequest, play: suspend () -> Unit) = coroutineScope {
+        val progress = launch(start = CoroutineStart.UNDISPATCHED) {
+            request.control.snapshot.collect { snapshot ->
+                if (isCurrentSpeechRequest(request) && speechControl === request.control) {
+                    _speechPlayback.value = if (snapshot.phase == SpeechPlaybackControl.Phase.IDLE) {
+                        snapshot.copy(phase = SpeechPlaybackControl.Phase.PREPARING)
+                    } else snapshot
+                }
+            }
+        }
+        try { play() }
+        finally {
+            progress.cancel()
+            request.control.close()
+        }
+    }
+
+    private suspend fun playSpeech(request: SpeechRequest, snapshot: SpeechRetrySnapshot) {
+        if (!isCurrentSpeechRequest(request)) return
+        _state.update { it.copy(speechRetryNotice = null, speechVoiceRequestLabel =
+            if (snapshot.attachmentMessageId != null) "正在播放语音附件" else "已请求${snapshot.source}：${snapshot.choice.label()}") }
+        try {
+            val ok = if (snapshot.attachmentMessageId != null) {
+                playStoredVoiceAttachments(request, snapshot.attachmentMessageId)
+            } else if (snapshot.choice.engineId == "azure") {
+                val preferences = com.mojing.app.data.VoicePreferences(appContext)
+                val (region, key) = withContext(Dispatchers.IO) { preferences.azureRegion to preferences.azureKey }
+                if (!isCurrentSpeechRequest(request)) return
+                com.mojing.app.media.AzureSpeech.speak(appContext, snapshot.text, region, key, snapshot.choice.voiceId, request.control)
+            } else {
+                if (!isCurrentSpeechRequest(request)) return
+                AndroidTts.speakAwaitCompletion(appContext, snapshot.text, snapshot.choice, request.control)
+            }
+            if (!ok) failSpeech(request, snapshot, when {
+                snapshot.attachmentMessageId != null -> "语音附件未播放完成，请重试"
+                snapshot.choice.engineId == "azure" -> "语音播放未完成，请重试"
+                else -> "系统朗读未完成，请重试"
+            })
+            else if (isCurrentSpeechRequest(request) && speechRetrySnapshot?.token == snapshot.token) {
+                speechRetrySnapshot = null
+                _state.update { it.copy(speechRetryNotice = null) }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: com.mojing.app.media.AzureSpeech.SpeechException) {
+            failSpeech(request, snapshot, com.mojing.app.media.AzureSpeech.failureMessage(e))
+        } catch (e: IllegalStateException) {
+            failSpeech(request, snapshot, e.message ?: "系统朗读失败，请重试")
+        } catch (e: Exception) {
+            failSpeech(request, snapshot, UserFacingStrings.remoteRequestFailed(e))
+        }
+    }
+
+    private fun failSpeech(request: SpeechRequest, snapshot: SpeechRetrySnapshot, message: String) {
+        if (!isCurrentSpeechRequest(request) || speechRetrySnapshot?.token != snapshot.token) return
+        _state.update {
+            it.copy(speechRetryNotice = SpeechRetryNotice(
+                token = UUID.randomUUID().toString(),
+                snapshotToken = snapshot.token,
+                message = message,
+            ))
+        }
+    }
+
+    fun playVoiceAttachments(messageId: Long) {
+        if (!canStartSpeech()) return
+        speakSnapshot(SpeechRetrySnapshot(
+            token = UUID.randomUUID().toString(), text = "语音附件", sessionId = sessionId,
+            branchId = currentBranchId(), characterId = null,
+            choice = com.mojing.app.data.VoiceChoice("system"), source = "语音附件",
+            attachmentMessageId = messageId,
+        ))
+    }
+
+    private suspend fun playStoredVoiceAttachments(request: SpeechRequest, messageId: Long): Boolean {
+        val message = getVisibleMessage(request.branchId, messageId) ?: return false
+        if (message.sessionId != sessionId || !isCurrentSpeechRequest(request)) return false
+        val parts = attachmentDao.getByMessage(messageId).filter { it.assetType == "voice" && it.mimeType.startsWith("audio/") }
+        if (parts.isEmpty() || !isCurrentSpeechRequest(request)) return false
+        var handle: com.mojing.app.media.TtsPlayer.PlaybackHandle? = null
+        val control = request.control
+        val lease = control.bind(
+            onPause = { handle?.let { com.mojing.app.media.TtsPlayer.pause(it) } },
+            onResume = { handle?.let { com.mojing.app.media.TtsPlayer.resume(it) } },
+            onClose = { handle?.let { com.mojing.app.media.TtsPlayer.stop(it) } },
+        ) ?: return false
+        try {
+            for ((index, part) in parts.withIndex()) {
+                if (!isCurrentSpeechRequest(request) || !control.awaitResume(lease)) return false
+                val file = java.io.File(part.storagePath)
+                if (!withContext(Dispatchers.IO) { file.isFile && file.length() > 0L }) return false
+                if (!isCurrentSpeechRequest(request) || !control.owns(lease)) return false
+                control.updateIfOwned(lease) { it.copy(phase = SpeechPlaybackControl.Phase.PREPARING, segmentIndex = index + 1, segmentCount = parts.size) }
+                val current = com.mojing.app.media.TtsPlayer.playOwned(file, deleteWhenFinished = false,
+                    initialPaused = control.isPaused(), onPhaseChanged = { phase ->
+                        control.updateIfOwned(lease) { it.copy(phase = when (phase) {
+                            com.mojing.app.media.TtsPlayer.Phase.PREPARING -> SpeechPlaybackControl.Phase.PREPARING
+                            com.mojing.app.media.TtsPlayer.Phase.PLAYING -> SpeechPlaybackControl.Phase.PLAYING
+                            com.mojing.app.media.TtsPlayer.Phase.PAUSED -> SpeechPlaybackControl.Phase.PAUSED
+                        }) }
+                    }) ?: return false
+                handle = current
+                if (!com.mojing.app.media.TtsPlayer.awaitCompletion(current)) return false
+            }
+            return true
+        } finally {
+            handle?.let { com.mojing.app.media.TtsPlayer.stop(it) }
+            control.unbind(lease)
+        }
     }
 
     /** 朗读输入框当前文字（不发送消息） */
@@ -2425,7 +3545,13 @@ class ChatViewModel @Inject constructor(
     ): Boolean {
         val participants = participantDao.getBySession(sessionId)
             .sortedWith(compareBy({ it.sortOrder }, { it.id }))
+        val selectedManualCharacterId = _state.value.manualReplyCharacterId
         if (participants.isEmpty()) {
+            if (secureStorage.speakerTurnMode == "manual" && selectedManualCharacterId != null) {
+                clearInvalidManualSpeakerSelection(selectedManualCharacterId)
+                refreshMessagesUi()
+                return false
+            }
             _state.value = _state.value.copy(error = UserFacingStrings.chatNoParticipant())
             refreshMessagesUi()
             return false
@@ -2440,6 +3566,11 @@ class ChatViewModel @Inject constructor(
         val maxSpeakers = secureStorage.maxAutoSpeakers.coerceIn(1, 8)
         val pick = if (manualMode) {
             if (manualCharId != null) {
+                if (participants.none { it.characterId == manualCharId } || !charactersById.containsKey(manualCharId)) {
+                    clearInvalidManualSpeakerSelection(manualCharId)
+                    refreshMessagesUi()
+                    return false
+                }
                 SpeakerScheduler.PickResult(
                     characterIds = listOf(manualCharId),
                     clearForceNextParticipantIds = emptyList(),
@@ -2467,6 +3598,7 @@ class ChatViewModel @Inject constructor(
                 participants = updatedParticipants,
                 characterNames = presentation.names,
                 characterAvatars = presentation.avatars,
+                characterSummaries = presentation.summaries,
                 characterCardImages = presentation.cardImages,
                 characterColors = presentation.colors,
             )
@@ -2474,7 +3606,11 @@ class ChatViewModel @Inject constructor(
         }
         val orderedCharacters = pick.characterIds.distinct().mapNotNull { characterDao.getById(it) }
         if (orderedCharacters.isEmpty()) {
-            _state.value = _state.value.copy(error = UserFacingStrings.chatNoParticipant())
+            if (manualMode && manualCharId != null) {
+                clearInvalidManualSpeakerSelection(manualCharId)
+            } else {
+                _state.value = _state.value.copy(error = UserFacingStrings.chatNoParticipant())
+            }
             refreshMessagesUi()
             return false
         }
@@ -2542,8 +3678,10 @@ class ChatViewModel @Inject constructor(
     }
 
     fun sendMessage() {
+        if (rejectDuringMediaBundle()) return
         val current = _state.value
         if (!current.isReady || current.sessionNotFound) return
+        if (rejectPendingReplyRecovery()) return
         if (!canContinueFromCurrentWindow()) return
         if (current.memoryOperationRunning) {
             _state.update { it.copy(error = "记忆整理中，请稍候再发送") }
@@ -2559,11 +3697,16 @@ class ChatViewModel @Inject constructor(
             return
         }
         if (generationJob?.isActive == true || _state.value.isGenerating) return
+        if (characterStateClearJob?.isActive == true) {
+            _state.update { it.copy(error = "角色状态正在清除，请稍后再发送") }
+            return
+        }
         if (current.quotingMessage != null && current.quotingSnippet == null) {
             _state.update { it.copy(error = "引用正文正在准备，请稍候再发送") }
             return
         }
         val draftSubmissionId = UUID.randomUUID().toString()
+        if (rejectPendingWorldWrite()) return
         if (!beginDraftSubmission(draftSubmissionId)) return
         val quote = current.quotingMessage
         val submittedQuoteRevision = quoteDraftRevision
@@ -2607,6 +3750,10 @@ class ChatViewModel @Inject constructor(
             var submissionCommitted = false
             var remoteRequestStarted = false
             try {
+                if (!validateManualSpeakerSelectionBeforeSubmission()) {
+                    finishDraftSubmission(draftSubmissionId)
+                    return@sendGeneration
+                }
                 val displayContent = when {
                     outboundText.isNotBlank() -> outboundText
                     text.isNotBlank() -> text
@@ -2699,6 +3846,35 @@ class ChatViewModel @Inject constructor(
         if (!launched) finishDraftSubmission(draftSubmissionId)
     }
 
+    /** A selected manual speaker must still be a live participant before the user message is committed. */
+    private suspend fun validateManualSpeakerSelectionBeforeSubmission(): Boolean {
+        if (secureStorage.speakerTurnMode != "manual") return true
+        val selectedId = _state.value.manualReplyCharacterId ?: return true
+        val isCurrentParticipant = participantDao.getBySession(sessionId).any { it.characterId == selectedId }
+        val characterStillExists = characterDao.getById(selectedId) != null
+        if (_state.value.manualReplyCharacterId != selectedId) {
+            _state.update { it.copy(error = "发言角色已变更，请重新发送") }
+            return false
+        }
+        if (isCurrentParticipant && characterStillExists) return true
+        clearInvalidManualSpeakerSelection(selectedId)
+        return false
+    }
+
+    private fun clearInvalidManualSpeakerSelection(selectedId: Long) {
+        _state.update { state ->
+            if (state.manualReplyCharacterId != selectedId) {
+                state
+            } else {
+                state.copy(
+                    manualReplyCharacterId = null,
+                    participants = state.participants.filterNot { it.characterId == selectedId },
+                    error = "选中的发言角色已移出当前对话，请重新选择",
+                )
+            }
+        }
+    }
+
     private suspend fun updateGeneratedSessionTitle() {
         val generatedTitle = _state.value.messages
             .firstOrNull()
@@ -2710,7 +3886,8 @@ class ChatViewModel @Inject constructor(
         sessionDao.touchWithGeneratedTitle(sessionId, generatedTitle)
     }
 
-    private fun getModelMaxContext(model: String): Int {
+    /** Legacy soft history quota only, never evidence of provider capacity. */
+    private fun getModelSoftContext(model: String): Int {
         return when {
             model.contains("128k", ignoreCase = true) -> 128000
             model.contains("32k", ignoreCase = true) -> 32000
@@ -2767,6 +3944,10 @@ class ChatViewModel @Inject constructor(
         val branchId = generation.branchId
         val allMessages = generation.contextMessagesOverride ?: getContextMessagesForBranch(branchId)
 
+        val contextWindow = requestPlatform()?.modelContextWindows?.get(model)
+            ?: com.mojing.app.domain.config.ModelRequestSettingsResolver.contextWindow(
+                generation.modelPlatforms, apiKey, preStreamBase, model)
+
         if (runMemoryCompact) {
             val compactThreshold = secureStorage.memoryCompactThreshold.coerceIn(10, 2000)
             val compacted = try { memoryCompactor.compactIfNeeded(
@@ -2776,6 +3957,7 @@ class ChatViewModel @Inject constructor(
                 baseUrl = preStreamBase,
                 model = model,
                 threshold = compactThreshold,
+                contextWindow = contextWindow,
                 onProgress = { chunk ->
                     generation.ensureCurrent()
                     _state.update { it.copy(memoryCompactionChunk = chunk) }
@@ -2803,7 +3985,7 @@ class ChatViewModel @Inject constructor(
         }
         val attemptUserMessageId = CharacterSnapshotCadence.dueUserMessageId(recentUserIds)
         var snapshot = attemptUserMessageId?.let {
-            snapshotExtractor.extract(allMessages, character, apiKey, preStreamBase, model)
+            snapshotExtractor.extract(allMessages, character, apiKey, preStreamBase, model, contextWindow = contextWindow)
         }
         if (attemptUserMessageId != null) {
             generation.ensureCurrent()
@@ -2831,7 +4013,9 @@ class ChatViewModel @Inject constructor(
             } catch (_: Exception) { }
         }
 
-        val budget = tokenBudgetManager.calculateBudget(getModelMaxContext(model), character.maxTokens)
+        val budget = tokenBudgetManager.calculateBudget(
+            contextWindow ?: getModelSoftContext(model), character.maxTokens, contextWindow,
+        )
         val memorySegments = memorySegmentDao.getRecentForBranch(sessionId, branchId)
         val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, branchId)
         val recallQuery = allMessages.takeLast(15).joinToString("\n") {
@@ -2846,6 +4030,7 @@ class ChatViewModel @Inject constructor(
             userMessage = allMessages.lastOrNull()?.content ?: "",
             recallQueryText = recallQuery,
             memorySummary = memorySegments.joinToString("\n") { "- ${it.summary}" },
+            automaticSummary = contextWindow != null && contextBuilder.areAutomaticSummaries(memorySegments),
             memoryCorrections = memoryCorrections,
             universalContextMemoryText = universalMemoryText,
             activeCharacterNames = _state.value.characterNames.values.toList(),
@@ -2866,6 +4051,7 @@ class ChatViewModel @Inject constructor(
         var llmHookBase = preStreamBase
         var sawDone = false
         var streamErrorMessage: String? = null
+        var contextLimitError = false
         var receivedText = ""
         generation.interruptedReplySpeakerType = "character"
         generation.interruptedReplyCharacterId = character.id
@@ -2883,6 +4069,8 @@ class ChatViewModel @Inject constructor(
             chatEngine.streamGenerateWithMemory(
                 sessionId, character, recentHistory, context.systemPrompt, snapshot, budget,
                 apiKey, streamBase, model, secureStorage.userName, secureStorage.userDescription,
+                platformId = requestPlatform()?.id,
+                promptDocument = context.promptDocument,
             ).collect { s ->
             when (s) {
                 is StreamState.Generating -> {
@@ -2976,6 +4164,7 @@ class ChatViewModel @Inject constructor(
                                 apiKey = apiKey,
                                 baseUrl = llmHookBase,
                                 model = model,
+                                contextWindow = contextWindow,
                                 worldText = world?.worldPrompt.orEmpty(),
                                 activeCharacterNames = _state.value.characterNames.values.toList(),
                             )
@@ -2987,7 +4176,8 @@ class ChatViewModel @Inject constructor(
                                 messages = msgs,
                                 apiKey = apiKey,
                                 baseUrl = llmHookBase,
-                                model = model
+                                model = model,
+                                contextWindow = contextWindow,
                             )
                             refreshEventNodesForBranch(branchId)
                             if (world?.autoSedimentEnabled == true && world.encyclopediaId != null) {
@@ -2998,7 +4188,8 @@ class ChatViewModel @Inject constructor(
                                     messages = msgs.takeLast(10),
                                     apiKey = apiKey,
                                     baseUrl = llmHookBase,
-                                    model = model
+                                    model = model,
+                                    contextWindow = contextWindow,
                                 )
                             }
                         }
@@ -3014,6 +4205,7 @@ class ChatViewModel @Inject constructor(
                 is StreamState.Error -> {
                     generation.ensureCurrent()
                     streamErrorMessage = s.message
+                    contextLimitError = s.contextLimit
                     UsbSessionLog.w(
                         "ChatLlm",
                         "session=$sessionId error model=${model.trim()} messageLen=${s.message.length}",
@@ -3029,11 +4221,15 @@ class ChatViewModel @Inject constructor(
             }
             if (streamErrorMessage != null) {
                 val partial = receivedText.trim()
-                if (partial.isNotEmpty() || idx >= streamBases.lastIndex) break
+                if (contextLimitError || partial.isNotEmpty() || idx >= streamBases.lastIndex) break
             }
         }
         }
         if (!sawDone && streamErrorMessage != null) {
+            if (contextLimitError) {
+                _state.update { it.copy(streamingText = "", contextBudgetError = streamErrorMessage) }
+                return false
+            }
             val retained = retainInterruptedReply(generation, receivedText, "character", character.id)
             _state.value = _state.value.copy(
                 streamingText = "",
@@ -3103,17 +4299,41 @@ class ChatViewModel @Inject constructor(
     }
 
     private fun scheduleAutoNarratorIfNeeded(branchId: String) {
+        cancelPendingAutoNarrator()
         val world = _state.value.world ?: return
         if (!world.narratorEnabled) return
-        viewModelScope.launch {
-            val msgs = getContextMessagesForBranch(branchId)
-            val lastNarratorIdx = msgs.indexOfLast { it.speakerType == "narrator" }
-            val since = if (lastNarratorIdx < 0) msgs.size else msgs.size - lastNarratorIdx - 1
-            if (!narratorEngine.shouldNarrate(world, since)) return@launch
-            kotlinx.coroutines.delay(450)
-            if (_state.value.isGenerating || currentBranchId() != branchId) return@launch
-            requestNarrator("")
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            val owner = coroutineContext[Job]
+            try {
+                val msgs = getContextMessagesForBranch(branchId)
+                val lastNarratorIdx = msgs.indexOfLast { it.speakerType == "narrator" }
+                val since = if (lastNarratorIdx < 0) msgs.size else msgs.size - lastNarratorIdx - 1
+                if (!narratorEngine.shouldNarrate(world, since)) return@launch
+                kotlinx.coroutines.delay(450)
+                if (autoNarratorJob !== owner || _state.value.isGenerating ||
+                    currentBranchId() != branchId || branchTransitionJob?.isActive == true ||
+                    _state.value.world?.narratorEnabled != true) return@launch
+                // The next generation may cancel pending narration, but must not cancel its own caller.
+                autoNarratorJob = null
+                requestNarrator("")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                if (autoNarratorJob === owner) {
+                    _state.update { it.copy(error = "自动旁白准备失败，可手动请求旁白") }
+                }
+            } finally {
+                if (autoNarratorJob === owner) autoNarratorJob = null
+            }
         }
+        autoNarratorJob = job
+        job.start()
+    }
+
+    fun cancelPendingAutoNarrator() {
+        val pending = autoNarratorJob
+        autoNarratorJob = null
+        pending?.cancel()
     }
 
     private fun shouldPromoteNarratorPublicBases(world: SessionWorldEntity): Boolean {
@@ -3142,6 +4362,72 @@ class ChatViewModel @Inject constructor(
             })
     }
 
+    private fun chapterForkDraftOwner(branchId: String, messageId: Long): String =
+        "chapter_fork:${UUID.nameUUIDFromBytes(branchId.toByteArray(Charsets.UTF_8))}:$messageId"
+
+    fun loadChapterForkInput(branchId: String, messageId: Long): ChapterInputDraft =
+        loadChapterInput(chapterForkDraftOwner(branchId, messageId))
+
+    fun saveChapterForkInput(branchId: String, messageId: Long, title: String, direction: String, synchronous: Boolean): Boolean =
+        saveChapterInput(chapterForkDraftOwner(branchId, messageId), title, direction, synchronous)
+
+    fun requestChapterFork(messageId: Long, expectedBranchId: String, title: String, direction: String): Boolean {
+        if (expectedBranchId != currentBranchId()) return false
+        val input = ChapterInputDraft(title, direction)
+        if (!saveChapterForkInput(expectedBranchId, messageId, title, direction, true)) {
+            _state.update { it.copy(error = "章节输入未能保存到本机，请检查存储空间") }
+            return false
+        }
+        var createdBranch: String? = null
+        var ready = false
+        return launchBranchTransition(navigationLabel = "正在创建续写故事线…", invalidateSpeech = true,
+            onSuccess = {
+                val child = createdBranch
+                if (ready && child != null && currentBranchId() == child) {
+                    if (!requestNarrator(nextChapter = true, chapterTitle = title, guidance = direction,
+                            onChapterCommitted = {
+                                listOf(child, chapterForkDraftOwner(expectedBranchId, messageId)).forEach { owner ->
+                                    val cleared = runCatching { chatDraftStore.clearChapterInputIfMatching(sessionId, owner, input) }.getOrDefault(false)
+                                    if (!cleared && runCatching { chatDraftStore.loadChapterInput(sessionId, owner) == input }.getOrDefault(false))
+                                        _state.update { it.copy(error = it.error ?: "章节已保存，但输入草稿未能清理") }
+                                }
+                            })) _state.update { it.copy(error = "续写故事线已创建，请在本线目录继续未完成章节") }
+                }
+            }) forkTransition@{
+            try {
+                check(expectedBranchId == currentBranchId()) { "故事线已改变" }
+                val original = getVisibleMessage(expectedBranchId, messageId)
+                require(original != null && original.sessionId == sessionId && original.speakerType == "narrator" &&
+                    original.content.isNotBlank() && NovelChapter.incomplete(original.structuredContentJson) &&
+                    NovelChapter.number(original.structuredContentJson) != null) { "目标章节已不可续写" }
+                val child = "chapter_${original.id}_${UUID.randomUUID().toString().take(12)}"
+                val replacement = original.copy(id = 0, branchId = child,
+                    regeneratedFromMessageId = original.id, createdAt = System.currentTimeMillis())
+                val cloneId = sessionBranchDao.insertEditedBranch(SessionBranchEntity(sessionId = sessionId,
+                    branchId = child, parentBranchId = expectedBranchId, sourceMessageId = original.id,
+                    label = "续写：${NovelChapter.title(original.structuredContentJson).ifBlank { "第 ${NovelChapter.number(original.structuredContentJson)} 章" }.take(32)}"),
+                    replacement, attachmentDao.getByMessage(original.id))
+                createdBranch = child
+                check(saveChapterInput(child, title, direction, synchronous = true))
+                // Transfer this submission to the child; retries there must not leave a stale source editor draft.
+                val draftOwner = chapterForkDraftOwner(expectedBranchId, messageId)
+                val transferred = chatDraftStore.clearChapterInputIfMatching(sessionId, draftOwner, input)
+                check(transferred || chatDraftStore.loadChapterInput(sessionId, draftOwner) != input)
+                sessionDao.bumpUpdatedAt(sessionId)
+                check(refreshMessagesUi(child, switchBranchOnSuccess = true) && currentBranchId() == child)
+                uiPreferencesRepository.setLastChatBranch(sessionId, child)
+                val tail = getMessageTailForBranch(child, 1).lastOrNull()
+                check(tail?.id == cloneId && NovelChapter.canResumeTail(child, tail.branchId, tail.structuredContentJson))
+                ready = true
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) {
+                _state.update { it.copy(error = if (createdBranch != null)
+                    "续写故事线已创建，但尚未开始生成；请从故事线列表进入后继续未完成章节，输入已保留"
+                    else "章节已改变或故事线创建失败，输入已保留，请重新打开目录重试") }
+            }
+        }
+    }
+
     fun requestNarrator(
         guidance: String = "",
         expectedTailMessageId: Long? = null,
@@ -3159,12 +4445,12 @@ class ChatViewModel @Inject constructor(
         return launchSingleGeneration(expectedTailMessageId, draftSubmissionId) narratorScope@{ generation ->
             if (!generation.ensureExpectedUserTail()) return@narratorScope
             val resumeChapter = if (nextChapter) getMessageTailForBranch(generation.branchId, 1).lastOrNull()?.takeIf {
-                it.branchId == generation.branchId && NovelChapter.incomplete(it.structuredContentJson)
+                NovelChapter.canResumeTail(generation.branchId, it.branchId, it.structuredContentJson)
             } else null
             val chapterNumber = if (nextChapter) {
                 val latest = if (generation.branchId == "main") messageDao.getMainMaxChapter(sessionId)
                     else messageDao.getBranchMaxChapter(sessionId, generation.branchId)
-                resumeChapter?.let { NovelChapter.number(it.structuredContentJson) } ?: (latest.coerceAtLeast(1) + 1)
+                resumeChapter?.let { NovelChapter.number(it.structuredContentJson) } ?: (latest.coerceAtLeast(0) + 1)
             } else null
             val guidanceText = guidance.trim()
             val connection = chatConnection(world)
@@ -3180,6 +4466,9 @@ class ChatViewModel @Inject constructor(
                     if (sole.isNotEmpty()) listOf(sole) else emptyList()
                 }
             val model = resolveMainChatModelId(CharacterEntity(modelName = ""), connection)
+            val contextWindow = requestPlatform()?.modelContextWindows?.get(model)
+                ?: com.mojing.app.domain.config.ModelRequestSettingsResolver.contextWindow(
+                    generation.modelPlatforms, apiKey, narrBases.firstOrNull().orEmpty(), model)
             if (apiKey.isEmpty()) {
                 _state.value = _state.value.copy(error = UserFacingStrings.chatApiKeyMissing())
                 return@narratorScope
@@ -3231,7 +4520,8 @@ class ChatViewModel @Inject constructor(
                     return@narratorScope
                 }
             }
-            val history = getContextMessagesForBranch(generation.branchId).takeLast(20)
+            val history = slidingWindowBuilder.takeRecentPreservingTurn(getContextMessagesForBranch(generation.branchId), 20)
+            val memorySegments = memorySegmentDao.getRecentForBranch(sessionId, generation.branchId)
             val universalMemoryText = universalContextMemoryManager.getFormattedMemory(sessionId, generation.branchId)
             val memoryCorrections = memoryCorrectionDao.getVisible(sessionId, generation.branchId)
             val recallQuery = history.joinToString("\n") { ConversationMessageText.forDerivedContext(it) }
@@ -3242,16 +4532,23 @@ class ChatViewModel @Inject constructor(
                 world = world,
                 personaName = secureStorage.userName,
                 userDescription = secureStorage.userDescription,
+                sessionId = sessionId,
+                recentMemorySegments = memorySegments,
                 universalContextMemoryText = universalMemoryText,
                 memoryCorrections = memoryCorrections,
+                encyclopediaFoundation = sharedWorldContext.encyclopediaFoundation,
+                automaticSummary = contextWindow != null && contextBuilder.areAutomaticSummaries(memorySegments),
                 encyclopediaHits = sharedWorldContext.encyclopediaHits,
                 loreHits = sharedWorldContext.loreHits,
             )
-            val narratorPrompt = promptBuilder.buildNarratorPrompt(context, guidance, model, includeUserProfile = false) +
+            val narratorDocument = promptBuilder.buildNarratorDocument(context, guidance, model,
+                includeUserProfile = false, allowChoices = !nextChapter)
+            val chapterInstructions =
                 if (chapterNumber != null) "\n小说名：${_state.value.sessionTitle}。本次续写小说第 $chapterNumber 章。承接已有剧情，写完整连续的小说正文，不回复用户、不生成选项或大纲。第一行给出章节标题，随后正文。" +
                     chapterTitle.trim().takeIf { it.isNotEmpty() }?.let { "指定章节标题：$it" }.orEmpty() +
                     if (resumeChapter != null) "\n上一条是本章未完成草稿。保留已有情节，返回从本章开头到结尾的完整正文。" else ""
                 else ""
+            val narratorPrompt = if (chapterInstructions.isBlank()) narratorDocument else narratorDocument.appendProtected(chapterInstructions, separator = "")
             generation.ensureCurrent()
             recordMemoryCorrectionPromptTrace(
                 branchId = generation.branchId,
@@ -3294,16 +4591,20 @@ class ChatViewModel @Inject constructor(
                         var lastUiUpdateAt = 0L
                         var lastUiLen = 0
                         var errMsg: String? = null
+                        var contextLimitError = false
                         generation.ensureCurrent()
                         _state.update { it.copy(lastRequestModel = model, lastRequestPlatform = requestPlatform()?.name) }
                         chatEngine.streamGenerate(
                             sessionId = sessionId,
-                            character = character.copy(personaPrompt = narratorPrompt),
+                            character = character.copy(personaPrompt = narratorPrompt.render()),
                             historyMessages = history,
                             apiKey = apiKey, baseUrl = nb, model = model,
                             temperature = 0.8f, maxTokens = 12000,
                             personaName = secureStorage.userName,
                             userDescription = secureStorage.userDescription,
+                            platformId = requestPlatform()?.id,
+                            contextWindow = contextWindow,
+                            promptDocument = narratorPrompt,
                         ).collect { s ->
                             when (s) {
                                 is StreamState.Generating -> {
@@ -3386,18 +4687,19 @@ class ChatViewModel @Inject constructor(
                                             apiKey = apiKey,
                                             baseUrl = nb,
                                             model = model,
+                                            contextWindow = contextWindow,
                                             worldText = world.worldPrompt,
                                             activeCharacterNames = _state.value.characterNames.values.toList(),
                                         )
                                         publishContextMemoryResult(branchId, memoryResult)
                                         val recentMessages = getContextMessagesForBranch(branchId).takeLast(20)
-                                        memoryV2Manager.extractEventNodes(sessionId, branchId, null, recentMessages, apiKey, nb, model)
+                                        memoryV2Manager.extractEventNodes(sessionId, branchId, null, recentMessages, apiKey, nb, model, contextWindow = contextWindow)
                                         refreshEventNodesForBranch(branchId)
                                         if (world.autoSedimentEnabled && world.encyclopediaId != null) {
                                             sedimentEngine.sedimentFromMessages(
                                                 encyclopediaId = world.encyclopediaId, sessionId = sessionId,
                                                 branchId = branchId, messages = recentMessages.takeLast(10),
-                                                apiKey = apiKey, baseUrl = nb, model = model,
+                                                apiKey = apiKey, baseUrl = nb, model = model, contextWindow = contextWindow,
                                             )
                                         }
 
@@ -3406,6 +4708,7 @@ class ChatViewModel @Inject constructor(
                                 is StreamState.Error -> {
                                     generation.ensureCurrent()
                                     errMsg = s.message
+                                    contextLimitError = s.contextLimit
                                     UsbSessionLog.w(
                                         "Narrator",
                                         "session=$sessionId error model=${model.trim()} messageLen=${s.message.length}",
@@ -3421,6 +4724,11 @@ class ChatViewModel @Inject constructor(
                             break
                         }
                         if (errMsg != null) {
+                            if (contextLimitError) {
+                                _state.update { it.copy(streamingText = "", contextBudgetError = errMsg) }
+                                exitNarratorJob = true
+                                break
+                            }
                             val partial = receivedText.trim()
                             if (partial.isEmpty() && idx < narrBases.lastIndex) continue
                             val retained = if (chapterNumber != null) { saveChapterDraft(); chapterDraftId != null } else retainInterruptedReply(generation, receivedText, "narrator", null)
@@ -3441,6 +4749,7 @@ class ChatViewModel @Inject constructor(
                     streamingText = "",
                     error = when {
                         narratorReplyCommitted -> "旁白回复已保存，但对话刷新失败，请重新进入对话"
+                        e is NovelChapter.EmptyBodyException -> "模型未返回章节正文，请重试"
                         sawDone -> UserFacingStrings.localSaveFailed("旁白回复")
                         else -> UserFacingStrings.remoteRequestFailed(e)
                     },
@@ -3485,29 +4794,48 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun renameChapter(messageId: Long, title: String, onSuccess: () -> Unit) {
+    fun renameChapter(messageId: Long, title: String, onSuccess: () -> Unit) =
+        renameChapter(messageId, title, currentBranchId(), null, onSuccess)
+
+    fun renameChapter(messageId: Long, title: String, expectedBranchId: String,
+        expectedSourceBranchId: String?, onSuccess: () -> Unit) {
         if (_state.value.novelMetadataSaving) return
         if (title.isBlank() || _state.value.isGenerating) {
             _state.update { it.copy(novelMetadataError = "请填写名称，并在生成结束后保存") }
             return
         }
+        if (expectedBranchId != currentBranchId()) {
+            _state.update { it.copy(novelMetadataError = "故事线已改变，请重新打开目录后修改") }
+            return
+        }
         _state.update { it.copy(novelMetadataSaving = true, novelMetadataError = null) }
-        val branch = currentBranchId()
-        viewModelScope.launch {
-            var saved = false
+        val branch = expectedBranchId
+        var saved = false
+        // Hold the existing action owner only through the source write. Later UI reads use
+        // their revision guards, so committed saves do not prevent navigation during refresh.
+        val launched = launchBranchTransition(onSuccess = {
+            if (saved) viewModelScope.launch {
+                try {
+                    onSuccess()
+                    refreshMessagesUi(branch)
+                } catch (e: CancellationException) { throw e }
+                catch (_: Exception) { _state.update { it.copy(error = "章节名称已保存，对话刷新失败，请重新打开对话") } }
+                finally { _state.update { it.copy(novelMetadataSaving = false) } }
+            }
+        }) {
             try {
-                check(getVisibleMessage(branch, messageId) != null) { "章节已不存在" }
+                val source = getVisibleMessage(branch, messageId)
+                check(source != null && source.sessionId == sessionId &&
+                    (expectedSourceBranchId == null || source.branchId == expectedSourceBranchId)) { "章节来源已变化" }
                 check(currentBranchId() == branch && !_state.value.isGenerating) { "当前故事线状态已变化" }
                 messageDao.renameNovelChapter(messageId, sessionId, title)
                 saved = true
-                onSuccess()
-                refreshMessagesUi(branch)
             } catch (e: CancellationException) { throw e }
-            catch (_: Exception) { _state.update {
-                if (saved) it.copy(error = "章节名称已保存，对话刷新失败，请重新打开对话")
-                else it.copy(novelMetadataError = "章节名称保存失败，请确认章节仍在当前故事线后重试")
-            } }
-            finally { _state.update { it.copy(novelMetadataSaving = false) } }
+            catch (_: Exception) { _state.update { it.copy(novelMetadataError = "章节名称保存失败，请确认章节仍在当前故事线后重试") } }
+            finally { if (!saved) _state.update { it.copy(novelMetadataSaving = false) } }
+        }
+        if (!launched) {
+            _state.update { it.copy(novelMetadataSaving = false, novelMetadataError = "当前正在生成或切换故事线，请稍后重试") }
         }
     }
 
@@ -3526,7 +4854,10 @@ class ChatViewModel @Inject constructor(
             _state.update { it.copy(error = "当前正在生成，请先停止或等待完成后再创建故事线") }
             return
         }
-        val launched = launchBranchTransition(navigationLabel = "正在创建并打开故事线…") branchTransition@{
+        val launched = launchBranchTransition(
+            navigationLabel = "正在创建并打开故事线…",
+            invalidateSpeech = true,
+        ) branchTransition@{
             val parentBranch = currentBranchId()
             var branchCommitted = false
             var branchAvailableInList = false
@@ -3579,7 +4910,10 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    suspend fun saveMessageImagesToGallery(messageId: Long): GalleryImageSaveResult {
+    suspend fun saveMessageImagesToGallery(messageId: Long, expectedBranchId: String? = null): GalleryImageSaveResult {
+        if (expectedBranchId != null && currentBranchId() != expectedBranchId) {
+            return GalleryImageSaveResult(requestedCount = 0, savedCount = 0)
+        }
         return saveGalleryImageAttachments(attachmentDao.getByMessage(messageId)) { attachment ->
             imageRepository.saveLocalImageToGallery(
                 filePath = attachment.storagePath,
@@ -3596,7 +4930,10 @@ class ChatViewModel @Inject constructor(
             onResult(reason)
             return
         }
-        val launched = launchBranchTransition(navigationLabel = "正在打开故事线…") switchTransition@{
+        val launched = launchBranchTransition(
+            navigationLabel = "正在打开故事线…",
+            invalidateSpeech = true,
+        ) switchTransition@{
             val previousBranchId = currentBranchId()
             var switched = false
             try {
@@ -3660,27 +4997,28 @@ class ChatViewModel @Inject constructor(
         characterId: Long,
         onResult: (Boolean) -> Unit = {},
     ) {
-        if (!canMutateRoundConfiguration()) {
+        if (_state.value.participantAdding || !canMutateRoundConfiguration()) {
             onResult(false)
             return
         }
-        viewModelScope.launch {
+        _state.update { it.copy(participantAdding = true, participantAddError = null, participantAddedId = null) }
+        val writeJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
                 val character = characterDao.getById(characterId)
                 if (character == null) {
-                    _state.update { it.copy(error = "角色不存在或已删除，请重新选择") }
+                    _state.update { it.copy(error = "角色不存在或已删除，请重新选择", participantAddError = "角色不存在或已删除，请重新选择") }
                     onResult(false)
                     return@launch
                 }
                 if (character.boundEncyclopediaId <= 0L) {
-                    _state.update { it.copy(error = "该角色尚未绑定世界资料，无法加入当前对话") }
+                    _state.update { it.copy(error = "该角色尚未绑定世界资料，无法加入当前对话", participantAddError = "该角色尚未绑定世界资料，无法加入当前对话") }
                     onResult(false)
                     return@launch
                 }
                 val world = sessionWorldDao.getBySession(sessionId)
                 val encyclopediaId = world?.encyclopediaId?.takeIf { it > 0L }
                 if (encyclopediaId != null && character.boundEncyclopediaId > 0L && character.boundEncyclopediaId != encyclopediaId) {
-                    _state.update { it.copy(error = "该角色与当前世界不匹配，请重新选择") }
+                    _state.update { it.copy(error = "该角色与当前世界不匹配，请重新选择", participantAddError = "该角色与当前世界不匹配，请重新选择") }
                     onResult(false)
                     return@launch
                 }
@@ -3703,25 +5041,38 @@ class ChatViewModel @Inject constructor(
                     participants = updated,
                     characterNames = maps.names,
                     characterAvatars = maps.avatars,
+                characterSummaries = maps.summaries,
                     characterCardImages = maps.cardImages,
                     characterColors = maps.colors,
+                    participantAddedId = characterId,
                 )
                 onResult(true)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                _state.update { it.copy(error = "添加角色失败，请重试") }
+                _state.update { it.copy(error = "添加角色失败，请重试", participantAddError = "添加角色失败，请重试") }
                 onResult(false)
-            }
+            } finally { _state.update { it.copy(participantAdding = false) } }
+        }
+        if (RetainedChatSessions.stores.contains(sessionId)) {
+            RetainedChatSessions.stores.retainJob(sessionId, writeJob, reportRunning = false)
+        }
+        writeJob.start()
+    }
+
+    fun clearParticipantAddFeedback() {
+        if (!_state.value.participantAdding) {
+            _state.update { it.copy(participantAddError = null, participantAddedId = null) }
         }
     }
 
     fun toggleMute(participantId: Long) {
-        if (!canMutateRoundConfiguration()) return
-        viewModelScope.launch {
+        if (isParticipantWritePending(participantId) || !canMutateRoundConfiguration()) return
+        _state.update { it.copy(participantMuteSaving = it.participantMuteSaving + participantId) }
+        val writeJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 val participant = participantDao.getById(participantId)
-                if (participant == null) {
+                if (participant == null || participant.sessionId != sessionId) {
                     _state.update { it.copy(error = "该角色已不在当前对话中") }
                     return@launch
                 }
@@ -3732,29 +5083,42 @@ class ChatViewModel @Inject constructor(
                 throw e
             } catch (_: Exception) {
                 _state.update { it.copy(error = "角色静音状态保存失败，请重试") }
+            } finally {
+                _state.update { it.copy(participantMuteSaving = it.participantMuteSaving - participantId) }
             }
         }
+        if (RetainedChatSessions.stores.contains(sessionId)) {
+            RetainedChatSessions.stores.retainJob(sessionId, writeJob, reportRunning = false)
+        }
+        writeJob.start()
     }
+
+    private fun isParticipantWritePending(participantId: Long): Boolean =
+        participantId in _state.value.participantMuteSaving ||
+            participantId in _state.value.participantRemoving ||
+            _state.value.participantTalkativenessSaving.containsKey(participantId)
 
     fun updateParticipantTalkativeness(
         participantId: Long,
         talkativeness: Float,
         onResult: (Boolean) -> Unit = {},
     ) {
-        if (!canMutateRoundConfiguration()) {
+        if (isParticipantWritePending(participantId) || !canMutateRoundConfiguration()) {
             onResult(false)
             return
         }
-        viewModelScope.launch {
+        val requested = talkativeness.coerceIn(0.05f, 1f)
+        _state.update { it.copy(participantTalkativenessSaving = it.participantTalkativenessSaving + (participantId to requested)) }
+        val writeJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 val participant = participantDao.getById(participantId)
-                if (participant == null) {
+                if (participant == null || participant.sessionId != sessionId) {
                     _state.update { it.copy(error = "该角色已不在当前对话中") }
                     onResult(false)
                     return@launch
                 }
                 participantDao.upsert(
-                    participant.copy(talkativeness = talkativeness.coerceIn(0.05f, 1f)),
+                    participant.copy(talkativeness = requested),
                 )
                 val updated = participantDao.getBySession(sessionId)
                 _state.value = _state.value.copy(participants = updated)
@@ -3764,8 +5128,14 @@ class ChatViewModel @Inject constructor(
             } catch (_: Exception) {
                 _state.update { it.copy(error = "发言率保存失败，请重试") }
                 onResult(false)
+            } finally {
+                _state.update { it.copy(participantTalkativenessSaving = it.participantTalkativenessSaving - participantId) }
             }
         }
+        if (RetainedChatSessions.stores.contains(sessionId)) {
+            RetainedChatSessions.stores.retainJob(sessionId, writeJob, reportRunning = false)
+        }
+        writeJob.start()
     }
 
     fun setManualReplyCharacterId(characterId: Long?) {
@@ -3827,10 +5197,15 @@ class ChatViewModel @Inject constructor(
     }
 
     fun removeParticipant(participantId: Long) {
-        if (!canMutateRoundConfiguration()) return
-        viewModelScope.launch {
+        if (isParticipantWritePending(participantId) || !canMutateRoundConfiguration()) return
+        _state.update { it.copy(participantRemoving = it.participantRemoving + participantId) }
+        val writeJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 val removed = participantDao.getById(participantId)
+                if (removed != null && removed.sessionId != sessionId) {
+                    _state.update { it.copy(error = "该角色已不在当前对话中") }
+                    return@launch
+                }
                 if (removed != null) participantDao.delete(participantId)
                 val updated = participantDao.getBySession(sessionId)
                 val maps = buildCharacterPresentationMaps(updated)
@@ -3838,6 +5213,7 @@ class ChatViewModel @Inject constructor(
                     participants = updated,
                     characterNames = maps.names,
                     characterAvatars = maps.avatars,
+                characterSummaries = maps.summaries,
                     characterCardImages = maps.cardImages,
                     characterColors = maps.colors,
                     manualReplyCharacterId = _state.value.manualReplyCharacterId
@@ -3847,11 +5223,19 @@ class ChatViewModel @Inject constructor(
                 throw e
             } catch (_: Exception) {
                 _state.update { it.copy(error = "移除角色失败，请重试") }
+            } finally {
+                _state.update { it.copy(participantRemoving = it.participantRemoving - participantId) }
             }
         }
+        if (RetainedChatSessions.stores.contains(sessionId)) {
+            RetainedChatSessions.stores.retainJob(sessionId, writeJob, reportRunning = false)
+        }
+        writeJob.start()
     }
 
     fun stopGeneration() {
+        cancelPendingAutoNarrator()
+        clearImageRetry()
         val job = generationJob ?: return
         if (activeGeneration?.started != true) {
             activeGeneration?.draftSubmissionId?.let(::finishDraftSubmission)
@@ -3867,6 +5251,29 @@ class ChatViewModel @Inject constructor(
     private fun normalizedCorrectionContent(content: String): String? = content.trim().takeIf { it.isNotEmpty() && it.length <= 2000 }
 
     private var correctionWriteInFlight = false
+
+    data class CorrectionSaveReceipt(val requestId: String, val saved: Boolean)
+    private val _correctionSaveReceipt = MutableStateFlow<CorrectionSaveReceipt?>(null)
+    val correctionSaveReceipt = _correctionSaveReceipt.asStateFlow()
+    private var correctionEditorRequestId: String? = null
+
+    fun knowsCorrectionEditorRequest(requestId: String): Boolean = correctionEditorRequestId == requestId
+
+    // The existing write owner keeps the result available to a recreated editor;
+    // a callback captured by the disposed Composition cannot close its successor.
+    fun saveMemoryCorrectionFromEditor(
+        requestId: String,
+        correctionId: Long?,
+        content: String,
+        branchId: String?,
+        sourceMessageId: Long?,
+    ) {
+        if (correctionEditorRequestId == requestId) return
+        correctionEditorRequestId = requestId
+        saveMemoryCorrection(correctionId, content, branchId, sourceMessageId) { saved ->
+            _correctionSaveReceipt.value = CorrectionSaveReceipt(requestId, saved)
+        }
+    }
 
     fun saveMemoryCorrection(
         correctionId: Long?,
@@ -3891,7 +5298,7 @@ class ChatViewModel @Inject constructor(
             return
         }
         correctionWriteInFlight = true
-        viewModelScope.launch {
+        val writeJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             val saved = try {
                 val now = System.currentTimeMillis()
                 val existing = correctionId?.let { id ->
@@ -3928,6 +5335,7 @@ class ChatViewModel @Inject constructor(
                 }
                 true
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                onResult(false)
                 throw cancelled
             } catch (_: Exception) {
                 _state.update { it.copy(error = "纠正记忆保存失败，请重试") }
@@ -3946,6 +5354,10 @@ class ChatViewModel @Inject constructor(
                 }
             }
         }
+        if (RetainedChatSessions.stores.contains(sessionId)) {
+            RetainedChatSessions.stores.retainJob(sessionId, writeJob, reportRunning = false)
+        }
+        writeJob.start()
     }
 
     fun deleteMemoryCorrection(id: Long, onResult: (Boolean) -> Unit = {}) {
@@ -4130,11 +5542,20 @@ class ChatViewModel @Inject constructor(
                 }
                 committed = true
                 val deletedIds = result.deletedMessageIds.toSet()
+                if (_state.value.quotingMessage?.id in deletedIds) {
+                    setQuotingMessage(null)
+                }
                 bookmarkMutex.withLock {
+                    val removedBookmarkIds = _state.value.bookmarks
+                        .filter { it.messageId in deletedIds }
+                        .map { it.id }
+                    removedBookmarkIds.forEach { savedStateHandle.remove<String>(bookmarkNoteDraftKey(it)) }
                     _state.update { current -> current.copy(
                         bookmarks = current.bookmarks.filterNot { it.messageId in deletedIds },
                         bookmarkedMessageIds = current.bookmarkedMessageIds - deletedIds,
                         bookmarkPreviews = current.bookmarkPreviews.filterKeys { it !in deletedIds },
+                        bookmarkNoteDrafts = current.bookmarkNoteDrafts - removedBookmarkIds.toSet(),
+                        bookmarkNoteErrors = current.bookmarkNoteErrors - removedBookmarkIds.toSet(),
                     ) }
                 }
                 var cleanupFailed = false
@@ -4229,6 +5650,7 @@ class ChatViewModel @Inject constructor(
                     }
                 }
             },
+            invalidateSpeech = true,
         ) editTransition@{
             try {
                 val original = getVisibleMessage(currentBranchId(), messageId)
@@ -4406,64 +5828,196 @@ class ChatViewModel @Inject constructor(
 
     fun removeBookmark(messageId: Long) = setBookmark(messageId, false)
 
+    private fun bookmarkNoteDraftKey(bookmarkId: Long): String =
+        "bookmarkNoteDraft:$sessionId:$bookmarkId"
+
+    private fun restoreBookmarkNoteDrafts(): Map<Long, String> =
+        savedStateHandle.keys()
+            .asSequence()
+            .filter { it.startsWith("bookmarkNoteDraft:$sessionId:") }
+            .mapNotNull { key ->
+                key.substringAfterLast(':').toLongOrNull()?.let { id ->
+                    savedStateHandle.get<String>(key)?.let { id to it.take(MAX_BOOKMARK_NOTE_LENGTH) }
+                }
+            }
+            .toMap()
+
+    fun updateBookmarkNoteDraft(bookmarkId: Long, note: String) {
+        if (_state.value.bookmarks.none { it.id == bookmarkId }) return
+        val normalized = note.take(MAX_BOOKMARK_NOTE_LENGTH)
+        savedStateHandle[bookmarkNoteDraftKey(bookmarkId)] = normalized
+        _state.update {
+            it.copy(bookmarkNoteDrafts = it.bookmarkNoteDrafts + (bookmarkId to normalized),
+                bookmarkNoteErrors = it.bookmarkNoteErrors - bookmarkId)
+        }
+    }
+
+    fun saveBookmarkNote(bookmarkId: Long, note: String, onResult: (Boolean) -> Unit = {}) {
+        val current = _state.value
+        val bookmark = current.bookmarks.firstOrNull { it.id == bookmarkId }
+        if (!current.isReady || bookmark == null || bookmark.sessionId != sessionId) {
+            _state.update { it.copy(bookmarkNoteErrors = it.bookmarkNoteErrors + (bookmarkId to "这条收藏已不可用，请刷新后重试")) }
+            onResult(false)
+            return
+        }
+        if (bookmarkId in current.bookmarkNoteSavingIds) return
+        val normalized = note.take(MAX_BOOKMARK_NOTE_LENGTH)
+        _state.update {
+            it.copy(
+                bookmarkNoteSavingIds = it.bookmarkNoteSavingIds + bookmarkId,
+                bookmarkNoteErrors = it.bookmarkNoteErrors - bookmarkId,
+            )
+        }
+        viewModelScope.launch {
+            var saved = false
+            try {
+                bookmarkMutex.withLock {
+                    val updated = bookmarkDao.updateNote(sessionId, bookmarkId, normalized)
+                    check(updated == 1) { "收藏已不存在" }
+                    saved = true
+                    _state.update { state ->
+                        val hasNewerDraft = state.bookmarkNoteDrafts[bookmarkId]?.let { it != normalized } == true
+                        if (!hasNewerDraft) savedStateHandle.remove<String>(bookmarkNoteDraftKey(bookmarkId))
+                        state.copy(
+                            bookmarks = state.bookmarks.map { row ->
+                                if (row.id == bookmarkId && row.sessionId == sessionId) row.copy(note = normalized) else row
+                            },
+                            bookmarkNoteDrafts = if (hasNewerDraft) state.bookmarkNoteDrafts else state.bookmarkNoteDrafts - bookmarkId,
+                            bookmarkNoteErrors = state.bookmarkNoteErrors - bookmarkId,
+                        )
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _state.update { state ->
+                    state.copy(bookmarkNoteErrors = state.bookmarkNoteErrors + (bookmarkId to "备注保存失败，请重试"))
+                }
+            } finally {
+                _state.update { it.copy(bookmarkNoteSavingIds = it.bookmarkNoteSavingIds - bookmarkId) }
+                onResult(saved)
+            }
+            if (saved && (_state.value.bookmarkQuery.isNotBlank() || _state.value.bookmarksBeforeId != null)) {
+                reloadBookmarkPage()
+            }
+        }
+    }
+
+    private suspend fun readBookmarkPage(
+        query: String, beforeCreatedAt: Long?, beforeId: Long?, limit: Int,
+    ): List<MessageBookmarkEntity> = when {
+        query.isNotBlank() -> bookmarkDao.searchPage(sessionId, query, beforeCreatedAt, beforeId, limit)
+        beforeCreatedAt == null -> bookmarkDao.getFirstPage(sessionId, limit)
+        else -> bookmarkDao.getBefore(sessionId, beforeCreatedAt, requireNotNull(beforeId), limit)
+    }
+
+    private fun saveBookmarkWindow(current: ChatContract.State) {
+        savedStateHandle["bookmark_window_query_$sessionId"] = current.bookmarkQuery
+        savedStateHandle["bookmark_window_size_$sessionId"] = current.bookmarksWindowSize
+        if (current.bookmarksBeforeCreatedAt == null) savedStateHandle.remove<Long>("bookmark_window_before_at_$sessionId")
+        else savedStateHandle["bookmark_window_before_at_$sessionId"] = current.bookmarksBeforeCreatedAt
+        if (current.bookmarksBeforeId == null) savedStateHandle.remove<Long>("bookmark_window_before_id_$sessionId")
+        else savedStateHandle["bookmark_window_before_id_$sessionId"] = current.bookmarksBeforeId
+    }
+
+    fun updateBookmarkQuery(query: String) {
+        val normalized = query.take(200)
+        if (!_state.value.isReady || normalized == _state.value.bookmarkQuery) return
+        savedStateHandle["bookmark_query_$sessionId"] = normalized
+        bookmarkRefreshRevision.incrementAndGet()
+        bookmarkInitialLoadJob?.cancel()
+        bookmarkInitialLoadJob = null
+        _state.update { it.copy(bookmarkQuery = normalized, bookmarks = emptyList(),
+            bookmarkPreviews = emptyMap(), bookmarksLoaded = false,
+            bookmarksHasMore = false, bookmarksLoadingMore = false, bookmarksRefreshFailed = false, bookmarksLoadError = null,
+            bookmarksWindowSize = BOOKMARK_PAGE_SIZE, bookmarksBeforeCreatedAt = null, bookmarksBeforeId = null) }
+        saveBookmarkWindow(_state.value)
+        loadBookmarksIfNeeded()
+    }
+
+    fun resetBookmarkWindow() {
+        if (!_state.value.isReady) return
+        _state.update { it.copy(bookmarksWindowSize = BOOKMARK_PAGE_SIZE,
+            bookmarksBeforeCreatedAt = null, bookmarksBeforeId = null) }
+        saveBookmarkWindow(_state.value)
+        reloadBookmarkPage(resetWindow = true)
+    }
+
     fun loadBookmarksIfNeeded() {
         if (!_state.value.isReady || _state.value.bookmarksLoaded || bookmarkInitialLoadJob?.isActive == true) return
-        _state.update { it.copy(bookmarksLoadingMore = true, bookmarksLoadError = null) }
+        reloadBookmarkPage()
+    }
+
+    private fun reloadBookmarkPage(resetWindow: Boolean = false) {
+        val request = _state.value
+        if (!request.isReady) return
+        val revision = bookmarkRefreshRevision.incrementAndGet()
+        bookmarkInitialLoadJob?.cancel()
+        val size = if (resetWindow) BOOKMARK_PAGE_SIZE else request.bookmarksWindowSize
+        _state.update { it.copy(bookmarksLoadingMore = true, bookmarksRefreshFailed = false, bookmarksLoadError = null) }
         bookmarkInitialLoadJob = viewModelScope.launch {
             val owner = currentCoroutineContext()[Job]
             try {
                 bookmarkMutex.withLock {
-                    val page = bookmarkDao.getFirstPage(sessionId, BOOKMARK_PAGE_SIZE + 1)
-                    val marks = page.take(BOOKMARK_PAGE_SIZE)
+                    val page = readBookmarkPage(request.bookmarkQuery, request.bookmarksBeforeCreatedAt,
+                        request.bookmarksBeforeId, size + 1)
+                    val marks = page.take(size)
                     val previews = messagePreviews(marks.mapTo(mutableSetOf()) { it.messageId }, maxChars = 120)
                     currentCoroutineContext().ensureActive()
-                    _state.update { state -> state.copy(
-                        bookmarks = marks,
-                        bookmarksLoaded = true,
-                        bookmarksHasMore = page.size > BOOKMARK_PAGE_SIZE,
-                        bookmarkPreviews = previews,
-                    ) }
+                    _state.update { state -> if (bookmarkRefreshRevision.get() == revision) state.copy(
+                        bookmarks = marks, bookmarksLoaded = true, bookmarksWindowSize = size,
+                        bookmarksHasMore = page.size > size, bookmarkPreviews = previews,
+                    ) else state }
+                    if (bookmarkRefreshRevision.get() == revision) saveBookmarkWindow(_state.value)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { _state.update { it.copy(bookmarksLoadError = "收藏读取失败，请重试") } }
+            catch (_: Exception) { _state.update { if (bookmarkRefreshRevision.get() == revision)
+                it.copy(bookmarksRefreshFailed = request.bookmarksLoaded, bookmarksLoadError = "收藏读取失败，请重试") else it } }
             finally {
-                if (bookmarkInitialLoadJob === owner) {
-                    bookmarkInitialLoadJob = null
-                    _state.update { it.copy(bookmarksLoadingMore = false) }
-                }
+                if (bookmarkInitialLoadJob === owner) bookmarkInitialLoadJob = null
+                _state.update { if (bookmarkRefreshRevision.get() == revision)
+                    it.copy(bookmarksLoadingMore = false) else it }
             }
         }
     }
 
     fun loadMoreBookmarks() {
-        if (!_state.value.bookmarksLoaded) {
-            loadBookmarksIfNeeded()
-            return
-        }
-        val current = _state.value
-        if (!current.isReady || !current.bookmarksHasMore || current.bookmarksLoadingMore) return
-        _state.update { it.copy(bookmarksLoadingMore = true, bookmarksLoadError = null) }
+        val request = _state.value
+        if (!request.bookmarksLoaded) { loadBookmarksIfNeeded(); return }
+        if (!request.isReady || request.bookmarksLoadingMore) return
+        if (request.bookmarksRefreshFailed) { reloadBookmarkPage(); return }
+        if (!request.bookmarksHasMore) return
+        val revision = bookmarkRefreshRevision.get()
+        val tail = request.bookmarks.lastOrNull()
+        _state.update { it.copy(bookmarksLoadingMore = true, bookmarksRefreshFailed = false, bookmarksLoadError = null) }
         viewModelScope.launch {
             try {
                 bookmarkMutex.withLock {
-                    val tail = _state.value.bookmarks.lastOrNull()
-                    val page = if (tail == null) bookmarkDao.getFirstPage(sessionId, BOOKMARK_PAGE_SIZE + 1)
-                        else bookmarkDao.getBefore(sessionId, tail.createdAt, tail.id, BOOKMARK_PAGE_SIZE + 1)
+                    val page = readBookmarkPage(request.bookmarkQuery, tail?.createdAt, tail?.id, BOOKMARK_PAGE_SIZE + 1)
                     val next = page.take(BOOKMARK_PAGE_SIZE)
                     val previews = messagePreviews(next.mapTo(mutableSetOf()) { it.messageId }, maxChars = 120)
+                    currentCoroutineContext().ensureActive()
                     _state.update { state ->
-                        val combined = (state.bookmarks + next).distinctBy { it.id }
-                            .sortedWith(compareByDescending<MessageBookmarkEntity> { it.createdAt }.thenByDescending { it.id })
-                        state.copy(
-                            bookmarks = combined,
-                            bookmarksHasMore = page.size > BOOKMARK_PAGE_SIZE,
-                            bookmarkPreviews = state.bookmarkPreviews + previews,
-                        )
+                        if (bookmarkRefreshRevision.get() != revision || state.bookmarks.lastOrNull()?.id != tail?.id) state
+                        else {
+                            val window = appendBookmarkPage(state.bookmarks, next,
+                                state.bookmarksBeforeCreatedAt, state.bookmarksBeforeId)
+                            val visibleIds = window.rows.mapTo(mutableSetOf()) { it.messageId }
+                            state.copy(bookmarks = window.rows,
+                                bookmarksWindowSize = (state.bookmarksWindowSize + BOOKMARK_PAGE_SIZE).coerceAtMost(BOOKMARK_WINDOW_SIZE), bookmarksHasMore = page.size > BOOKMARK_PAGE_SIZE,
+                                bookmarksBeforeCreatedAt = window.beforeCreatedAt, bookmarksBeforeId = window.beforeId,
+                                bookmarkPreviews = (state.bookmarkPreviews + previews).filterKeys { it in visibleIds })
+                        }
                     }
+                    val accepted = _state.value
+                    if (bookmarkRefreshRevision.get() == revision)
+                        saveBookmarkWindow(accepted)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { _state.update { it.copy(bookmarksLoadError = "较早收藏读取失败，请重试") } }
-            finally { _state.update { it.copy(bookmarksLoadingMore = false) } }
+            catch (_: Exception) { _state.update { if (bookmarkRefreshRevision.get() == revision)
+                it.copy(bookmarksLoadError = "较早收藏读取失败，请重试") else it } }
+            finally { _state.update { if (bookmarkRefreshRevision.get() == revision)
+                it.copy(bookmarksLoadingMore = false) else it } }
         }
     }
 
@@ -4492,16 +6046,32 @@ class ChatViewModel @Inject constructor(
                     mark = null
                 }
                 _state.update { current ->
-                    val marks = (current.bookmarks.filterNot { it.messageId == messageId } + listOfNotNull(mark))
+                    val visibleMark = mark?.takeIf { current.bookmarkQuery.isBlank() && current.bookmarksBeforeId == null }
+                    val marks = (current.bookmarks.filterNot { it.messageId == messageId } + listOfNotNull(visibleMark))
                         .sortedWith(compareByDescending<MessageBookmarkEntity> { it.createdAt }.thenByDescending { it.id })
+                        .take(BOOKMARK_WINDOW_SIZE)
+                    if (!bookmarked) {
+                        current.bookmarks.firstOrNull { it.messageId == messageId }
+                            ?.let { savedStateHandle.remove<String>(bookmarkNoteDraftKey(it.id)) }
+                    }
                     current.copy(
                         bookmarks = marks,
+                        bookmarksWindowSize = maxOf(current.bookmarksWindowSize,
+                            ((marks.size + BOOKMARK_PAGE_SIZE - 1) / BOOKMARK_PAGE_SIZE * BOOKMARK_PAGE_SIZE).coerceIn(BOOKMARK_PAGE_SIZE, BOOKMARK_WINDOW_SIZE)),
                         bookmarkedMessageIds = if (bookmarked) current.bookmarkedMessageIds + messageId
                             else current.bookmarkedMessageIds - messageId,
-                        bookmarkPreviews = if (preview != null) current.bookmarkPreviews + (messageId to preview)
-                            else current.bookmarkPreviews - messageId,
+                        bookmarkPreviews = (if (preview != null) current.bookmarkPreviews + (messageId to preview)
+                            else current.bookmarkPreviews - messageId).filterKeys { id -> marks.any { it.messageId == id } },
+                        bookmarkNoteDrafts = if (bookmarked) current.bookmarkNoteDrafts
+                            else current.bookmarkNoteDrafts - (current.bookmarks.firstOrNull { it.messageId == messageId }?.id ?: -1L),
+                        bookmarkNoteErrors = if (bookmarked) current.bookmarkNoteErrors
+                            else current.bookmarkNoteErrors - (current.bookmarks.firstOrNull { it.messageId == messageId }?.id ?: -1L),
                     )
                 }
+                }
+                if (_state.value.bookmarksLoaded) saveBookmarkWindow(_state.value)
+                if (_state.value.bookmarksLoaded && (_state.value.bookmarkQuery.isNotBlank() || _state.value.bookmarksBeforeId != null)) {
+                    reloadBookmarkPage()
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -4541,18 +6111,22 @@ class ChatViewModel @Inject constructor(
             return
         }
         _state.update { it.copy(eventBusyIds = it.eventBusyIds + nodeId, eventActionErrors = it.eventActionErrors - nodeId) }
-        viewModelScope.launch {
+        val writeJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 eventNodeDao.deleteById(nodeId)
                 _state.update { if (it.currentBranchId == branchId) it.copy(eventNodes = it.eventNodes.filter { event -> event.id != nodeId }) else it }
+                refreshEventNodesForBranch(branchId, reportFailure = true)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
                 _state.update { if (it.currentBranchId == branchId) it.copy(eventActionErrors = it.eventActionErrors + (nodeId to "事件删除失败，请重试")) else it }
                 return@launch
             }
             finally { _state.update { it.copy(eventBusyIds = it.eventBusyIds - nodeId) } }
-            refreshEventNodesForBranch(branchId, reportFailure = true)
         }
+        if (RetainedChatSessions.stores.contains(sessionId)) {
+            RetainedChatSessions.stores.retainJob(sessionId, writeJob, reportRunning = false)
+        }
+        writeJob.start()
     }
 
     fun toggleEventNodeResolved(nodeId: Long) {
@@ -4560,7 +6134,7 @@ class ChatViewModel @Inject constructor(
         if (nodeId in _state.value.eventBusyIds) return
         val target = _state.value.eventNodes.firstOrNull { it.id == nodeId } ?: return
         _state.update { it.copy(eventBusyIds = it.eventBusyIds + nodeId, eventActionErrors = it.eventActionErrors - nodeId) }
-        viewModelScope.launch {
+        val writeJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 if (target.branchId == branchId) {
                     eventNodeDao.setResolved(nodeId, !target.resolved)
@@ -4570,34 +6144,79 @@ class ChatViewModel @Inject constructor(
                     )
                 }
                 _state.update { if (it.currentBranchId == branchId) it.copy(eventNodes = it.eventNodes.map { event -> if (event.id == nodeId) event.copy(resolved = !target.resolved) else event }) else it }
+                refreshEventNodesForBranch(branchId, reportFailure = true)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
                 _state.update { if (it.currentBranchId == branchId) it.copy(eventActionErrors = it.eventActionErrors + (nodeId to "事件状态保存失败，请重试")) else it }
                 return@launch
             }
             finally { _state.update { it.copy(eventBusyIds = it.eventBusyIds - nodeId) } }
-            refreshEventNodesForBranch(branchId, reportFailure = true)
         }
+        if (RetainedChatSessions.stores.contains(sessionId)) {
+            RetainedChatSessions.stores.retainJob(sessionId, writeJob, reportRunning = false)
+        }
+        writeJob.start()
+    }
+
+    private suspend fun readEventPage(
+        branchId: String, query: String, resolved: Boolean?,
+        beforeCreatedAt: Long? = null, beforeId: Long? = null, limit: Int,
+    ): List<SessionEventNodeEntity> = if (query.isBlank() && resolved == null)
+        eventNodeDao.getPageForBranch(sessionId, branchId, beforeCreatedAt, beforeId, limit)
+    else eventNodeDao.getFilteredPageForBranch(sessionId, branchId, query.trim(), resolved,
+        beforeCreatedAt, beforeId, limit)
+
+    fun updateEventQuery(query: String) = updateEventCriteria(query.take(200), _state.value.eventResolvedFilter)
+
+    fun updateEventResolvedFilter(resolved: Boolean?) = updateEventCriteria(_state.value.eventQuery, resolved)
+
+    fun resetEventWindow() = updateEventCriteria(_state.value.eventQuery, _state.value.eventResolvedFilter, true)
+
+    private fun saveEventCriteria(branchId: String, query: String, resolved: Boolean?) {
+        savedStateHandle["event_criteria_branch_$sessionId"] = branchId
+        savedStateHandle["event_query_$sessionId"] = query.take(200)
+        if (resolved == null) savedStateHandle.remove<Boolean>("event_resolved_$sessionId")
+        else savedStateHandle["event_resolved_$sessionId"] = resolved
+        savedStateHandle.remove<Int>("event_window_size_$sessionId")
+        savedStateHandle.remove<Long>("event_window_before_at_$sessionId")
+        savedStateHandle.remove<Long>("event_window_before_id_$sessionId")
+    }
+
+    private fun saveEventWindow(current: ChatContract.State) {
+        // A bounded descriptor only; Room remains the source of event rows. Saving
+        // criteria with it scopes the cursor to the same line/query/filter.
+        saveEventCriteria(current.currentBranchId, current.eventQuery, current.eventResolvedFilter)
+        savedStateHandle["event_window_size_$sessionId"] = current.eventNodesWindowSize
+        current.eventNodesBeforeCreatedAt?.let { savedStateHandle["event_window_before_at_$sessionId"] = it }
+        current.eventNodesBeforeId?.let { savedStateHandle["event_window_before_id_$sessionId"] = it }
+    }
+
+    private fun updateEventCriteria(query: String, resolved: Boolean?, force: Boolean = false) {
+        val current = _state.value
+        if (!current.isReady || (!force && current.eventQuery == query && current.eventResolvedFilter == resolved)) return
+        saveEventCriteria(current.currentBranchId, query, resolved)
+        eventRefreshRevision.incrementAndGet()
+        _state.update { it.copy(eventQuery = query, eventResolvedFilter = resolved,
+            eventNodes = emptyList(), eventNodesLoaded = false, eventNodesWindowSize = EVENT_NODE_PAGE_SIZE,
+            eventNodesBeforeCreatedAt = null, eventNodesBeforeId = null,
+            eventNodesHasMore = false, eventNodesLoadingMore = false, eventNodesRefreshFailed = false, eventNodesLoadError = null) }
+        loadEventNodesIfNeeded()
     }
 
     private suspend fun refreshEventNodesForBranch(branchId: String, reportFailure: Boolean = false) {
+        val current = _state.value
+        if (current.currentBranchId != branchId) return
         val revision = eventRefreshRevision.incrementAndGet()
-        val requestedSize = _state.value.takeIf { it.currentBranchId == branchId }
-            ?.eventNodesWindowSize ?: EVENT_NODE_PAGE_SIZE
+        val requestedSize = current.eventNodesWindowSize
         try {
-            val page = eventNodeDao.getPageForBranch(
-                sessionId = sessionId,
-                branchId = branchId,
-                limit = requestedSize + 1,
-            )
+            val page = readEventPage(branchId, current.eventQuery, current.eventResolvedFilter,
+                current.eventNodesBeforeCreatedAt, current.eventNodesBeforeId, requestedSize + 1)
             _state.update {
                 if (it.currentBranchId == branchId && eventRefreshRevision.get() == revision &&
                     it.eventNodesWindowSize == requestedSize) it.copy(
-                    eventNodes = page.take(requestedSize),
-                    eventNodesLoaded = true,
+                    eventNodes = page.take(requestedSize), eventNodesLoaded = true,
                     eventNodesHasMore = page.size > requestedSize,
-                    eventNodesLoadingMore = false,
-                    eventNodesLoadError = null,
+                    eventNodesLoadingMore = false, eventNodesRefreshFailed = false, eventNodesLoadError = null,
                 ) else it
             }
         } catch (cancelled: CancellationException) { throw cancelled }
@@ -4606,7 +6225,8 @@ class ChatViewModel @Inject constructor(
                 if (it.currentBranchId == branchId && eventRefreshRevision.get() == revision &&
                     it.eventNodesWindowSize == requestedSize) it.copy(
                     eventNodesLoadingMore = false,
-                    error = if (reportFailure) "修改已保存，事件列表刷新失败，可重新进入当前故事线" else it.error,
+                    eventNodesRefreshFailed = true, eventNodesLoadError = "事件列表刷新失败，请重试",
+                    error = if (reportFailure) "修改已保存，事件列表刷新失败，请重试" else it.error,
                 ) else it
             }
         }
@@ -4619,16 +6239,15 @@ class ChatViewModel @Inject constructor(
         eventPanelRequestedBranchId = branchId
         val revision = eventRefreshRevision.incrementAndGet()
         _state.update { state -> if (state.currentBranchId == branchId)
-            state.copy(eventNodesLoadingMore = true, eventNodesLoadError = null) else state }
+            state.copy(eventNodesLoadingMore = true, eventNodesRefreshFailed = false, eventNodesLoadError = null) else state }
         viewModelScope.launch {
             try {
-                val page = eventNodeDao.getPageForBranch(sessionId, branchId, limit = EVENT_NODE_PAGE_SIZE + 1)
+                val page = readEventPage(branchId, current.eventQuery, current.eventResolvedFilter,
+                    current.eventNodesBeforeCreatedAt, current.eventNodesBeforeId,
+                    limit = current.eventNodesWindowSize + 1)
                 _state.update { state -> if (state.currentBranchId == branchId && eventRefreshRevision.get() == revision)
-                    state.copy(
-                        eventNodes = page.take(EVENT_NODE_PAGE_SIZE),
-                        eventNodesLoaded = true,
-                        eventNodesHasMore = page.size > EVENT_NODE_PAGE_SIZE,
-                        eventNodesWindowSize = EVENT_NODE_PAGE_SIZE,
+                    state.copy(eventNodes = page.take(current.eventNodesWindowSize), eventNodesLoaded = true,
+                        eventNodesHasMore = page.size > current.eventNodesWindowSize,
                     ) else state }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
@@ -4643,44 +6262,45 @@ class ChatViewModel @Inject constructor(
 
     fun loadMoreEventNodes() {
         val current = _state.value
-        if (!current.eventNodesLoaded) {
-            loadEventNodesIfNeeded()
+        if (!current.eventNodesLoaded) { loadEventNodesIfNeeded(); return }
+        if (!current.isReady || current.eventNodesLoadingMore) return
+        if (current.eventNodesRefreshFailed) {
+            viewModelScope.launch { refreshEventNodesForBranch(current.currentBranchId) }
             return
         }
-        if (!current.isReady || !current.eventNodesHasMore || current.eventNodesLoadingMore) return
+        if (!current.eventNodesHasMore) return
         val branchId = current.currentBranchId
         val tail = current.eventNodes.lastOrNull() ?: return
         val revision = eventRefreshRevision.get()
-        _state.update { it.copy(eventNodesLoadingMore = true, eventNodesLoadError = null) }
+        _state.update { it.copy(eventNodesLoadingMore = true, eventNodesRefreshFailed = false, eventNodesLoadError = null) }
         viewModelScope.launch {
             try {
-                val page = eventNodeDao.getPageForBranch(
-                    sessionId = sessionId,
-                    branchId = branchId,
-                    beforeCreatedAt = tail.createdAt,
-                    beforeId = tail.id,
-                    limit = EVENT_NODE_PAGE_SIZE + 1,
-                )
+                val page = readEventPage(branchId, current.eventQuery, current.eventResolvedFilter,
+                    tail.createdAt, tail.id, EVENT_NODE_PAGE_SIZE + 1)
                 _state.update { state ->
                     if (eventRefreshRevision.get() != revision || state.currentBranchId != branchId ||
                         state.eventNodes.lastOrNull()?.id != tail.id) state
-                    else state.copy(
-                        eventNodes = (state.eventNodes + page.take(EVENT_NODE_PAGE_SIZE)).distinctBy { it.id },
-                        eventNodesWindowSize = state.eventNodesWindowSize + EVENT_NODE_PAGE_SIZE,
-                        eventNodesHasMore = page.size > EVENT_NODE_PAGE_SIZE,
-                    )
+                    else {
+                        val window = appendEventPage(state.eventNodes, page.take(EVENT_NODE_PAGE_SIZE),
+                            state.eventNodesBeforeCreatedAt, state.eventNodesBeforeId)
+                        state.copy(eventNodes = window.rows,
+                            eventNodesWindowSize = (state.eventNodesWindowSize + EVENT_NODE_PAGE_SIZE).coerceAtMost(EVENT_NODE_WINDOW_SIZE),
+                            eventNodesBeforeCreatedAt = window.beforeCreatedAt, eventNodesBeforeId = window.beforeId,
+                            eventNodesHasMore = page.size > EVENT_NODE_PAGE_SIZE)
+                    }
+                }
+                val accepted = _state.value
+                if (eventRefreshRevision.get() == revision && accepted.currentBranchId == branchId &&
+                    accepted.eventNodes.lastOrNull()?.id == (page.take(EVENT_NODE_PAGE_SIZE).lastOrNull()?.id ?: tail.id)) {
+                    saveEventWindow(accepted)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
-                _state.update { state ->
-                    if (eventRefreshRevision.get() == revision && state.currentBranchId == branchId)
-                        state.copy(eventNodesLoadError = "较早事件读取失败，请重试") else state
-                }
+                _state.update { state -> if (eventRefreshRevision.get() == revision && state.currentBranchId == branchId)
+                    state.copy(eventNodesLoadError = "较早事件读取失败，请重试") else state }
             } finally {
-                _state.update { state ->
-                    if (eventRefreshRevision.get() == revision && state.currentBranchId == branchId)
-                        state.copy(eventNodesLoadingMore = false) else state
-                }
+                _state.update { state -> if (eventRefreshRevision.get() == revision && state.currentBranchId == branchId)
+                    state.copy(eventNodesLoadingMore = false) else state }
             }
         }
     }
@@ -4788,6 +6408,35 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    private suspend fun readMemorySummaryWindow(branchId: String, request: ChatContract.State): List<SessionMemorySegmentEntity> =
+        if (request.memorySegmentsBeforeEndId != null && request.memorySegmentsBeforeId != null)
+            memorySegmentDao.getOlderForBranch(sessionId, branchId, request.memorySegmentsBeforeEndId,
+                request.memorySegmentsBeforeId, request.memorySegmentsWindowSize + 1)
+        else memorySegmentDao.getRecentForBranch(sessionId, branchId, request.memorySegmentsWindowSize + 1)
+
+    private fun saveMemorySummaryWindow(current: ChatContract.State) {
+        savedStateHandle["summary_window_branch_$sessionId"] = current.currentBranchId
+        savedStateHandle["summary_window_size_$sessionId"] = current.memorySegmentsWindowSize
+        if (current.memorySegmentsBeforeEndId == null) savedStateHandle.remove<Long>("summary_window_before_end_$sessionId")
+        else savedStateHandle["summary_window_before_end_$sessionId"] = current.memorySegmentsBeforeEndId
+        if (current.memorySegmentsBeforeId == null) savedStateHandle.remove<Long>("summary_window_before_id_$sessionId")
+        else savedStateHandle["summary_window_before_id_$sessionId"] = current.memorySegmentsBeforeId
+    }
+
+    fun resetMemorySummaryWindow() {
+        val current = _state.value
+        if (!current.isReady || current.isGenerating || current.memoryOperationRunning) return
+        memorySummaryListRevision.incrementAndGet()
+        val reset = current.copy(memorySegments = emptyList(), memorySegmentsLoaded = false,
+            memorySegmentsLoading = false, memorySegmentsLoadingMore = false,
+            memorySegmentsWindowSize = MEMORY_SEGMENT_PAGE_SIZE,
+            memorySegmentsBeforeEndId = null, memorySegmentsBeforeId = null,
+            memorySegmentsHasMore = false, memorySegmentsLoadError = null)
+        _state.value = reset
+        saveMemorySummaryWindow(reset)
+        loadMemorySummariesIfNeeded()
+    }
+
     fun loadMemorySummariesIfNeeded() {
         val current = _state.value
         if (!current.isReady || current.memorySegmentsLoaded || current.memorySegmentsLoading) return
@@ -4798,12 +6447,12 @@ class ChatViewModel @Inject constructor(
                 memorySegmentsLoadError = null) else state }
         viewModelScope.launch {
             try {
-                val page = memorySegmentDao.getRecentForBranch(sessionId, branchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
+                val page = readMemorySummaryWindow(branchId, current)
                 _state.update { state -> if (state.currentBranchId == branchId &&
                     memorySummaryListRevision.get() == revision) state.copy(
-                    memorySegments = page.take(MEMORY_SEGMENT_PAGE_SIZE),
+                    memorySegments = page.take(current.memorySegmentsWindowSize),
                     memorySegmentsLoaded = true,
-                    memorySegmentsHasMore = page.size > MEMORY_SEGMENT_PAGE_SIZE,
+                    memorySegmentsHasMore = page.size > current.memorySegmentsWindowSize,
                     memorySegmentsLoadError = null,
                 ) else state }
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -4829,13 +6478,13 @@ class ChatViewModel @Inject constructor(
             state.copy(memorySegmentsLoading = true, memorySegmentsLoadingMore = false,
                 memorySegmentsLoadError = null) else state }
         try {
-            val page = memorySegmentDao.getRecentForBranch(sessionId, branchId, MEMORY_SEGMENT_PAGE_SIZE + 1)
+            val page = readMemorySummaryWindow(branchId, current)
             _state.update { state -> if (state.currentBranchId == branchId &&
                 memorySummaryListRevision.get() == revision) state.copy(
-                memorySegments = page.take(MEMORY_SEGMENT_PAGE_SIZE),
+                memorySegments = page.take(current.memorySegmentsWindowSize),
                 memorySegmentsLoaded = true,
                 memorySegmentsLoading = false,
-                memorySegmentsHasMore = page.size > MEMORY_SEGMENT_PAGE_SIZE,
+                memorySegmentsHasMore = page.size > current.memorySegmentsWindowSize,
                 memorySegmentsLoadingMore = false,
                 memorySegmentsLoadError = null,
             ) else state }
@@ -4883,11 +6532,22 @@ class ChatViewModel @Inject constructor(
                 _state.update { state ->
                     if (memorySummaryListRevision.get() != revision || state.currentBranchId != branchId ||
                         state.memorySegments.lastOrNull()?.id != tail.id) state
-                    else state.copy(
-                        memorySegments = (state.memorySegments + page.take(MEMORY_SEGMENT_PAGE_SIZE)).distinctBy { it.id },
-                        memorySegmentsHasMore = page.size > MEMORY_SEGMENT_PAGE_SIZE,
-                    )
+                    else {
+                        val combined = (state.memorySegments + page.take(MEMORY_SEGMENT_PAGE_SIZE)).distinctBy { it.id }
+                        val dropped = (combined.size - MEMORY_SEGMENT_WINDOW_SIZE).coerceAtLeast(0)
+                        val boundary = combined.getOrNull(dropped - 1)
+                        state.copy(
+                            memorySegments = combined.drop(dropped),
+                            memorySegmentsWindowSize = (state.memorySegmentsWindowSize + MEMORY_SEGMENT_PAGE_SIZE).coerceAtMost(MEMORY_SEGMENT_WINDOW_SIZE),
+                            memorySegmentsBeforeEndId = boundary?.endMessageId ?: state.memorySegmentsBeforeEndId,
+                            memorySegmentsBeforeId = boundary?.id ?: state.memorySegmentsBeforeId,
+                            memorySegmentsHasMore = page.size > MEMORY_SEGMENT_PAGE_SIZE,
+                        )
+                    }
                 }
+                val accepted = _state.value
+                if (accepted.currentBranchId == branchId && memorySummaryListRevision.get() == revision &&
+                    accepted.memorySegments.lastOrNull()?.id != tail.id) saveMemorySummaryWindow(accepted)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { _state.update { if (it.currentBranchId == branchId &&
                 memorySummaryListRevision.get() == revision)
@@ -4898,10 +6558,84 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    /** Edits only a summary owned by the visible story line. The original messages remain authoritative. */
+    suspend fun resolveMemorySummaryEditor(segmentId: Long, branchId: String): SessionMemorySegmentEntity? {
+        if (!_state.value.isReady || _state.value.currentBranchId != branchId) return null
+        branchVisibilityIndexManager.ensureReady()
+        val segment = if (branchId == "main") memorySegmentDao.getById(segmentId)
+            else memorySegmentDao.getVisibleById(sessionId, branchId, segmentId)
+        return segment?.takeIf {
+            _state.value.isReady && _state.value.currentBranchId == branchId &&
+                it.sessionId == sessionId && it.branchId == branchId
+        }
+    }
+
+    fun editMemorySummary(segment: SessionMemorySegmentEntity, summary: String, onDone: (Boolean, String) -> Unit = { _, _ -> }) {
+        val current = _state.value
+        if (!current.isReady || current.isGenerating || current.memoryOperationRunning ||
+            current.currentBranchId != segment.branchId || summary.isBlank()) return
+        _state.update { it.copy(memoryOperationRunning = true, memorySummaryEditSavedId = null, memorySummaryEditSavedText = null) }
+        val writeJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                branchVisibilityIndexManager.ensureReady()
+                check(_state.value.currentBranchId == segment.branchId && !_state.value.isGenerating)
+                when (summaryMaintenance.edit(sessionId, segment.branchId, segment.id, segment.summary, summary)) {
+                    SummaryMaintenanceResult.Updated -> {
+                        _state.update { it.copy(memorySummaryEditSavedId = segment.id, memorySummaryEditSavedText = summary.trim()) }
+                        val message = try {
+                            refreshMemorySummaryPage(segment.branchId)
+                            "摘要已更新，相关上下文将在下次整理时重建"
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { "摘要已保存，列表读取失败，请重试读取" }
+                        onDone(true, message)
+                    }
+                    SummaryMaintenanceResult.NotOwned -> onDone(false, "只能修改当前故事线自行生成的摘要")
+                    SummaryMaintenanceResult.Conflict -> onDone(false, "摘要已被其他操作更新，请重新打开后再编辑")
+                    SummaryMaintenanceResult.Deleted -> onDone(false, "摘要状态已变化，请刷新列表")
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { onDone(false, failure.message ?: "摘要保存失败，请重试") }
+            finally { _state.update { it.copy(memoryOperationRunning = false) } }
+        }
+        if (RetainedChatSessions.stores.contains(sessionId)) {
+            RetainedChatSessions.stores.retainJob(sessionId, writeJob, reportRunning = false)
+        }
+        writeJob.start()
+    }
+
+    /** Deletes the selected owned summary and later derived summaries on that line. */
+    fun deleteMemorySummary(segment: SessionMemorySegmentEntity, onDone: (String) -> Unit = {}) {
+        val current = _state.value
+        if (!current.isReady || current.isGenerating || current.memoryOperationRunning ||
+            current.currentBranchId != segment.branchId) return
+        _state.update { it.copy(memoryOperationRunning = true) }
+        viewModelScope.launch {
+            try {
+                branchVisibilityIndexManager.ensureReady()
+                check(_state.value.currentBranchId == segment.branchId && !_state.value.isGenerating)
+                when (summaryMaintenance.delete(sessionId, segment.branchId, segment.id, segment.summary)) {
+                    SummaryMaintenanceResult.Deleted -> {
+                        refreshMemorySummaryPage(segment.branchId)
+                        onDone("摘要及后续自动摘要已删除，原始对话仍保留")
+                    }
+                    SummaryMaintenanceResult.NotOwned -> onDone("只能删除当前故事线自行生成的摘要")
+                    SummaryMaintenanceResult.Conflict -> onDone("摘要已不存在或被其他操作更新，请刷新列表")
+                    SummaryMaintenanceResult.Updated -> onDone("摘要状态已变化，请刷新列表")
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { onDone(failure.message ?: "摘要删除失败，请重试") }
+            finally { _state.update { it.copy(memoryOperationRunning = false) } }
+        }
+    }
+
     fun continueCurrentStorySummary(onDone: (String) -> Unit = {}) {
         if (_state.value.memoryOperationRunning || _state.value.isGenerating ||
             activeGeneration != null || branchTransitionJob?.isActive == true) return
         val branchId = currentBranchId()
+        val maintenancePlatform = try { requestPlatform() } catch (_: Exception) {
+            onDone("所选平台或模型已变更，请重新选择后重试")
+            return
+        }
         _state.update { it.copy(memoryOperationRunning = true, manualCompactionRunning = true, manualCompactionChunk = null) }
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             val owner = coroutineContext[Job]
@@ -4919,9 +6653,9 @@ class ChatViewModel @Inject constructor(
                     onDone("当前会话没有可用角色，无法整理摘要")
                     return@launch
                 }
-                val connection = chatConnection(world, character)
+                val connection = chatConnection(world, character, maintenancePlatform)
                 connection.error?.let { onDone(it); return@launch }
-                val model = resolveChatLlmModel(character, sessionThink, connection)
+                val model = resolveChatLlmModel(character, sessionThink, connection, maintenancePlatform)
                 val baseUrl = ApiRootLines.splitToOrderedDistinct(connection.baseUrl, llmApiService::normalizeOpenAiCompatibleBase)
                     .firstOrNull() ?: llmApiService.normalizeOpenAiCompatibleBase(connection.baseUrl.trim())
                 if (connection.apiKey.isBlank() || baseUrl.isBlank() || model.isNullOrBlank()) {
@@ -4934,6 +6668,7 @@ class ChatViewModel @Inject constructor(
                     apiKey = connection.apiKey,
                     baseUrl = baseUrl,
                     model = model,
+                    contextWindow = maintenancePlatform?.modelContextWindows?.get(model),
                     threshold = threshold,
                     scanHistoricalGaps = true,
                     onProgress = { chunk ->
@@ -4967,7 +6702,11 @@ class ChatViewModel @Inject constructor(
     }
 
     fun rebuildCurrentContextMemory(onDone: (String) -> Unit = {}) {
-        if (_state.value.memoryOperationRunning || _state.value.isGenerating) return
+        if (_state.value.memoryOperationRunning || _state.value.isGenerating || activeGeneration != null) return
+        val maintenancePlatform = try { requestPlatform() } catch (_: Exception) {
+            onDone("所选平台或模型已变更，请重新选择后重试")
+            return
+        }
         _state.update { it.copy(memoryOperationRunning = true) }
         viewModelScope.launch {
           try {
@@ -4977,11 +6716,11 @@ class ChatViewModel @Inject constructor(
                 characterDao.getById(participant.characterId)
             }
             val resolvedCharacter = firstCharacter ?: CharacterEntity()
-            val connection = chatConnection(world, resolvedCharacter)
+            val connection = chatConnection(world, resolvedCharacter, maintenancePlatform)
             connection.error?.let { onDone(it); return@launch }
             val apiKey = connection.apiKey
             val baseUrl = connection.baseUrl
-            val model = resolveMainChatModelId(resolvedCharacter, connection)
+            val model = resolveMainChatModelId(resolvedCharacter, connection, maintenancePlatform)
             if (apiKey.isBlank() || baseUrl.isBlank() || model.isBlank()) {
                 onDone("当前线路未配置可用对话模型，无法重建记忆")
                 return@launch
@@ -4994,6 +6733,7 @@ class ChatViewModel @Inject constructor(
                 apiKey = apiKey,
                 baseUrl = baseUrl,
                 model = model,
+                contextWindow = maintenancePlatform?.modelContextWindows?.get(model),
                 worldText = world?.worldPrompt.orEmpty(),
                 activeCharacterNames = _state.value.characterNames.values.toList(),
             )
@@ -5027,12 +6767,21 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    fun clearCurrentContextMemory(onDone: (String) -> Unit = {}) {
+    fun clearCurrentContextMemory(expectedBranchId: String? = null, onDone: (String) -> Unit = {}) {
         if (_state.value.memoryOperationRunning || _state.value.isGenerating) return
+        val branchId = expectedBranchId ?: currentBranchId()
+        if (_state.value.currentBranchId != branchId) {
+            onDone("故事线已切换，未清空记忆，请重试")
+            return
+        }
         _state.update { it.copy(memoryOperationRunning = true) }
-        val branchId = currentBranchId()
+        _state.update { it.copy(contextMemoryClearError = null) }
         viewModelScope.launch {
             try {
+                if (_state.value.currentBranchId != branchId) {
+                    onDone("故事线已切换，未清空记忆，请重试")
+                    return@launch
+                }
                 universalContextMemoryManager.clear(sessionId, branchId)
                 if (_state.value.currentBranchId == branchId) contextMemoryDisplayRevision.incrementAndGet()
                 _state.update { if (it.currentBranchId == branchId) it.copy(
@@ -5040,11 +6789,18 @@ class ChatViewModel @Inject constructor(
                     contextMemoryLoaded = true,
                     contextMemoryLoading = false,
                     contextMemoryLoadError = null,
+                    contextMemoryClearError = null,
                     contextMemoryStatus = ContextMemoryStatus.IDLE,
                 ) else it }
                 onDone("已清空长期记忆；后续对话会重新整理")
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { onDone("清空失败，请重试") }
+            catch (_: Exception) {
+                _state.update { if (it.currentBranchId == branchId) it.copy(
+                    contextMemoryClearError = "长期记忆清空失败，请重试",
+                    contextMemoryStatus = ContextMemoryStatus.FAILED,
+                ) else it }
+                onDone("清空失败，请重试")
+            }
             finally { _state.update { it.copy(memoryOperationRunning = false) } }
         }
     }
@@ -5053,46 +6809,57 @@ class ChatViewModel @Inject constructor(
         draft: SessionWorldCredentialDraft,
         onResult: (Boolean) -> Unit = {},
     ) {
-        if (!canMutateRoundConfiguration()) {
+        if (_state.value.worldCredentialsSaving || _state.value.worldSettingSaving || !canMutateRoundConfiguration()) {
             onResult(false)
             return
         }
-        viewModelScope.launch {
-            val updated = try {
-                val current = sessionWorldDao.getBySession(sessionId)
-                    ?: SessionWorldEntity(sessionId = sessionId)
-                val pending = current.copy(
-                    sessionLlmApiKey = draft.sessionLlmApiKey.trim(),
-                    sessionLlmBaseUrl = draft.sessionLlmBaseUrl.trim(),
-                    sessionImageApiKey = draft.sessionImageApiKey.trim(),
-                    sessionImageBaseUrl = draft.sessionImageBaseUrl.trim(),
-                    sessionImageModel = draft.sessionImageModel.trim(),
-                    sessionVoiceApiKey = draft.sessionVoiceApiKey.trim(),
-                    sessionVoiceBaseUrl = draft.sessionVoiceBaseUrl.trim(),
-                    sessionVoiceModel = draft.sessionVoiceModel.trim(),
-                    sessionVoiceSpeechVoice = draft.sessionVoiceSpeechVoice.trim(),
-                    sessionVoicePresetPrefixModel = draft.sessionVoicePresetPrefixModel.trim(),
-                    updatedAt = System.currentTimeMillis(),
-                )
-                sessionWorldDao.upsert(pending)
-                pending
+        _state.update { it.copy(worldCredentialsSaving = true) }
+        val writeJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                val updated = run {
+                    val current = sessionWorldDao.getBySession(sessionId)
+                        ?: SessionWorldEntity(sessionId = sessionId)
+                    val pending = current.copy(
+                        sessionLlmApiKey = draft.sessionLlmApiKey.trim(),
+                        sessionLlmBaseUrl = draft.sessionLlmBaseUrl.trim(),
+                        sessionImageApiKey = draft.sessionImageApiKey.trim(),
+                        sessionImageBaseUrl = draft.sessionImageBaseUrl.trim(),
+                        sessionImageModel = draft.sessionImageModel.trim(),
+                        sessionVoiceApiKey = draft.sessionVoiceApiKey.trim(),
+                        sessionVoiceBaseUrl = draft.sessionVoiceBaseUrl.trim(),
+                        sessionVoiceModel = draft.sessionVoiceModel.trim(),
+                        sessionVoiceSpeechVoice = draft.sessionVoiceSpeechVoice.trim(),
+                        sessionVoicePresetPrefixModel = draft.sessionVoicePresetPrefixModel.trim(),
+                        updatedAt = System.currentTimeMillis(),
+                    )
+                    sessionWorldDao.upsert(pending)
+                    pending
+                }
+                _state.update { it.copy(world = updated) }
+                onResult(true)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
                 _state.update { it.copy(error = "本场线路保存失败，请重试") }
                 onResult(false)
                 return@launch
-            }
-            _state.update { it.copy(world = updated) }
-            onResult(true)
+            } finally { _state.update { it.copy(worldCredentialsSaving = false) } }
         }
+        if (RetainedChatSessions.stores.contains(sessionId)) {
+            RetainedChatSessions.stores.retainJob(sessionId, writeJob, reportRunning = false)
+        }
+        writeJob.start()
     }
 
     fun updateWorldSetting(key: String, value: Boolean) {
+        if (key !in setOf("narratorEnabled", "choiceGenerationEnabled", "antiCheatEnabled",
+                "autoSedimentEnabled", "autoCharacterImageGen", "autoCharacterSpeech")) return
+        if (_state.value.worldSettingSaving || _state.value.worldCredentialsSaving) return
         if (!canMutateRoundConfiguration()) return
-        viewModelScope.launch {
+        _state.update { it.copy(worldSettingSaving = true) }
+        val writeJob = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
-                val world = _state.value.world ?: SessionWorldEntity(sessionId = sessionId)
+                val world = sessionWorldDao.getBySession(sessionId) ?: SessionWorldEntity(sessionId = sessionId)
                 val updated = when (key) {
                     "narratorEnabled" -> world.copy(narratorEnabled = value)
                     "choiceGenerationEnabled" -> world.copy(choiceGenerationEnabled = value)
@@ -5103,18 +6870,25 @@ class ChatViewModel @Inject constructor(
                     else -> return@launch
                 }
                 sessionWorldDao.upsert(updated)
-                _state.value = _state.value.copy(world = updated)
+                _state.update { it.copy(world = updated) }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
                 _state.update { it.copy(error = "本场玩法保存失败，请重试") }
-            }
+            } finally { _state.update { it.copy(worldSettingSaving = false) } }
         }
+        if (RetainedChatSessions.stores.contains(sessionId)) {
+            RetainedChatSessions.stores.retainJob(sessionId, writeJob, reportRunning = false)
+        }
+        writeJob.start()
     }
 
     fun handleMessageAction(action: MessageAction) {
         when (action) {
             is MessageAction.Speak -> speakMessage(ChatMessageTextFormat.visibleBody(action.message.content, action.message.speakerType), action.message.characterId)
+            is MessageAction.RetryAutoImage -> { retryAutoCharacterImage(action.message.id) }
+            is MessageAction.RetryAutoVoice -> { retryAutoCharacterVoice(action.message.id) }
+            is MessageAction.PlayVoiceAttachments -> { playVoiceAttachments(action.message.id) }
             is MessageAction.Copy -> Unit // 剪贴板：由 ChatScreen 处理
             is MessageAction.ContinueReply -> {
                 val message = action.message

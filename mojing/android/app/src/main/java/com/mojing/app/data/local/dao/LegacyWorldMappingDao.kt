@@ -30,6 +30,9 @@ interface LegacyWorldMappingDao {
     @Query("SELECT * FROM legacy_lore_mappings WHERE loreEntryId = :loreEntryId")
     suspend fun getLoreById(loreEntryId: Long): LegacyLoreMappingEntity?
 
+    @Query("SELECT loreEntryId FROM legacy_lore_mappings WHERE loreEntryId IN (:ids)")
+    suspend fun getMappedLoreIds(ids: List<Long>): List<Long>
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertLore(mapping: LegacyLoreMappingEntity): Long
 }

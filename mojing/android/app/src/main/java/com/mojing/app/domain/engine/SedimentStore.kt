@@ -6,8 +6,11 @@ import com.mojing.app.data.local.AppDatabase
 import com.mojing.app.data.local.dao.*
 import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
 import com.mojing.app.data.local.entity.MessageEntity
+import com.mojing.app.domain.encyclopedia.messageSourceFingerprint
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 data class SedimentSnapshot(val encyclopediaId: Long, val sessionId: Long, val branchId: String, val revision: Long, val sources: List<MessageEntity>)
@@ -41,12 +44,21 @@ class SedimentStore @Inject constructor(private val database: AppDatabase) {
         suspend fun persistValidated(snapshot: SedimentSnapshot, entries: List<EncyclopediaEntryEntity>, messages: MessageDao, worlds: SessionWorldDao, encyclopedias: EncyclopediaDao, dao: EncyclopediaEntryDao): Int {
             require(entries.size <= 8 && entries.all { it.id == 0L && it.title.isNotBlank() && it.content.isNotBlank() })
             if (!valid(snapshot, messages, worlds, encyclopedias)) return 0
-            val meta = Gson().toJson(linkedMapOf("sediment_version" to 1, "source_branch_id" to snapshot.branchId,
+            val fingerprints = withContext(Dispatchers.Default) {
+                snapshot.sources.map { source ->
+                    linkedMapOf("message_id" to source.id, "fingerprint" to messageSourceFingerprint(source))
+                }
+            }
+            val meta = Gson().toJson(linkedMapOf("sediment_version" to 2, "source_branch_id" to snapshot.branchId,
+                "source_message_ids" to snapshot.sources.map { it.id }, "source_revision" to snapshot.revision,
+                "source_fingerprint_version" to 1, "source_message_fingerprints" to fingerprints))
+            val legacyMeta = Gson().toJson(linkedMapOf("sediment_version" to 1, "source_branch_id" to snapshot.branchId,
                 "source_message_ids" to snapshot.sources.map { it.id }, "source_revision" to snapshot.revision))
             var added = 0
             for (entry in entries) {
                 currentCoroutineContext().ensureActive()
-                if (dao.findSedimentDuplicate(snapshot.encyclopediaId, snapshot.sessionId, entry.title, entry.content, meta) != null) continue
+                if (dao.findSedimentDuplicate(snapshot.encyclopediaId, snapshot.sessionId, entry.title, entry.content, meta) != null ||
+                    dao.findSedimentDuplicate(snapshot.encyclopediaId, snapshot.sessionId, entry.title, entry.content, legacyMeta) != null) continue
                 // 自动推断仅新增条目；角色设定的修改由明确的编辑保存操作负责。
                 dao.upsert(entry.copy(encyclopediaId = snapshot.encyclopediaId, confidence = "inferred",
                     sourceSessionId = snapshot.sessionId, sourceMessageId = snapshot.sources.last().id, metaJson = meta))

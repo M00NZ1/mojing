@@ -33,7 +33,7 @@ import javax.inject.Singleton
 sealed class StreamState {
     data class Generating(val partialText: String) : StreamState()
     data class Done(val fullText: String, val usage: CostRecordEntity? = null) : StreamState()
-    data class Error(val message: String) : StreamState()
+    data class Error(val message: String, val contextLimit: Boolean = false) : StreamState()
 }
 
 @Singleton
@@ -69,8 +69,20 @@ class ChatEngine @Inject constructor(
     private fun streamRequest(
         sessionId: Long, character: CharacterEntity, messages: List<ChatMessage>,
         apiKey: String, baseUrl: String, model: String, temperature: Float, maxTokens: Int,
+        platformId: String? = null,
+        contextWindow: Int? = null,
+        promptDocument: PromptDocument? = null,
     ): Flow<StreamState> = flow {
-        val billing = costRecorder.capture(model, baseUrl, apiKey)
+        val fitted = if (contextWindow == null) null else withContext(kotlinx.coroutines.Dispatchers.Default) {
+            RequestContextBudget.fit(messages, contextWindow, maxTokens, promptDocument)
+        }
+        if (fitted is RequestContextBudget.Result.TooLarge) {
+            emit(StreamState.Error(fitted.message(), contextLimit = true))
+            return@flow
+        }
+        val requestMessages = (fitted as? RequestContextBudget.Result.Ready)?.messages ?: messages
+        val billing = if (platformId.isNullOrBlank()) costRecorder.capture(model, baseUrl, apiKey)
+        else costRecorder.captureForPlatform(model, baseUrl, apiKey, platformId)
         val text = StringBuilder()
         val started = System.nanoTime()
         var usage: TokenUsage? = null
@@ -88,7 +100,7 @@ class ChatEngine @Inject constructor(
                             promptTokens = usage?.promptTokens ?: 0,
                             completionTokens = usage?.completionTokens ?: 0,
                             durationMs = ((System.nanoTime() - started) / 1_000_000).coerceIn(0, Int.MAX_VALUE.toLong()).toInt(),
-                            success = success, promptTextFallback = messages.joinToString("\n") { it.content },
+                            success = success, promptTextFallback = requestMessages.joinToString("\n") { it.content },
                             completionTextFallback = text.toString(), request = billing,
                             usageProvided = usage != null, cachedPromptTokens = usage?.cachedPromptTokens ?: 0,
                             status = status,
@@ -101,13 +113,16 @@ class ChatEngine @Inject constructor(
         val result: StreamState = try {
             val source = if (OpenAiCompatibleRouting.isAnthropicHost(baseUrl)) {
                 anthropicAdapter.streamChatWithUsage(
-                    apiKey, baseUrl, model, messages.filter { it.role == "system" }.joinToString("\n") { it.content },
-                    messages.filter { it.role != "system" }, temperature, maxTokens,
+                    apiKey, baseUrl, model, requestMessages.filter { it.role == "system" }.joinToString("\n") { it.content },
+                    requestMessages.filter { it.role != "system" }, temperature, maxTokens,
                     onUsage = { usage = it }, strictErrors = true,
                 )
             } else {
                 llmApi.streamChatCompletionWithUsage(apiKey, baseUrl,
-                    ChatRequest(model = model, messages = messages, temperature = temperature, max_tokens = maxTokens),
+                    ChatRequest(model = model, messages = requestMessages, temperature = temperature, max_tokens = maxTokens,
+                        top_p = character.topP.takeIf { character.id > 0 },
+                        frequency_penalty = character.frequencyPenalty.takeIf { character.id > 0 },
+                        presence_penalty = character.presencePenalty.takeIf { character.id > 0 }),
                     onUsage = { usage = it })
             }
             coroutineScope {
@@ -155,8 +170,11 @@ class ChatEngine @Inject constructor(
         maxTokens: Int,
         personaName: String = "玩家",
         userDescription: String = "",
+        platformId: String? = null,
+        contextWindow: Int? = null,
+        promptDocument: PromptDocument? = null,
     ): Flow<StreamState> = flow {
-        val systemPrompt = promptBuilder.buildForCharacter(
+        val systemDocument = promptBuilder.buildCharacterDocument(
             PromptBuilder.PromptContext(
                 character = character,
                 personaName = personaName,
@@ -164,12 +182,13 @@ class ChatEngine @Inject constructor(
                 sessionId = sessionId,
             ),
             effectiveModelName = model,
+            personaDocument = promptDocument,
         )
 
         val userMacros = MacroBindings.forCharacterSession(character, personaName, userDescription, sessionId, model)
 
         val messages = mutableListOf<ChatMessage>()
-        messages.add(ChatMessage("system", systemPrompt))
+        messages.add(ChatMessage("system", systemDocument.render()))
 
         for (msg in historyMessages) {
             val role = when (msg.speakerType) {
@@ -189,7 +208,7 @@ class ChatEngine @Inject constructor(
             messages.add(ChatMessage(role, cleanContent))
         }
 
-        emitAll(streamRequest(sessionId, character, messages, apiKey, baseUrl, model, temperature, maxTokens))
+        emitAll(streamRequest(sessionId, character, messages, apiKey, baseUrl, model, temperature, maxTokens, platformId, contextWindow, systemDocument))
     }
 
     fun streamGenerateWithMemory(
@@ -204,10 +223,12 @@ class ChatEngine @Inject constructor(
         model: String,
         personaName: String = "玩家",
         userDescription: String = "",
+        platformId: String? = null,
+        promptDocument: PromptDocument? = null,
     ): Flow<StreamState> = flow {
-        var systemPrompt = contextText
+        var systemDocument = promptDocument?.takeIf { it.render() == contextText } ?: PromptDocument.protected(contextText)
         if (snapshot != null) {
-            systemPrompt += """
+            systemDocument = systemDocument.appendProtected("""
 
                 【角色状态锚点 —— 你必须保持以下状态的连续性】
                 当前情绪：${snapshot.mood}
@@ -216,13 +237,13 @@ class ChatEngine @Inject constructor(
                 近期行为：${snapshot.recentKeyActions.joinToString("；")}
                 已知事实：${snapshot.knownFacts.joinToString("；")}
                 警告：不得无故突然转变情绪或态度，变化必须有剧情触发。
-            """.trimIndent()
+            """.trimIndent(), separator = "")
         }
 
         val userMacros = MacroBindings.forCharacterSession(character, personaName, userDescription, sessionId, model)
 
         val messages = mutableListOf<ChatMessage>()
-        messages.add(ChatMessage("system", systemPrompt))
+        messages.add(ChatMessage("system", systemDocument.render()))
 
         for (msg in historyMessages) {
             val role = when (msg.speakerType) {
@@ -243,7 +264,7 @@ class ChatEngine @Inject constructor(
         }
 
         emitAll(streamRequest(sessionId, character, messages, apiKey, baseUrl, model,
-            character.temperature, budget.reservedForOutput))
+            character.temperature, budget.reservedForOutput, platformId, budget.contextWindow, systemDocument))
     }
 
     suspend fun nonStreamingCall(

@@ -58,6 +58,20 @@ internal fun StoryGenerationProgressCard(
             }
             Text("已用 ${state.generationElapsedMs / 1000} 秒 · ${state.receivedChars} 字" +
                 (state.firstContentDelayMs?.let { " · 首字 ${it / 1000} 秒" } ?: ""), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (state.totalChapters > 0) {
+                val completed = state.completedChapters.coerceIn(0, state.totalChapters)
+                Text(
+                    if (completed == state.totalChapters || !state.isGenerating) "已完成 $completed/${state.totalChapters} 章"
+                    else "正在生成第 ${(completed + 1).coerceAtMost(state.totalChapters)}/${state.totalChapters} 章",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                androidx.compose.material3.LinearProgressIndicator(
+                    progress = { completed.toFloat() / state.totalChapters.toFloat() },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            StoryCompletedChapters(state.completedChapterDrafts)
             if (state.preview.isNotBlank()) {
                 Text(state.preview, Modifier.heightIn(min = 80.dp, max = 180.dp).verticalScroll(rememberScrollState()), style = MaterialTheme.typography.bodyMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -72,8 +86,6 @@ internal fun StoryGenerationProgressCard(
                     TextButton(onClick = onStop) { Text("停止", color = MaterialTheme.colorScheme.error) }
                 }
             }
-            if (state.isGenerating) Text("本轮按开始生成时的设定创作", style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (state.hasPendingStory && state.preview.isBlank() && onCopyCompleted != null) {
                 TextButton(onClick = onCopyCompleted) { Text("复制完整正文") }
             }
@@ -83,6 +95,20 @@ internal fun StoryGenerationProgressCard(
                     Text(when { state.savedSessionId != null -> "打开已保存的会话"; state.hasPendingStory -> "重试保存"; else -> "重试" })
                 }
             }
+        }
+    }
+}
+
+@Composable
+internal fun StoryCompletedChapters(chapters: List<com.mojing.app.domain.story.StoryChapter>) {
+    if (chapters.isEmpty()) return
+    Text("已完成章节", style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Column(Modifier.fillMaxWidth().heightIn(max = 144.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        chapters.forEach { chapter ->
+            Text("${chapter.number}. ${chapter.title.ifBlank { "未命名章节" }}",
+                style = MaterialTheme.typography.bodyMedium)
         }
     }
 }

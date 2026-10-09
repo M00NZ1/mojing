@@ -82,7 +82,7 @@ class PromoteWorldTemplateUseCase @Inject constructor(
 
     suspend operator fun invoke(template: WorldTemplateEntity): EncyclopediaEntity = invoke(template.id)
 
-    private fun isCopiedFrom(entry: EncyclopediaEntryEntity, lore: WorldLoreEntryEntity): Boolean {
+    internal fun isCopiedFrom(entry: EncyclopediaEntryEntity, lore: WorldLoreEntryEntity): Boolean {
         val meta = parseObject(entry.metaJson)
         return meta.get("source")?.asString == SOURCE &&
             meta.get("source_hash")?.asString == hashLore(lore) &&
@@ -92,7 +92,7 @@ class PromoteWorldTemplateUseCase @Inject constructor(
             meta.get("sort_order")?.asInt == lore.sortOrder
     }
 
-    private fun toCanonicalEntry(
+    internal fun toCanonicalEntry(
         encyclopediaId: Long,
         template: WorldTemplateEntity,
         lore: WorldLoreEntryEntity,
@@ -137,15 +137,15 @@ class PromoteWorldTemplateUseCase @Inject constructor(
             "anti_cheat_prompt" to template.antiCheatPrompt, "is_builtin" to template.isBuiltin,
         ), "lore" to lore.map { loreSemantics(it) })))
 
-    private fun hashLore(lore: WorldLoreEntryEntity): String = sha256(Gson().toJson(loreSemantics(lore)))
+    internal fun hashLore(lore: WorldLoreEntryEntity): String = sha256(Gson().toJson(loreSemantics(lore)))
 
-    private fun loreSemantics(lore: WorldLoreEntryEntity): Map<String, Any> = mapOf(
+    internal fun loreSemantics(lore: WorldLoreEntryEntity): Map<String, Any> = mapOf(
         "title" to lore.title, "entry_type" to lore.entryType, "keywords" to keywords(lore.keywordsJson),
         "content" to lore.content, "sort_order" to lore.sortOrder, "is_core" to lore.isCore,
     )
 
-    private fun keywordsJson(raw: String): String = Gson().toJson(keywords(raw))
-    private fun keywords(raw: String): JsonArray = runCatching {
+    internal fun keywordsJson(raw: String): String = Gson().toJson(keywords(raw))
+    internal fun keywords(raw: String): JsonArray = runCatching {
         JsonParser.parseString(raw.ifBlank { "[]" }).asJsonArray
     }.getOrElse { JsonArray() }
     private fun parseObject(raw: String): JsonObject = runCatching {
@@ -153,7 +153,7 @@ class PromoteWorldTemplateUseCase @Inject constructor(
     }.getOrElse { JsonObject() }
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-    private fun mapEntryType(value: String): String = LEGACY_TYPES[value] ?: value.takeIf { it in CANONICAL_TYPES } ?: "other"
+    internal fun mapEntryType(value: String): String = LEGACY_TYPES[value] ?: value.takeIf { it in CANONICAL_TYPES } ?: "other"
 
     private companion object {
         const val SOURCE = "legacy_world_lore"

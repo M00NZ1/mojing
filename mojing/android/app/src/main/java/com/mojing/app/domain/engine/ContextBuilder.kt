@@ -16,10 +16,12 @@ data class ChatContext(
     val memorySummary: String = "",
     val universalContextMemoryText: String = "",
     val activeCharacters: List<String> = emptyList(),
-    val personaName: String = "玩家"
+    val personaName: String = "玩家",
+    val promptDocument: PromptDocument? = null,
 )
 
 data class SharedWorldContext(
+    val encyclopediaFoundation: String = "",
     val encyclopediaHits: List<String> = emptyList(),
     val loreHits: List<String> = emptyList(),
 )
@@ -31,7 +33,22 @@ class ContextBuilder @Inject constructor(
     private val loreSearcher: LoreSearcher,
     private val characterBookSearcher: CharacterBookSearcher,
     private val encyclopediaDao: com.mojing.app.data.local.dao.EncyclopediaDao,
+    private val configDao: com.mojing.app.data.local.dao.ConfigDao? = null,
 ) {
+    /** Recent list is already bounded by its DAO. An unknown or edited row protects the whole summary block. */
+    suspend fun areAutomaticSummaries(segments: List<com.mojing.app.data.local.entity.SessionMemorySegmentEntity>): Boolean {
+        val config = configDao ?: return false
+        if (segments.isEmpty()) return false
+        for (segment in segments) {
+            if (segment.id <= 0L) return false
+            val source = try { config.get(SummaryProvenance.key(segment))?.valueJson }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { return false }
+            if (source != SummaryProvenance.fingerprint(segment)) return false
+        }
+        return true
+    }
+
     suspend fun buildFullContext(
         character: CharacterEntity,
         world: SessionWorldEntity?,
@@ -46,12 +63,13 @@ class ContextBuilder @Inject constructor(
         activeCharacterNames: List<String>,
         sessionId: Long,
         effectiveModelName: String,
+        automaticSummary: Boolean = false,
     ): ChatContext {
         val sharedWorldContext = searchWorldContext(world, recallQueryText)
 
         val characterBookHits = characterBookSearcher.search(character.id, recallQueryText)
 
-        val systemPrompt = promptBuilder.buildForCharacter(
+        val promptDocument = promptBuilder.buildCharacterDocument(
             PromptBuilder.PromptContext(
                 character = character,
                 world = world,
@@ -59,7 +77,10 @@ class ContextBuilder @Inject constructor(
                 userDescription = userDescription,
                 activeCharacterNames = activeCharacterNames,
                 recentMemorySegments = emptyList(),
+                memorySummary = memorySummary,
                 memoryCorrections = memoryCorrections,
+                encyclopediaFoundation = sharedWorldContext.encyclopediaFoundation,
+                automaticSummary = automaticSummary,
                 encyclopediaHits = sharedWorldContext.encyclopediaHits,
                 loreHits = sharedWorldContext.loreHits,
                 characterBookHits = characterBookHits,
@@ -70,7 +91,8 @@ class ContextBuilder @Inject constructor(
         )
 
         return ChatContext(
-            systemPrompt = systemPrompt,
+            systemPrompt = promptDocument.render(),
+            promptDocument = promptDocument,
             encyclopediaHits = sharedWorldContext.encyclopediaHits,
             loreHits = sharedWorldContext.loreHits,
             characterBookHits = characterBookHits,
@@ -93,19 +115,14 @@ class ContextBuilder @Inject constructor(
         world: SessionWorldEntity?,
         recallQueryText: String,
     ): SharedWorldContext {
-        val encyclopediaHits = if (world?.encyclopediaId != null) {
-            val foundation = encyclopediaFoundation(world)
-            buildList {
-                if (foundation.isNotBlank()) add("[百科基础背景] $foundation")
-                addAll(encyclopediaSearcher.search(world.encyclopediaId, recallQueryText)
-                    .map { "[${it.title}] ${it.content.take(200)}" })
-            }
-        } else {
-            emptyList()
-        }
+        val foundation = encyclopediaFoundation(world)
+        val encyclopediaHits = world?.encyclopediaId?.let { id ->
+            encyclopediaSearcher.search(id, recallQueryText).map { "[${it.title}] ${it.content.take(200)}" }
+        }.orEmpty()
         val loreHits = loreSearcher.search(world?.templateId, recallQueryText)
             .map { "[${it.title}] ${it.content.take(200)}" }
         return SharedWorldContext(
+            encyclopediaFoundation = foundation,
             encyclopediaHits = encyclopediaHits,
             loreHits = loreHits,
         )

@@ -13,8 +13,8 @@ def queries(filename):
     text = (SOURCE / "data/local/dao" / filename).read_text(encoding="utf-8")
     result = {}
     for body, name in re.findall(r"@Query\((.*?)\)\s*(?:suspend\s+)?fun\s+(\w+)", text, re.S):
-        literal = re.search(r'"""(.*?)"""|"(.*?)"', body, re.S)
-        result[name] = next(value for value in literal.groups() if value is not None)
+        literals = re.findall(r'"""(.*?)"""|"((?:\\.|[^"\\])*)"', body, re.S)
+        result[name] = "".join(long or json.loads('"' + short + '"') for long, short in literals)
     return result
 
 
@@ -22,16 +22,31 @@ class AndroidLibrarySqlTest(unittest.TestCase):
     def setUp(self):
         self.db = sqlite3.connect(":memory:")
         self.db.row_factory = sqlite3.Row
-        schema = json.loads((ANDROID / "schemas/com.mojing.app.data.local.AppDatabase/19.json").read_text())
+        schema_dir = ANDROID / "schemas/com.mojing.app.data.local.AppDatabase"
+        schema_file = max(schema_dir.glob("*.json"), key=lambda path: int(path.stem))
+        schema = json.loads(schema_file.read_text())
         for entity in schema["database"]["entities"]:
             self.db.execute(entity["createSql"].replace("${TABLE_NAME}", entity["tableName"]))
             for index in entity.get("indices", []):
                 self.db.execute(index["createSql"].replace("${TABLE_NAME}", entity["tableName"]))
         self.characters = queries("CharacterDao.kt")
         self.tasks = queries("GenerationTaskDao.kt")
+        self.sessions = queries("SessionDao.kt")
+        self.entries = queries("EncyclopediaEntryDao.kt")
+        self.costs = queries("CostRecordDao.kt")
 
     def tearDown(self):
         self.db.close()
+
+    def test_recent_projects_are_bounded_chronological_and_ignore_pin_order(self):
+        pinned_old = self.insert("sessions", title="旧置顶", updatedAt=1, pinnedAt=999)
+        first = self.insert("sessions", title="新故事", updatedAt=500)
+        tied = self.insert("sessions", title="同时间后建", updatedAt=500)
+        third = self.insert("sessions", title="第三个", updatedAt=100)
+        query = queries("SessionDao.kt")["observeRecentProjects"]
+        self.assertEqual([tied, first, third], [r["id"] for r in self.db.execute(query)])
+        self.db.execute("UPDATE sessions SET updatedAt=600 WHERE id=?", (pinned_old,))
+        self.assertEqual([pinned_old, tied, first], [r["id"] for r in self.db.execute(query)])
 
     def insert(self, table, **values):
         row = {c["name"]: ("" if c["type"] == "TEXT" else 0) if c["notnull"] else None
@@ -48,6 +63,81 @@ class AndroidLibrarySqlTest(unittest.TestCase):
         for method in ("getAll", "observeAll", "getAllBound", "observeByEncyclopedia"):
             rows = self.db.execute(self.characters[method], {"encyclopediaId": 7})
             self.assertEqual(expected, [r["id"] for r in rows])
+
+    def test_recent_project_cover_prefers_world_then_character_and_returns_null_without_image(self):
+        session = self.insert("sessions", title="封面故事", updatedAt=900)
+        encyclopedia = self.insert("world_encyclopedias", name="雾港", coverImagePath="world-cover.png")
+        self.insert("session_worlds", sessionId=session, encyclopediaId=encyclopedia)
+        character = self.insert("characters", name="艾琳", cardImagePath="character-cover.png")
+        self.insert("session_participants", sessionId=session, characterId=character, sortOrder=0)
+        query = self.sessions["observeRecentProjectsWithMeta"]
+        row = self.db.execute(query).fetchone()
+        self.assertEqual("world-cover.png", row["cover_image_path"])
+
+        self.db.execute("UPDATE world_encyclopedias SET coverImagePath='' WHERE id=?", (encyclopedia,))
+        row = self.db.execute(query).fetchone()
+        self.assertEqual("character-cover.png", row["cover_image_path"])
+
+        self.db.execute("UPDATE characters SET cardImagePath='', avatarImagePath='' WHERE id=?", (character,))
+        row = self.db.execute(query).fetchone()
+        self.assertIsNone(row["cover_image_path"])
+
+    def test_character_query_filters_full_set_and_cursor_has_no_duplicates(self):
+        query = self.characters["getLibraryRecommendedPage"]
+        for index in range(30):
+            self.insert("characters", name=f"角色{index:02d}", personaPrompt="needle" if index in (4, 19, 28) else "普通设定",
+                        createdAt=index + 1)
+        params = dict(encyclopediaId=None, cursorPinned=None, cursorPinnedAt=None,
+                      cursorFavorite=None, cursorCreatedAt=None, cursorId=None, limit=3, query="needle")
+        seen = []
+        while True:
+            rows = list(self.db.execute(query, params))
+            page = rows[:2]
+            seen.extend(row["id"] for row in page)
+            if len(rows) <= 2:
+                break
+            last = page[-1]
+            params.update(cursorPinned=0, cursorPinnedAt=last["pinnedAt"],
+                          cursorFavorite=last["favorite"], cursorCreatedAt=last["createdAt"], cursorId=last["id"])
+        self.assertEqual(3, len(seen))
+        self.assertEqual(3, len(set(seen)))
+        self.assertEqual(3, self.db.execute("SELECT COUNT(*) FROM characters WHERE personaPrompt='needle'").fetchone()[0])
+
+    def test_world_type_counts_group_real_types(self):
+        enc = self.insert("world_encyclopedias", name="统计世界")
+        for entry_type in ("角色", "角色", "地点", "事件"):
+            self.insert("encyclopedia_entries", encyclopediaId=enc, entryType=entry_type, title=entry_type)
+        rows = self.db.execute(self.entries["getWorldTypeCounts"], {"encId": enc}).fetchall()
+        self.assertEqual({"角色": 2, "地点": 1, "事件": 1}, {row["type"]: row["count"] for row in rows})
+
+    def test_daily_usage_separates_currency_and_excludes_unknown_cost_from_amount(self):
+        query = self.costs["dailyUsage"]
+        day = 1_700_000_000_000
+        self.insert("llm_cost_records", platformId="p", modelName="m", currency="USD", costKnown=1,
+                    estimatedCost=1.5, totalTokens=10, createdAt=day)
+        self.insert("llm_cost_records", platformId="p", modelName="m", currency="USD", costKnown=0,
+                    estimatedCost=99.0, totalTokens=20, createdAt=day + 1)
+        self.insert("llm_cost_records", platformId="p", modelName="m", currency="CNY", costKnown=1,
+                    estimatedCost=2.0, totalTokens=30, createdAt=day + 1)
+        rows = self.db.execute(query, {"fromMillis": day - 1, "toMillis": day + 86_400_000}).fetchall()
+        by_currency = {row["currency"]: row for row in rows}
+        self.assertEqual(1.5, by_currency["USD"]["costKnownAmount"])
+        self.assertEqual(1, by_currency["USD"]["unknownCalls"])
+        self.assertEqual(2.0, by_currency["CNY"]["costKnownAmount"])
+
+    def test_platform_and_currency_summaries_preserve_unknown_cost_count(self):
+        self.insert("llm_cost_records", platformId="p1", platformName="平台一", modelName="m1",
+                    currency="USD", costKnown=1, estimatedCost=3.0, totalTokens=12, success=1)
+        self.insert("llm_cost_records", platformId="p1", platformName="平台一", modelName="m1",
+                    currency="USD", costKnown=0, estimatedCost=88.0, totalTokens=8, success=0, status="failed")
+        self.insert("llm_cost_records", platformId="", platformName="", modelName="legacy",
+                    currency="USD", costKnown=0, estimatedCost=42.0, totalTokens=5, success=1)
+        platforms = list(self.db.execute(self.costs["platformUsage"]))
+        self.assertIn("历史记录（未记录平台）", [row["platformName"] for row in platforms])
+        summary = list(self.db.execute(self.costs["usageSummary"], {"platformId": "p1", "modelName": None}))
+        self.assertEqual(1, len(summary))
+        self.assertEqual(1, summary[0]["unknownCostCalls"])
+        self.assertEqual(3.0, summary[0]["estimatedCost"])
 
     def test_revision_pages_cover_large_interleaved_history_without_duplicates(self):
         query = queries("EntryVersionDao.kt")["getPage"]

@@ -95,6 +95,73 @@ interface SessionEventNodeDao {
         limit: Int,
     ): List<SessionEventNodeEntity>
 
+    @Query("""
+        SELECT event.* FROM session_event_nodes AS event
+        WHERE event.sessionId = :sessionId
+          AND event.branchId = 'main'
+          AND (:query = '' OR instr(lower(event.title), lower(:query)) > 0
+               OR instr(lower(event.description), lower(:query)) > 0)
+          AND (:resolved IS NULL OR event.resolved = :resolved)
+          AND (:beforeCreatedAt IS NULL OR
+               event.createdAt < :beforeCreatedAt OR
+               (event.createdAt = :beforeCreatedAt AND event.id < :beforeId))
+        ORDER BY event.createdAt DESC, event.id DESC
+        LIMIT :limit
+    """)
+    suspend fun getFilteredMainPage(
+        sessionId: Long,
+        query: String,
+        resolved: Boolean?,
+        beforeCreatedAt: Long?,
+        beforeId: Long?,
+        limit: Int,
+    ): List<SessionEventNodeEntity>
+
+    @Query("""
+        $VISIBLE_EVENT_NODES_QUERY
+          AND (:query = '' OR instr(lower(event.title), lower(:query)) > 0
+               OR instr(lower(event.description), lower(:query)) > 0)
+          AND (:resolved IS NULL OR COALESCE(
+                (SELECT status.resolved FROM branch_event_status AS status
+                 WHERE status.sessionId = event.sessionId AND status.branchId = :branchId
+                   AND status.eventId = event.id LIMIT 1), event.resolved) = :resolved)
+          AND (:beforeCreatedAt IS NULL OR
+               event.createdAt < :beforeCreatedAt OR
+               (event.createdAt = :beforeCreatedAt AND event.id < :beforeId))
+        ORDER BY event.createdAt DESC, event.id DESC
+        LIMIT :limit
+    """)
+    suspend fun getFilteredVisiblePage(
+        sessionId: Long,
+        branchId: String,
+        query: String,
+        resolved: Boolean?,
+        beforeCreatedAt: Long?,
+        beforeId: Long?,
+        limit: Int,
+    ): List<SessionEventNodeEntity>
+
+    suspend fun getFilteredPageForBranch(
+        sessionId: Long,
+        branchId: String,
+        query: String = "",
+        resolved: Boolean? = null,
+        beforeCreatedAt: Long? = null,
+        beforeId: Long? = null,
+        limit: Int,
+    ): List<SessionEventNodeEntity> {
+        require(limit >= 0)
+        require((beforeCreatedAt == null) == (beforeId == null))
+        if (limit == 0) return emptyList()
+        val rows = if (branchId == "main") {
+            getFilteredMainPage(sessionId, query, resolved, beforeCreatedAt, beforeId, limit)
+        } else {
+            getFilteredVisiblePage(sessionId, branchId, query, resolved, beforeCreatedAt, beforeId, limit)
+        }
+        if (branchId == "main" || rows.isEmpty()) return rows
+        return applyEventStatusOverrides(rows, getStatusOverrides(sessionId, branchId, rows.map { it.id }))
+    }
+
     suspend fun getPageForBranch(
         sessionId: Long,
         branchId: String,

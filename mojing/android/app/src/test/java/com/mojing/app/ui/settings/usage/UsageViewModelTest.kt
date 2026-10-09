@@ -11,6 +11,8 @@ import org.junit.Assert.*
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import java.time.YearMonth
+import java.time.ZoneId
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class UsageViewModelTest {
@@ -20,11 +22,20 @@ class UsageViewModelTest {
     private fun platform(id: String) = UsagePlatformUi(id, id, 10, 2, 0, 0)
     private fun model(id: String = "p") = UsageModelUi(id, "m", 10, 2, 0, 0)
     private fun summary() = UsageCurrencySummary("CNY", 2, 0, 0, 4, 6, 10, 0.01, 0)
+    private fun day(month: YearMonth, label: String = month.toString()) = DailyUsageSummary(label, "CNY", 0.01, 0, 10, 2)
+    private fun monthPlatform(id: String, tokens: Long = 10) = MonthlyPlatformUsage(id, id, "CNY", 0.01, tokens, 2, 0, 0)
+    private fun bounds(month: YearMonth): Pair<Long, Long> {
+        val zone = ZoneId.systemDefault()
+        return month.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli() to
+            month.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
+    }
 
     @Before fun setup() {
         Dispatchers.setMain(dispatcher)
         every { currency.state } returns MutableStateFlow(CurrencyDisplayState(usdToCny = 7.2, rateDate = "手动"))
         coEvery { dao.usageSummary(any(), any()) } returns listOf(summary())
+        coEvery { dao.dailyUsage(any(), any()) } returns listOf(day(YearMonth.now()))
+        coEvery { dao.monthlyPlatformUsage(any(), any()) } returns listOf(monthPlatform("p"))
         coEvery { dao.platformUsage() } returns listOf(PlatformUsageSummary("p", "渠道", 2, 0, 10))
         coEvery { dao.modelUsage(any()) } returns listOf(ModelChannelUsageSummary("m", 2, 0, 10))
     }
@@ -38,6 +49,118 @@ class UsageViewModelTest {
         coEvery { dao.usageSummary(null, null) } throws IllegalStateException()
         vm.refresh(); advanceUntilIdle()
         assertEquals(0.01, vm.state.value.currencies.single().cost, 0.0)
+        assertNotNull(vm.state.value.error)
+    }
+
+    @Test fun changingMonthQueriesExactlyTheSelectedMonthBounds() = runTest(dispatcher) {
+        val capturedDaily = mutableListOf<Pair<Long, Long>>()
+        val capturedMonthly = mutableListOf<Pair<Long, Long>>()
+        coEvery { dao.dailyUsage(any(), any()) } coAnswers {
+            capturedDaily += firstArg<Long>() to secondArg<Long>()
+            listOf(day(YearMonth.now()))
+        }
+        coEvery { dao.monthlyPlatformUsage(any(), any()) } coAnswers {
+            capturedMonthly += firstArg<Long>() to secondArg<Long>()
+            listOf(monthPlatform("p"))
+        }
+        val vm = UsageViewModel(dao, currency)
+        advanceUntilIdle()
+        val selected = YearMonth.now().minusMonths(1)
+        vm.setMonth(selected)
+        advanceUntilIdle()
+        assertEquals(selected, vm.state.value.selectedMonth)
+        assertEquals(bounds(YearMonth.now()), capturedDaily.first())
+        assertEquals(bounds(selected), capturedDaily.last())
+        assertEquals(bounds(selected), capturedMonthly.last())
+    }
+
+    @Test fun newlyCreatedOwnerRestoresOnlyMonthIdentityAndReloadsItsBounds() = runTest(dispatcher) {
+        val saved = androidx.lifecycle.SavedStateHandle()
+        val first = UsageViewModel(dao, currency, saved)
+        advanceUntilIdle()
+        val month = YearMonth.now().minusMonths(2)
+        first.setMonth(month)
+        advanceUntilIdle()
+        val restored = androidx.lifecycle.SavedStateHandle(saved.keys().associateWith { saved.get<Any>(it) })
+        val second = UsageViewModel(dao, currency, restored)
+        advanceUntilIdle()
+        assertEquals(month, second.state.value.selectedMonth)
+        assertEquals(month, second.state.value.loadedMonth)
+        val range = bounds(month)
+        coVerify(exactly = 2) { dao.dailyUsage(range.first, range.second) }
+        assertTrue(saved.keys().size == 1)
+    }
+
+    @Test fun invalidOrFutureSavedMonthsFallBackWithoutChangingRouteIdentity() = runTest(dispatcher) {
+        listOf<Any>("broken", "2026-99", "10000-01", "0000-01", 17, YearMonth.now().plusMonths(1).toString()).forEach { value ->
+            val handle = androidx.lifecycle.SavedStateHandle(mapOf("usage_selected_month" to value))
+            val vm = UsageViewModel(dao, currency, handle)
+            advanceUntilIdle()
+            assertEquals(YearMonth.now(), vm.state.value.selectedMonth)
+            assertEquals(YearMonth.now(), vm.state.value.loadedMonth)
+        }
+        coEvery { dao.requestPage("p", "m", any(), 40) } returns emptyList()
+        val month = YearMonth.now().minusMonths(3)
+        val handle = androidx.lifecycle.SavedStateHandle(mapOf("usage_selected_month" to month.toString(), "platformId" to "p", "modelName" to "m"))
+        val vm = UsageViewModel(dao, currency, handle)
+        advanceUntilIdle()
+        assertEquals(2, vm.state.value.level)
+        assertEquals("p", vm.state.value.selectedModel?.platformId)
+        assertEquals(month, vm.state.value.selectedMonth)
+        assertNull(vm.state.value.loadedMonth)
+    }
+
+    @Test fun failedMonthSelectionPersistsIntentButKeepsLoadedMonthUntilRetry() = runTest(dispatcher) {
+        val handle = androidx.lifecycle.SavedStateHandle()
+        val vm = UsageViewModel(dao, currency, handle)
+        advanceUntilIdle()
+        val previous = YearMonth.now().minusMonths(1)
+        val range = bounds(previous)
+        coEvery { dao.dailyUsage(range.first, range.second) } throws IllegalStateException()
+        vm.setMonth(previous); advanceUntilIdle()
+        assertEquals(YearMonth.now(), vm.state.value.loadedMonth)
+        assertEquals(previous.toString(), handle.get<String>("usage_selected_month"))
+        coEvery { dao.dailyUsage(range.first, range.second) } returns listOf(day(previous))
+        vm.refresh(); advanceUntilIdle()
+        assertEquals(previous, vm.state.value.loadedMonth)
+        assertNull(vm.state.value.error)
+        coVerify(exactly = 2) { dao.dailyUsage(range.first, range.second) }
+    }
+
+    @Test fun lateCompletionFromOlderMonthCannotOverwriteNewMonth() = runTest(dispatcher) {
+        val oldMonth = YearMonth.now().minusMonths(1)
+        val newMonth = oldMonth.minusMonths(1)
+        val oldBounds = bounds(oldMonth)
+        val gate = CompletableDeferred<Unit>()
+        coEvery { dao.dailyUsage(any(), any()) } coAnswers {
+            if (firstArg<Long>() == oldBounds.first) {
+                withContext(NonCancellable) { gate.await() }
+                listOf(day(oldMonth, "old"))
+            } else listOf(day(newMonth, "new"))
+        }
+        coEvery { dao.monthlyPlatformUsage(any(), any()) } returns listOf(monthPlatform("new"))
+        val vm = UsageViewModel(dao, currency)
+        advanceUntilIdle()
+        vm.setMonth(oldMonth)
+        runCurrent()
+        vm.setMonth(newMonth)
+        runCurrent()
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(newMonth, vm.state.value.selectedMonth)
+        assertEquals("new", vm.state.value.daily.single().day)
+    }
+
+    @Test fun failedMonthRefreshKeepsDisplayedDailyAndPlatformData() = runTest(dispatcher) {
+        val vm = UsageViewModel(dao, currency)
+        advanceUntilIdle()
+        val displayedDaily = vm.state.value.daily
+        val displayedPlatforms = vm.state.value.platforms
+        coEvery { dao.dailyUsage(any(), any()) } throws IllegalStateException("offline")
+        vm.setMonth(YearMonth.now().minusMonths(1))
+        advanceUntilIdle()
+        assertEquals(displayedDaily, vm.state.value.daily)
+        assertEquals(displayedPlatforms, vm.state.value.platforms)
         assertNotNull(vm.state.value.error)
     }
 

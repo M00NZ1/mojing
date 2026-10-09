@@ -59,6 +59,29 @@ class MessageDaoTest {
     }
 
     @Test
+    fun relatedStoriesKeysetUsesTimestampAndIdAndFiltersParticipants() = runBlocking {
+        val characterId = db.characterDao().upsert(CharacterEntity(name = "分页角色"))
+        val ids = (1..12).map { n ->
+            val id = sessionDao.insert(SessionEntity(title = "关联$n", updatedAt = if (n > 8) 200L else 100L))
+            db.participantDao().upsert(SessionParticipantEntity(sessionId = id, characterId = characterId))
+            id
+        }
+        sessionDao.insert(SessionEntity(title = "无关故事", updatedAt = 300L))
+        var cursor: SessionEntity? = null
+        val visited = mutableListOf<Long>()
+        do {
+            val page = sessionDao.getRecentForCharacter(characterId, 6, cursor?.updatedAt, cursor?.id)
+            val visible = page.take(5)
+            visited += visible.map { it.id }
+            cursor = visible.lastOrNull()
+        } while (page.size > 5)
+        assertEquals(ids.reversed(), visited)
+        assertEquals(visited.size, visited.toSet().size)
+        assertTrue(sessionDao.getRecentForCharacter(characterId, 6, cursor!!.updatedAt, cursor.id).isEmpty())
+        assertTrue(sessionDao.getRecentForCharacter(characterId + 999L).isEmpty())
+    }
+
+    @Test
     fun storyLibraryPagesKeepPinnedOrderAndFindTitlesBeyondFirstPage() = runBlocking {
         for (count in listOf(0, 1, 39, 40, 41)) {
             db.clearAllTables()

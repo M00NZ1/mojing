@@ -115,12 +115,12 @@ fun BranchOverviewBottomSheet(
             }
             if (searching) com.mojing.app.ui.common.SearchBar(
                 query = query, onQueryChange = { query = it; selectionError = null }, modifier = Modifier.fillMaxWidth(),
-                placeholder = "搜索名称、来源或分叉内容", clearDescription = "清除搜索",
+                placeholder = "搜索名称、来源片段", clearDescription = "清除搜索",
             )
             Text(
                 if (query.isBlank()) "${storyBranches.size + 1} 条 · 选择一条继续阅读与创作"
                 else if (sourcePreviewsLoading || sourcePreviewsError != null)
-                    "已匹配 ${filtered.size + if (showMain) 1 else 0} 条 · 分叉内容搜索待摘要"
+                    "已匹配 ${filtered.size + if (showMain) 1 else 0} 条 · 来源片段未加载"
                 else "找到 ${filtered.size + if (showMain) 1 else 0} 条故事线",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -128,14 +128,14 @@ fun BranchOverviewBottomSheet(
             if (sourcePreviewsLoading) {
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Text("正在读取分叉摘要；名称搜索和切换仍可用", Modifier.padding(start = 10.dp),
+                    Text("正在读取来源片段；名称搜索和切换仍可用", Modifier.padding(start = 10.dp),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else if (sourcePreviewsError != null) {
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(sourcePreviewsError, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error)
-                    TextButton(onClick = onRetryPreviews) { Text("重试摘要") }
+                    TextButton(onClick = onRetryPreviews) { Text("重试来源片段") }
                 }
             }
             if (pendingBranchId != null) {
@@ -237,9 +237,9 @@ fun BranchOverviewBottomSheet(
                             )
                             Text(
                                 preview?.let { "从「$it」处分出" }
-                                    ?: if (sourcePreviewsLoading) "正在读取分叉摘要…"
-                                    else if (sourcePreviewsError != null) "摘要暂不可读，可按名称切换"
-                                    else "分叉位置已不可用",
+                                    ?: if (sourcePreviewsLoading) "来源片段未加载…"
+                                    else if (sourcePreviewsError != null) "来源片段加载失败，可按名称切换"
+                                    else "分叉位置未记录",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 2,

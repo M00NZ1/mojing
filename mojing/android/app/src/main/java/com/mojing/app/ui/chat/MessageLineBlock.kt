@@ -62,14 +62,28 @@ fun MessageLineBlock(
     branchAnchors: List<BranchAnchor> = emptyList(),
     canReturnToMain: Boolean = false,
     readOnly: Boolean = false,
+    readingMode: Boolean = false,
+    preparedReaderParagraphs: List<String>? = null,
 ) {
+    if (readingMode) {
+        val message = line.selectedMessage()
+        var imagePreview by remember(message.id) { mutableStateOf<String?>(null) }
+        ReaderMessage(message, messageAttachments[message.id].orEmpty(),
+            onAction = onAction, canRetryMedia = !readOnly && message.branchId == currentBranchId,
+            canPlayMedia = !readOnly,
+            isGenerating = isGenerating, preparedParagraphs = preparedReaderParagraphs) { imagePreview = it }
+        imagePreview?.let { path ->
+            com.mojing.app.ui.common.ImagePreviewDialog(imageUrl = path, onDismiss = { imagePreview = null })
+        }
+        return
+    }
     val d = LocalChatDensityMetrics.current
     val headerMsg = line.selectedMessage()
     val isUser = headerMsg.speakerType == "user"
     val labelColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
     val timeColor = MaterialTheme.colorScheme.onSurfaceVariant
     val clusterInlineHeader = line.variants.size == 1 &&
-        (headerMsg.speakerType == "character" || headerMsg.speakerType == "user")
+        (headerMsg.speakerType == "character" || headerMsg.speakerType == "user" || headerMsg.speakerType == "narrator")
     Column(modifier = Modifier.fillMaxWidth()) {
         if (!clusterInlineHeader) {
             if (showSenderHeader) {
@@ -188,6 +202,7 @@ fun MessageLineBlock(
                     senderLabel = senderLabel,
                     showSenderHeader = showSenderHeader,
                     timeText = timeText,
+                    canRetryAutoImage = !readOnly && msg.branchId == currentBranchId,
                 )
             }
             Row(
@@ -227,6 +242,7 @@ fun MessageLineBlock(
                 senderLabel = senderLabel,
                 showSenderHeader = showSenderHeader,
                 timeText = timeText,
+                canRetryAutoImage = !readOnly && msg.branchId == currentBranchId,
             )
         }
         if (!readOnly && headerMsg.contextSelectionKey() in excludedContextKeys) {

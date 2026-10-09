@@ -18,12 +18,14 @@ import com.mojing.app.ui.theme.MoJingTheme
 internal fun StoryLibraryModelHint(onOpenSettings: () -> Unit, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     Surface(onClick = onOpenSettings, modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.small, color = colors.surfaceContainerLow) {
+        shape = MaterialTheme.shapes.small, color = colors.primaryContainer) {
         Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Icon(Icons.Outlined.Tune, null, Modifier.size(18.dp), tint = colors.onSurfaceVariant)
-            Text("配置模型后开始对话", Modifier.weight(1f),
-                style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("尚未配置模型", style = MaterialTheme.typography.labelLarge, color = colors.onSurface)
+                Text("连接平台并选择模型，即可开始对话。", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+            }
             Icon(Icons.AutoMirrored.Outlined.ArrowForward, null, Modifier.size(18.dp), tint = colors.primary)
         }
     }

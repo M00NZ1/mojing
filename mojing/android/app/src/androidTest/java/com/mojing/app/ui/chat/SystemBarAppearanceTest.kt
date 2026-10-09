@@ -19,7 +19,7 @@ class SystemBarAppearanceTest {
         val splash = mutableStateOf(true)
         rule.setContent {
             MoJingTheme(themeMode = theme.value) {
-                SystemBarAppearance(rule.activity.window, MaterialTheme.colorScheme.background, splash.value)
+                SystemBarAppearance(rule.activity, MaterialTheme.colorScheme.background, splash.value)
             }
         }
         fun assertDarkIcons(expected: Boolean) = rule.runOnIdle {

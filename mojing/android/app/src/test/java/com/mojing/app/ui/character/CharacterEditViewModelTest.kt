@@ -17,6 +17,9 @@ import com.mojing.app.data.repository.ImageRepository
 import com.mojing.app.domain.engine.LlmRetry
 import com.mojing.app.domain.generation.GenerationQueueProcessor
 import com.mojing.app.domain.usecase.SaveCharacterBindingUseCase
+import com.mojing.app.domain.util.CharacterCardPngCodec
+import com.mojing.app.domain.util.CharacterPortableCodec
+import com.google.gson.JsonParser
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -28,10 +31,13 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -39,6 +45,10 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.io.File
+import java.util.Base64
+import java.util.zip.ZipInputStream
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CharacterEditViewModelTest {
@@ -59,6 +69,7 @@ class CharacterEditViewModelTest {
         val saveCharacterBinding: SaveCharacterBindingUseCase,
         val profileDao: CharacterProfileDao,
         val draftStore: CharacterEditDraftStore,
+        val secureStorage: SecureStorage,
     )
 
     private fun createSubject(
@@ -70,11 +81,11 @@ class CharacterEditViewModelTest {
             coEvery { load(any()) } returns null
         },
         encyclopediaDao: EncyclopediaDao = mockk(relaxed = true),
+        secureStorage: SecureStorage = mockk(relaxed = true),
+        llmRetry: LlmRetry = mockk(relaxed = true),
     ): TestSubject {
         val queue = mockk<GenerationQueueProcessor>(relaxed = true)
         every { queue.observeActiveForCharacter(any()) } returns activeTasks
-        val secureStorage = mockk<SecureStorage>(relaxed = true)
-        every { secureStorage.publicApiKey } returns ""
         return TestSubject(
             viewModel = CharacterEditViewModel(
                 appContext = mockk<Context>(relaxed = true),
@@ -84,7 +95,7 @@ class CharacterEditViewModelTest {
                 saveCharacterBinding = saveCharacterBinding,
                 secureStorage = secureStorage,
                 generationQueueProcessor = queue,
-                llmRetry = mockk<LlmRetry>(relaxed = true),
+                llmRetry = llmRetry,
                 systemProbeApi = mockk<BackendSystemProbeApi>(relaxed = true),
                 imageRepository = mockk<ImageRepository>(relaxed = true),
                 llmApiService = mockk<LlmApiService>(relaxed = true),
@@ -93,7 +104,91 @@ class CharacterEditViewModelTest {
             saveCharacterBinding = saveCharacterBinding,
             profileDao = profileDao,
             draftStore = draftStore,
+            secureStorage = secureStorage,
         )
+    }
+
+    private suspend fun TestScope.exportPortable(
+        vm: CharacterEditViewModel,
+        format: PortableExportFormat,
+        summary: Boolean = false,
+    ): Pair<String, ByteArray>? {
+        val result = CompletableDeferred<Pair<String, ByteArray>?>()
+        vm.buildPortableExport(7L, format, summary = summary) { result.complete(it) }
+        return withContext(Dispatchers.Default) { withTimeout(5_000L) { result.await() } }
+    }
+
+    private suspend fun TestScope.exportPng(vm: CharacterEditViewModel): Pair<String, ByteArray>? {
+        val result = CompletableDeferred<Pair<String, ByteArray>?>()
+        vm.buildTavernPngExport(7L) { result.complete(it) }
+        return withContext(Dispatchers.Default) { withTimeout(5_000L) { result.await() } }
+    }
+
+    private fun writeTestPng(): File {
+        val file = File.createTempFile("mojing-character-export-", ".png")
+        file.writeBytes(Base64.getDecoder().decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        ))
+        return file
+    }
+
+    @Test
+    fun newCharacterUsesValidConfiguredSamplingDefaults() = runTest(dispatcher) {
+        val secureStorage = mockk<SecureStorage>(relaxed = true)
+        every { secureStorage.publicApiKey } returns ""
+        every { secureStorage.defaultTemperature } returns " 1.25 "
+        every { secureStorage.defaultMaxTokens } returns "4096"
+        every { secureStorage.defaultTopP } returns "0.65"
+
+        val vm = createSubject(mockk(relaxed = true), secureStorage = secureStorage).viewModel
+        vm.load(0L)
+        advanceUntilIdle()
+
+        assertEquals("1.25", vm.state.value.temperature)
+        assertEquals("4096", vm.state.value.maxTokens)
+        assertEquals("0.65", vm.state.value.topP)
+    }
+
+    @Test
+    fun newCharacterFallsBackWhenConfiguredSamplingDefaultsAreInvalid() = runTest(dispatcher) {
+        val secureStorage = mockk<SecureStorage>(relaxed = true)
+        every { secureStorage.publicApiKey } returns ""
+        every { secureStorage.defaultTemperature } returns "2.1"
+        every { secureStorage.defaultMaxTokens } returns "0"
+        every { secureStorage.defaultTopP } returns "oops"
+
+        val vm = createSubject(mockk(relaxed = true), secureStorage = secureStorage).viewModel
+        vm.load(0L)
+        advanceUntilIdle()
+
+        assertEquals("0.9", vm.state.value.temperature)
+        assertEquals("1200", vm.state.value.maxTokens)
+        assertEquals("1.0", vm.state.value.topP)
+    }
+
+    @Test
+    fun existingCharacterKeepsItsSamplingValuesWhenDefaultsChange() = runTest(dispatcher) {
+        val secureStorage = mockk<SecureStorage>(relaxed = true)
+        every { secureStorage.publicApiKey } returns ""
+        every { secureStorage.defaultTemperature } returns "1.5"
+        every { secureStorage.defaultMaxTokens } returns "4096"
+        every { secureStorage.defaultTopP } returns "0.4"
+        val character = CharacterEntity(
+            id = 7L,
+            name = "旧角色",
+            temperature = 0.35f,
+            maxTokens = 777,
+            topP = 0.8f,
+        )
+        val dao = mockk<CharacterDao> { coEvery { getById(7L) } returns character }
+
+        val vm = createSubject(dao, secureStorage = secureStorage).viewModel
+        vm.load(7L)
+        advanceUntilIdle()
+
+        assertEquals("0.35", vm.state.value.temperature)
+        assertEquals("777", vm.state.value.maxTokens)
+        assertEquals("0.8", vm.state.value.topP)
     }
 
     @Test
@@ -568,6 +663,236 @@ class CharacterEditViewModelTest {
         assertEquals("手动改名", vm.state.value.name)
         assertEquals(null, vm.state.value.personaRefreshError)
         assertFalse(vm.state.value.isRefreshingPersona)
+    }
+
+    @Test
+    fun exportsFrozenRawCardDraftAcrossPortableFormatsAndPng() = runTest(dispatcher) {
+        val basePng = writeTestPng()
+        try {
+            val original = CharacterEntity(
+                id = 7L,
+                name = "旧名",
+                personaPrompt = "旧人设",
+                cardImagePath = basePng.absolutePath,
+                temperature = 0.0f,
+                maxTokens = 1,
+                topP = 0.000001f,
+                frequencyPenalty = -2.5f,
+                presencePenalty = -0.0f,
+            )
+            val profile = CharacterProfileEntity(
+                id = 3L,
+                characterId = 7L,
+                sourceFilename = "original.png",
+                rawPersonaText = "原始文本",
+                characterCardMarkdown = "# 原始卡",
+                characterCardJson = """{"spec":"chara_card_v2","spec_version":"2.0","data":{"name":"旧名","description":"旧人设","extensions":{"old":true}}}""",
+            )
+            val dao = mockk<CharacterDao> { coEvery { getById(7L) } returns original }
+            val profileDao = mockk<CharacterProfileDao> {
+                coEvery { getByCharacter(7L) } returns profile
+            }
+            val vm = createSubject(dao, profileDao = profileDao).viewModel
+            vm.load(7L)
+            advanceUntilIdle()
+            vm.updateName("新名")
+            vm.updatePersonaPrompt("当前人设")
+            vm.updateCharacterCardJsonRaw(
+                """{"spec":"chara_card_v2","spec_version":"2.0","data":{"name":"草稿名","description":"当前人设","extensions":{"draft":true},"custom_note":"未保存"}}""",
+            )
+
+            val json = exportPortable(vm, PortableExportFormat.JSON)!!
+            assertEquals("新名_portable.json", json.first)
+            val jsonRoot = JsonParser.parseString(String(json.second, Charsets.UTF_8)).asJsonObject
+            assertEquals("新名", jsonRoot.get("name").asString)
+            assertEquals("当前人设", jsonRoot.get("persona_prompt").asString)
+            assertEquals(0.0f, jsonRoot.get("temperature").asFloat)
+            assertEquals(1, jsonRoot.get("max_tokens").asInt)
+            assertEquals(0.000001f, jsonRoot.get("top_p").asFloat)
+            assertEquals(-2.5f, jsonRoot.get("frequency_penalty").asFloat)
+            assertEquals(-0.0f, jsonRoot.get("presence_penalty").asFloat)
+            assertEquals(true, jsonRoot.getAsJsonObject("profile").getAsJsonObject("character_card_json").getAsJsonObject("data").getAsJsonObject("extensions").get("draft").asBoolean)
+            assertEquals("未保存", jsonRoot.getAsJsonObject("profile").getAsJsonObject("character_card_json").getAsJsonObject("data").get("custom_note").asString)
+            assertEquals("original.png", jsonRoot.getAsJsonObject("profile").get("source_filename").asString)
+
+            val txt = exportPortable(vm, PortableExportFormat.TXT)!!
+            val txtRoot = CharacterPortableCodec.parseTxt(String(txt.second, Charsets.UTF_8))
+            assertEquals("新名", txtRoot.get("name").asString)
+            assertEquals(0.0f, txtRoot.get("temperature").asFloat)
+            assertEquals(1, txtRoot.get("max_tokens").asInt)
+            assertEquals(0.000001f, txtRoot.get("top_p").asFloat)
+            assertEquals(-2.5f, txtRoot.get("frequency_penalty").asFloat)
+            assertEquals(-0.0f, txtRoot.get("presence_penalty").asFloat)
+            assertTrue(String(txt.second, Charsets.UTF_8).contains("custom_note"))
+
+            val docx = exportPortable(vm, PortableExportFormat.DOCX)!!
+            assertEquals("新名_portable.docx", docx.first)
+            val documentXml = ZipInputStream(ByteArrayInputStream(docx.second)).use { zip ->
+                generateSequence { zip.nextEntry }.first { it.name == "word/document.xml" }.let {
+                    zip.readBytes().toString(Charsets.UTF_8)
+                }
+            }
+            assertTrue(documentXml.contains("custom_note"))
+            assertTrue(documentXml.contains("top_p"))
+            assertTrue(documentXml.contains("frequency_penalty"))
+            assertTrue(documentXml.contains("presence_penalty"))
+            assertTrue(documentXml.contains("2.5"))
+
+            val png = exportPng(vm)!!
+            assertEquals("新名.png", png.first)
+            val pngRoot = CharacterCardPngCodec.readCharaCardJsonRoot(png.second)!!
+            assertEquals("chara_card_v2", pngRoot.get("spec").asString)
+            assertEquals("新名", pngRoot.getAsJsonObject("data").get("name").asString)
+            assertEquals("未保存", pngRoot.getAsJsonObject("data").get("custom_note").asString)
+            assertEquals("当前人设", pngRoot.getAsJsonObject("data").get("description").asString)
+            coVerify(exactly = 0) { profileDao.upsert(any()) }
+        } finally {
+            basePng.delete()
+        }
+    }
+
+    @Test
+    fun exportUsesSnapshotWhenProfileReadIsInFlightAndLaterDraftIsForNextExport() = runTest(dispatcher) {
+        val original = CharacterEntity(id = 7L, name = "角色", personaPrompt = "旧人设")
+        val oldProfile = CharacterProfileEntity(
+            characterId = 7L,
+            sourceFilename = "old.json",
+            characterCardJson = """{"data":{"name":"角色","description":"旧人设","extensions":{"old":true}}}""",
+        )
+        val pending = CompletableDeferred<CharacterProfileEntity?>()
+        var profileReads = 0
+        val profileDao = mockk<CharacterProfileDao> {
+            coEvery { getByCharacter(7L) } coAnswers {
+                if (profileReads++ == 0) oldProfile else pending.await()
+            }
+        }
+        val dao = mockk<CharacterDao> { coEvery { getById(7L) } returns original }
+        val vm = createSubject(dao, profileDao = profileDao).viewModel
+        vm.load(7L)
+        advanceUntilIdle()
+        vm.updateName("冻结名")
+        vm.updatePersonaPrompt("冻结人设")
+        vm.updateCharacterCardJsonRaw("""{"data":{"name":"第一稿","extensions":{"draft":1}}}""")
+        val result = CompletableDeferred<Pair<String, ByteArray>?>()
+        vm.buildPortableExport(7L, PortableExportFormat.JSON, summary = false) { result.complete(it) }
+        vm.updateCharacterCardJsonRaw("""{"data":{"name":"第二稿","extensions":{"draft":2}}}""")
+        vm.updateName("第二次名称")
+        pending.complete(oldProfile)
+        val firstResult = withContext(Dispatchers.Default) { withTimeout(5_000L) { result.await() } }!!
+
+        val firstExport = JsonParser.parseString(String(firstResult.second, Charsets.UTF_8)).asJsonObject
+        assertEquals("冻结名", firstExport.get("name").asString)
+        assertEquals("冻结人设", firstExport.get("persona_prompt").asString)
+        assertEquals(1, firstExport.getAsJsonObject("profile").getAsJsonObject("character_card_json").getAsJsonObject("data").getAsJsonObject("extensions").get("draft").asInt)
+        assertEquals("old.json", firstExport.getAsJsonObject("profile").get("source_filename").asString)
+        assertEquals(2, JsonParser.parseString(vm.state.value.characterCardJsonRaw).asJsonObject.getAsJsonObject("data").getAsJsonObject("extensions").get("draft").asInt)
+
+        val secondExport = exportPortable(vm, PortableExportFormat.JSON)!!
+        val secondRoot = JsonParser.parseString(String(secondExport.second, Charsets.UTF_8)).asJsonObject
+        assertEquals("第二次名称", secondRoot.get("name").asString)
+        assertEquals(2, secondRoot.getAsJsonObject("profile").getAsJsonObject("character_card_json").getAsJsonObject("data").getAsJsonObject("extensions").get("draft").asInt)
+    }
+
+    @Test
+    fun summaryExportPromptContainsFrozenRawJsonAndDoesNotPersistIt() = runTest(dispatcher) {
+        val raw = """{"data":{"name":"摘要角色","extensions":{"summary_raw":true},"custom_note":"summary input"}}"""
+        val profileDao = mockk<CharacterProfileDao>(relaxed = true) {
+            coEvery { getByCharacter(7L) } returns CharacterProfileEntity(characterId = 7L, sourceFilename = "source.json")
+        }
+        val retry = mockk<LlmRetry>()
+        val requests = CompletableDeferred<List<com.mojing.app.data.remote.ChatMessage>>()
+        coEvery { retry.chatCompletionWithRetry(any(), any(), any(), any(), any(), any(), any()) } coAnswers {
+            requests.complete(arg(3))
+            """{"name":"摘要角色","persona_prompt":"摘要正文","temperature":1.9,"max_tokens":9999,"top_p":0.2,"frequency_penalty":4.0,"presence_penalty":3.0}"""
+        }
+        val secure = mockk<SecureStorage>(relaxed = true)
+        every { secure.publicApiKey } returns "test-key"
+        val subject = createSubject(
+            mockk<CharacterDao> {
+                coEvery { getById(7L) } returns CharacterEntity(
+                    id = 7L,
+                    name = "摘要角色",
+                    temperature = 0.35f,
+                    maxTokens = 777,
+                    topP = 0.8f,
+                    frequencyPenalty = -1.25f,
+                    presencePenalty = 0.0f,
+                )
+            },
+            profileDao = profileDao,
+            secureStorage = secure,
+            llmRetry = retry,
+        )
+        val vm = subject.viewModel
+        vm.load(7L)
+        advanceUntilIdle()
+        vm.updateCharacterCardJsonRaw(raw)
+        val result = exportPortable(vm, PortableExportFormat.JSON, summary = true)!!
+        val prompt = withContext(Dispatchers.Default) { withTimeout(5_000L) { requests.await() } }.last().content
+        assertTrue(prompt.contains("summary_raw"))
+        assertTrue(prompt.contains("summary input"))
+        assertEquals("摘要角色_summary.json", result.first)
+        val summaryRoot = JsonParser.parseString(String(result.second, Charsets.UTF_8)).asJsonObject
+        assertEquals(0.35f, summaryRoot.get("temperature").asFloat)
+        assertEquals(777, summaryRoot.get("max_tokens").asInt)
+        assertEquals(0.8f, summaryRoot.get("top_p").asFloat)
+        assertEquals(-1.25f, summaryRoot.get("frequency_penalty").asFloat)
+        assertEquals(0.0f, summaryRoot.get("presence_penalty").asFloat)
+        coVerify(exactly = 0) { profileDao.upsert(any()) }
+        coVerify(exactly = 0) { subject.saveCharacterBinding(any()) }
+    }
+
+    @Test
+    fun invalidOrNonObjectRawCardRejectsExportAndCanBeRetried() = runTest(dispatcher) {
+        val dao = mockk<CharacterDao> { coEvery { getById(7L) } returns CharacterEntity(id = 7L, name = "角色") }
+        val vm = createSubject(dao).viewModel
+        vm.load(7L)
+        for (raw in listOf("{bad", "[]")) {
+            vm.updateCharacterCardJsonRaw(raw)
+            assertEquals(null, exportPortable(vm, PortableExportFormat.JSON))
+            assertTrue(vm.state.value.exportMessage.orEmpty().isNotBlank())
+        }
+        vm.updateCharacterCardJsonRaw("""{"data":{"name":"可重试","extensions":{"ok":true}}}""")
+        val retry = exportPortable(vm, PortableExportFormat.JSON)
+        assertNotNull(retry)
+        assertEquals(null, vm.state.value.exportMessage)
+    }
+
+    @Test
+    fun blankRawCardExportsAsEmptyObjectAndExplicitNullExtensionsSurvive() = runTest(dispatcher) {
+        val profileDao = mockk<CharacterProfileDao>(relaxed = true) {
+            coEvery { getByCharacter(7L) } returns CharacterProfileEntity(characterId = 7L)
+        }
+        val vm = createSubject(
+            mockk<CharacterDao> { coEvery { getById(7L) } returns CharacterEntity(id = 7L, name = "角色") },
+            profileDao = profileDao,
+        ).viewModel
+        vm.load(7L)
+        advanceUntilIdle()
+
+        vm.updateCharacterCardJsonRaw("   ")
+        val blank = exportPortable(vm, PortableExportFormat.JSON)!!
+        val blankRoot = JsonParser.parseString(String(blank.second, Charsets.UTF_8)).asJsonObject
+        assertEquals(0, blankRoot.getAsJsonObject("profile").getAsJsonObject("character_card_json").entrySet().size)
+
+        vm.updateCharacterCardJsonRaw("""{"extensions":{"nullable":null}}""")
+        val explicitNull = exportPortable(vm, PortableExportFormat.JSON)!!
+        val nullValue = JsonParser.parseString(String(explicitNull.second, Charsets.UTF_8))
+            .asJsonObject.getAsJsonObject("profile").getAsJsonObject("character_card_json")
+            .getAsJsonObject("extensions").get("nullable")
+        assertTrue(nullValue.isJsonNull)
+        coVerify(exactly = 0) { profileDao.upsert(any()) }
+    }
+
+    @Test
+    fun exportBeforeCharacterIsLoadedDoesNotReadOrWriteCharacterData() = runTest(dispatcher) {
+        val characterDao = mockk<CharacterDao>(relaxed = true)
+        val profileDao = mockk<CharacterProfileDao>(relaxed = true)
+        val vm = createSubject(characterDao, profileDao = profileDao).viewModel
+        assertEquals(null, exportPortable(vm, PortableExportFormat.JSON))
+        coVerify(exactly = 0) { characterDao.getById(any()) }
+        coVerify(exactly = 0) { profileDao.getByCharacter(any()) }
+        coVerify(exactly = 0) { profileDao.upsert(any()) }
     }
 
 }

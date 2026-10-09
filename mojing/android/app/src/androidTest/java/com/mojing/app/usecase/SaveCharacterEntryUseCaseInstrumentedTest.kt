@@ -18,6 +18,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
@@ -141,6 +142,143 @@ class SaveCharacterEntryUseCaseInstrumentedTest {
     }
 
     @Test
+    fun editedOld8000PrefixRestoresLinkedCharacterAndMirrorWhileVersionKeepsPrefix() = runBlocking {
+        val fullPersona = longPersona()
+        assertTrue(fullPersona.length > 8000)
+        val oldPrefix = fullPersona.take(8000)
+        val characterId = database.characterDao().upsert(CharacterEntity(
+            name = "长人设角色",
+            personaPrompt = fullPersona,
+            boundEncyclopediaId = firstEncyclopediaId,
+        ))
+        val mirror = database.encyclopediaEntryDao().upsert(EncyclopediaEntryEntity(
+            encyclopediaId = firstEncyclopediaId,
+            title = "长人设角色",
+            summary = "旧摘要",
+            entryType = "character",
+            content = oldPrefix,
+            metaJson = "{\"linkedCharacterId\":$characterId}",
+        )).let { database.encyclopediaEntryDao().getById(it)!! }
+
+        val saved = saveCharacterEntry.saveEdited(mirror.copy(title = "长人设角色·改", summary = "新摘要"))
+
+        assertEquals(fullPersona, database.characterDao().getById(characterId)?.personaPrompt)
+        assertEquals(fullPersona, database.encyclopediaEntryDao().getById(mirror.id)?.content)
+        assertEquals(fullPersona, saved.content)
+        assertEquals("长人设角色·改", database.encyclopediaEntryDao().getById(mirror.id)?.title)
+        assertEquals(1, database.entryVersionDao().getByEntry(mirror.id).size)
+        assertEquals(oldPrefix, database.entryVersionDao().getByEntry(mirror.id).single().content)
+        assertEquals(8000, database.entryVersionDao().getByEntry(mirror.id).single().content.length)
+    }
+
+    @Test
+    fun editedExplicitShortContentIsSavedWithoutRestoringLinkedCharacterSuffix() = runBlocking {
+        val fullPersona = longPersona()
+        val shortContent = "用户明确改成的短稿"
+        val characterId = database.characterDao().upsert(CharacterEntity(
+            name = "短稿角色", personaPrompt = fullPersona, boundEncyclopediaId = firstEncyclopediaId,
+        ))
+        val mirror = database.encyclopediaEntryDao().upsert(EncyclopediaEntryEntity(
+            encyclopediaId = firstEncyclopediaId, title = "短稿角色", entryType = "character",
+            content = fullPersona.take(8000), metaJson = "{\"linkedCharacterId\":$characterId}",
+        )).let { database.encyclopediaEntryDao().getById(it)!! }
+
+        saveCharacterEntry.saveEdited(mirror.copy(content = shortContent))
+
+        assertEquals(shortContent, database.characterDao().getById(characterId)?.personaPrompt)
+        assertEquals(shortContent, database.encyclopediaEntryDao().getById(mirror.id)?.content)
+    }
+
+    @Test
+    fun editedDifferent8000BodyIsSavedWithoutRestoringLinkedCharacterSuffix() = runBlocking {
+        val fullPersona = longPersona()
+        val differentContent = "不同正文".repeat(8000 / 4)
+        assertEquals(8000, differentContent.length)
+        val characterId = database.characterDao().upsert(CharacterEntity(
+            name = "不同正文角色", personaPrompt = fullPersona, boundEncyclopediaId = firstEncyclopediaId,
+        ))
+        val mirror = database.encyclopediaEntryDao().upsert(EncyclopediaEntryEntity(
+            encyclopediaId = firstEncyclopediaId, title = "不同正文角色", entryType = "character",
+            content = fullPersona.take(8000), metaJson = "{\"linkedCharacterId\":$characterId}",
+        )).let { database.encyclopediaEntryDao().getById(it)!! }
+
+        saveCharacterEntry.saveEdited(mirror.copy(content = differentContent))
+
+        assertEquals(differentContent, database.characterDao().getById(characterId)?.personaPrompt)
+    }
+
+    @Test
+    fun editedNon8000BoundaryContentIsSavedWithoutRestoringLinkedCharacterSuffix() = runBlocking {
+        val fullPersona = longPersona()
+        val boundaryContent = fullPersona.take(8001)
+        assertEquals(8001, boundaryContent.length)
+        val characterId = database.characterDao().upsert(CharacterEntity(
+            name = "边界角色", personaPrompt = fullPersona, boundEncyclopediaId = firstEncyclopediaId,
+        ))
+        val mirror = database.encyclopediaEntryDao().upsert(EncyclopediaEntryEntity(
+            encyclopediaId = firstEncyclopediaId, title = "边界角色", entryType = "character",
+            content = fullPersona.take(8000), metaJson = "{\"linkedCharacterId\":$characterId}",
+        )).let { database.encyclopediaEntryDao().getById(it)!! }
+
+        saveCharacterEntry.saveEdited(mirror.copy(content = boundaryContent))
+
+        assertEquals(boundaryContent, database.characterDao().getById(characterId)?.personaPrompt)
+    }
+
+    @Test
+    fun edited7999BoundaryContentIsSavedWithoutRestoringLinkedCharacterSuffix() = runBlocking {
+        val fullPersona = longPersona()
+        val boundaryContent = fullPersona.take(7999)
+        assertEquals(7999, boundaryContent.length)
+        val characterId = database.characterDao().upsert(CharacterEntity(
+            name = "短边界角色", personaPrompt = fullPersona, boundEncyclopediaId = firstEncyclopediaId,
+        ))
+        val mirror = database.encyclopediaEntryDao().upsert(EncyclopediaEntryEntity(
+            encyclopediaId = firstEncyclopediaId, title = "短边界角色", entryType = "character",
+            content = fullPersona.take(8000), metaJson = "{\"linkedCharacterId\":$characterId}",
+        )).let { database.encyclopediaEntryDao().getById(it)!! }
+
+        saveCharacterEntry.saveEdited(mirror.copy(content = boundaryContent))
+
+        assertEquals(boundaryContent, database.characterDao().getById(characterId)?.personaPrompt)
+    }
+
+    @Test
+    fun edited8000PrefixDoesNotRestoreWhenLinkedCharacterDoesNotMatchPrefix() = runBlocking {
+        val fullPersona = longPersona()
+        val oldPrefix = "不同旧正文".repeat(8000 / 5)
+        assertEquals(8000, oldPrefix.length)
+        val characterId = database.characterDao().upsert(CharacterEntity(
+            name = "不匹配角色", personaPrompt = fullPersona, boundEncyclopediaId = firstEncyclopediaId,
+        ))
+        val mirror = database.encyclopediaEntryDao().upsert(EncyclopediaEntryEntity(
+            encyclopediaId = firstEncyclopediaId, title = "不匹配角色", entryType = "character",
+            content = oldPrefix, metaJson = "{\"linkedCharacterId\":$characterId}",
+        )).let { database.encyclopediaEntryDao().getById(it)!! }
+
+        saveCharacterEntry.saveEdited(mirror.copy(summary = "只改摘要"))
+
+        assertEquals(oldPrefix, database.characterDao().getById(characterId)?.personaPrompt)
+    }
+
+    @Test
+    fun edited8000PrefixWithoutLinkedIdDoesNotRestoreByName() = runBlocking {
+        val fullPersona = longPersona()
+        val oldPrefix = fullPersona.take(8000)
+        val characterId = database.characterDao().upsert(CharacterEntity(
+            name = "无绑定角色", personaPrompt = fullPersona, boundEncyclopediaId = firstEncyclopediaId,
+        ))
+        val mirror = database.encyclopediaEntryDao().upsert(EncyclopediaEntryEntity(
+            encyclopediaId = firstEncyclopediaId, title = "无绑定角色", entryType = "character",
+            content = oldPrefix, metaJson = "{}",
+        )).let { database.encyclopediaEntryDao().getById(it)!! }
+
+        saveCharacterEntry.saveEdited(mirror.copy(summary = "只改摘要"))
+
+        assertEquals(oldPrefix, database.characterDao().getById(characterId)?.personaPrompt)
+    }
+
+    @Test
     fun confirmingConversationNotePreservesSameNameCharacterAndMirror() = runBlocking {
         val mirror = saveCharacterEntry(EncyclopediaEntryEntity(
             encyclopediaId = firstEncyclopediaId, title = "林岚",
@@ -206,6 +344,52 @@ class SaveCharacterEntryUseCaseInstrumentedTest {
     }
 
     @Test
+    fun relationWriteRequiresBothEndpointsInSameEncyclopedia() = runBlocking {
+        val firstEntry = database.encyclopediaEntryDao().upsert(
+            EncyclopediaEntryEntity(encyclopediaId = firstEncyclopediaId, title = "第一端点"),
+        )
+        val secondEntry = database.encyclopediaEntryDao().upsert(
+            EncyclopediaEntryEntity(encyclopediaId = firstEncyclopediaId, title = "第二端点"),
+        )
+        val otherWorldEntry = database.encyclopediaEntryDao().upsert(
+            EncyclopediaEntryEntity(encyclopediaId = secondEncyclopediaId, title = "异世界端点"),
+        )
+        val dao = database.entryRelationDao()
+
+        assertEquals(
+            true,
+            dao.upsertIfEndpointsBelongToEncyclopedia(
+                EntryRelationEntity(
+                    encyclopediaId = firstEncyclopediaId,
+                    fromEntryId = firstEntry,
+                    toEntryId = secondEntry,
+                ),
+            ),
+        )
+        assertEquals(
+            false,
+            dao.upsertIfEndpointsBelongToEncyclopedia(
+                EntryRelationEntity(
+                    encyclopediaId = firstEncyclopediaId,
+                    fromEntryId = firstEntry,
+                    toEntryId = otherWorldEntry,
+                ),
+            ),
+        )
+        assertEquals(
+            false,
+            dao.upsertIfEndpointsBelongToEncyclopedia(
+                EntryRelationEntity(
+                    encyclopediaId = firstEncyclopediaId,
+                    fromEntryId = firstEntry,
+                    toEntryId = 999999L,
+                ),
+            ),
+        )
+        assertEquals(1, dao.getByEncyclopedia(firstEncyclopediaId).size)
+    }
+
+    @Test
     fun deletingCharacterEntryRemovesLinkedCharacterAndMirror() = runBlocking {
         val created = saveCharacterEntry(
             EncyclopediaEntryEntity(
@@ -216,7 +400,7 @@ class SaveCharacterEntryUseCaseInstrumentedTest {
         )
         val characterId = CharacterEncyclopediaSync.readLinkedCharacterId(created.metaJson)!!
 
-        DeleteEncyclopediaEntryUseCase(database)(created.id)
+        DeleteEncyclopediaEntryUseCase(database)(created.id, firstEncyclopediaId)
 
         assertNull(database.encyclopediaEntryDao().getById(created.id))
         assertNull(database.characterDao().getById(characterId))
@@ -226,4 +410,7 @@ class SaveCharacterEntryUseCaseInstrumentedTest {
     private suspend fun mirrors(encyclopediaId: Long, characterId: Long) =
         database.encyclopediaEntryDao().getByType(encyclopediaId, "character")
             .filter { CharacterEncyclopediaSync.readLinkedCharacterId(it.metaJson) == characterId }
+
+    private fun longPersona(): String =
+        ("角色长人设片段：冷静、敏锐、持续保留原文。\n").repeat(800) + "尾部仍然属于角色正文。"
 }

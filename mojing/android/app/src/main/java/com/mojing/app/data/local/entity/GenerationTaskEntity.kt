@@ -28,6 +28,9 @@ data class GenerationTaskEntity(
     val targetEncyclopediaId: Long? = null,
     val targetCharacterId: Long? = null,
     val targetWorldTemplateId: Long? = null,
+    /** Versioned, allow-listed AI result snapshot. Empty for legacy/non-snapshot tasks. */
+    val resultJson: String = "",
+    val resultAppliedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
 )

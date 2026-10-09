@@ -66,7 +66,7 @@ class CreateSessionUseCase @Inject constructor(
             narratorEnabled = secureStorage.defaultNarratorEnabled,
             choiceEnabled = secureStorage.defaultChoiceGenerationEnabled,
             antiCheatEnabled = secureStorage.defaultAntiCheatEnabled,
-            template = loadDefaultTemplate(),
+            template = if (character.boundEncyclopediaId > 0L) null else loadDefaultTemplate(),
             characterIds = listOf(character.id),
         )
     }

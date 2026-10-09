@@ -1,6 +1,6 @@
 package com.mojing.app.ui.character
 
-import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingCenterAlignedTopAppBar as TopAppBar
 import com.mojing.app.ui.common.MoJingIcon as Icon
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ErrorOutline
@@ -114,7 +114,7 @@ fun CharacterEditScreen(
     val canSave = state.loadError == null && state.personaRefreshError == null && !state.isRefreshingPersona &&
         state.recoverableDraft == null && !state.draftUnreadable && (!state.isPersisted || state.isDirty || state.saveError != null)
     val pageBusy = state.isSaving || isAvatarImporting || isCardImageProcessing ||
-        state.isGeneratingCardImage || state.isPreparingExport || pendingExport != null || isWritingExport || state.isDiscardingDraft
+        state.isGeneratingCardImage || state.isPreparingExport || pendingExport != null || isWritingExport || state.isDiscardingDraft || state.draftFlushing
 
     fun leaveEditor(destination: String) {
         if (destination == "settings") onOpenSettings() else onBack()
@@ -128,7 +128,7 @@ fun CharacterEditScreen(
                 scope.launch { snackbarHostState.showSnackbar("请先恢复或丢弃本机角色草稿") }
             state.isDirty -> pendingExit = destination
             state.draftError != null -> scope.launch { snackbarHostState.showSnackbar("请先重试清理本机角色草稿") }
-            else -> leaveEditor(destination)
+            else -> viewModel.flushDraft { ok -> if (ok) leaveEditor(destination) }
         }
     }
 
@@ -262,7 +262,7 @@ fun CharacterEditScreen(
                     }
                 },
                 actions = {
-                    if (isImeOpen) TextButton(
+                    if (state.isLoaded) TextButton(
                         onClick = { viewModel.save(characterId) },
                         enabled = state.isLoaded && canSave && !pageBusy && !state.isAiCompleting,
                     ) {
@@ -329,9 +329,33 @@ fun CharacterEditScreen(
             if (isImeOpen) state.saveError?.let { error ->
                 Text(error, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
             }
-            CharacterEditorSectionTitle("基本资料", "名称与百科归属")
-
-            OutlinedTextField(value = state.name, onValueChange = { viewModel.updateName(it) }, label = { Text("角色名") }, placeholder = { Text("如：林云") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Surface(onClick = { focusManager.clearFocus(); appearanceOpen = !appearanceOpen },
+                    modifier = Modifier.size(72.dp), shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.primaryContainer) {
+                    if (state.avatarImagePath.isNotBlank()) coil.compose.AsyncImage(
+                        model = com.mojing.app.ui.common.avatarImageModel(context, state.avatarImagePath), contentDescription = "修改角色形象",
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    else Box(contentAlignment = Alignment.Center) { Text(state.name.take(1).ifBlank { "角" }, style = MaterialTheme.typography.headlineLarge) }
+                }
+                OutlinedTextField(value = state.name, onValueChange = { viewModel.updateName(it) }, label = { Text("姓名") },
+                    placeholder = { Text("角色名") }, modifier = Modifier.weight(1f), singleLine = true)
+            }
+            if (state.personaRefreshError != null || state.isRefreshingPersona) {
+                Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("更新角色人设", style = MaterialTheme.typography.titleSmall)
+                        Text(state.personaRefreshError ?: "正在读取补全结果…",
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedButton(onClick = viewModel::retryPersonaRefresh,
+                            enabled = !state.isRefreshingPersona && !state.isAiCompleting,
+                            modifier = Modifier.fillMaxWidth()) {
+                            Text(if (state.isRefreshingPersona) "读取中…" else "重新读取")
+                        }
+                    }
+                }
+            }
+            MoJingLongTextField(value = state.personaPrompt, onValueChange = { viewModel.updatePersonaPrompt(it) }, label = "人设", placeholder = "描述角色的性格、背景、说话风格...", modifier = Modifier.fillMaxWidth())
             val encyclopediaLabel = when {
                 state.boundEncyclopediaId <= 0L -> "暂不绑定百科"
                 state.boundEncyclopediaReadError -> "名称暂时无法读取 · ${state.boundEncyclopediaId}"
@@ -350,24 +374,10 @@ fun CharacterEditScreen(
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 TextButton(onClick = viewModel::refreshBoundEncyclopediaName) { Text("重试") }
             }
-            HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
-            CharacterEditorSectionTitle("人设与表达", "决定角色如何理解和回应对话")
-            if (state.personaRefreshError != null || state.isRefreshingPersona) {
-                Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.medium,
-                    modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("更新角色人设", style = MaterialTheme.typography.titleSmall)
-                        Text(state.personaRefreshError ?: "正在读取补全结果…",
-                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        OutlinedButton(onClick = viewModel::retryPersonaRefresh,
-                            enabled = !state.isRefreshingPersona && !state.isAiCompleting,
-                            modifier = Modifier.fillMaxWidth()) {
-                            Text(if (state.isRefreshingPersona) "读取中…" else "重新读取")
-                        }
-                    }
-                }
-            }
-            MoJingLongTextField(value = state.personaPrompt, onValueChange = { viewModel.updatePersonaPrompt(it) }, label = "人设提示词", placeholder = "描述角色的性格、背景、说话风格...", modifier = Modifier.fillMaxWidth())
+            var creativeToolsOpen by remember { mutableStateOf(false) }
+            CharacterEditorSectionHeader("创作辅助", "宏变量与人设补全", creativeToolsOpen,
+                onClick = { creativeToolsOpen = !creativeToolsOpen })
+            if (creativeToolsOpen) {
             TextButton(onClick = { focusManager.clearFocus(); showMacroSheet = true }, modifier = Modifier.align(Alignment.Start)) {
                 Text("插入宏变量")
             }
@@ -411,8 +421,12 @@ fun CharacterEditScreen(
                 }
             }
 
+            }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
-            CharacterEditorSectionTitle("朗读", "为这个角色选择引擎与音色")
+            var voiceSettingsOpen by remember { mutableStateOf(false) }
+            CharacterEditorSectionHeader("朗读", "为这个角色选择引擎与音色", voiceSettingsOpen,
+                onClick = { voiceSettingsOpen = !voiceSettingsOpen })
+            if (voiceSettingsOpen) {
             var showVoiceChoice by remember { mutableStateOf(false) }
             val characterVoice = com.mojing.app.data.resolveVoiceChoice(state.voiceProvider, state.voiceModel,
                 com.mojing.app.data.VoiceChoice("inherit"))
@@ -429,6 +443,7 @@ fun CharacterEditScreen(
                 }, onDismiss = { showVoiceChoice = false },
             )
 
+            }
             HorizontalDivider()
             CharacterEditorSectionHeader(
                 title = "角色形象",
@@ -735,6 +750,9 @@ fun CharacterEditScreen(
             Text("采样参数", style = MaterialTheme.typography.titleMedium)
             Text("控制回复的变化、长度和重复程度", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Top P 与两项惩罚用于 OpenAI 兼容线路；原生 Anthropic 线路暂不发送这三项。温度是否生效取决于模型，Claude 4.7 及后续模型和 Mythos Preview 使用模型默认采样。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 val compact = maxWidth < 340.dp
                 if (compact) {
@@ -903,14 +921,14 @@ private fun CharacterEditorSectionHeader(
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
-    Surface(
+    Surface(shape = MaterialTheme.shapes.small,
         onClick = onClick,
         enabled = enabled,
         color = MaterialTheme.colorScheme.surface,
         modifier = Modifier.fillMaxWidth().semantics { stateDescription = if (expanded) "已展开" else "已收起" },
     ) {
         Row(
-            Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(vertical = 8.dp),
+            Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -918,7 +936,7 @@ private fun CharacterEditorSectionHeader(
                 Text(title, style = MaterialTheme.typography.titleMedium)
                 Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null)
+            Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null, Modifier.size(24.dp))
         }
     }
 }

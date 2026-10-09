@@ -23,7 +23,7 @@ class NarratorRequestDialogTest {
         rule.runOnIdle { assertEquals(listOf(""), requests); guidance = "  " + "夜色中出现脚步声。".repeat(200) + "  " }
         rule.onNodeWithText("按此方向生成").assertIsDisplayed().performClick()
         rule.onNodeWithText("不指定方向，自动生成").assertIsDisplayed().performClick()
-        rule.onNodeWithText("返回对话").assertIsDisplayed().performClick()
+        rule.onNodeWithContentDescription("关闭生成旁白").assertIsDisplayed().performClick()
         rule.runOnIdle {
             assertEquals(listOf("", guidance.trim(), ""), requests)
             assertEquals(1, dismissed)

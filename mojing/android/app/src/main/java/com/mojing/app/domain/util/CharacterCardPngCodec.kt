@@ -1,6 +1,6 @@
 package com.mojing.app.domain.util
 
-import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.io.ByteArrayOutputStream
@@ -14,7 +14,7 @@ import java.util.zip.Inflater
  */
 object CharacterCardPngCodec {
 
-    private val gson = Gson()
+    private val gson = GsonBuilder().serializeNulls().create()
     private val pngMagic = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
 
     fun isPng(bytes: ByteArray): Boolean =

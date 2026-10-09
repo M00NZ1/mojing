@@ -3,6 +3,7 @@ package com.mojing.app.ui.encyclopedia
 import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.local.dao.CharacterDao
@@ -55,9 +56,15 @@ import javax.inject.Inject
 // World prompts and entry bodies are large; export reads only one small page of each at a time.
 private const val ENCYCLOPEDIA_EXPORT_BATCH_SIZE = 32
 
+enum class WorldLibrarySort(val key: String, val label: String) {
+    PINNED("pinned", "置顶优先"), UPDATED("updated", "最近更新"), NAME("name", "名称")
+}
+
 data class EncyclopediaLibraryState(
     val items: List<EncyclopediaLibraryItem> = emptyList(),
     val query: String = "",
+    val onlyPinned: Boolean = false,
+    val sort: WorldLibrarySort = WorldLibrarySort.PINNED,
     val pageIndex: Int = 0,
     val hasNext: Boolean = false,
     val loading: Boolean = false,
@@ -152,18 +159,23 @@ class EncyclopediaListViewModel @Inject constructor(
     private val uiPreferencesRepository: UiPreferencesRepository,
     private val generationTaskDao: GenerationTaskDao,
     private val deleteWorld: com.mojing.app.domain.usecase.DeleteWorldUseCase,
+    private val savedStateHandle: SavedStateHandle = SavedStateHandle(),
 ) : ViewModel() {
     private val createMutex = Mutex()
     private val coverGenerationOwner = KeyedOperationOwner<Long>()
     val coverGeneratingEncyclopediaIds: StateFlow<Set<Long>> = coverGenerationOwner.activeKeys
 
     private val libraryPageSize = 24 // Image-heavy world cards use the project list standard.
-    private val _library = MutableStateFlow(EncyclopediaLibraryState())
+    private val _library = MutableStateFlow(EncyclopediaLibraryState(
+        query = savedStateHandle.get<String>("library_query").orEmpty(),
+        onlyPinned = savedStateHandle.get<Boolean>("library_pinned") ?: false,
+        sort = WorldLibrarySort.entries.firstOrNull { it.key == savedStateHandle.get<String>("library_sort") } ?: WorldLibrarySort.PINNED,
+    ))
     val library: StateFlow<EncyclopediaLibraryState> = _library.asStateFlow()
     private val _documentImport = MutableStateFlow(EncyclopediaDocumentImportState())
     val documentImport: StateFlow<EncyclopediaDocumentImportState> = _documentImport.asStateFlow()
     private var documentImportJob: Job? = null
-    private val pageCursors = mutableListOf<EncyclopediaLibraryItem?>(null)
+    private val pageCursors = restoreCursors()
     private var loadJob: Job? = null
     private var loadRevision = 0
     private var pendingPageIndex = 0
@@ -171,16 +183,59 @@ class EncyclopediaListViewModel @Inject constructor(
     fun setSearchQuery(query: String) {
         val normalized = query.trim()
         if (normalized == _library.value.query) return
-        _library.value = EncyclopediaLibraryState(query = normalized)
+        resetCriteria(_library.value.copy(query = normalized))
+    }
+
+    fun setOnlyPinned(pinned: Boolean) {
+        if (pinned != _library.value.onlyPinned) resetCriteria(_library.value.copy(onlyPinned = pinned))
+    }
+
+    fun setSort(sort: WorldLibrarySort) {
+        if (sort != _library.value.sort) resetCriteria(_library.value.copy(sort = sort))
+    }
+
+    private fun resetCriteria(state: EncyclopediaLibraryState) {
+        _library.value = EncyclopediaLibraryState(query = state.query, onlyPinned = state.onlyPinned, sort = state.sort)
         pageCursors.clear()
         pageCursors.add(null)
+        savePosition(0)
         loadPage(0)
+    }
+
+    // Only cursor identity is saved. Room is queried again after recreation; no card bodies in Bundle.
+    private fun restoreCursors(): MutableList<EncyclopediaLibraryItem?> {
+        val pairs = savedStateHandle.get<LongArray>("library_cursors") ?: return mutableListOf(null)
+        val names = savedStateHandle.get<ArrayList<String>>("library_names") ?: return mutableListOf(null)
+        val index = savedStateHandle.get<Int>("library_page") ?: 0
+        if (pairs.size % 3 != 0 || pairs.size / 3 != names.size || names.size > 127 ||
+            names.sumOf { it.length } > 16_384 || index != names.size) return mutableListOf(null)
+        val result = mutableListOf<EncyclopediaLibraryItem?>(null)
+        for (i in names.indices) {
+            val id = pairs[i * 3]
+            if (id <= 0 || pairs[i * 3 + 1] < 0) return mutableListOf(null)
+            result.add(EncyclopediaLibraryItem(id, names[i], "", pairs[i * 3 + 1], pairs[i * 3 + 2], "", ""))
+        }
+        return result
+    }
+
+    private fun savePosition(index: Int) {
+        val state = _library.value
+        savedStateHandle["library_query"] = state.query
+        savedStateHandle["library_pinned"] = state.onlyPinned
+        savedStateHandle["library_sort"] = state.sort.key
+        val candidates = if (index < 128) pageCursors.take(index + 1).filterNotNull() else emptyList()
+        val canSave = index < 128 && candidates.sumOf { it.name.length } <= 16_384
+        val cursors = if (canSave) candidates else emptyList()
+        savedStateHandle["library_page"] = if (canSave) index else 0
+        savedStateHandle["library_cursors"] = cursors.flatMap { listOf(it.id, it.pinnedAt, it.updatedAt) }.toLongArray()
+        savedStateHandle["library_names"] = ArrayList(cursors.map { it.name })
     }
 
     fun nextPage() {
         val state = _library.value
         if (state.loading || state.error != null || !state.hasNext) return
         val cursor = state.items.lastOrNull() ?: return
+        while (pageCursors.size > state.pageIndex + 1) pageCursors.removeAt(pageCursors.lastIndex)
         pageCursors.add(cursor)
         loadPage(state.pageIndex + 1)
     }
@@ -193,7 +248,7 @@ class EncyclopediaListViewModel @Inject constructor(
 
     fun retryPage() = loadPage(pendingPageIndex)
 
-    private fun loadPage(index: Int) {
+    private fun loadPage(index: Int, fallbackToPreviousWhenEmpty: Boolean = false) {
         loadJob?.cancel()
         pendingPageIndex = index
         val revision = ++loadRevision
@@ -204,13 +259,21 @@ class EncyclopediaListViewModel @Inject constructor(
             try {
                 val rows = encyclopediaDao.getLibraryPage(
                     query = current.query,
-                    cursorPinned = cursor?.let { if (it.pinnedAt > 0) 1 else 0 },
-                    cursorPinnedAt = cursor?.pinnedAt,
+                    cursorPinned = cursor?.let { if (current.sort == WorldLibrarySort.PINNED && it.pinnedAt > 0) 1 else 0 },
+                    cursorPinnedAt = cursor?.let { if (current.sort == WorldLibrarySort.PINNED) it.pinnedAt else 0L },
                     cursorUpdatedAt = cursor?.updatedAt,
                     cursorId = cursor?.id,
                     limit = libraryPageSize + 1,
+                    onlyPinned = current.onlyPinned,
+                    sort = current.sort.key,
+                    cursorName = cursor?.let { if (current.sort == WorldLibrarySort.NAME) it.name else "" },
                 )
                 if (revision != loadRevision) return@launch
+                if (fallbackToPreviousWhenEmpty && rows.isEmpty() && index > 0) {
+                    while (pageCursors.size > index) pageCursors.removeAt(pageCursors.lastIndex)
+                    loadPage(index - 1, fallbackToPreviousWhenEmpty = true)
+                    return@launch
+                }
                 _library.value = current.copy(
                     items = rows.take(libraryPageSize),
                     pageIndex = index,
@@ -220,6 +283,7 @@ class EncyclopediaListViewModel @Inject constructor(
                     error = null,
                 )
                 while (pageCursors.size > index + 1) pageCursors.removeAt(pageCursors.lastIndex)
+                savePosition(index)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -252,7 +316,7 @@ class EncyclopediaListViewModel @Inject constructor(
 
     init {
         syncPublicLlmKeyFromStorage()
-        loadPage(0)
+        loadPage(pageCursors.lastIndex, fallbackToPreviousWhenEmpty = true)
     }
 
     suspend fun createNew(): Result<Long> = createMutex.withLock {
@@ -279,8 +343,15 @@ class EncyclopediaListViewModel @Inject constructor(
     }
 
     suspend fun delete(id: Long): String? = try {
+        val targetQuery = _library.value.query
+        val targetPageIndex = _library.value.pageIndex
+        val targetLoadRevision = loadRevision
         val error = deleteWorld(id)
-        if (error == null) refresh()
+        if (error == null && _library.value.query == targetQuery &&
+            _library.value.pageIndex == targetPageIndex && loadRevision == targetLoadRevision
+        ) {
+            loadPage(targetPageIndex, fallbackToPreviousWhenEmpty = true)
+        }
         error
     } catch (cancelled: CancellationException) {
         throw cancelled
@@ -306,13 +377,14 @@ class EncyclopediaListViewModel @Inject constructor(
     }
 
     fun refresh() {
-        viewModelScope.launch {
-            syncPublicLlmKeyFromStorage()
-            pageCursors.clear()
-            pageCursors.add(null)
-            loadPage(0)
-        }
+        syncPublicLlmKeyFromStorage()
+        pageCursors.clear()
+        pageCursors.add(null)
+        savePosition(0)
+        loadPage(0)
     }
+
+    fun refreshCurrentPage() = loadPage(_library.value.pageIndex, fallbackToPreviousWhenEmpty = true)
 
     suspend fun updateEncyclopediaCover(id: Long, localPath: String): String = withContext(NonCancellable) {
         val path = localPath.trim()

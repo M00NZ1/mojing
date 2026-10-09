@@ -37,10 +37,8 @@ internal enum class MainNavTab {
 private val mainRootRoutes = setOf(
     Routes.SESSION_LIST,
     Routes.CREATION_HUB,
-    Routes.CHARACTER_LIST,
     Routes.ENCYCLOPEDIA_LIST,
     Routes.WORKBENCH,
-    Routes.STORY_SIMULATION,
     Routes.SETTINGS,
 )
 

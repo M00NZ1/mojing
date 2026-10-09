@@ -39,6 +39,23 @@ interface GenerationTaskDao {
 
     @Query(
         """
+        SELECT * FROM generation_tasks WHERE id < :beforeId
+        AND (:filter = 0 OR (:filter = 1 AND status IN ('QUEUED','RUNNING','PAUSED'))
+            OR (:filter = 2 AND status = 'FAILED'))
+        AND (:keyword = '' OR instr(lower(title), lower(:keyword)) > 0)
+        AND (:taskKind IS NULL OR taskKind = :taskKind)
+        ORDER BY id DESC LIMIT 51
+        """,
+    )
+    fun observeHistoryPageFiltered(
+        beforeId: Long,
+        filter: Int,
+        keyword: String,
+        taskKind: String?,
+    ): Flow<List<GenerationTaskEntity>>
+
+    @Query(
+        """
         SELECT COUNT(*) FROM generation_tasks
         WHERE status IN ('QUEUED', 'RUNNING', 'PAUSED')
         """,
@@ -129,6 +146,20 @@ interface GenerationTaskDao {
         """,
     )
     suspend fun setTerminal(id: Long, status: String, err: String, now: Long)
+
+    @Query("""
+        UPDATE generation_tasks
+        SET resultJson = :resultJson, status = :status, errorMessage = :err, updatedAt = :now
+        WHERE id = :id AND status = 'RUNNING'
+    """)
+    suspend fun saveResultAndTerminal(id: Long, resultJson: String, status: String, err: String, now: Long): Int
+
+    @Query("""
+        UPDATE generation_tasks
+        SET resultAppliedAt = :appliedAt, updatedAt = :now
+        WHERE id = :id AND resultJson <> '' AND resultAppliedAt IS NULL
+    """)
+    suspend fun markResultApplied(id: Long, appliedAt: Long, now: Long): Int
 
     @Query(
         """

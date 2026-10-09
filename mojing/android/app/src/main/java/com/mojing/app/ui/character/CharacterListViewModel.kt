@@ -4,18 +4,18 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.local.dao.CharacterDao
 import com.mojing.app.data.local.dao.CharacterListItem
-import com.mojing.app.data.local.dao.CharacterProfileDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.EncyclopediaFilterOption
 import com.mojing.app.data.local.dao.EncyclopediaNameOption
 import com.mojing.app.data.local.dao.EncyclopediaEntryDao
 import com.mojing.app.data.local.entity.CharacterEntity
-import com.mojing.app.data.local.entity.CharacterProfileEntity
 import com.mojing.app.data.prefs.UiPreferencesRepository
+import com.mojing.app.domain.usecase.SmartImportException
 import com.mojing.app.domain.usecase.SmartImportUseCase
 import com.mojing.app.domain.usecase.CreateSessionUseCase
 import com.mojing.app.domain.usecase.DeleteCharacterUseCase
 import com.mojing.app.domain.usecase.SaveCharacterBindingUseCase
+import com.mojing.app.domain.usecase.ImportCharacterUseCase
 import com.mojing.app.domain.util.CharacterCardPngCodec
 import com.mojing.app.domain.util.CharacterCardV2Converter
 import com.mojing.app.domain.util.CharacterPortableCodec
@@ -204,7 +204,7 @@ internal object CharacterExportCodec {
                 apiBaseUrl = obj.string("apiBaseUrl"),
                 modelName = obj.string("modelName").ifBlank { "deepseek-chat" },
                 temperature = obj.float("temperature", 0.9f),
-                maxTokens = obj.int("maxTokens", 1200),
+                maxTokens = CharacterPortableCodec.parseOptionalMaxTokens(obj.get("maxTokens")) ?: 1200,
                 topP = obj.float("topP", 1.0f),
                 topK = obj.int("topK", 0),
                 frequencyPenalty = obj.float("frequencyPenalty", 0.0f),
@@ -248,11 +248,11 @@ internal object CharacterExportCodec {
 @HiltViewModel
 class CharacterListViewModel @Inject constructor(
     private val characterDao: CharacterDao,
-    private val characterProfileDao: CharacterProfileDao,
     private val encyclopediaDao: EncyclopediaDao,
     private val entryDao: EncyclopediaEntryDao,
     private val deleteCharacter: DeleteCharacterUseCase,
     private val saveCharacterBinding: SaveCharacterBindingUseCase,
+    private val importCharacter: ImportCharacterUseCase,
     private val smartImportUseCase: SmartImportUseCase,
     private val createSessionUseCase: CreateSessionUseCase,
     private val uiPreferencesRepository: UiPreferencesRepository,
@@ -276,6 +276,8 @@ class CharacterListViewModel @Inject constructor(
 
     private val _page = MutableStateFlow(CharacterLibraryPage())
     val page: StateFlow<CharacterLibraryPage> = _page.asStateFlow()
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
     private var sort = CharacterLibrarySort.RECOMMENDED
     private val pageCursors = mutableListOf<CharacterListItem?>(null)
     private var pageJob: Job? = null
@@ -288,6 +290,14 @@ class CharacterListViewModel @Inject constructor(
         retryPageIndex = null
         if (!keepVisible) _page.value = CharacterLibraryPage()
         loadPage(0)
+    }
+
+    /** Search is owned by the paged DAO query so results and cursors cover the full library. */
+    fun updateSearch(value: String) {
+        val next = value.trimStart()
+        if (_searchQuery.value == next) return
+        _searchQuery.value = next
+        refreshList(keepVisible = false)
     }
 
     fun nextPage() {
@@ -308,11 +318,12 @@ class CharacterListViewModel @Inject constructor(
 
     fun retryPage() = loadPage(retryPageIndex ?: _page.value.pageIndex)
 
-    private fun loadPage(index: Int) {
+    private fun loadPage(index: Int, fallbackToPreviousWhenEmpty: Boolean = false) {
         pageJob?.cancel()
         val revision = ++pageRevision
         val cursor = pageCursors[index]
         val filter = _filterEncyclopediaId.value
+        val query = _searchQuery.value.trim()
         val requestedSort = sort
         _page.value = _page.value.copy(loading = true, error = null)
         pageJob = viewModelScope.launch {
@@ -320,18 +331,23 @@ class CharacterListViewModel @Inject constructor(
                 val rows = when (requestedSort) {
                     CharacterLibrarySort.RECOMMENDED -> characterDao.getLibraryRecommendedPage(
                         filter, cursor?.pinnedAt?.let { if (it > 0) 1 else 0 }, cursor?.pinnedAt,
-                        cursor?.favorite, cursor?.createdAt, cursor?.id, CHARACTER_LIBRARY_PAGE_SIZE + 1,
+                        cursor?.favorite, cursor?.createdAt, cursor?.id, CHARACTER_LIBRARY_PAGE_SIZE + 1, query,
                     )
                     CharacterLibrarySort.RECENT -> characterDao.getLibraryRecentPage(
                         filter, cursor?.pinnedAt?.let { if (it > 0) 1 else 0 },
-                        cursor?.createdAt, cursor?.id, CHARACTER_LIBRARY_PAGE_SIZE + 1,
+                        cursor?.createdAt, cursor?.id, CHARACTER_LIBRARY_PAGE_SIZE + 1, query,
                     )
                     CharacterLibrarySort.NAME -> characterDao.getLibraryNamePage(
                         filter, cursor?.pinnedAt?.let { if (it > 0) 1 else 0 },
-                        cursor?.name, cursor?.id, CHARACTER_LIBRARY_PAGE_SIZE + 1,
+                        cursor?.name, cursor?.id, CHARACTER_LIBRARY_PAGE_SIZE + 1, query,
                     )
                 }
                 if (revision == pageRevision) {
+                    if (fallbackToPreviousWhenEmpty && rows.isEmpty() && index > 0) {
+                        while (pageCursors.size > index) pageCursors.removeAt(pageCursors.lastIndex)
+                        loadPage(index - 1)
+                        return@launch
+                    }
                     retryPageIndex = null
                     _page.value = CharacterLibraryPage(
                         items = rows.take(CHARACTER_LIBRARY_PAGE_SIZE),
@@ -429,6 +445,11 @@ class CharacterListViewModel @Inject constructor(
 
     fun delete(id: Long, onDeleted: () -> Unit = {}, onFailed: (String) -> Unit = {}) {
         if (_deletingCharacterId.value != null) return
+        val targetQuery = _searchQuery.value
+        val targetFilter = _filterEncyclopediaId.value
+        val targetSort = sort
+        val targetPageIndex = _page.value.pageIndex
+        val targetPageRevision = pageRevision
         _deletingCharacterId.value = id
         viewModelScope.launch {
             val deleted = try {
@@ -444,7 +465,14 @@ class CharacterListViewModel @Inject constructor(
             }
             if (deleted) {
                 onDeleted()
-                refreshList()
+                if (_searchQuery.value == targetQuery &&
+                    _filterEncyclopediaId.value == targetFilter &&
+                    sort == targetSort &&
+                    _page.value.pageIndex == targetPageIndex &&
+                    pageRevision == targetPageRevision
+                ) {
+                    loadPage(targetPageIndex, fallbackToPreviousWhenEmpty = true)
+                }
             }
         }
     }
@@ -561,23 +589,26 @@ class CharacterListViewModel @Inject constructor(
                 else -> runCatching { String(bytes, Charsets.UTF_8) }.getOrNull()
             }
         }
-        return text?.let { tryImportPortableText(it) }
+        val filename = hint?.substringAfterLast('/')?.substringAfterLast('\\')?.takeIf { it.isNotBlank() }
+            ?: "imported.json"
+        return text?.let { tryImportPortableText(it, filename) }
     }
 
-    private suspend fun tryImportPortableText(text: String): CharacterImportResult? {
-        val parsed = withContext(Dispatchers.Default) {
-            runCatching {
-                val obj: JsonObject = if (text.trimStart().startsWith("{")) {
-                    gson.fromJson(text, JsonObject::class.java)
-                } else {
-                    CharacterPortableCodec.parseTxt(text)
-                }
+    private suspend fun tryImportPortableText(text: String, sourceFilename: String = "imported.json"): CharacterImportResult? {
+        val parsed = try {
+            withContext(Dispatchers.Default) {
+                val obj = runCatching {
+                    if (text.trimStart().startsWith("{")) gson.fromJson(text, JsonObject::class.java)
+                    else CharacterPortableCodec.parseTxt(text)
+                }.getOrNull() ?: return@withContext null
                 if (CharacterPortableCodec.isPortableKind(obj.get("kind")?.asString)) {
                     CharacterPortableCodec.parsePortableJson(obj)
                 } else {
-                    CharacterPortableCodec.tryParseTavernLike(obj)
+                    runCatching { CharacterPortableCodec.tryParseTavernLike(obj, sourceFilename) }.getOrNull()
                 }
-            }.getOrNull()
+            }
+        } catch (invalid: IllegalArgumentException) {
+            return CharacterImportResult(invalid.message ?: "便携角色配置无效，请检查后重试", hasFailure = true)
         }
         if (parsed == null) return null
         return persistParsedPortable(parsed, portableLabel = "便携包")
@@ -598,44 +629,10 @@ class CharacterListViewModel @Inject constructor(
         parsed: CharacterPortableCodec.ParsedPortable,
         portableLabel: String,
     ): CharacterImportResult {
-        val base = CharacterPortableCodec.normalizedNameBase(parsed.name)
-        val names = characterDao.getNamesStartingWith(base).toHashSet()
-        val name = CharacterPortableCodec.allocateUniqueName(names, base)
-        val entity = CharacterEntity(
-            name = name,
-            personaPrompt = parsed.personaPrompt,
-            apiBaseUrl = parsed.apiBaseUrl?.takeIf { it.isNotBlank() } ?: "",
-            modelName = parsed.modelName?.takeIf { it.isNotBlank() } ?: "deepseek-chat",
-            temperature = parsed.temperature ?: 0.9f,
-            maxTokens = parsed.maxTokens ?: 1200,
-            avatarColor = parsed.avatarColor?.takeIf { it.isNotBlank() } ?: "#F97316",
-            avatarImagePath = parsed.avatarImagePath?.takeIf { it.isNotBlank() }.orEmpty(),
-            cardImagePath = parsed.cardImagePath?.takeIf { it.isNotBlank() }.orEmpty(),
-        )
-        val effectiveId = saveCharacterBinding(entity)
-        var profileFailed = false
-        parsed.profile?.let { pr ->
-            try {
-                characterProfileDao.upsert(
-                    CharacterProfileEntity(
-                        characterId = effectiveId,
-                        sourceFilename = pr.sourceFilename.take(255),
-                        rawPersonaText = pr.rawPersonaText,
-                        characterCardMarkdown = pr.characterCardMarkdown,
-                        characterCardJson = pr.characterCardJson,
-                    ),
-                )
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                profileFailed = true
-            }
-        }
+        val effectiveId = importCharacter.importPortable(parsed)
         return CharacterImportResult(
-            message = if (profileFailed) "已导入${portableLabel}「$name」，附加档案保存失败，请检查角色详情"
-                else "已导入${portableLabel}「$name」（请在编辑页绑定百科）",
+            message = "已导入${portableLabel}（请在编辑页绑定百科）",
             importedIds = listOf(effectiveId),
-            hasFailure = profileFailed,
         )
     }
 
@@ -645,15 +642,9 @@ class CharacterListViewModel @Inject constructor(
         return try {
             val json = smartImportUseCase.parseToStructuredJson(text, "character")
             val data = withContext(Dispatchers.Default) { CharacterExportCodec.fromJson(json) }
-            val encyclopedias = encyclopediaDao.getAllNameOptions()
-            data.forEach { exported ->
-                val boundId = CharacterExportCodec.resolveBoundEncyclopediaId(
-                    exported.boundEncyclopediaName,
-                    encyclopedias,
-                )
-                importedIds += saveCharacterBinding(exported.toEntity(boundId))
-                if (boundId == 0L) unboundCount++
-            }
+            val saved = importCharacter.importStandard(data)
+            importedIds += saved.importedIds
+            unboundCount = saved.unboundCount
             if (importedIds.isEmpty()) CharacterImportResult("未找到可导入的角色", hasFailure = true)
             else CharacterImportResult(
                 "成功导入 ${importedIds.size} 个角色" +
@@ -662,12 +653,10 @@ class CharacterListViewModel @Inject constructor(
             )
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (failure: SmartImportException) {
+            CharacterImportResult(failure.message ?: "模型解析失败，请重试", hasFailure = true)
         } catch (e: Exception) {
-            if (importedIds.isNotEmpty()) {
-                CharacterImportResult("已导入 ${importedIds.size} 个角色，其余导入失败，请检查文件或重试", importedIds.toList(), hasFailure = true)
-            } else {
-                CharacterImportResult("导入失败，请检查文件格式后重试", hasFailure = true)
-            }
+            CharacterImportResult("导入失败，请检查文件格式后重试", hasFailure = true)
         }
     }
 }

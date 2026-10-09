@@ -9,6 +9,9 @@ import com.mojing.app.data.local.entity.BranchSwipeSelectionEntity
 import com.mojing.app.data.local.entity.BranchContextExclusionEntity
 import com.mojing.app.data.local.entity.contextSelectionKey
 import com.mojing.app.data.local.entity.MessageEntity
+import com.mojing.app.data.local.entity.MessageAttachmentEntity
+import com.mojing.app.data.local.AutoImageMetadata
+import com.mojing.app.data.local.AutoVoiceMetadata
 import com.mojing.app.data.local.entity.MessageSearchIndexStateEntity
 import com.mojing.app.data.local.entity.ConfigEntity
 import com.mojing.app.data.local.entity.SessionBranchEntity
@@ -60,6 +63,9 @@ data class StoryContentsMessageProjection(
     val structuredContentJson: String,
     val contentPreview: String,
 )
+
+/** Completion eligibility needs the actual message tail, including non-chapter rows, without its body. */
+data class StoryChapterTailProjection(val id: Long, val branchId: String, val structuredContentJson: String)
 
 /** 搜索列表所需字段；避免把结构化正文和搜索派生列读入每个结果。 */
 data class SearchMessageRow(
@@ -145,13 +151,7 @@ private const val SEARCH_RESULT_CONTENT = """
          ELSE substr(message.content, 1, 2048) END AS content
 """
 
-private const val CURRENT_MESSAGES_SEARCH_QUERY = """
-    SELECT message.id, message.sessionId, message.speakerType, message.characterId,
-           message.branchId, $SEARCH_RESULT_CONTENT, message.createdAt
-    $CURRENT_MESSAGES_FROM_QUERY
-"""
-
-private const val MAIN_SELECTED_MESSAGES_QUERY = """
+internal const val MAIN_SELECTED_MESSAGES_QUERY = """
     SELECT message.*
     FROM messages AS message
     WHERE message.sessionId = :sessionId
@@ -192,6 +192,35 @@ private const val MAIN_SELECTED_MESSAGES_QUERY = """
               )
           )
       )
+"""
+
+// Search keeps ordinary context-excluded messages searchable, while still returning
+// only the adopted variant for each swipe group.
+private const val MAIN_SEARCH_MESSAGES_QUERY = """
+    SELECT message.*
+    FROM messages AS message
+    WHERE message.sessionId = :sessionId AND message.branchId = 'main'
+      AND (
+          message.swipeGroupId IS NULL OR
+          message.id = COALESCE(
+              (SELECT selection.selectedMessageId FROM branch_swipe_selections AS selection
+               WHERE selection.sessionId = :sessionId AND selection.branchId = 'main'
+                 AND selection.swipeGroupId = message.swipeGroupId LIMIT 1),
+              (SELECT active.id FROM messages AS active
+               WHERE active.sessionId = :sessionId AND active.branchId = 'main'
+                 AND active.swipeGroupId = message.swipeGroupId AND active.includeInContext = 1
+               ORDER BY active.createdAt DESC, active.id DESC LIMIT 1),
+              (SELECT fallback.id FROM messages AS fallback
+               WHERE fallback.sessionId = :sessionId AND fallback.branchId = 'main'
+                 AND fallback.swipeGroupId = message.swipeGroupId
+               ORDER BY fallback.createdAt DESC, fallback.id DESC LIMIT 1), -1
+          )
+      )
+"""
+
+private const val MAIN_SEARCH_MESSAGES_FROM = """
+FROM ($MAIN_SEARCH_MESSAGES_QUERY) AS message
+WHERE message.sessionId = :sessionId
 """
 
 private const val VISIBLE_SELECTED_MESSAGES_QUERY = CURRENT_MESSAGES_QUERY + """
@@ -239,8 +268,46 @@ private const val VISIBLE_SELECTED_MESSAGES_QUERY = CURRENT_MESSAGES_QUERY + """
       )
 """
 
+private const val VISIBLE_SEARCH_MESSAGES_QUERY = CURRENT_MESSAGES_QUERY + """
+      AND (
+          message.swipeGroupId IS NULL OR
+          message.id = COALESCE(
+              (SELECT selection.selectedMessageId FROM branch_swipe_selections AS selection
+               WHERE selection.sessionId = :sessionId AND selection.branchId = :branchId
+                 AND selection.swipeGroupId = message.swipeGroupId LIMIT 1),
+              (SELECT candidate.id
+               FROM branch_visibility_segments AS candidate_segment
+               JOIN messages AS candidate
+                 ON candidate.sessionId = candidate_segment.sessionId
+                AND candidate.branchId = candidate_segment.sourceBranchId
+                AND candidate.id <= candidate_segment.maxMessageId
+               WHERE candidate_segment.sessionId = :sessionId
+                 AND candidate_segment.targetBranchId = :branchId
+                 AND candidate.swipeGroupId = message.swipeGroupId
+                 AND NOT EXISTS (
+                     SELECT 1 FROM messages AS replacement
+                     JOIN branch_visibility_segments AS replacement_segment
+                       ON replacement_segment.sessionId = replacement.sessionId
+                      AND replacement_segment.targetBranchId = :branchId
+                      AND replacement_segment.sourceBranchId = replacement.branchId
+                      AND replacement.id <= replacement_segment.maxMessageId
+                     WHERE replacement.sessionId = :sessionId
+                       AND replacement.regeneratedFromMessageId = candidate.id
+                       AND replacement.branchId <> candidate.branchId
+                 )
+               ORDER BY candidate.includeInContext DESC, candidate.createdAt DESC, candidate.id DESC LIMIT 1), -1
+          )
+      )
+"""
+
+private const val VISIBLE_SEARCH_MESSAGES_SEARCH_QUERY = """
+    SELECT message.id, message.sessionId, message.speakerType, message.characterId,
+           message.branchId, $SEARCH_RESULT_CONTENT, message.createdAt
+    FROM ($VISIBLE_SEARCH_MESSAGES_QUERY) AS message WHERE 1 = 1
+"""
+
 /** 阅读和章节目录仍使用采用版本；排除仅影响模型、摘要和自动事件。 */
-private const val MAIN_CONTEXT_MESSAGES_QUERY = MAIN_SELECTED_MESSAGES_QUERY + """
+internal const val MAIN_CONTEXT_MESSAGES_QUERY = MAIN_SELECTED_MESSAGES_QUERY + """
       AND NOT EXISTS (
           SELECT 1 FROM branch_context_exclusions AS exclusion
           WHERE exclusion.sessionId = :sessionId AND exclusion.branchId = 'main'
@@ -250,7 +317,7 @@ private const val MAIN_CONTEXT_MESSAGES_QUERY = MAIN_SELECTED_MESSAGES_QUERY + "
       )
 """
 
-private const val VISIBLE_CONTEXT_MESSAGES_QUERY = VISIBLE_SELECTED_MESSAGES_QUERY + """
+internal const val VISIBLE_CONTEXT_MESSAGES_QUERY = VISIBLE_SELECTED_MESSAGES_QUERY + """
       AND NOT EXISTS (
           SELECT 1 FROM branch_context_exclusions AS exclusion
           WHERE exclusion.sessionId = :sessionId AND exclusion.branchId = :branchId
@@ -260,8 +327,29 @@ private const val VISIBLE_CONTEXT_MESSAGES_QUERY = VISIBLE_SELECTED_MESSAGES_QUE
       )
 """
 
+// Search only directory metadata and the same bounded opening snippet shown in the list.
+// instr keeps %, _ and punctuation literal; the selected-message queries retain branch/version scope.
+private const val STORY_CONTENTS_SEARCH_FILTER = """
+    AND (
+        instr(lower(substr(content, 1, 180)), lower(:query)) > 0
+        OR CASE WHEN json_valid(structuredContentJson) THEN
+            instr(lower(COALESCE(json_extract(structuredContentJson, '$.chapter_title'), '')), lower(:query)) > 0
+            OR (:chapterNumber IS NOT NULL AND CAST(json_extract(structuredContentJson, '$.chapter_number') AS INTEGER) = :chapterNumber)
+        ELSE 0 END
+    )
+"""
+
 @Dao
 interface MessageDao {
+    @Query("SELECT id, branchId, structuredContentJson FROM messages WHERE sessionId = :sessionId AND branchId = 'main' ORDER BY id DESC LIMIT 1")
+    suspend fun getMainStoryChapterTail(sessionId: Long): StoryChapterTailProjection?
+
+    @Query("SELECT message.id, message.branchId, message.structuredContentJson $CURRENT_MESSAGES_FROM_QUERY ORDER BY message.id DESC LIMIT 1")
+    suspend fun getBranchStoryChapterTail(sessionId: Long, branchId: String): StoryChapterTailProjection?
+
+    suspend fun getStoryChapterTail(sessionId: Long, branchId: String): StoryChapterTailProjection? =
+        if (branchId == "main") getMainStoryChapterTail(sessionId) else getBranchStoryChapterTail(sessionId, branchId)
+
     @Query("SELECT COALESCE(MAX(CASE WHEN json_valid(structuredContentJson) THEN CAST(json_extract(structuredContentJson, '$.chapter_number') AS INTEGER) ELSE 0 END), 0) FROM ($MAIN_SELECTED_MESSAGES_QUERY)")
     suspend fun getMainMaxChapter(sessionId: Long): Int
 
@@ -281,6 +369,20 @@ interface MessageDao {
     suspend fun getVisibleStoryContentsBefore(sessionId: Long, branchId: String, beforeMessageId: Long, limit: Int): List<StoryContentsMessageProjection> =
         if (branchId == "main") getMainStoryContentsBefore(sessionId, beforeMessageId, limit)
         else getBranchStoryContentsBefore(sessionId, branchId, beforeMessageId, limit)
+
+    @Query("SELECT id, speakerType, branchId, createdAt, structuredContentJson, substr(content, 1, 180) AS contentPreview " +
+        "FROM ($MAIN_SELECTED_MESSAGES_QUERY) WHERE speakerType IN ('narrator', 'character') " +
+        "AND id < :beforeMessageId " + STORY_CONTENTS_SEARCH_FILTER + " ORDER BY id DESC LIMIT :limit")
+    suspend fun searchMainStoryContentsBefore(sessionId: Long, beforeMessageId: Long, limit: Int, query: String, chapterNumber: Int?): List<StoryContentsMessageProjection>
+
+    @Query("SELECT id, speakerType, branchId, createdAt, structuredContentJson, substr(content, 1, 180) AS contentPreview " +
+        "FROM ($VISIBLE_SELECTED_MESSAGES_QUERY) WHERE speakerType IN ('narrator', 'character') " +
+        "AND id < :beforeMessageId " + STORY_CONTENTS_SEARCH_FILTER + " ORDER BY id DESC LIMIT :limit")
+    suspend fun searchBranchStoryContentsBefore(sessionId: Long, branchId: String, beforeMessageId: Long, limit: Int, query: String, chapterNumber: Int?): List<StoryContentsMessageProjection>
+
+    suspend fun searchVisibleStoryContentsBefore(sessionId: Long, branchId: String, beforeMessageId: Long, limit: Int, query: String, chapterNumber: Int?): List<StoryContentsMessageProjection> =
+        if (branchId == "main") searchMainStoryContentsBefore(sessionId, beforeMessageId, limit, query, chapterNumber)
+        else searchBranchStoryContentsBefore(sessionId, branchId, beforeMessageId, limit, query, chapterNumber)
 
     @Query("SELECT id, speakerType, branchId, createdAt, structuredContentJson, substr(content, 1, 180) AS contentPreview " +
         "FROM ($MAIN_SELECTED_MESSAGES_QUERY) WHERE id = :messageId AND speakerType IN ('narrator', 'character') LIMIT 1")
@@ -561,6 +663,24 @@ interface MessageDao {
     )
     suspend fun getMainMessageById(sessionId: Long, messageId: Long): MessageEntity?
 
+    /** Search detail lookup: ordinary context-excluded rows remain openable, but swipe rows must be adopted. */
+    @Query("$MAIN_SEARCH_MESSAGES_QUERY AND message.id = :messageId LIMIT 1")
+    suspend fun getMainAdoptedSearchMessageById(sessionId: Long, messageId: Long): MessageEntity?
+
+    // Search neighbours use the same adopted-version scope as the target, before LIMIT.
+    // Ordinary context-excluded rows remain readable; raw chat paging keeps all variants.
+    @Query("$MAIN_SEARCH_MESSAGES_QUERY AND message.id < :beforeMessageId ORDER BY message.id DESC LIMIT :limit")
+    suspend fun getMainAdoptedSearchMessagesBefore(sessionId: Long, beforeMessageId: Long, limit: Int): List<MessageEntity>
+
+    @Query("$MAIN_SEARCH_MESSAGES_QUERY AND message.id > :afterMessageId ORDER BY message.id ASC LIMIT :limit")
+    suspend fun getMainAdoptedSearchMessagesAfter(sessionId: Long, afterMessageId: Long, limit: Int): List<MessageEntity>
+
+    @Query("$VISIBLE_SEARCH_MESSAGES_QUERY AND message.id < :beforeMessageId ORDER BY message.id DESC LIMIT :limit")
+    suspend fun getVisibleAdoptedSearchMessagesBefore(sessionId: Long, branchId: String, beforeMessageId: Long, limit: Int): List<MessageEntity>
+
+    @Query("$VISIBLE_SEARCH_MESSAGES_QUERY AND message.id > :afterMessageId ORDER BY message.id ASC LIMIT :limit")
+    suspend fun getVisibleAdoptedSearchMessagesAfter(sessionId: Long, branchId: String, afterMessageId: Long, limit: Int): List<MessageEntity>
+
     @Query("$MAIN_CONTEXT_MESSAGES_QUERY ORDER BY message.id DESC LIMIT :limit")
     suspend fun getMainContextTail(sessionId: Long, limit: Int): List<MessageEntity>
 
@@ -595,8 +715,7 @@ interface MessageDao {
 
     @Query(
         "SELECT message.id, message.sessionId, message.speakerType, message.characterId, " +
-            "message.branchId, $SEARCH_RESULT_CONTENT, message.createdAt FROM messages AS message " +
-            "WHERE message.sessionId = :sessionId AND message.branchId = 'main' " +
+            "message.branchId, $SEARCH_RESULT_CONTENT, message.createdAt $MAIN_SEARCH_MESSAGES_FROM " +
             "AND (message.id IN (" +
             "SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression" +
             ") OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId) OR $SPEAKER_NAME_SEARCH_MATCH) " +
@@ -653,8 +772,7 @@ interface MessageDao {
 
     @Query(
         "SELECT message.id, message.sessionId, message.speakerType, message.characterId, " +
-            "message.branchId, $SEARCH_RESULT_CONTENT, message.createdAt FROM messages AS message " +
-            "WHERE message.sessionId = :sessionId AND message.branchId = 'main' " +
+            "message.branchId, $SEARCH_RESULT_CONTENT, message.createdAt $MAIN_SEARCH_MESSAGES_FROM " +
             "AND (message.id IN (SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression) " +
             "OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId) OR $SPEAKER_NAME_SEARCH_MATCH) " +
             "AND ($MESSAGE_BODY_SEARCH_MATCH OR $SPEAKER_NAME_SEARCH_MATCH) " +
@@ -677,7 +795,7 @@ interface MessageDao {
 
     /** 搜索页展示真实命中消息数，不以当前分页大小冒充总数。 */
     @Query(
-        "SELECT COUNT(*) FROM messages AS message WHERE message.sessionId = :sessionId AND message.branchId = 'main' " +
+        "SELECT COUNT(*) $MAIN_SEARCH_MESSAGES_FROM " +
             "AND (message.id IN (SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression) " +
             "OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId) OR $SPEAKER_NAME_SEARCH_MATCH) " +
             "AND ($MESSAGE_BODY_SEARCH_MATCH OR $SPEAKER_NAME_SEARCH_MATCH)",
@@ -733,6 +851,14 @@ interface MessageDao {
         "$CURRENT_MESSAGES_QUERY AND message.id = :messageId LIMIT 1",
     )
     suspend fun getVisibleMessageById(
+        sessionId: Long,
+        branchId: String,
+        messageId: Long,
+    ): MessageEntity?
+
+    /** Search detail lookup with the same branch visibility and adopted-swipe predicate as search results. */
+    @Query("$VISIBLE_SEARCH_MESSAGES_QUERY AND message.id = :messageId LIMIT 1")
+    suspend fun getVisibleAdoptedSearchMessageById(
         sessionId: Long,
         branchId: String,
         messageId: Long,
@@ -806,7 +932,7 @@ interface MessageDao {
 
     /** 搜索结果有硬上限；点击结果后再按 id 读取目标附近窗口。 */
     @Query(
-        "$CURRENT_MESSAGES_SEARCH_QUERY AND (message.id IN (" +
+        "$VISIBLE_SEARCH_MESSAGES_SEARCH_QUERY AND (message.id IN (" +
             "SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression" +
             ") OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId) OR $SPEAKER_NAME_SEARCH_MATCH) " +
             "AND ($MESSAGE_BODY_SEARCH_MATCH OR $SPEAKER_NAME_SEARCH_MATCH) " +
@@ -865,7 +991,7 @@ interface MessageDao {
     }
 
     @Query(
-        "$CURRENT_MESSAGES_SEARCH_QUERY AND (message.id IN (" +
+        "$VISIBLE_SEARCH_MESSAGES_SEARCH_QUERY AND (message.id IN (" +
             "SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression" +
             ") OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId) OR $SPEAKER_NAME_SEARCH_MATCH) " +
             "AND ($MESSAGE_BODY_SEARCH_MATCH OR $SPEAKER_NAME_SEARCH_MATCH) " +
@@ -888,7 +1014,7 @@ interface MessageDao {
     }
 
     @Query(
-        "SELECT COUNT(*) FROM ($CURRENT_MESSAGES_QUERY) AS message WHERE (message.id IN (SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression) " +
+        "SELECT COUNT(*) FROM ($VISIBLE_SEARCH_MESSAGES_QUERY) AS message WHERE (message.id IN (SELECT rowid FROM message_search_fts WHERE message_search_fts MATCH :matchExpression) " +
             "OR (:indexComplete = 0 AND message.id > :indexedThroughMessageId) OR $SPEAKER_NAME_SEARCH_MATCH) " +
             "AND ($MESSAGE_BODY_SEARCH_MATCH OR $SPEAKER_NAME_SEARCH_MATCH)",
     )
@@ -979,6 +1105,112 @@ interface MessageDao {
           AND instr(structuredContentJson, :batchMarker) > 0
     """)
     suspend fun countImportBatch(sessionId: Long, branchId: String, batchMarker: String): Int
+
+    @Query(
+        "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = :sessionId) " +
+            "AND (:branchId = 'main' OR EXISTS(" +
+            "SELECT 1 FROM session_branches WHERE sessionId = :sessionId AND branchId = :branchId))",
+    )
+    suspend fun targetStorylineExists(sessionId: Long, branchId: String): Boolean
+
+    @Query(
+        "SELECT EXISTS(SELECT 1 FROM messages WHERE id = :messageId AND sessionId = :sessionId " +
+            "AND branchId = :branchId AND instr(structuredContentJson, :batchMarker) > 0)",
+    )
+    suspend fun isMediaBundleMessage(
+        messageId: Long,
+        sessionId: Long,
+        branchId: String,
+        batchMarker: String,
+    ): Boolean
+
+    /**
+     * Atomically appends one validated media bundle to a session branch.
+     * The callbacks are deliberately request-owned: the caller can build bounded pages without
+     * making MessageDao depend on the bundle codec or use-case models.
+     */
+    @Transaction
+    suspend fun insertMediaBundleIfAbsent(
+        sessionId: Long,
+        branchId: String,
+        batchId: String,
+        expectedCount: Int,
+        textBatchId: String?,
+        beforeCommit: suspend () -> Unit,
+        writeRows: suspend (
+            insertMessage: suspend (MessageEntity) -> Long,
+            insertAttachments: suspend (List<MessageAttachmentEntity>) -> Int,
+        ) -> Int,
+    ): Int {
+        require(sessionId > 0L && branchId.isNotBlank() && batchId.isNotBlank()) {
+            "媒体包缺少有效的会话、故事线或批次标识"
+        }
+        require(expectedCount > 0) { "媒体包消息数必须大于 0" }
+        check(targetStorylineExists(sessionId, branchId)) { "目标会话或故事线已不存在" }
+
+        val mediaMarker = "\"mojing_media_bundle_batch\":\"$batchId\""
+        val existingCount = countImportBatch(sessionId, branchId, mediaMarker)
+        if (existingCount == expectedCount) return 0
+        check(existingCount == 0) { "媒体包批次状态不完整，请先检查当前故事线" }
+
+        if (!textBatchId.isNullOrBlank()) {
+            val textMarker = "\"st_import_batch\":\"$textBatchId\""
+            check(countImportBatch(sessionId, branchId, textMarker) == 0) {
+                "该故事线已导入对应文字记录，请使用尚未导入的故事线"
+            }
+        }
+
+        currentCoroutineContext().ensureActive()
+        beforeCommit()
+        currentCoroutineContext().ensureActive()
+        check(targetStorylineExists(sessionId, branchId)) { "提交前目标会话或故事线已不存在" }
+
+        var insertedMessageCount = 0
+        val insertMessage: suspend (MessageEntity) -> Long = { entity ->
+            require(entity.id == 0L && entity.sessionId == sessionId && entity.branchId == branchId) {
+                "媒体包消息绑定已失效"
+            }
+            require(entity.structuredContentJson.contains(mediaMarker)) {
+                "媒体包消息缺少批次标记"
+            }
+            val id = insert(entity)
+            check(id > 0L) { "媒体包消息写入失败" }
+            check(getByIdInSession(id, sessionId)?.branchId == branchId) {
+                "媒体包消息未写入目标故事线"
+            }
+            insertedMessageCount++
+            id
+        }
+        val insertAttachments: suspend (List<MessageAttachmentEntity>) -> Int = { attachments ->
+            require(attachments.all { it.id == 0L }) { "媒体包附件必须是新记录" }
+            var inserted = 0
+            attachments.chunked(128).forEach { chunk ->
+                currentCoroutineContext().ensureActive()
+                chunk.forEach { attachment ->
+                    check(isMediaBundleMessage(attachment.messageId, sessionId, branchId, mediaMarker)) {
+                        "媒体包附件未绑定本批新消息"
+                    }
+                }
+                val ids = insertMessageAttachmentsRaw(chunk)
+                check(ids.size == chunk.size && ids.all { it > 0L }) { "媒体包附件写入失败" }
+                inserted += ids.size
+            }
+            inserted
+        }
+
+        val writtenCount = writeRows(insertMessage, insertAttachments)
+        check(writtenCount == expectedCount) {
+            "媒体包消息数量不完整：$writtenCount/$expectedCount"
+        }
+        check(insertedMessageCount == expectedCount) {
+            "媒体包消息写入数量不完整：$insertedMessageCount/$expectedCount"
+        }
+        currentCoroutineContext().ensureActive()
+        check(targetStorylineExists(sessionId, branchId)) { "提交前目标会话或故事线已不存在" }
+        beforeCommit()
+        currentCoroutineContext().ensureActive()
+        return writtenCount
+    }
 
     @Query("""
         SELECT COUNT(*) FROM messages
@@ -1130,6 +1362,232 @@ interface MessageDao {
 
     @Query("UPDATE messages SET structuredContentJson = :json WHERE id = :id")
     suspend fun updateStructuredRaw(id: Long, json: String)
+
+    @Query("SELECT COUNT(*) FROM message_attachments WHERE messageId = :messageId")
+    suspend fun countAttachments(messageId: Long): Int
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertMessageAttachmentRaw(entity: MessageAttachmentEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertMessageAttachmentsRaw(entities: List<MessageAttachmentEntity>): List<Long>
+
+    @Transaction
+    suspend fun claimAutoImageGeneration(
+        messageId: Long,
+        sessionId: Long,
+        branchId: String,
+        expectedAttemptToken: String?,
+        freshAttemptToken: String,
+    ): Boolean {
+        require(freshAttemptToken.isNotBlank()) { "自动配图 attempt token 不能为空" }
+        val current = getById(messageId) ?: return false
+        val parent = current.parentMessageId?.let { getByIdInSession(it, sessionId) }
+        if (current.sessionId != sessionId || current.branchId != branchId ||
+            current.speakerType != "character" || current.characterId == null || current.includeInContext ||
+            parent == null || parent.sessionId != sessionId || parent.branchId != branchId ||
+            countAttachments(messageId) > 0
+        ) return false
+        val metadata = AutoImageMetadata.parse(current.structuredContentJson) ?: return false
+        if (!metadata.retryable || metadata.attemptToken != expectedAttemptToken || freshAttemptToken == expectedAttemptToken) return false
+        updateContent(messageId, "🖼 配图生成中…")
+        updateStructuredRaw(messageId, AutoImageMetadata.update(
+            current.structuredContentJson,
+            AutoImageMetadata.STATE_RUNNING,
+            freshAttemptToken,
+        ))
+        return true
+    }
+
+    @Transaction
+    suspend fun completeAutoImageGeneration(
+        messageId: Long,
+        sessionId: Long,
+        branchId: String,
+        attemptToken: String,
+        attachment: MessageAttachmentEntity,
+    ): Boolean {
+        val current = getById(messageId) ?: return false
+        val metadata = AutoImageMetadata.parse(current.structuredContentJson) ?: return false
+        val parent = current.parentMessageId?.let { getByIdInSession(it, sessionId) }
+        if (current.sessionId != sessionId || current.branchId != branchId ||
+            current.speakerType != "character" || current.characterId == null || current.includeInContext ||
+            metadata.state != AutoImageMetadata.STATE_RUNNING || metadata.attemptToken != attemptToken ||
+            countAttachments(messageId) > 0 ||
+            parent == null || parent.sessionId != sessionId || parent.branchId != branchId
+        ) return false
+        if (insertMessageAttachmentRaw(attachment.copy(messageId = messageId)) <= 0L) return false
+        updateContent(messageId, "")
+        updateStructuredRaw(messageId, AutoImageMetadata.update(
+            current.structuredContentJson,
+            AutoImageMetadata.STATE_COMPLETE,
+            attemptToken,
+        ))
+        return true
+    }
+
+    @Transaction
+    suspend fun failAutoImageGeneration(
+        messageId: Long,
+        sessionId: Long,
+        branchId: String,
+        attemptToken: String,
+        interrupted: Boolean,
+    ): Boolean {
+        val current = getById(messageId) ?: return false
+        val metadata = AutoImageMetadata.parse(current.structuredContentJson) ?: return false
+        val parent = current.parentMessageId?.let { getByIdInSession(it, sessionId) }
+        if (current.sessionId != sessionId || current.branchId != branchId ||
+            current.speakerType != "character" || current.characterId == null || current.includeInContext ||
+            metadata.state != AutoImageMetadata.STATE_RUNNING || metadata.attemptToken != attemptToken ||
+            countAttachments(messageId) > 0 ||
+            parent == null || parent.sessionId != sessionId || parent.branchId != branchId
+        ) return false
+        val state = if (interrupted) AutoImageMetadata.STATE_INTERRUPTED else AutoImageMetadata.STATE_FAILED
+        updateContent(messageId, if (interrupted) "🖼 配图生成中断，可重试" else "🖼 配图生成失败，可重试")
+        updateStructuredRaw(messageId, AutoImageMetadata.update(current.structuredContentJson, state, attemptToken))
+        return true
+    }
+
+    @Transaction
+    suspend fun markAutoImageRunningInterrupted(messageId: Long, sessionId: Long, branchId: String): Boolean {
+        val current = getById(messageId) ?: return false
+        val parent = current.parentMessageId?.let { getByIdInSession(it, sessionId) }
+        if (current.sessionId != sessionId || current.branchId != branchId ||
+            current.speakerType != "character" || current.includeInContext || countAttachments(messageId) > 0 ||
+            parent == null || parent.sessionId != sessionId || parent.branchId != branchId
+        ) return false
+        val metadata = AutoImageMetadata.parse(current.structuredContentJson) ?: return false
+        val legacyRunning = metadata.state.isBlank() && metadata.prompt == null &&
+            (current.content == "🖼 配图生成中…" || current.content.isBlank())
+        if (metadata.state != AutoImageMetadata.STATE_RUNNING && !legacyRunning) return false
+        if (!legacyRunning && metadata.attemptToken.isNullOrBlank()) return false
+        updateContent(messageId, if (legacyRunning) "🖼 配图已中断" else "🖼 配图生成中断，可重试")
+        updateStructuredRaw(messageId, AutoImageMetadata.update(current.structuredContentJson, AutoImageMetadata.STATE_INTERRUPTED))
+        return true
+    }
+
+    @Transaction
+    suspend fun claimAutoVoiceGeneration(
+        messageId: Long,
+        sessionId: Long,
+        branchId: String,
+        expectedAttemptToken: String?,
+        freshAttemptToken: String,
+    ): Boolean {
+        require(freshAttemptToken.isNotBlank()) { "自动配音 attempt token 不能为空" }
+        require(freshAttemptToken != expectedAttemptToken) { "自动配音 attempt token 必须更新" }
+        val current = getById(messageId) ?: return false
+        val parent = current.parentMessageId?.let { getByIdInSession(it, sessionId) }
+        if (current.sessionId != sessionId || current.branchId != branchId ||
+            current.speakerType != "character" || current.characterId == null || current.includeInContext ||
+            parent == null || parent.sessionId != sessionId || parent.branchId != branchId ||
+            countAttachments(messageId) > 0
+        ) return false
+        val metadata = AutoVoiceMetadata.parse(current.structuredContentJson) ?: return false
+        if (!metadata.retryable || metadata.attemptToken != expectedAttemptToken) return false
+        updateContent(messageId, "配音生成中…")
+        updateStructuredRaw(messageId, AutoVoiceMetadata.update(
+            current.structuredContentJson, AutoVoiceMetadata.STATE_RUNNING, freshAttemptToken,
+        ))
+        return true
+    }
+
+    @Transaction
+    suspend fun completeAutoVoiceGeneration(
+        messageId: Long,
+        sessionId: Long,
+        branchId: String,
+        attemptToken: String,
+        attachments: List<MessageAttachmentEntity>,
+    ): Boolean {
+        require(attachments.isNotEmpty()) { "自动配音必须至少生成一个音频分段" }
+        require(attachments.all { it.id == 0L }) { "自动配音附件必须是新记录" }
+        require(attachments.all { it.assetType == "voice" }) { "自动配音附件类型无效" }
+        require(attachments.all { it.mimeType.startsWith("audio/") }) { "自动配音附件 MIME 类型无效" }
+        require(attachments.all { it.storagePath.isNotBlank() }) { "自动配音附件路径不能为空" }
+        require(attachments.map { it.storagePath }.distinct().size == attachments.size) { "自动配音附件路径重复" }
+        val current = getById(messageId) ?: return false
+        val metadata = AutoVoiceMetadata.parse(current.structuredContentJson) ?: return false
+        val parent = current.parentMessageId?.let { getByIdInSession(it, sessionId) }
+        if (current.sessionId != sessionId || current.branchId != branchId ||
+            current.speakerType != "character" || current.characterId == null || current.includeInContext ||
+            metadata.state != AutoVoiceMetadata.STATE_RUNNING || metadata.attemptToken != attemptToken ||
+            countAttachments(messageId) > 0 ||
+            parent == null || parent.sessionId != sessionId || parent.branchId != branchId
+        ) return false
+        attachments.forEach { attachment ->
+            check(insertMessageAttachmentRaw(attachment.copy(messageId = messageId)) > 0L) {
+                "自动配音附件写入失败"
+            }
+        }
+        updateContent(messageId, "")
+        updateStructuredRaw(messageId, AutoVoiceMetadata.update(
+            current.structuredContentJson, AutoVoiceMetadata.STATE_COMPLETE, attemptToken,
+        ))
+        return true
+    }
+
+    @Transaction
+    suspend fun failAutoVoiceGeneration(
+        messageId: Long,
+        sessionId: Long,
+        branchId: String,
+        attemptToken: String,
+        interrupted: Boolean,
+    ): Boolean {
+        val current = getById(messageId) ?: return false
+        val metadata = AutoVoiceMetadata.parse(current.structuredContentJson) ?: return false
+        val parent = current.parentMessageId?.let { getByIdInSession(it, sessionId) }
+        if (current.sessionId != sessionId || current.branchId != branchId ||
+            current.speakerType != "character" || current.characterId == null || current.includeInContext ||
+            metadata.state != AutoVoiceMetadata.STATE_RUNNING || metadata.attemptToken != attemptToken ||
+            countAttachments(messageId) > 0 || parent == null ||
+            parent.sessionId != sessionId || parent.branchId != branchId
+        ) return false
+        val state = if (interrupted) AutoVoiceMetadata.STATE_INTERRUPTED else AutoVoiceMetadata.STATE_FAILED
+        updateContent(messageId, if (interrupted) "配音生成中断，可重试" else "配音生成失败，可重试")
+        updateStructuredRaw(current.id, AutoVoiceMetadata.update(current.structuredContentJson, state, attemptToken))
+        return true
+    }
+
+    @Transaction
+    suspend fun markAutoVoiceRunningInterrupted(
+        messageId: Long,
+        sessionId: Long,
+        branchId: String,
+        expectedAttemptToken: String? = null,
+    ): Boolean {
+        val current = getById(messageId) ?: return false
+        val parent = current.parentMessageId?.let { getByIdInSession(it, sessionId) }
+        if (current.sessionId != sessionId || current.branchId != branchId ||
+            current.speakerType != "character" || current.characterId == null || current.includeInContext || countAttachments(messageId) > 0 ||
+            parent == null || parent.sessionId != sessionId || parent.branchId != branchId
+        ) return false
+        val metadata = AutoVoiceMetadata.parse(current.structuredContentJson)
+        if (metadata?.attemptToken != expectedAttemptToken) return false
+        if (metadata == null) {
+            if (!AutoVoiceMetadata.isLegacyRunningContent(current.content)) return false
+            updateContent(messageId, "配音已中断")
+            updateStructuredRaw(messageId, AutoVoiceMetadata.update(current.structuredContentJson, AutoVoiceMetadata.STATE_INTERRUPTED))
+            return true
+        }
+        if (metadata.state.isBlank() && metadata.text == null &&
+            (AutoVoiceMetadata.isLegacyRunningContent(current.content) || current.content.isBlank())
+        ) {
+            updateContent(messageId, "配音已中断")
+            updateStructuredRaw(messageId, AutoVoiceMetadata.update(current.structuredContentJson, AutoVoiceMetadata.STATE_INTERRUPTED))
+            return true
+        }
+        if (metadata.state != AutoVoiceMetadata.STATE_RUNNING ||
+            metadata.attemptToken == null || metadata.attemptToken != expectedAttemptToken
+        ) return false
+        updateContent(messageId, "配音生成中断，可重试")
+        updateStructuredRaw(messageId, AutoVoiceMetadata.update(
+            current.structuredContentJson, AutoVoiceMetadata.STATE_INTERRUPTED, metadata.attemptToken,
+        ))
+        return true
+    }
 
     @Transaction
     suspend fun renameNovelChapter(id: Long, sessionId: Long, title: String) {

@@ -162,7 +162,7 @@ object UserFacingStrings {
     fun documentWriteFailed(msg: String?): String =
         "写入文件失败，目标文件可能不完整: ${msg?.trim().takeUnless { it.isNullOrEmpty() } ?: "未知原因"}"
 
-    fun entryHistoryVersionLoaded(): String = "已载入历史版本，请检查后保存"
+    fun entryHistoryVersionLoaded(): String = "已载入历史文本资料，其他设置保留，请检查后保存"
 
     fun encyclopediaCreated(): String = "已新建百科库，可在列表中点入编辑名称"
 

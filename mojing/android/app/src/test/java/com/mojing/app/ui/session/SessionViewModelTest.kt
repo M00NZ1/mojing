@@ -600,6 +600,58 @@ class SessionViewModelTest {
         } finally { job.complete(); runCurrent() }
     }
 
+    @Test
+    fun pinWaitsForOneFieldWriteAndRejectsDuplicateAction() = runTest(dispatcher) {
+        val gate = CompletableDeferred<Int>()
+        coEvery { sessionDao.updatePinnedAt(42L, any()) } coAnswers { gate.await() }
+        val model = createViewModel()
+        model.setSessionPinned(42L, true)
+        model.setSessionPinned(42L, true)
+        runCurrent()
+        assertEquals(setOf(42L), model.pinningSessionIds.value)
+        coVerify(exactly = 1) { sessionDao.updatePinnedAt(42L, more(0L)) }
+        coVerify(exactly = 0) { sessionDao.update(any()) }
+        coVerify(exactly = 0) { sessionDao.getById(any()) }
+        gate.complete(1)
+        advanceUntilIdle()
+        assertTrue(model.pinningSessionIds.value.isEmpty())
+        assertEquals(null, model.pinFailure.value)
+    }
+
+    @Test
+    fun pinFailureCanRetryWithoutLosingTheRequestedState() = runTest(dispatcher) {
+        coEvery { sessionDao.updatePinnedAt(42L, 0L) } throws IllegalStateException("private database error")
+        val model = createViewModel()
+        model.setSessionPinned(42L, false)
+        advanceUntilIdle()
+        val failure = model.pinFailure.value!!
+        assertEquals(42L, failure.sessionId)
+        assertEquals(false, failure.pinned)
+        assertEquals("置顶状态保存失败，请重试", failure.message)
+        assertTrue(model.pinningSessionIds.value.isEmpty())
+        model.setSessionPinned(failure.sessionId, failure.pinned)
+        advanceUntilIdle()
+        val retriedFailure = model.pinFailure.value!!
+        org.junit.Assert.assertNotSame(failure, retriedFailure)
+        model.clearPinFailure(failure)
+        org.junit.Assert.assertSame(retriedFailure, model.pinFailure.value)
+        coEvery { sessionDao.updatePinnedAt(42L, 0L) } returns 1
+        model.setSessionPinned(failure.sessionId, failure.pinned)
+        advanceUntilIdle()
+        assertEquals(null, model.pinFailure.value)
+    }
+
+    @Test
+    fun pinMissingSessionDoesNotReportSuccessOrCreateARecord() = runTest(dispatcher) {
+        coEvery { sessionDao.updatePinnedAt(42L, any()) } returns 0
+        val model = createViewModel()
+        model.setSessionPinned(42L, true)
+        advanceUntilIdle()
+        assertEquals("对话已不存在，请刷新列表", model.pinFailure.value?.message)
+        assertTrue(model.pinningSessionIds.value.isEmpty())
+        coVerify(exactly = 0) { sessionDao.insert(any()) }
+    }
+
     private fun createViewModel(): SessionViewModel = SessionViewModel(
         sessionDao = sessionDao,
         sessionBranchDao = sessionBranchDao,
@@ -613,5 +665,6 @@ class SessionViewModelTest {
         generationTaskDao = generationTaskDao,
         secureStorage = secureStorage,
         uiPreferencesRepository = preferences,
+        sessionSetupDraftStore = mockk(relaxed = true),
     )
 }

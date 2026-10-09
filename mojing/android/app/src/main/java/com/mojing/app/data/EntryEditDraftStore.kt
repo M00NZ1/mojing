@@ -20,6 +20,8 @@ data class EntryDraftSnapshot(
     @SerializedName("metaJson") val metaJson: String = "{}",
     @SerializedName("isFeatured") val isFeatured: Boolean = false,
     @SerializedName("coverImagePath") val coverImagePath: String = "",
+    /** 生图时的临时补充说明；旧 v1 草稿缺少该字段时按空字符串兼容。 */
+    @SerializedName("coverPromptHint") val coverPromptHint: String = "",
 )
 
 private data class StoredEntryDraft(
@@ -43,7 +45,8 @@ class EntryEditDraftStore @Inject constructor(@ApplicationContext context: Conte
             val fields = listOf("title", "entryType", "summary", "content", "tags", "confidence",
                 "metaJson", "isFeatured", "coverImagePath")
             check(fields.all { snapshot.get(it)?.isJsonPrimitive == true })
-            gson.fromJson(raw, StoredEntryDraft::class.java)
+            val decoded = gson.fromJson(raw, StoredEntryDraft::class.java)
+            decoded.copy(snapshot = decoded.snapshot.copy(coverPromptHint = decoded.snapshot.coverPromptHint.orEmpty()))
         }.getOrNull() ?: error("词条草稿无法读取，请保留本机数据并重试")
         stored.snapshot
     }

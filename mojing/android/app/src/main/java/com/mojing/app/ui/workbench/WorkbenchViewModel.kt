@@ -120,7 +120,7 @@ class WorkbenchViewModel @Inject constructor(
 
     fun retryPage() = loadPage(pendingPageIndex)
 
-    private fun loadPage(index: Int) {
+    private fun loadPage(index: Int, fallbackToPreviousWhenEmpty: Boolean = false) {
         loadJob?.cancel()
         pendingPageIndex = index
         val revision = ++loadRevision
@@ -138,6 +138,11 @@ class WorkbenchViewModel @Inject constructor(
                     limit = libraryPageSize + 1,
                 )
                 if (revision != loadRevision) return@launch
+                if (fallbackToPreviousWhenEmpty && rows.isEmpty() && index > 0) {
+                    while (pageCursors.size > index) pageCursors.removeAt(pageCursors.lastIndex)
+                    loadPage(index - 1)
+                    return@launch
+                }
                 _library.value = current.copy(
                     items = rows.take(libraryPageSize), pageIndex = index,
                     hasNext = rows.size > libraryPageSize, loading = false,
@@ -203,13 +208,21 @@ class WorkbenchViewModel @Inject constructor(
 
     fun deleteTemplate(id: Long) {
         if (!deletingTemplateIds.add(id)) return
+        val targetQuery = _library.value.query
+        val targetPageIndex = _library.value.pageIndex
+        val targetLoadRevision = loadRevision
         _deleteTemplateState.value = TemplateDeleteState(templateId = id, isDeleting = true)
         viewModelScope.launch {
             try {
                 val result = deleteWorldTemplateUseCase(id)
                 if (result is DeleteWorldTemplateResult.Deleted) {
                     _library.update { state -> state.copy(items = state.items.filterNot { it.id == id }) }
-                    refresh()
+                    if (_library.value.query == targetQuery &&
+                        _library.value.pageIndex == targetPageIndex &&
+                        loadRevision == targetLoadRevision
+                    ) {
+                        loadPage(targetPageIndex, fallbackToPreviousWhenEmpty = true)
+                    }
                 }
                 _deleteTemplateState.value = TemplateDeleteState(templateId = id, result = result)
             } catch (cause: CancellationException) {

@@ -1,98 +1,119 @@
 package com.mojing.app.ui.encyclopedia.components
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.toSize
+import com.mojing.app.ui.common.MoJingCoverImage
 import kotlin.math.cos
-import kotlin.math.hypot
 import kotlin.math.sin
 
-data class GraphNode(val id: Long, val title: String)
+// Image paths are optional and originate from this relation page's endpoint projection.
+data class GraphNode(val id: Long, val title: String, val imagePath: String = "")
 data class GraphEdge(val source: Long, val target: Long, val label: String)
 
 @Composable
 fun EncyclopediaRelationCanvas(
-    nodes: List<GraphNode>,
-    edges: List<GraphEdge>,
-    highlightId: Long?,
-    onNodeTap: (Long) -> Unit,
-    modifier: Modifier = Modifier
+    nodes: List<GraphNode>, edges: List<GraphEdge>, highlightId: Long?,
+    onNodeTap: (Long) -> Unit, modifier: Modifier = Modifier,
 ) {
-    var layoutSize by remember { mutableStateOf(Size.Zero) }
-    val lineColor = MaterialTheme.colorScheme.outline
-    val accent = MaterialTheme.colorScheme.primary
-    val surface = MaterialTheme.colorScheme.surfaceVariant
-
-    val positions = remember(nodes, layoutSize) {
-        if (layoutSize.width <= 0f || layoutSize.height <= 0f) emptyMap()
-        else {
-            val cx = layoutSize.width / 2f
-            val cy = layoutSize.height / 2f
-            val r = minOf(layoutSize.width, layoutSize.height) * 0.32f
-            val n = nodes.size.coerceAtLeast(1)
-            nodes.mapIndexed { i, node ->
-                val ang = (2 * Math.PI * i / n - Math.PI / 2).toFloat()
-                node.id to Offset(cx + r * cos(ang), cy + r * sin(ang))
-            }.toMap()
-        }
-    }
-
+    val visibleNodes = remember(nodes) { nodes.take(12) }
+    val visibleIds = remember(visibleNodes) { visibleNodes.map { it.id }.toSet() }
+    val visibleEdges = remember(edges, visibleIds) { edges.filter { it.source in visibleIds && it.target in visibleIds } }
+    val lineColor = MaterialTheme.colorScheme.outlineVariant
+    val density = LocalDensity.current
+    val labelStyle = MaterialTheme.typography.labelSmall
+    val labelLineHeight = with(density) { labelStyle.lineHeight.toDp().value }
     Column(modifier) {
-        Canvas(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(280.dp)
-                .onSizeChanged { layoutSize = it.toSize() }
-                .pointerInput(layoutSize, nodes, edges, positions) {
-                    if (layoutSize.width <= 0f) return@pointerInput
-                    detectTapGestures { tap ->
-                        var hit: Long? = null
-                        for ((id, p) in positions) {
-                            if (hypot(tap.x - p.x, tap.y - p.y) < 28f) {
-                                hit = id
-                                break
-                            }
-                        }
-                        hit?.let { onNodeTap(it) }
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val dense = visibleNodes.size > 6 || (visibleNodes.size > 3 && (maxWidth < 360.dp || density.fontScale > 1.2f))
+            val columns = (maxWidth.value / 88f).toInt().coerceIn(1, 3)
+            val rowHeight = 56f + 2f * labelLineHeight
+            val radius = minOf(maxWidth.value * 0.34f, 112f)
+            val graphHeight = if (dense) (((visibleNodes.size + columns - 1) / columns) * rowHeight).dp else (2f * radius + rowHeight + 24f).dp
+            val nodeWidth = if (dense) (maxWidth.value / columns - 8f).dp else 80.dp
+            val positions = remember(visibleNodes, maxWidth, dense, columns, rowHeight, radius) {
+                val center = Offset(maxWidth.value / 2f, radius + 36f)
+                visibleNodes.mapIndexed { index, node ->
+                    val angle = (2 * Math.PI * index / visibleNodes.size.coerceAtLeast(1)).toFloat()
+                    node.id to if (dense) Offset((index % columns + 0.5f) * maxWidth.value / columns, index / columns * rowHeight + 24f)
+                        else Offset(center.x + radius * cos(angle), center.y + radius * sin(angle))
+                }.toMap()
+            }
+            Box(Modifier.fillMaxWidth().height(graphHeight)) {
+                Canvas(Modifier.fillMaxSize()) {
+                    visibleEdges.forEach { edge ->
+                        val start = positions[edge.source] ?: return@forEach
+                        val end = positions[edge.target] ?: return@forEach
+                        drawLine(lineColor, Offset(start.x.dp.toPx(), start.y.dp.toPx()),
+                            Offset(end.x.dp.toPx(), end.y.dp.toPx()), strokeWidth = 1.5.dp.toPx())
                     }
                 }
-        ) {
-            edges.forEach { e ->
-                val a = positions[e.source] ?: return@forEach
-                val b = positions[e.target] ?: return@forEach
-                drawLine(color = lineColor, start = a, end = b, strokeWidth = 2f)
-            }
-            nodes.forEach { node ->
-                val p = positions[node.id] ?: return@forEach
-                val active = node.id == highlightId
-                val rad = if (active) 22f else 18f
-                drawCircle(color = surface, radius = rad, center = p)
-                drawCircle(color = accent, radius = rad, center = p, style = Stroke(width = 2f))
+                // Dense edge labels would cover endpoint actions; the complete directed list follows the graph.
+                if (!dense) visibleEdges.forEach { edge ->
+                    val start = positions[edge.source] ?: return@forEach
+                    val end = positions[edge.target] ?: return@forEach
+                    val labelLeft = (start.x + end.x) / 2f - 36f
+                    val labelTop = (start.y + end.y) / 2f - 12f
+                    val coversNode = positions.values.any { position ->
+                        labelLeft < position.x + nodeWidth.value / 2f && labelLeft + 72f > position.x - nodeWidth.value / 2f &&
+                            labelTop < position.y - 24f + rowHeight && labelTop + labelLineHeight + 8f > position.y - 24f
+                    }
+                    if (coversNode) return@forEach
+                    Surface(Modifier.offset(labelLeft.dp, labelTop.dp).width(72.dp),
+                        color = MaterialTheme.colorScheme.background, shape = MaterialTheme.shapes.extraSmall) {
+                        Text(edge.label, Modifier.padding(4.dp), style = MaterialTheme.typography.labelSmall,
+                            textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                visibleNodes.forEach { node ->
+                    val position = positions[node.id] ?: return@forEach
+                    Column(Modifier.offset((position.x - nodeWidth.value / 2f).dp, (position.y - 24).dp).width(nodeWidth)
+                        .clickable { onNodeTap(node.id) }
+                        .clearAndSetSemantics {
+                            contentDescription = "选择条目：${node.title}"
+                            selected = node.id == highlightId
+                            role = Role.Button
+                            onClick(label = "选择条目") { onNodeTap(node.id); true }
+                        },
+                        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Surface(Modifier.size(48.dp), shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            border = BorderStroke(if (node.id == highlightId) 2.dp else 1.dp,
+                                if (node.id == highlightId) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)) {
+                            if (node.imagePath.isNotBlank()) MoJingCoverImage(node.imagePath, Modifier.fillMaxSize())
+                            else Box(contentAlignment = Alignment.Center) {
+                                Text(node.title.take(1), style = MaterialTheme.typography.titleMedium)
+                            }
+                        }
+                        Text(node.title, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
             }
         }
-        Text(
-            "点击圆点打开条目；环形为示意布局。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
-            modifier = Modifier.padding(top = 4.dp)
-        )
+        Text(if (nodes.size > visibleNodes.size) "图中显示本页前12个条目，其余关系可在下方查看" else "点击条目查看详情，关系类型与方向见下方列表",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp))
     }
 }

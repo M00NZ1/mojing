@@ -71,7 +71,10 @@ internal fun buildMessageSearchHighlight(
     return MessageSearchHighlightResult(ranges, highlightedMessageText(text, ranges))
 }
 
-internal class MessageSearchHighlight(val query: String = "", val focus: Boolean = false) {
+internal class MessageSearchHighlight(
+    val query: String = "", val focus: Boolean = false,
+    val onFocusClaimed: () -> Unit = {},
+) {
     var focusClaimed = false
 }
 internal val LocalMessageSearchHighlight = staticCompositionLocalOf { MessageSearchHighlight() }
@@ -133,6 +136,7 @@ internal fun SearchableMessageText(
         val result = layout ?: return@LaunchedEffect
         if (!highlight.focus || highlight.focusClaimed || ranges.isEmpty()) return@LaunchedEffect
         highlight.focusClaimed = true
+        highlight.onFocusClaimed()
         val line = result.getLineForOffset(ranges.first().first)
         requester.bringIntoView(Rect(0f, result.getLineTop(line), result.size.width.toFloat(), result.getLineBottom(line)))
     }

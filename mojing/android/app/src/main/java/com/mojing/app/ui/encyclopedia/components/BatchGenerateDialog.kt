@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import com.mojing.app.ui.settings.PlatformEditorDialog as AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -69,9 +69,8 @@ fun BatchGenerateDialog(
     )
 
     AlertDialog(
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
         onDismissRequest = onDismiss,
-        title = { Text("批量生成（条目 / 时间线）") },
+        title = { Text("批量生成") },
         text = {
             Column(
                 modifier = Modifier

@@ -24,6 +24,7 @@ data class ChatCharacterPresentationRow(
     val avatarImagePath: String,
     val cardImagePath: String,
     val thinkMaxEnabled: Boolean,
+    val personaPreview: String = "",
 )
 
 /** Only fields rendered by the character library; credentials and full prompts stay in Room. */
@@ -46,7 +47,7 @@ interface CharacterDao {
     @Query("SELECT id, name FROM characters WHERE id IN (:ids)")
     suspend fun getNamesByIds(ids: List<Long>): List<CharacterNameRow>
 
-    @Query("SELECT id, name, avatarColor, avatarImagePath, cardImagePath, thinkMaxEnabled FROM characters WHERE id IN (:ids)")
+    @Query("SELECT id, name, avatarColor, avatarImagePath, cardImagePath, thinkMaxEnabled, substr(personaPrompt, 1, 96) AS personaPreview FROM characters WHERE id IN (:ids)")
     suspend fun getChatPresentationByIds(ids: List<Long>): List<ChatCharacterPresentationRow>
 
     @Query(
@@ -57,6 +58,7 @@ interface CharacterDao {
                pinnedAt, favorite, createdAt
         FROM characters
         WHERE (:encyclopediaId IS NULL OR boundEncyclopediaId = :encyclopediaId)
+          AND (:query = '' OR instr(lower(name), lower(:query)) > 0 OR instr(lower(personaPrompt), lower(:query)) > 0)
           AND (:cursorId IS NULL OR
                (CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) < :cursorPinned OR
                ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND pinnedAt < :cursorPinnedAt) OR
@@ -69,7 +71,7 @@ interface CharacterDao {
     )
     suspend fun getLibraryRecommendedPage(
         encyclopediaId: Long?, cursorPinned: Int?, cursorPinnedAt: Long?, cursorFavorite: Boolean?,
-        cursorCreatedAt: Long?, cursorId: Long?, limit: Int,
+        cursorCreatedAt: Long?, cursorId: Long?, limit: Int, query: String = "",
     ): List<CharacterListItem>
 
     @Query(
@@ -80,6 +82,7 @@ interface CharacterDao {
                pinnedAt, favorite, createdAt
         FROM characters
         WHERE (:encyclopediaId IS NULL OR boundEncyclopediaId = :encyclopediaId)
+          AND (:query = '' OR instr(lower(name), lower(:query)) > 0 OR instr(lower(personaPrompt), lower(:query)) > 0)
           AND (:cursorId IS NULL OR
                (CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) < :cursorPinned OR
                ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND createdAt < :cursorCreatedAt) OR
@@ -89,7 +92,7 @@ interface CharacterDao {
         """,
     )
     suspend fun getLibraryRecentPage(
-        encyclopediaId: Long?, cursorPinned: Int?, cursorCreatedAt: Long?, cursorId: Long?, limit: Int,
+        encyclopediaId: Long?, cursorPinned: Int?, cursorCreatedAt: Long?, cursorId: Long?, limit: Int, query: String = "",
     ): List<CharacterListItem>
 
     @Query(
@@ -100,6 +103,7 @@ interface CharacterDao {
                pinnedAt, favorite, createdAt
         FROM characters
         WHERE (:encyclopediaId IS NULL OR boundEncyclopediaId = :encyclopediaId)
+          AND (:query = '' OR instr(lower(name), lower(:query)) > 0 OR instr(lower(personaPrompt), lower(:query)) > 0)
           AND (:cursorId IS NULL OR
                (CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) < :cursorPinned OR
                ((CASE WHEN pinnedAt > 0 THEN 1 ELSE 0 END) = :cursorPinned AND trim(name) COLLATE LOCALIZED > trim(:cursorName) COLLATE LOCALIZED) OR
@@ -109,7 +113,7 @@ interface CharacterDao {
         """,
     )
     suspend fun getLibraryNamePage(
-        encyclopediaId: Long?, cursorPinned: Int?, cursorName: String?, cursorId: Long?, limit: Int,
+        encyclopediaId: Long?, cursorPinned: Int?, cursorName: String?, cursorId: Long?, limit: Int, query: String = "",
     ): List<CharacterListItem>
 
     @Query("SELECT * FROM characters ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, favorite DESC, createdAt DESC, id DESC")

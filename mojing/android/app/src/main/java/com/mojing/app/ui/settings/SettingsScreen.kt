@@ -9,11 +9,13 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -52,12 +54,14 @@ fun SettingsScreen(
     onModelRequestConsumed: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
-    var personalizationSection by rememberSaveable { mutableIntStateOf(0) }
+    val sectionState = rememberSaveable { mutableIntStateOf(if (requestModelSection) 0 else -1) }
+    var personalizationSection by rememberSaveable { mutableIntStateOf(1) }
     val snackbarHostState = remember { SnackbarHostState() }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val isImeOpen = isImeKeyboardOpen()
     val profileSaving by viewModel.profileSaving.collectAsStateWithLifecycle()
+    val readingPreferencesSaveNotice by viewModel.readingPreferencesSaveNotice.collectAsStateWithLifecycle()
     val storedProfileName by viewModel.userName.collectAsStateWithLifecycle()
     val storedProfileDescription by viewModel.userDescription.collectAsStateWithLifecycle()
     val storedProfileColor by viewModel.userAvatarColor.collectAsStateWithLifecycle()
@@ -95,7 +99,7 @@ fun SettingsScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            MainAppBottomNavigation(
+            if (sectionState.intValue < 0) MainAppBottomNavigation(
                 navController = navController,
                 onNavigateRequest = { action -> requestNavigation(action) },
             )
@@ -103,10 +107,11 @@ fun SettingsScreen(
     ) { padding ->
         Surface(
             modifier = Modifier.fillMaxSize().padding(padding).imePadding(),
-            color = MaterialTheme.colorScheme.surface,
+            color = MaterialTheme.colorScheme.background,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
             SettingsSections(
+                sectionState = sectionState,
                 requestModelSection = requestModelSection,
                 onModelRequestConsumed = onModelRequestConsumed,
                 requestNavigation = ::requestNavigation,
@@ -142,6 +147,20 @@ fun SettingsScreen(
                 }
             }
             }
+        }
+    }
+
+    LaunchedEffect(readingPreferencesSaveNotice?.token) {
+        val notice = readingPreferencesSaveNotice ?: return@LaunchedEffect
+        val result = snackbarHostState.showSnackbar(
+            message = "阅读设置未保存，请重试",
+            actionLabel = "重试",
+            withDismissAction = true,
+            duration = SnackbarDuration.Indefinite,
+        )
+        when (result) {
+            SnackbarResult.ActionPerformed -> viewModel.retryReadingPreferences(notice.token)
+            SnackbarResult.Dismissed -> viewModel.dismissReadingPreferencesNotice(notice.token)
         }
     }
 
@@ -196,7 +215,28 @@ private fun PersonalizationTab(
     profileDirty: Boolean,
     onProfileSaved: (String, String, String) -> Unit,
 ) {
+    val avatarPath by viewModel.userAvatarImagePath.collectAsStateWithLifecycle()
     Column(modifier = Modifier.fillMaxSize()) {
+        Surface(onClick = { onSelectSection(0) }, modifier = Modifier.fillMaxWidth().padding(16.dp),
+            shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surface,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Surface(Modifier.size(48.dp), shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.primaryContainer) {
+                    if (avatarPath.isNotBlank()) coil.compose.AsyncImage(
+                        model = com.mojing.app.ui.common.avatarImageModel(androidx.compose.ui.platform.LocalContext.current, avatarPath),
+                        contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                    else Box(contentAlignment = Alignment.Center) { Text(profileName.take(1).ifBlank { "我" }) }
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(profileName.ifBlank { "我的资料" }, style = MaterialTheme.typography.titleMedium)
+                    Text(profileDescription.ifBlank { "设置对话中的称呼与身份" }, style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("编辑", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            }
+        }
         com.mojing.app.ui.common.MoJingSectionTabs(
             listOf("我的资料", "外观"), selectedSection, onSelectSection,
         )
@@ -315,9 +355,9 @@ fun DefaultsTab(viewModel: SettingsViewModel) {
     val defaultEncyclopediaIdForAi by viewModel.defaultEncyclopediaIdForAi.collectAsStateWithLifecycle()
     val defaultLabels by viewModel.creationDefaultLabels.collectAsStateWithLifecycle()
 
-    val tempError = temp.toFloatOrNull()?.let { it !in 0f..2f } != false
-    val maxTokensError = maxTokens.toIntOrNull()?.let { it !in 1..200_000 } != false
-    val topPError = topP.toFloatOrNull()?.let { it !in 0f..1f } != false
+    val tempError = temp.trim().toFloatOrNull()?.let { it !in 0f..2f } != false
+    val maxTokensError = maxTokens.trim().toIntOrNull()?.let { it !in 1..200_000 } != false
+    val topPError = topP.trim().toFloatOrNull()?.let { it !in 0f..1f } != false
     val memoryError = memoryCompact.toIntOrNull()?.let { it !in 10..2000 } != false
     val uploadError = maxUpload.toIntOrNull()?.let { it !in 1..200 } != false
     val autoError = maxAuto.toIntOrNull()?.let { it !in 1..10 } != false
@@ -345,7 +385,7 @@ fun DefaultsTab(viewModel: SettingsViewModel) {
     ) {
         SettingsSectionHeader(
             title = "新故事默认设置",
-            description = "修改会立即保存在本机，只影响之后新建的故事。",
+            description = "有效设置会保存在本机，用于之后新建的故事和角色。",
         )
         if (defaultLabels.loading) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -362,35 +402,39 @@ fun DefaultsTab(viewModel: SettingsViewModel) {
                 }
             }
         }
-        OutlinedButton(onClick = { showWorldPicker = true }, modifier = Modifier.fillMaxWidth()) {
-            Text("默认世界 · $worldLabel", maxLines = 2, overflow = TextOverflow.Ellipsis)
+        SettingsGroup("叙事默认") {
+            OutlinedButton(onClick = { showWorldPicker = true }, modifier = Modifier.fillMaxWidth()) {
+                Text("默认世界 · $worldLabel", maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            OutlinedButton(onClick = { showEncyclopediaPicker = true }, modifier = Modifier.fillMaxWidth()) {
+                Text("默认参考百科 · $encyclopediaLabel", maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
         }
-        OutlinedButton(onClick = { showEncyclopediaPicker = true }, modifier = Modifier.fillMaxWidth()) {
-            Text("默认参考百科 · $encyclopediaLabel", maxLines = 2, overflow = TextOverflow.Ellipsis)
+        SettingsGroup("生成行为") {
+            MoJingToggleRow("旁白", "回复时包含场景旁白", defaultNarrator, viewModel::updateDefaultNarratorEnabled)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            MoJingToggleRow("本回合选项", "在回复后提供可选行动", defaultChoice, viewModel::updateDefaultChoiceGenerationEnabled)
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            MoJingToggleRow(
+                "保持角色与世界规则",
+                "减少角色或世界设定被临时要求带偏的情况",
+                defaultAnti,
+                viewModel::updateDefaultAntiCheatEnabled,
+            )
         }
-        SettingsDividerLabel("对话方式")
-        MoJingToggleRow("旁白", "回复时包含场景旁白", defaultNarrator, viewModel::updateDefaultNarratorEnabled)
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        MoJingToggleRow("本回合选项", "在回复后提供可选行动", defaultChoice, viewModel::updateDefaultChoiceGenerationEnabled)
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        MoJingToggleRow(
-            "保持角色与世界规则",
-            "减少角色或世界设定被临时要求带偏的情况",
-            defaultAnti,
-            viewModel::updateDefaultAntiCheatEnabled,
-        )
-        SettingsDividerLabel("参与角色")
-        OutlinedTextField(
-            value = maxAuto,
-            onValueChange = { viewModel.updateMaxAutoSpeakers(it) },
-            label = { Text("每轮自动发言角色上限") },
-            placeholder = { Text("2") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            isError = autoError,
-            supportingText = if (autoError) { { Text("请输入 1 到 10 之间的整数") } } else null,
-        )
+        SettingsGroup("对话") {
+            OutlinedTextField(
+                value = maxAuto,
+                onValueChange = { viewModel.updateMaxAutoSpeakers(it) },
+                label = { Text("每轮自动发言角色上限") },
+                placeholder = { Text("2") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                isError = autoError,
+                supportingText = if (autoError) { { Text("请输入 1 到 10 之间的整数") } } else null,
+            )
+        }
 
         ExpandableSettingsCard(
             title = "更多本机与生成设置",
@@ -466,5 +510,23 @@ private fun SettingsDividerLabel(label: String) {
     ) {
         Text(label, style = MaterialTheme.typography.titleSmall)
         HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
+    }
+}
+
+@Composable
+private fun SettingsGroup(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.small,
+            color = MaterialTheme.colorScheme.surface,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
+        }
     }
 }

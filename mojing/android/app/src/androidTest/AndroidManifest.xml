@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity android:name="com.mojing.app.test.MediaBundleFixtureActivity" android:exported="true" android:theme="@android:style/Theme.NoDisplay" />
+        <activity android:name="com.mojing.app.test.LibraryExportFixtureActivity" android:exported="true" android:theme="@android:style/Theme.NoDisplay" />
+        <provider
+            android:name="com.mojing.app.test.MediaBundleDocumentsProvider"
+            android:authorities="com.mojing.app.test.media.documents"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+        <provider
+            android:name="com.mojing.app.test.LibraryExportDocumentsProvider"
+            android:authorities="com.mojing.app.test.library.documents"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+        <activity
+            android:name="com.mojing.app.test.AcceptanceRecognitionActivity"
+            android:label="本地识别验收"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <service
+            android:name="com.mojing.app.test.AcceptanceSpeechEngineService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.TTS_SERVICE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

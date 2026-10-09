@@ -16,6 +16,7 @@ internal class RetainedSessionStores(private val scope: CoroutineScope) {
     private data class Entry(val store: ViewModelStore, val model: ViewModel, var readers: Int)
     private val entries = mutableMapOf<Long, Entry>()
     private val jobs = mutableMapOf<Long, MutableSet<Job>>()
+    private val localWrites = mutableSetOf<Job>()
     private val _running = MutableStateFlow<Set<Long>>(emptySet())
     val running = _running.asStateFlow()
     private var nextReplyToken = 0L
@@ -60,17 +61,23 @@ internal class RetainedSessionStores(private val scope: CoroutineScope) {
         evictIdle(id)
     }
 
-    fun retainJob(id: Long, job: Job, onSettled: () -> Unit = {}) {
+    fun retainJob(id: Long, job: Job, reportRunning: Boolean = true, onSettled: () -> Unit = {}) {
+        if (!reportRunning) localWrites.add(job)
         jobs.getOrPut(id) { mutableSetOf() }.add(job)
-        _running.value = jobs.keys.toSet()
+        updateRunning()
         job.invokeOnCompletion {
             scope.launch {
                 jobs[id]?.let { active -> if (active.remove(job) && active.isEmpty()) jobs.remove(id) }
-                _running.value = jobs.keys.toSet()
+                localWrites.remove(job)
+                updateRunning()
                 evictIdle(id)
                 onSettled()
             }
         }
+    }
+
+    private fun updateRunning() {
+        _running.value = jobs.filterValues { active -> active.any { it !in localWrites } }.keys.toSet()
     }
 
     fun stopAll() { jobs.values.flatMap { it.toList() }.forEach { it.cancel() } }
@@ -93,7 +100,6 @@ internal object RetainedChatSessions {
         val token = if (failure != null) stores.beginReply(id) else null
         stores.retainJob(id, job) {
             if (token != null) stores.finishReply(id, token, failure?.invoke())
-            if (running.value.isEmpty()) runCatching { app.stopService(Intent(app, GenerateService::class.java)) }
         }
         if (wasIdle) runCatching {
             ContextCompat.startForegroundService(app, Intent(app, GenerateService::class.java))

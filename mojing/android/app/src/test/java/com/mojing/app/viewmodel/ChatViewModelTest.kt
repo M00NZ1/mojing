@@ -4,16 +4,25 @@ import kotlinx.coroutines.flow.first
 
 import androidx.lifecycle.SavedStateHandle
 import android.content.Context
+import android.content.SharedPreferences
 import com.mojing.app.data.ChatDraftSnapshot
 import com.mojing.app.data.ChapterInputDraft
 import com.mojing.app.data.ChatDraftStore
 import com.mojing.app.data.ReplyRecoveryLoadResult
 import com.mojing.app.data.ReplyRecoverySnapshot
 import com.mojing.app.data.SecureStorage
+import com.mojing.app.media.AndroidTts
+import com.mojing.app.media.AzureSpeech
+import com.mojing.app.media.SynthesizedSpeechFile
+import com.mojing.app.media.TtsPlayer
+import com.mojing.app.media.newmedia.SpeechPlaybackControl
 import com.mojing.app.data.local.dao.BookmarkDao
+import com.mojing.app.data.local.AutoImageMetadata
+import com.mojing.app.data.local.AutoVoiceMetadata
 import com.mojing.app.data.local.entity.MessageBookmarkEntity
 import com.mojing.app.data.local.dao.AttachmentDao
 import com.mojing.app.data.local.dao.CharacterDao
+import com.mojing.app.data.local.dao.CharacterStateDao
 import com.mojing.app.data.local.dao.ChatCharacterPresentationRow
 import com.mojing.app.data.local.dao.NewSessionCharacterOption
 import com.mojing.app.data.local.dao.MessageDao
@@ -36,11 +45,13 @@ import com.mojing.app.data.local.entity.SessionEntity
 import com.mojing.app.data.local.entity.SessionParticipantEntity
 import com.mojing.app.data.local.entity.SessionWorldCredentialDraft
 import com.mojing.app.data.local.entity.SessionWorldEntity
+import com.mojing.app.data.local.entity.SessionCharacterStateEntity
 import com.mojing.app.domain.engine.ContextBuilder
 import com.mojing.app.data.local.entity.SessionMemoryCorrectionEntity
 import com.mojing.app.data.prefs.UiPreferencesRepository
 import com.mojing.app.domain.engine.ChatEngine
 import com.mojing.app.domain.engine.NarratorEngine
+import com.mojing.app.domain.engine.SummaryMaintenanceUseCase
 import com.mojing.app.domain.engine.StreamState
 import com.mojing.app.domain.story.NovelChapter
 import com.mojing.app.domain.usecase.MessageSubmissionTransaction
@@ -51,6 +62,10 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.mockkConstructor
+import io.mockk.unmockkConstructor
+import io.mockk.unmockkObject
 import io.mockk.verify
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -66,12 +81,16 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -80,8 +99,172 @@ import kotlin.io.path.createTempDirectory
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatViewModelTest {
+    @Test fun contextBudgetErrorPersistsAndDoesNotTryBackupEndpoints() = runTest(testDispatcher) {
+        val storage = validSecureStorage(baseUrl = "https://first.test/v1\nhttps://second.test/v1")
+        every { storage.speakerTurnMode } returns "manual"
+        val characters = mockk<CharacterDao>(relaxed = true)
+        coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "角色")
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 3L))
+        val messages = mockk<MessageDao>(relaxed = true)
+        coEvery { messages.getMainContextTail(42L, any()) } returns listOf(MessageEntity(id = 1, sessionId = 42, speakerType = "user", content = "已保存输入"))
+        val engine = mockk<ChatEngine>(relaxed = true)
+        every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            flowOf(StreamState.Error("容量需要调整", contextLimit = true))
+        val vm = createViewModel(messageDao = messages, secureStorage = storage, characterDao = characters,
+            participantDao = participants, chatEngine = engine, llmApiService = validLlmApiService())
+        advanceUntilIdle()
+        vm.setManualReplyCharacterId(3L)
+        vm.updateInput("继续剧情")
+        vm.sendMessage()
+        advanceUntilIdle()
+        assertFalse(vm.state.value.isGenerating)
+        assertEquals("容量需要调整", vm.state.value.contextBudgetError)
+        assertEquals(null, vm.state.value.error)
+        verify(exactly = 1) { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        vm.clearContextBudgetError("旧错误")
+        assertEquals("容量需要调整", vm.state.value.contextBudgetError)
+        vm.clearContextBudgetError("容量需要调整")
+        assertEquals(null, vm.state.value.contextBudgetError)
+    }
+
+
+    companion object {
+        @JvmStatic @org.junit.BeforeClass fun installSpeechHandler() {
+            io.mockk.mockkStatic(android.os.Looper::class)
+            every { android.os.Looper.getMainLooper() } returns mockk(relaxed = true)
+            io.mockk.mockkConstructor(android.os.Handler::class)
+            every { anyConstructed<android.os.Handler>().post(any()) } answers {
+                firstArg<Runnable>().run(); true
+            }
+        }
+
+        @JvmStatic @org.junit.AfterClass fun removeSpeechHandler() {
+            io.mockk.unmockkConstructor(android.os.Handler::class)
+            io.mockk.unmockkStatic(android.os.Looper::class)
+        }
+    }
 
     private val testDispatcher = StandardTestDispatcher()
+
+    private fun speechTestContext(): Context {
+        val context = mockk<Context>(relaxed = true)
+        val prefs = mockk<SharedPreferences>(relaxed = true)
+        every { context.applicationContext } returns context
+        every { context.getSharedPreferences(any(), any()) } returns prefs
+        every { prefs.getString(any(), any()) } answers {
+            when (args[0] as String) {
+                "global_engine" -> "system"
+                "global_voice" -> ""
+                else -> null
+            }
+        }
+        return context
+    }
+
+    @Test
+    fun playbackControlsExposeCurrentSegmentAndStopClearsOnlyCurrentRequest() = runTest(testDispatcher) {
+        mockkObject(AndroidTts)
+        lateinit var control: SpeechPlaybackControl
+        lateinit var lease: SpeechPlaybackControl.Lease
+        var pauses = 0
+        var resumes = 0
+        try {
+            every { AndroidTts.stop() } returns Unit
+            coEvery { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) } coAnswers {
+                control = arg(3)
+                lease = control.bind(
+                    onPause = { pauses++ },
+                    onResume = {
+                        resumes++
+                        control.updateIfOwned(lease) { it.copy(phase = SpeechPlaybackControl.Phase.PLAYING) }
+                    },
+                )!!
+                control.updateIfOwned(lease) {
+                    it.copy(phase = SpeechPlaybackControl.Phase.PLAYING, segmentIndex = 2, segmentCount = 12)
+                }
+                awaitCancellation()
+            }
+            val vm = createViewModel(appContext = speechTestContext())
+            advanceUntilIdle()
+            vm.speakMessage("当前分段朗读")
+            runCurrent()
+            assertEquals(2, vm.speechPlayback.value.segmentIndex)
+            assertEquals(12, vm.speechPlayback.value.segmentCount)
+            vm.pauseSpeaking(); runCurrent()
+            assertEquals(SpeechPlaybackControl.Phase.PAUSED, vm.speechPlayback.value.phase)
+            assertEquals(1, pauses)
+            vm.resumeSpeaking(); runCurrent()
+            assertEquals(SpeechPlaybackControl.Phase.PLAYING, vm.speechPlayback.value.phase)
+            assertEquals(1, resumes)
+            vm.stopSpeaking(); runCurrent()
+            assertFalse(vm.speechActive.value)
+            assertEquals(SpeechPlaybackControl.Snapshot(), vm.speechPlayback.value)
+            control.updateIfOwned(lease) { it.copy(phase = SpeechPlaybackControl.Phase.PLAYING) }
+            assertEquals(SpeechPlaybackControl.Snapshot(), vm.speechPlayback.value)
+        } finally { unmockkObject(AndroidTts) }
+    }
+
+    @Test
+    fun pauseDuringTextPreparationIsKeptWhenMediaStarts() = runTest(testDispatcher) {
+        val scheduler = TestCoroutineScheduler()
+        mockkObject(AndroidTts)
+        try {
+            every { AndroidTts.stop() } returns Unit
+            coEvery { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) } coAnswers {
+                val control = arg<SpeechPlaybackControl>(3)
+                assertTrue(control.isPaused())
+                control.bind({}, {})
+                awaitCancellation()
+            }
+            val vm = createViewModel(appContext = speechTestContext())
+            advanceUntilIdle()
+            vm.preparationDispatcher = StandardTestDispatcher(scheduler)
+            vm.speakMessage("准备中的暂停")
+            runCurrent()
+            vm.pauseSpeaking(); runCurrent()
+            assertEquals(SpeechPlaybackControl.Phase.PAUSED, vm.speechPlayback.value.phase)
+            scheduler.advanceUntilIdle(); runCurrent()
+            coVerify(exactly = 1) { AndroidTts.speakAwaitCompletion(any(), "准备中的暂停", any(), any()) }
+            assertEquals(SpeechPlaybackControl.Phase.PAUSED, vm.speechPlayback.value.phase)
+            vm.stopSpeaking(); runCurrent()
+        } finally { unmockkObject(AndroidTts) }
+    }
+
+    @Test
+    fun replacedPlaybackCannotResetNewProgressWhenOldFinallyCompletes() = runTest(testDispatcher) {
+        val oldFinish = CompletableDeferred<Unit>()
+        mockkObject(AndroidTts)
+        var calls = 0
+        try {
+            every { AndroidTts.stop() } returns Unit
+            coEvery { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) } coAnswers {
+                val control = arg<SpeechPlaybackControl>(3)
+                val lease = control.bind({}, {})!!
+                calls++
+                control.updateIfOwned(lease) {
+                    it.copy(phase = SpeechPlaybackControl.Phase.PLAYING, segmentIndex = calls, segmentCount = 8)
+                }
+                if (calls == 1) {
+                    withContext(NonCancellable) { oldFinish.await() }
+                    control.updateIfOwned(lease) { it.copy(segmentIndex = 7) }
+                    false
+                } else awaitCancellation()
+            }
+            val vm = createViewModel(appContext = speechTestContext())
+            advanceUntilIdle()
+            vm.speakMessage("旧播放"); runCurrent()
+            vm.speakMessage("新播放"); runCurrent()
+            oldFinish.complete(Unit); runCurrent()
+            assertTrue(vm.speechActive.value)
+            assertEquals(2, vm.speechPlayback.value.segmentIndex)
+            assertEquals(null, vm.state.value.speechRetryNotice)
+            vm.stopSpeaking(); runCurrent()
+        } finally {
+            oldFinish.complete(Unit)
+            unmockkObject(AndroidTts)
+        }
+    }
 
     @Test
     fun chatDisplaysWindowBeforeEstimateAndIgnoresOldWindowResult() = runTest(testDispatcher) {
@@ -107,6 +290,365 @@ class ChatViewModelTest {
         oldEstimateScheduler.advanceUntilIdle()
         assertEquals(com.mojing.app.domain.engine.TokenCounter.estimateScaledPrefix("长篇正文"),
             vm.state.value.conversationTokenEstimate)
+    }
+
+    @Test
+    fun speechFailureKeepsSnapshotAndRetryUsesSameRequest() = runTest(testDispatcher) {
+        val context = speechTestContext()
+        mockkObject(AndroidTts)
+        try {
+            coEvery { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) } returnsMany listOf(false, true)
+            every { AndroidTts.stop() } returns Unit
+            val vm = createViewModel(appContext = context)
+            advanceUntilIdle()
+
+            vm.speakMessage("可恢复的朗读")
+            advanceUntilIdle()
+            val notice = vm.state.value.speechRetryNotice
+            assertNotNull(notice)
+
+            vm.retryFailedSpeech(notice!!.token)
+            advanceUntilIdle()
+
+            assertEquals(null, vm.state.value.speechRetryNotice)
+            coVerify(exactly = 2) { AndroidTts.speakAwaitCompletion(context, "可恢复的朗读", any(), any()) }
+        } finally {
+            unmockkObject(AndroidTts)
+        }
+    }
+
+    @Test
+    fun retryKeepsCompleteLongTextAndOriginalResolvedVoice() = runTest(testDispatcher) {
+        val context = mockk<Context>(relaxed = true)
+        val prefs = mockk<SharedPreferences>(relaxed = true)
+        var voice = "voice-a"
+        every { context.applicationContext } returns context
+        every { context.getSharedPreferences(any(), any()) } returns prefs
+        every { prefs.getString(any(), any()) } answers {
+            when (args[0] as String) {
+                "global_engine" -> "system"
+                "global_voice" -> voice
+                else -> null
+            }
+        }
+        val capturedText = mutableListOf<String>()
+        val capturedChoices = mutableListOf<com.mojing.app.data.VoiceChoice>()
+        mockkObject(AndroidTts)
+        try {
+            coEvery { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) } coAnswers {
+                capturedText += args[1] as String
+                capturedChoices += args[2] as com.mojing.app.data.VoiceChoice
+                capturedText.size > 1
+            }
+            every { AndroidTts.stop() } returns Unit
+            val vm = createViewModel(appContext = context)
+            advanceUntilIdle()
+            val text = "长文本。".repeat(8_500)
+
+            vm.speakMessage(text)
+            advanceUntilIdle()
+            val notice = vm.state.value.speechRetryNotice!!
+            voice = "voice-b"
+            vm.retryFailedSpeech(notice.token)
+            advanceUntilIdle()
+
+            assertEquals(text.length, capturedText[0].length)
+            assertEquals(text, capturedText[0])
+            assertEquals(text, capturedText[1])
+            assertEquals("voice-a", capturedChoices[0].voiceId)
+            assertEquals("voice-a", capturedChoices[1].voiceId)
+        } finally {
+            unmockkObject(AndroidTts)
+        }
+    }
+
+    @Test
+    fun stoppingSpeechInvalidatesRetryAndDuplicateRetryDoesNotStartAnotherJob() = runTest(testDispatcher) {
+        val context = speechTestContext()
+        mockkObject(AndroidTts)
+        try {
+            coEvery { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) } returns false
+            every { AndroidTts.stop() } returns Unit
+            val vm = createViewModel(appContext = context)
+            advanceUntilIdle()
+
+            vm.speakMessage("失败后应可关闭")
+            advanceUntilIdle()
+            val token = vm.state.value.speechRetryNotice!!.token
+            vm.retryFailedSpeech(token)
+            vm.retryFailedSpeech(token)
+            advanceUntilIdle()
+            assertNotNull(vm.state.value.speechRetryNotice)
+            assertNotEquals(token, vm.state.value.speechRetryNotice!!.token)
+            coVerify(exactly = 2) { AndroidTts.speakAwaitCompletion(context, "失败后应可关闭", any(), any()) }
+
+            vm.stopSpeaking()
+            assertEquals(null, vm.state.value.speechRetryNotice)
+            vm.retryFailedSpeech(token)
+            advanceUntilIdle()
+            coVerify(exactly = 2) { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) }
+        } finally {
+            unmockkObject(AndroidTts)
+        }
+    }
+
+    @Test
+    fun lateFailureFromReplacedSpeechCannotPublishRetryNotice() = runTest(testDispatcher) {
+        val context = speechTestContext()
+        val oldSpeech = CompletableDeferred<Unit>()
+        var calls = 0
+        mockkObject(AndroidTts)
+        try {
+            coEvery { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) } coAnswers {
+                calls++
+                if (calls == 1) {
+                    withContext(NonCancellable) { oldSpeech.await() }
+                    false
+                } else true
+            }
+            every { AndroidTts.stop() } returns Unit
+            val vm = createViewModel(appContext = context)
+            advanceUntilIdle()
+
+            vm.speakMessage("旧朗读")
+            runCurrent()
+            vm.speakMessage("新朗读")
+            runCurrent()
+            oldSpeech.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(null, vm.state.value.speechRetryNotice)
+            assertEquals(2, calls)
+        } finally {
+            unmockkObject(AndroidTts)
+        }
+    }
+
+    @Test
+    fun preparationFromReplacedSpeechCannotPublishOrPlay() = runTest(testDispatcher) {
+        val context = speechTestContext()
+        val preparationScheduler = TestCoroutineScheduler()
+        mockkObject(AndroidTts)
+        try {
+            coEvery { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) } returns true
+            every { AndroidTts.stop() } returns Unit
+            val vm = createViewModel(appContext = context)
+            vm.preparationDispatcher = StandardTestDispatcher(preparationScheduler)
+            advanceUntilIdle()
+
+            vm.speakMessage("旧准备")
+            runCurrent()
+            vm.speakMessage("新准备")
+            runCurrent()
+            preparationScheduler.advanceUntilIdle()
+            advanceUntilIdle()
+
+            coVerify(exactly = 1) { AndroidTts.speakAwaitCompletion(context, "新准备", any(), any()) }
+            assertEquals(null, vm.state.value.speechRetryNotice)
+        } finally {
+            unmockkObject(AndroidTts)
+        }
+    }
+
+    @Test
+    fun azureFailureCreatesRetryNoticeAndEmptyTextDoesNot() = runTest(testDispatcher) {
+        val context = mockk<Context>(relaxed = true)
+        val prefs = mockk<SharedPreferences>(relaxed = true)
+        every { context.applicationContext } returns context
+        every { context.getSharedPreferences(any(), any()) } returns prefs
+        every { prefs.getString(any(), any()) } answers {
+            when (args[0] as String) {
+                "global_engine" -> "azure"
+                "global_voice" -> "zh-CN-XiaoxiaoNeural"
+                else -> null
+            }
+        }
+        io.mockk.mockkConstructor(SecureStorage::class)
+        every { anyConstructed<SecureStorage>().init(any()) } returns Unit
+        every { anyConstructed<SecureStorage>().azureSpeechRegion } returns "test-region"
+        every { anyConstructed<SecureStorage>().azureSpeechKey } returns "synthetic-key"
+        mockkObject(AzureSpeech)
+        try {
+            coEvery { AzureSpeech.speak(any(), any(), any(), any(), any(), any()) } throws AzureSpeech.SpeechException("failed")
+            val vm = createViewModel(appContext = context)
+            advanceUntilIdle()
+
+            vm.speakMessage("Azure 失败")
+            assertNotNull(vm.state.first { it.speechRetryNotice != null }.speechRetryNotice)
+
+            vm.speakMessage("   ")
+            advanceUntilIdle()
+            assertEquals(null, vm.state.value.speechRetryNotice)
+            coVerify(exactly = 1) { AzureSpeech.speak(any(), any(), any(), any(), any(), any()) }
+        } finally {
+            unmockkObject(AzureSpeech)
+            io.mockk.unmockkConstructor(SecureStorage::class)
+        }
+    }
+
+    @Test
+    fun detachedSpeechCannotStartUntilScreenAttachesAgain() = runTest(testDispatcher) {
+        val context = speechTestContext()
+        mockkObject(AndroidTts)
+        try {
+            coEvery { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) } returns true
+            every { AndroidTts.stop() } returns Unit
+            val vm = createViewModel(appContext = context)
+            advanceUntilIdle()
+
+            vm.detachSpeechScreen()
+            vm.speakMessage("离页期间不应播放")
+            advanceUntilIdle()
+            assertEquals(null, vm.state.value.speechRetryNotice)
+            coVerify(exactly = 0) { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) }
+
+            vm.attachSpeechScreen()
+            vm.speakMessage("重新进入后可以播放")
+            advanceUntilIdle()
+            coVerify(exactly = 1) { AndroidTts.speakAwaitCompletion(context, "重新进入后可以播放", any(), any()) }
+        } finally {
+            unmockkObject(AndroidTts)
+        }
+    }
+
+    @Test
+    fun nonCancellableFailureAfterDetachCannotPublishRetryNotice() = runTest(testDispatcher) {
+        val context = speechTestContext()
+        val failureGate = CompletableDeferred<Unit>()
+        mockkObject(AndroidTts)
+        try {
+            coEvery { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) } coAnswers {
+                withContext(NonCancellable) { failureGate.await() }
+                false
+            }
+            every { AndroidTts.stop() } returns Unit
+            val vm = createViewModel(appContext = context)
+            advanceUntilIdle()
+
+            vm.speakMessage("离页后仍会晚到失败")
+            runCurrent()
+            coVerify(exactly = 1) { AndroidTts.speakAwaitCompletion(context, "离页后仍会晚到失败", any(), any()) }
+            vm.detachSpeechScreen()
+            failureGate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(null, vm.state.value.speechRetryNotice)
+            vm.attachSpeechScreen()
+            vm.speakMessage("晚到失败之后的新请求")
+            advanceUntilIdle()
+            coVerify(exactly = 2) { AndroidTts.speakAwaitCompletion(context, any(), any(), any()) }
+        } finally {
+            unmockkObject(AndroidTts)
+        }
+    }
+
+    @Test
+    fun branchSwitchBlocksSpeechAndRetryWhileDatabaseReadIsSuspended() = runTest(testDispatcher) {
+        val context = speechTestContext()
+        val branchDao = mockk<SessionBranchDao>(relaxed = true)
+        val messageDao = mockk<MessageDao>(relaxed = true)
+        val branchRead = CompletableDeferred<List<MessageEntity>>()
+        val branch = SessionBranchEntity(sessionId = 42L, branchId = "B", sourceMessageId = 1L)
+        coEvery { branchDao.getBySession(42L) } returns listOf(branch)
+        coEvery { messageDao.getVisibleMessagesTail(42L, "B", any()) } coAnswers { branchRead.await() }
+        mockkObject(AndroidTts)
+        try {
+            coEvery { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) } returnsMany listOf(false, true)
+            every { AndroidTts.stop() } returns Unit
+            val vm = createViewModel(appContext = context, messageDao = messageDao, sessionBranchDao = branchDao)
+            advanceUntilIdle()
+
+            vm.speakMessage("切线前失败")
+            advanceUntilIdle()
+            val retryToken = vm.state.value.speechRetryNotice!!.token
+            vm.switchBranch("B")
+            runCurrent()
+            assertEquals("正在打开故事线…", vm.state.value.branchNavigationLabel)
+            vm.speakMessage("切线读取期间不应播放")
+            vm.retryFailedSpeech(retryToken)
+            runCurrent()
+            coVerify(exactly = 1) { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) }
+
+            branchRead.complete(emptyList())
+            advanceUntilIdle()
+            vm.speakMessage("切线完成后可以播放")
+            advanceUntilIdle()
+            coVerify(exactly = 2) { AndroidTts.speakAwaitCompletion(context, any(), any(), any()) }
+        } finally {
+            unmockkObject(AndroidTts)
+        }
+    }
+
+    @Test
+    fun speechIsBlockedDuringVoiceSaveAndUsesNewChoiceAfterSaveCompletes() = runTest(testDispatcher) {
+        val context = speechTestContext()
+        val oldChoice = com.mojing.app.data.VoiceChoice("system", "old-voice")
+        val newChoice = com.mojing.app.data.VoiceChoice("system", "new-voice")
+        var currentChoice = oldChoice
+        val saveStarted = CountDownLatch(1)
+        val saveFinished = CountDownLatch(1)
+        val saveGate = CountDownLatch(1)
+        mockkConstructor(com.mojing.app.data.VoicePreferences::class)
+        mockkObject(AndroidTts)
+        try {
+            every { anyConstructed<com.mojing.app.data.VoicePreferences>().sessionSelection(any()) } answers { currentChoice }
+            every { anyConstructed<com.mojing.app.data.VoicePreferences>().global() } answers { currentChoice }
+            every { anyConstructed<com.mojing.app.data.VoicePreferences>().saveSession(42L, newChoice) } answers {
+                saveStarted.countDown()
+                check(saveGate.await(5, TimeUnit.SECONDS))
+                currentChoice = newChoice
+                saveFinished.countDown()
+            }
+            coEvery { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) } returns true
+            every { AndroidTts.stop() } returns Unit
+            val vm = createViewModel(appContext = context)
+            advanceUntilIdle()
+
+            vm.selectVoiceChoice(newChoice) {}
+            runCurrent()
+            assertTrue(saveStarted.await(5, TimeUnit.SECONDS))
+            vm.speakMessage("保存进行中不应使用旧音色")
+            runCurrent()
+            coVerify(exactly = 0) { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) }
+
+            saveGate.countDown()
+            assertTrue(saveFinished.await(5, TimeUnit.SECONDS))
+            vm.state.first { !it.voiceSelectionSaving }
+            vm.speakMessage("保存完成使用新音色")
+            advanceUntilIdle()
+            coVerify(exactly = 1) {
+                AndroidTts.speakAwaitCompletion(context, "保存完成使用新音色", newChoice, any())
+            }
+        } finally {
+            saveGate.countDown()
+            unmockkObject(AndroidTts)
+            unmockkConstructor(com.mojing.app.data.VoicePreferences::class)
+        }
+    }
+
+    @Test
+    fun switchingToInvalidBranchStillInvalidatesSpeechRetry() = runTest(testDispatcher) {
+        val context = mockk<Context>(relaxed = true)
+        every { context.applicationContext } returns context
+        every { context.getSharedPreferences(any(), any()) } returns mockk(relaxed = true)
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        coEvery { branches.getBySession(42L) } returns emptyList()
+        mockkObject(AndroidTts)
+        try {
+            coEvery { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) } returns false
+            every { AndroidTts.stop() } returns Unit
+            val vm = createViewModel(appContext = context, sessionBranchDao = branches)
+            advanceUntilIdle()
+
+            vm.speakMessage("切线前的失败")
+            advanceUntilIdle()
+            assertNotNull(vm.state.value.speechRetryNotice)
+            vm.switchBranch("missing")
+            advanceUntilIdle()
+            assertEquals(null, vm.state.value.speechRetryNotice)
+        } finally {
+            unmockkObject(AndroidTts)
+        }
     }
 
     @Before
@@ -163,7 +705,7 @@ class ChatViewModelTest {
         val world = mockk<SessionWorldDao>(relaxed = true)
         coEvery { world.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L, gameplayMode = "小说创作")
         val engine = mockk<ChatEngine>(relaxed = true)
-        every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+        every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
             flowOf(StreamState.Done("第二章\n雨夜重逢。"))
         val vm = createViewModel(messageDao = messages, sessionWorldDao = world,
             chatDraftStore = draftStore, secureStorage = validSecureStorage(),
@@ -175,6 +717,154 @@ class ChatViewModelTest {
 
         assertTrue(committed)
         verify(exactly = 1) { draftStore.clearChapterInputIfMatching(42L, "main", input) }
+    }
+
+    @Test fun chapterForkRejectsStaleBranchWithoutSavingOrCreating() = runTest(testDispatcher) {
+        val drafts = emptyDraftStore()
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        val vm = createViewModel(chatDraftStore = drafts, sessionBranchDao = branches)
+        advanceUntilIdle()
+        assertFalse(vm.requestChapterFork(7, "stale", "题", "方向"))
+        verify(exactly = 0) { drafts.saveChapterInput(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { branches.insertEditedBranch(any(), any(), any()) }
+    }
+
+    @Test fun chapterForkRejectsChangedOrInvalidTarget() = runTest(testDispatcher) {
+        val drafts = emptyDraftStore()
+        every { drafts.saveChapterInput(any(), any(), any(), any()) } returns true
+        val messages = mockk<MessageDao>(relaxed = true)
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        val vm = createViewModel(chatDraftStore = drafts, messageDao = messages, sessionBranchDao = branches)
+        advanceUntilIdle()
+        val target = MessageEntity(id = 7, sessionId = 42, speakerType = "narrator", content = "原文",
+            structuredContentJson = NovelChapter.draftMetadata("{}", 1, "第一章"))
+        listOf(null, target.copy(sessionId = 99), target.copy(speakerType = "user"),
+            target.copy(content = ""), target.copy(structuredContentJson = NovelChapter.metadata("{}", 1, "第一章")),
+            target.copy(structuredContentJson = "{\"chapter_incomplete\":true}")).forEach { row ->
+            coEvery { messages.getMainMessageById(42, 7) } returns row
+            assertTrue(vm.requestChapterFork(7, "main", "", "方向"))
+            advanceUntilIdle()
+            assertEquals("main", vm.state.value.currentBranchId)
+            assertFalse(vm.state.value.isGenerating)
+        }
+        coVerify(exactly = 0) { branches.insertEditedBranch(any(), any(), any()) }
+    }
+
+    @Test fun chapterForkKeepsCreatedLineWithoutGeneratingWhenChildDraftSaveFails() = runTest(testDispatcher) {
+        val drafts = emptyDraftStore()
+        every { drafts.saveChapterInput(any(), match { it.startsWith("chapter_fork:") }, any(), true) } returns true
+        every { drafts.saveChapterInput(any(), match { it.startsWith("chapter_7_") }, any(), true) } returns false
+        val messages = mockk<MessageDao>(relaxed = true)
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        val target = MessageEntity(id = 7, sessionId = 42, speakerType = "narrator", content = "完整原文",
+            structuredContentJson = NovelChapter.draftMetadata("{\"extra\":42}", 1, "第一章"))
+        coEvery { messages.getMainMessageById(42, 7) } returns target
+        coEvery { branches.insertEditedBranch(any(), any(), any()) } answers {
+            val clone = args[1] as MessageEntity
+            assertEquals(target, clone.copy(id = target.id, branchId = target.branchId,
+                regeneratedFromMessageId = target.regeneratedFromMessageId, createdAt = target.createdAt))
+            99L
+        }
+        val vm = createViewModel(chatDraftStore = drafts, messageDao = messages, sessionBranchDao = branches)
+        advanceUntilIdle()
+        assertTrue(vm.requestChapterFork(7, "main", "", "方向"))
+        advanceUntilIdle()
+        assertFalse(vm.state.value.isGenerating)
+        assertTrue(vm.state.value.error!!.contains("已创建"))
+        coVerify(exactly = 1) { branches.insertEditedBranch(any(), any(), any()) }
+        verify(exactly = 0) { drafts.clearChapterInputIfMatching(any(), any(), any()) }
+    }
+
+    @Test fun chapterForkDoesNotGenerateAfterRefreshPreferenceOrTailFailure() = runTest(testDispatcher) {
+        for (failure in listOf("refresh", "preference", "tail")) {
+            val drafts = emptyDraftStore()
+            every { drafts.saveChapterInput(any(), any(), any(), any()) } returns true
+            every { drafts.clearChapterInputIfMatching(any(), any(), any()) } returns true
+            val messages = mockk<MessageDao>(relaxed = true)
+            val branches = mockk<SessionBranchDao>(relaxed = true)
+            val preferences = uiPreferences()
+            val target = MessageEntity(id = 7, sessionId = 42, speakerType = "narrator", content = "原文",
+                structuredContentJson = NovelChapter.draftMetadata("{}", 1, "第一章"))
+            val created = mutableListOf<SessionBranchEntity>()
+            var clone: MessageEntity? = null
+            coEvery { messages.getMainMessageById(42, 7) } returns target
+            coEvery { branches.getBySession(42) } answers { created.toList() }
+            coEvery { branches.insertEditedBranch(any(), any(), any()) } answers {
+                created += args[0] as SessionBranchEntity
+                clone = (args[1] as MessageEntity).copy(id = 99)
+                99L
+            }
+            coEvery { messages.getVisibleMessagesTail(42, any(), 81) } answers {
+                if (failure == "refresh") throw IllegalStateException("synthetic refresh failure")
+                listOfNotNull(clone)
+            }
+            coEvery { messages.getVisibleMessagesTail(42, any(), 1) } answers { listOfNotNull(clone?.copy(id = 100)) }
+            if (failure == "preference") coEvery { preferences.setLastChatBranch(42, any()) } throws IllegalStateException("synthetic preference failure")
+            val vm = createViewModel(chatDraftStore = drafts, messageDao = messages,
+                sessionBranchDao = branches, uiPreferencesRepository = preferences)
+            advanceUntilIdle()
+            assertTrue(vm.requestChapterFork(7, "main", "", "方向"))
+            advanceUntilIdle()
+            assertEquals(1, created.size)
+            assertFalse(vm.state.value.isGenerating)
+            assertTrue(vm.state.value.error!!.contains("尚未开始生成"))
+        }
+    }
+
+    @Test fun chapterGenerationStartsAtOneAndKeepsExistingNumberProgression() = runTest(testDispatcher) {
+        for ((latest, expected) in listOf(0 to 1, 2 to 3)) {
+            val messages = mockk<MessageDao>(relaxed = true)
+            coEvery { messages.getMainMaxChapter(42) } returns latest
+            var saved: MessageEntity? = null
+            coEvery { messages.insert(match { it.speakerType == "narrator" }) } answers {
+                saved = args[0] as MessageEntity; 99L
+            }
+            val world = mockk<SessionWorldDao>(relaxed = true)
+            coEvery { world.getBySession(42) } returns SessionWorldEntity(sessionId = 42, gameplayMode = "小说创作")
+            val engine = mockk<ChatEngine>(relaxed = true)
+            every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+                flowOf(StreamState.Done("海风\n岸边的故事。"))
+            val vm = createViewModel(messageDao = messages, sessionWorldDao = world, chatEngine = engine,
+                secureStorage = validSecureStorage(), llmApiService = validLlmApiService())
+            advanceUntilIdle()
+            assertTrue(vm.requestNarrator(nextChapter = true))
+            advanceUntilIdle()
+            assertEquals(expected, NovelChapter.number(saved!!.structuredContentJson))
+        }
+    }
+
+    @Test fun chapterGenerationEmptyBodyReportsModelFailureWithoutCompletedWrite() = runTest(testDispatcher) {
+        for (raw in listOf("", "第1章", "<NARRATION>第1章</NARRATION>")) {
+            val messages = mockk<MessageDao>(relaxed = true)
+            val world = mockk<SessionWorldDao>(relaxed = true)
+            coEvery { world.getBySession(42) } returns SessionWorldEntity(sessionId = 42, gameplayMode = "小说创作")
+            val engine = mockk<ChatEngine>(relaxed = true)
+            every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+                flowOf(StreamState.Done(raw))
+            val vm = createViewModel(messageDao = messages, sessionWorldDao = world, chatEngine = engine,
+                secureStorage = validSecureStorage(), llmApiService = validLlmApiService())
+            advanceUntilIdle()
+            assertTrue(vm.requestNarrator(nextChapter = true))
+            advanceUntilIdle()
+            assertEquals("模型未返回章节正文，请重试", vm.state.value.error)
+            coVerify(exactly = 0) { messages.insert(any()) }
+        }
+    }
+
+    @Test fun chapterGenerationDatabaseFailureKeepsLocalSaveFeedback() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        coEvery { messages.insert(any()) } throws IllegalStateException("synthetic storage failure")
+        val world = mockk<SessionWorldDao>(relaxed = true)
+        coEvery { world.getBySession(42) } returns SessionWorldEntity(sessionId = 42, gameplayMode = "小说创作")
+        val engine = mockk<ChatEngine>(relaxed = true)
+        every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            flowOf(StreamState.Done("第1章\n海风吹来。"))
+        val vm = createViewModel(messageDao = messages, sessionWorldDao = world, chatEngine = engine,
+            secureStorage = validSecureStorage(), llmApiService = validLlmApiService())
+        advanceUntilIdle()
+        assertTrue(vm.requestNarrator(nextChapter = true))
+        advanceUntilIdle()
+        assertEquals(UserFacingStrings.localSaveFailed("旁白回复"), vm.state.value.error)
     }
 
     private fun submissionTransaction(
@@ -204,6 +894,7 @@ class ChatViewModelTest {
 
     private fun createViewModel(
         sessionId: Long = 42L,
+        savedStateHandle: SavedStateHandle = SavedStateHandle(mapOf("sessionId" to sessionId)),
         messageDao: MessageDao = mockk(relaxed = true),
         bookmarkDao: BookmarkDao = mockk(relaxed = true),
         sessionBranchDao: SessionBranchDao = mockk(relaxed = true),
@@ -219,8 +910,13 @@ class ChatViewModelTest {
         eventNodeDao: SessionEventNodeDao = mockk(relaxed = true),
         memorySegmentDao: com.mojing.app.data.local.dao.SessionMemorySegmentDao = mockk(relaxed = true),
         contextMemory: com.mojing.app.domain.engine.UniversalContextMemoryManager = mockk(relaxed = true),
+        compactor: com.mojing.app.domain.engine.MemoryCompactor = mockk(relaxed = true),
+        events: com.mojing.app.domain.engine.MemoryV2Manager = mockk(relaxed = true),
+        sediment: com.mojing.app.domain.engine.SedimentEngine = mockk(relaxed = true),
         contextBuilder: ContextBuilder = mockk(relaxed = true),
+        promptBuilder: com.mojing.app.domain.engine.PromptBuilder = mockk(relaxed = true),
         participantDao: ParticipantDao = mockk(relaxed = true),
+        characterStateDao: CharacterStateDao = mockk(relaxed = true),
         chatDraftStore: ChatDraftStore = emptyDraftStore(),
         secureStorage: SecureStorage = mockk(relaxed = true) { every { sessionModelSelection(any()) } returns null },
         llmApiService: LlmApiService = mockk(relaxed = true),
@@ -230,8 +926,13 @@ class ChatViewModelTest {
         imageRepository: com.mojing.app.data.repository.ImageRepository = mockk(relaxed = true),
         sourceMessageId: Long = 0L,
         sourceBranchId: String = "",
+        budgetManager: com.mojing.app.domain.engine.TokenBudgetManager = mockk(relaxed = true),
+        summaryMaintenance: SummaryMaintenanceUseCase = mockk(relaxed = true),
     ) = ChatViewModel(
-        savedStateHandle = SavedStateHandle(mapOf("sessionId" to sessionId, "sourceMessageId" to sourceMessageId, "sourceBranchId" to sourceBranchId)),
+        savedStateHandle = savedStateHandle.apply {
+            this["sourceMessageId"] = sourceMessageId
+            this["sourceBranchId"] = sourceBranchId
+        },
         messageDao = messageDao,
         sessionDao = sessionDao,
         characterDao = characterDao,
@@ -245,16 +946,17 @@ class ChatViewModelTest {
         costRecorder = mockk(relaxed = true),
         chatEngine = chatEngine,
         secureStorage = secureStorage,
-        promptBuilder = mockk(relaxed = true),
-        memoryCompactor = mockk(relaxed = true),
+        promptBuilder = promptBuilder,
+        memoryCompactor = compactor,
+        summaryMaintenance = summaryMaintenance,
         contextBuilder = contextBuilder,
-        tokenBudgetManager = mockk(relaxed = true),
+        tokenBudgetManager = budgetManager,
         slidingWindowBuilder = mockk(relaxed = true),
         snapshotExtractor = mockk(relaxed = true),
-        memoryV2Manager = mockk(relaxed = true),
+        memoryV2Manager = events,
         universalContextMemoryManager = contextMemory,
-        sedimentEngine = mockk(relaxed = true),
-        characterStateDao = mockk(relaxed = true),
+        sedimentEngine = sediment,
+        characterStateDao = characterStateDao,
         attachmentDao = attachmentDao,
         messageSubmissionTransaction = messageSubmissionTransaction
             ?: submissionTransaction(messageDao, attachmentDao),
@@ -269,6 +971,7 @@ class ChatViewModelTest {
     ).also {
         it.preparationDispatcher = testDispatcher
         it.tokenEstimateDispatcher = testDispatcher
+        it.attachSpeechScreen()
     }
 
     private fun validSecureStorage(
@@ -283,6 +986,217 @@ class ChatViewModelTest {
     }
 
     private fun validLlmApiService(): LlmApiService = LlmApiService()
+
+    @Test
+    fun manualSpeakerChangedDuringValidationPreservesNewSelectionAndDraft() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 99L))
+        val characters = mockk<CharacterDao>(relaxed = true)
+        coEvery { characters.getById(99L) } returns CharacterEntity(id = 99L, name = "原角色")
+        val storage = validSecureStorage()
+        every { storage.speakerTurnMode } returns "manual"
+        val vm = createViewModel(messageDao = messages, participantDao = participants, characterDao = characters,
+            secureStorage = storage, llmApiService = validLlmApiService())
+        advanceUntilIdle()
+        val gate = CompletableDeferred<CharacterEntity>()
+        coEvery { characters.getById(99L) } coAnswers { gate.await() }
+        vm.setManualReplyCharacterId(99L)
+        vm.updateInput("换人后再发送")
+        vm.sendMessage()
+        runCurrent()
+        vm.setManualReplyCharacterId(100L)
+        gate.complete(CharacterEntity(id = 99L, name = "原角色"))
+        advanceUntilIdle()
+        assertEquals(100L, vm.state.value.manualReplyCharacterId)
+        assertEquals("换人后再发送", vm.state.value.inputText)
+        assertEquals("发言角色已变更，请重新发送", vm.state.value.error)
+        coVerify(exactly = 0) { messages.insert(any()) }
+    }
+
+    @Test
+    fun invalidSelectedManualSpeakerIsRejectedBeforeUserMessageCommit() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        coEvery { participants.getBySession(42L) } returns emptyList()
+        val characters = mockk<CharacterDao>(relaxed = true)
+        coEvery { characters.getById(99L) } returns CharacterEntity(id = 99L, name = "已移除角色")
+        val storage = validSecureStorage()
+        every { storage.speakerTurnMode } returns "manual"
+        val vm = createViewModel(
+            messageDao = messages,
+            participantDao = participants,
+            characterDao = characters,
+            secureStorage = storage,
+            llmApiService = validLlmApiService(),
+        )
+        advanceUntilIdle()
+
+        vm.setManualReplyCharacterId(99L)
+        vm.updateInput("保留这段草稿")
+        val quoted = MessageEntity(id = 7L, sessionId = 42L, speakerType = "narrator", content = "码头见")
+        vm.handleMessageAction(com.mojing.app.ui.chat.MessageAction.Quote(quoted))
+        advanceUntilIdle()
+        assertTrue(vm.queueLocalImageAttachment("F:/pending/keep.png", expectedBranchId = "main"))
+        vm.sendMessage()
+        advanceUntilIdle()
+
+        assertEquals("保留这段草稿", vm.state.value.inputText)
+        assertEquals(listOf("F:/pending/keep.png"), vm.state.value.pendingLocalImagePaths)
+        assertEquals(quoted, vm.state.value.quotingMessage)
+        assertEquals(null, vm.state.value.manualReplyCharacterId)
+        assertEquals("选中的发言角色已移出当前对话，请重新选择", vm.state.value.error)
+        coVerify(exactly = 0) { messages.insert(any()) }
+    }
+
+    @Test
+    fun voiceDraftUpdateAcceptsCurrentBranchAndRejectsStaleBranchWithoutPersisting() = runTest(testDispatcher) {
+        val draftStore = emptyDraftStore()
+        every { draftStore.save(any(), any()) } returns Unit
+        val vm = createViewModel(chatDraftStore = draftStore)
+        advanceUntilIdle()
+
+        assertTrue(vm.updateInput("已有文字识别结果", expectedBranchId = "main"))
+        assertEquals("已有文字识别结果", vm.state.value.inputText)
+        verify(exactly = 1) {
+            draftStore.save(42L, match { it.inputText == "已有文字识别结果" })
+        }
+
+        assertFalse(vm.updateInput("旧故事线结果", expectedBranchId = "stale-branch"))
+        assertEquals("已有文字识别结果", vm.state.value.inputText)
+        verify(exactly = 0) {
+            draftStore.save(42L, match { it.inputText == "旧故事线结果" })
+        }
+        verify(exactly = 1) {
+            draftStore.save(42L, match { it.inputText == "已有文字识别结果" })
+        }
+    }
+
+    @Test
+    fun participantRemovedAfterSubmissionKeepsCommittedUserMessageAndClearsSelection() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val stored = mutableListOf<MessageEntity>()
+        coEvery { messages.insert(any()) } answers {
+            val message = firstArg<MessageEntity>().copy(id = stored.size.toLong() + 1)
+            stored += message
+            message.id
+        }
+        coEvery { messages.getMainMessagesTail(42L, any()) } answers { stored.reversed() }
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        var participantPresent = true
+        val participant = SessionParticipantEntity(sessionId = 42L, characterId = 99L)
+        coEvery { participants.getBySession(42L) } answers { if (participantPresent) listOf(participant) else emptyList() }
+        val characters = mockk<CharacterDao>(relaxed = true)
+        coEvery { characters.getById(99L) } returns CharacterEntity(id = 99L, name = "迟到角色")
+        val transaction = mockk<MessageSubmissionTransaction>()
+        coEvery { transaction(any(), any(), any()) } coAnswers {
+            val message = firstArg<MessageEntity>()
+            val messageId = messages.insert(message)
+            @Suppress("UNCHECKED_CAST")
+            (args[2] as (Long) -> Unit)(messageId)
+            participantPresent = false
+            messageId
+        }
+        val storage = validSecureStorage()
+        every { storage.speakerTurnMode } returns "manual"
+        val vm = createViewModel(
+            messageDao = messages,
+            participantDao = participants,
+            characterDao = characters,
+            secureStorage = storage,
+            messageSubmissionTransaction = transaction,
+            llmApiService = validLlmApiService(),
+        )
+        advanceUntilIdle()
+
+        vm.setManualReplyCharacterId(99L)
+        vm.updateInput("提交后角色被移出")
+        vm.sendMessage()
+        advanceUntilIdle()
+
+        assertEquals(listOf("提交后角色被移出"), stored.filter { it.speakerType == "user" }.map { it.content })
+        assertEquals(null, vm.state.value.manualReplyCharacterId)
+        assertEquals("选中的发言角色已移出当前对话，请重新选择", vm.state.value.error)
+    }
+
+    @Test
+    fun characterDeletedAfterSubmissionKeepsCommittedUserMessageAndClearsSelection() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val stored = mutableListOf<MessageEntity>()
+        coEvery { messages.insert(any()) } answers {
+            val message = firstArg<MessageEntity>().copy(id = stored.size.toLong() + 1)
+            stored += message
+            message.id
+        }
+        coEvery { messages.getMainMessagesTail(42L, any()) } answers { stored.reversed() }
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        val participant = SessionParticipantEntity(sessionId = 42L, characterId = 99L)
+        coEvery { participants.getBySession(42L) } returns listOf(participant)
+        val characters = mockk<CharacterDao>(relaxed = true)
+        var characterPresent = true
+        coEvery { characters.getById(99L) } answers {
+            if (characterPresent) CharacterEntity(id = 99L, name = "已删除角色") else null
+        }
+        val transaction = mockk<MessageSubmissionTransaction>()
+        coEvery { transaction(any(), any(), any()) } coAnswers {
+            val message = firstArg<MessageEntity>()
+            val messageId = messages.insert(message)
+            @Suppress("UNCHECKED_CAST")
+            (args[2] as (Long) -> Unit)(messageId)
+            characterPresent = false
+            messageId
+        }
+        val storage = validSecureStorage()
+        every { storage.speakerTurnMode } returns "manual"
+        val vm = createViewModel(
+            messageDao = messages,
+            participantDao = participants,
+            characterDao = characters,
+            secureStorage = storage,
+            messageSubmissionTransaction = transaction,
+            llmApiService = validLlmApiService(),
+        )
+        advanceUntilIdle()
+
+        vm.setManualReplyCharacterId(99L)
+        vm.updateInput("提交后角色被删除")
+        vm.sendMessage()
+        advanceUntilIdle()
+
+        assertEquals(listOf("提交后角色被删除"), stored.filter { it.speakerType == "user" }.map { it.content })
+        assertEquals(null, vm.state.value.manualReplyCharacterId)
+        assertEquals("选中的发言角色已移出当前对话，请重新选择", vm.state.value.error)
+    }
+
+    @Test
+    fun manualModeWithoutSelectionStillCommitsUserOnlyMessage() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val stored = mutableListOf<MessageEntity>()
+        coEvery { messages.insert(any()) } answers {
+            val message = firstArg<MessageEntity>().copy(id = stored.size.toLong() + 1)
+            stored += message
+            message.id
+        }
+        coEvery { messages.getMainMessagesTail(42L, any()) } answers { stored.reversed() }
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        coEvery { participants.getBySession(42L) } returns emptyList()
+        val storage = validSecureStorage()
+        every { storage.speakerTurnMode } returns "manual"
+        val vm = createViewModel(
+            messageDao = messages,
+            participantDao = participants,
+            secureStorage = storage,
+            llmApiService = validLlmApiService(),
+        )
+        advanceUntilIdle()
+
+        vm.updateInput("只保存用户正文")
+        vm.sendMessage()
+        advanceUntilIdle()
+
+        assertEquals(listOf("只保存用户正文"), stored.filter { it.speakerType == "user" }.map { it.content })
+        assertEquals(UserFacingStrings.chatNoParticipant(), vm.state.value.error)
+    }
 
     @Test
     fun initialDisplayLinesHideEmptyCommandsButKeepAttachedMessages() = runTest(testDispatcher) {
@@ -339,6 +1253,14 @@ class ChatViewModelTest {
 
         assertEquals("进程退出前的回复", vm.state.value.replyRecovery?.text)
         assertEquals(0, inserts)
+        vm.updateInput("未提交的新输入")
+        vm.sendMessage()
+        assertFalse(vm.submitNarratorGuidance("新的旁白方向"))
+        advanceUntilIdle()
+        assertEquals("未提交的新输入", vm.state.value.inputText)
+        assertFalse(vm.state.value.isGenerating)
+        coVerify(exactly = 0) { messages.insert(any()) }
+        assertEquals("进程退出前的回复", vm.state.value.replyRecovery?.text)
         vm.keepRecoveredReply()
         advanceUntilIdle()
 
@@ -347,6 +1269,36 @@ class ChatViewModelTest {
         vm.keepRecoveredReply()
         advanceUntilIdle()
         assertEquals(1, inserts)
+    }
+
+    @Test
+    fun recoveryLookupFinishesBeforeSessionAcceptsGeneration() = runTest(testDispatcher) {
+        val snapshot = ReplyRecoverySnapshot(
+            token = "123e4567-e89b-12d3-a456-426614174002", sessionId = 42L,
+            branchId = "main", speakerType = "narrator", rawText = "待核对的回复",
+            startedAt = 100L, updatedAt = 200L,
+        )
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val store = emptyDraftStore()
+        every { store.loadReplyRecovery(42L) } returns ReplyRecoveryLoadResult.Valid(snapshot)
+        val messages = mockk<MessageDao>(relaxed = true)
+        coEvery { messages.findReplyRecoveryMessageId(42L, "main", snapshot.token) } coAnswers {
+            gate.await()
+            null
+        }
+        val vm = createViewModel(messageDao = messages, chatDraftStore = store)
+        advanceUntilIdle()
+        assertFalse(vm.state.value.isReady)
+        vm.updateInput("核对期间输入")
+        vm.sendMessage()
+        assertFalse(vm.submitNarratorGuidance("核对期间旁白"))
+        advanceUntilIdle()
+        coVerify(exactly = 0) { messages.insert(any()) }
+        assertEquals("核对期间输入", vm.state.value.inputText)
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.isReady)
+        assertEquals(snapshot.rawText, vm.state.value.replyRecovery?.text)
     }
 
     @Test
@@ -401,6 +1353,68 @@ class ChatViewModelTest {
         assertEquals(null, vm.state.value.replyRecovery)
         assertFalse(pending)
         coVerify(exactly = 0) { messages.insertReplyRecoveryIfAbsent(any(), any(), any()) }
+    }
+
+    @Test fun chapterRenameRejectsStaleDirectoryAndSourceWithoutWriting() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val vm = createViewModel(messageDao = messages)
+        advanceUntilIdle()
+        var completed = 0
+        vm.renameChapter(501L, "新名", "old-branch", "main") { completed++ }
+        advanceUntilIdle()
+        assertNotNull(vm.state.value.novelMetadataError)
+        coEvery { messages.getMainMessageById(42L, 501L) } returns MessageEntity(id = 501L, sessionId = 42L, branchId = "other")
+        vm.renameChapter(501L, "新名", "main", "main") { completed++ }
+        advanceUntilIdle()
+        assertNotNull(vm.state.value.novelMetadataError)
+        coEvery { messages.getMainMessageById(42L, 501L) } returns null
+        vm.renameChapter(501L, "新名", "main", "main") { completed++ }
+        advanceUntilIdle()
+        assertEquals(0, completed)
+        assertFalse(vm.state.value.novelMetadataSaving)
+        coVerify(exactly = 0) { messages.renameNovelChapter(any(), any(), any()) }
+    }
+
+    @Test fun chapterRenameOwnsWriteAgainstNavigationGenerationAndDuplicateSave() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val gate = CompletableDeferred<Unit>()
+        coEvery { messages.getMainMessageById(42L, 501L) } returns MessageEntity(id = 501L, sessionId = 42L)
+        coEvery { messages.renameNovelChapter(501L, 42L, "新名") } coAnswers { gate.await() }
+        val vm = createViewModel(messageDao = messages)
+        advanceUntilIdle()
+        var completed = 0
+        vm.renameChapter(501L, "新名", "main", "main") { completed++ }
+        runCurrent()
+        assertTrue(vm.state.value.novelMetadataSaving)
+        vm.switchBranch("B")
+        assertFalse(vm.openMessageInHistory(501L))
+        assertFalse(vm.requestNarrator(nextChapter = true))
+        vm.renameChapter(501L, "重复") { completed++ }
+        runCurrent()
+        assertEquals("main", vm.state.value.currentBranchId)
+        assertEquals(0, completed)
+        gate.complete(Unit); advanceUntilIdle()
+        assertEquals(1, completed)
+        assertFalse(vm.state.value.novelMetadataSaving)
+        coVerify(exactly = 1) { messages.renameNovelChapter(any(), any(), any()) }
+    }
+
+    @Test fun chapterRenameWriteFailureKeepsEditorAndReleasesOwnerForRetry() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        coEvery { messages.getMainMessageById(42L, 501L) } returns MessageEntity(id = 501L, sessionId = 42L)
+        coEvery { messages.renameNovelChapter(any(), any(), any()) } throws IllegalStateException("write failed")
+        val vm = createViewModel(messageDao = messages)
+        advanceUntilIdle()
+        var completed = 0
+        vm.renameChapter(501L, "新名", "main", "main") { completed++ }; advanceUntilIdle()
+        assertEquals(0, completed)
+        assertNotNull(vm.state.value.novelMetadataError)
+        assertFalse(vm.state.value.novelMetadataSaving)
+        coEvery { messages.renameNovelChapter(any(), any(), any()) } returns Unit
+        vm.renameChapter(501L, "新名", "main", "main") { completed++ }; advanceUntilIdle()
+        assertEquals(1, completed)
+        assertEquals(null, vm.state.value.novelMetadataError)
+        coVerify(exactly = 2) { messages.renameNovelChapter(any(), any(), any()) }
     }
 
     @Test fun novelRenameWaitsForSaveAndIgnoresDuplicateSubmission() = runTest(testDispatcher) {
@@ -777,12 +1791,52 @@ class ChatViewModelTest {
         vm.clearCurrentContextMemory()
         advanceUntilIdle()
         assertEquals("码头约定", vm.state.value.contextMemoryText)
+        assertEquals("长期记忆清空失败，请重试", vm.state.value.contextMemoryClearError)
         assertFalse(vm.state.value.memoryOperationRunning)
         coEvery { memory.clear(42L, "main") } returns Unit
         vm.clearCurrentContextMemory()
         advanceUntilIdle()
         assertEquals("", vm.state.value.contextMemoryText)
+        assertEquals(null, vm.state.value.contextMemoryClearError)
         assertFalse(vm.state.value.memoryOperationRunning)
+    }
+
+    @Test
+    fun staleExpectedBranchDoesNotClearMemory() = runTest(testDispatcher) {
+        val memory = mockk<com.mojing.app.domain.engine.UniversalContextMemoryManager>(relaxed = true)
+        val vm = createViewModel(contextMemory = memory)
+        advanceUntilIdle()
+
+        vm.clearCurrentContextMemory(expectedBranchId = "stale-branch")
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { memory.clear(any(), any()) }
+        assertFalse(vm.state.value.memoryOperationRunning)
+    }
+
+    @Test
+    fun generationAndBusyStateDoNotSubmitDuplicateClears() = runTest(testDispatcher) {
+        val memory = mockk<com.mojing.app.domain.engine.UniversalContextMemoryManager>(relaxed = true)
+        val messageDao = mockk<MessageDao>(relaxed = true)
+        coEvery { messageDao.insert(any()) } coAnswers { awaitCancellation() }
+        val vm = createViewModel(contextMemory = memory, messageDao = messageDao)
+        advanceUntilIdle()
+
+        vm.updateInput("生成中的消息")
+        vm.sendMessage()
+        runCurrent()
+        vm.clearCurrentContextMemory(expectedBranchId = "main")
+        runCurrent()
+        coVerify(exactly = 0) { memory.clear(any(), any()) }
+        vm.stopGeneration()
+        advanceUntilIdle()
+
+        coEvery { memory.clear(42L, "main") } coAnswers { awaitCancellation() }
+        vm.clearCurrentContextMemory(expectedBranchId = "main")
+        runCurrent()
+        vm.clearCurrentContextMemory(expectedBranchId = "main")
+        runCurrent()
+        coVerify(exactly = 1) { memory.clear(42L, "main") }
     }
 
     @Test
@@ -1331,6 +2385,58 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun recreatedCorrectionEditorReadsPendingWriteReceiptWithoutReplaying() = runTest(testDispatcher) {
+        val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
+        val write = CompletableDeferred<Long>()
+        coEvery { dao.insert(any()) } coAnswers { write.await() }
+        val vm = createViewModel(memoryCorrectionDao = dao)
+        advanceUntilIdle()
+        vm.saveMemoryCorrectionFromEditor("editor-one", null, "纠正", "main", null)
+        runCurrent()
+        assertTrue(vm.knowsCorrectionEditorRequest("editor-one"))
+        assertEquals(null, vm.correctionSaveReceipt.value)
+        vm.saveMemoryCorrectionFromEditor("editor-one", null, "纠正", "main", null)
+        write.complete(7L); advanceUntilIdle()
+        assertEquals(ChatViewModel.CorrectionSaveReceipt("editor-one", true), vm.correctionSaveReceipt.value)
+        vm.saveMemoryCorrectionFromEditor("editor-one", null, "纠正", "main", null)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { dao.insert(any()) }
+    }
+
+    @Test
+    fun correctionEditorFailureReceiptKeepsRetryIndependentOfOlderResult() = runTest(testDispatcher) {
+        val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
+        coEvery { dao.insert(any()) } throws IllegalStateException("write failed")
+        val vm = createViewModel(memoryCorrectionDao = dao)
+        advanceUntilIdle()
+        vm.saveMemoryCorrectionFromEditor("failed", null, "纠正", "main", null)
+        advanceUntilIdle()
+        assertEquals(ChatViewModel.CorrectionSaveReceipt("failed", false), vm.correctionSaveReceipt.value)
+        coEvery { dao.insert(any()) } returns 7L
+        vm.saveMemoryCorrectionFromEditor("retry", null, "纠正", "main", null)
+        advanceUntilIdle()
+        assertEquals(ChatViewModel.CorrectionSaveReceipt("retry", true), vm.correctionSaveReceipt.value)
+        assertFalse(vm.knowsCorrectionEditorRequest("failed"))
+        coVerify(exactly = 2) { dao.insert(any()) }
+    }
+
+    @Test
+    fun restoredCorrectionEditorUpdatesSameIdAndPreservesSourceAndCreatedAt() = runTest(testDispatcher) {
+        val dao = mockk<SessionMemoryCorrectionDao>(relaxed = true)
+        val original = SessionMemoryCorrectionEntity(id = 7L, sessionId = 42L,
+            branchId = "main", content = "旧纠正", sourceMessageId = 123L, createdAt = 10L)
+        coEvery { dao.getById(42L, 7L) } returns original
+        val vm = createViewModel(memoryCorrectionDao = dao)
+        advanceUntilIdle()
+        vm.saveMemoryCorrectionFromEditor("edit", 7L, "新纠正", "main", 123L)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { dao.update(match { it.id == 7L && it.content == "新纠正" &&
+            it.branchId == "main" && it.sourceMessageId == 123L && it.createdAt == 10L }) }
+        coVerify(exactly = 0) { dao.insert(any()) }
+        assertEquals(ChatViewModel.CorrectionSaveReceipt("edit", true), vm.correctionSaveReceipt.value)
+    }
+
+    @Test
     fun missingSessionStopsInitializationBeforeCreatingWorldRows() = runTest(testDispatcher) {
         val sessionDao = mockk<SessionDao>(relaxed = true)
         val sessionWorldDao = mockk<SessionWorldDao>(relaxed = true)
@@ -1513,6 +2619,40 @@ class ChatViewModelTest {
         }
     }
 
+    @Test fun sessionWorldCredentialWriteRetainsOwnerAndRejectsDuplicateUntilReceipt() = runTest(testDispatcher) {
+        val registry = com.mojing.app.ui.chat.RetainedChatSessions.stores
+        val dao = mockk<SessionWorldDao>(relaxed = true)
+        val original = SessionWorldEntity(id=17,sessionId=42,worldPrompt="原设定",sessionLlmApiKey="old-key")
+        coEvery { dao.getBySession(42L) } returns original
+        val finish = CompletableDeferred<Unit>()
+        coEvery { dao.upsert(any()) } coAnswers { finish.await();17L }
+        val vm = registry.acquire(42L) { store -> createViewModel(sessionWorldDao=dao).also { store.put("vm",it) } }
+        var readers = 1
+        try {
+            advanceUntilIdle()
+            val results = mutableListOf<Boolean>()
+            vm.saveSessionWorldCredentials(SessionWorldCredentialDraft(sessionLlmApiKey=" new-key ")) { results+=it }
+            runCurrent()
+            assertTrue(vm.state.value.worldCredentialsSaving)
+            assertTrue(results.isEmpty())
+            vm.saveSessionWorldCredentials(SessionWorldCredentialDraft(sessionLlmApiKey="duplicate")) { results+=it }
+            assertEquals(listOf(false),results)
+            registry.release(42L);readers--
+            assertTrue(registry.contains(42L));assertFalse(42L in registry.running.value)
+            val reopened=registry.acquire<ChatViewModel>(42L) { error("Duplicate write owner") };readers++
+            assertTrue(reopened===vm)
+            finish.complete(Unit);advanceUntilIdle()
+            assertFalse(vm.state.value.worldCredentialsSaving)
+            assertEquals(listOf(false,true),results)
+            assertEquals(original.copy(sessionLlmApiKey="new-key",updatedAt=vm.state.value.world!!.updatedAt),vm.state.value.world)
+            coVerify(exactly=1) { dao.upsert(any()) }
+        } finally {
+            finish.complete(Unit)
+            repeat(readers) { registry.release(42L) }
+            advanceUntilIdle()
+        }
+    }
+
     @Test
     fun sessionWorldCredentialSaveFailureKeepsPreviousStateAndReportsFailure() = runTest(testDispatcher) {
         val original = SessionWorldEntity(sessionId = 42L, sessionLlmApiKey = "old-key")
@@ -1531,6 +2671,7 @@ class ChatViewModelTest {
         assertEquals(listOf(false), results)
         assertEquals("old-key", vm.state.value.world?.sessionLlmApiKey)
         assertEquals("本场线路保存失败，请重试", vm.state.value.error)
+        assertFalse(vm.state.value.worldCredentialsSaving)
         assertFalse(vm.state.value.error.orEmpty().contains("database unavailable"))
     }
 
@@ -1640,7 +2781,59 @@ class ChatViewModelTest {
         assertEquals(listOf(false), results)
         assertTrue(vm.state.value.participants.isEmpty())
         assertEquals("添加角色失败，请重试", vm.state.value.error)
+        assertEquals("添加角色失败，请重试", vm.state.value.participantAddError)
+        assertFalse(vm.state.value.participantAdding)
+        assertEquals(null, vm.state.value.participantAddedId)
         assertFalse(vm.state.value.error.orEmpty().contains("database unavailable"))
+    }
+
+    @Test fun participantWriteRetainsOwnerRejectsDuplicateAndPublishesReceipt() = runTest(testDispatcher) {
+        val registry=com.mojing.app.ui.chat.RetainedChatSessions.stores
+        val characters=mockk<CharacterDao>(relaxed=true)
+        val participants=mockk<ParticipantDao>(relaxed=true)
+        val worlds=mockk<SessionWorldDao>(relaxed=true)
+        val finish=CompletableDeferred<Unit>()
+        var committed=false
+        coEvery { characters.getById(7L) } returns CharacterEntity(id=7,name="青鸾",boundEncyclopediaId=3)
+        coEvery { worlds.getBySession(42L) } returns SessionWorldEntity(sessionId=42,encyclopediaId=3)
+        coEvery { participants.getBySession(42L) } answers { if(committed) listOf(SessionParticipantEntity(id=9,sessionId=42,characterId=7)) else emptyList() }
+        coEvery { participants.upsert(any()) } coAnswers { finish.await();committed=true;9L }
+        val vm=registry.acquire(42L) { store->createViewModel(characterDao=characters,participantDao=participants,sessionWorldDao=worlds).also { store.put("vm",it) } }
+        var readers=1
+        try {
+            advanceUntilIdle()
+            val results=mutableListOf<Boolean>()
+            vm.addParticipant(7) { results+=it };runCurrent()
+            assertTrue(vm.state.value.participantAdding)
+            vm.addParticipant(7) { results+=it }
+            assertEquals(listOf(false),results)
+            registry.release(42);readers--
+            assertTrue(registry.contains(42));assertFalse(42L in registry.running.value)
+            val reopened=registry.acquire<ChatViewModel>(42) { error("Duplicate participant owner") };readers++
+            assertTrue(reopened===vm)
+            vm.clearParticipantAddFeedback();assertTrue(vm.state.value.participantAdding)
+            finish.complete(Unit);advanceUntilIdle()
+            assertFalse(vm.state.value.participantAdding)
+            assertEquals(7L,vm.state.value.participantAddedId)
+            assertEquals(listOf(7L),vm.state.value.participants.map { it.characterId })
+            assertEquals(listOf(false,true),results)
+            coVerify(exactly=1) { participants.upsert(any()) }
+            vm.clearParticipantAddFeedback();assertEquals(null,vm.state.value.participantAddedId)
+        } finally { finish.complete(Unit);repeat(readers) { registry.release(42) };advanceUntilIdle() }
+    }
+
+    @Test fun participantQualificationFailureKeepsRetryableFeedbackAndNoWrite() = runTest(testDispatcher) {
+        val characters=mockk<CharacterDao>(relaxed=true)
+        val participants=mockk<ParticipantDao>(relaxed=true)
+        coEvery { characters.getById(7L) } returns CharacterEntity(id=7,name="青鸾",boundEncyclopediaId=0)
+        val vm=createViewModel(characterDao=characters,participantDao=participants)
+        advanceUntilIdle()
+        vm.addParticipant(7);advanceUntilIdle()
+        assertFalse(vm.state.value.participantAdding)
+        assertEquals("该角色尚未绑定世界资料，无法加入当前对话",vm.state.value.participantAddError)
+        assertEquals(null,vm.state.value.participantAddedId)
+        coVerify(exactly=0) { participants.upsert(any()) }
+        vm.clearParticipantAddFeedback();assertEquals(null,vm.state.value.participantAddError)
     }
 
     @Test
@@ -1730,6 +2923,52 @@ class ChatViewModelTest {
         assertEquals(0.7f, vm.state.value.participants.single().talkativeness)
         assertEquals("发言率保存失败，请重试", vm.state.value.error)
         assertFalse(vm.state.value.error.orEmpty().contains("database unavailable"))
+        assertTrue(vm.state.value.participantTalkativenessSaving.isEmpty())
+    }
+
+    @Test fun talkativenessWriteRetainsOwnerAndRejectsDuplicateUntilCommitted() = runTest(testDispatcher) {
+        val registry = com.mojing.app.ui.chat.RetainedChatSessions.stores
+        val original = SessionParticipantEntity(id = 9, sessionId = 42, characterId = 7, talkativeness = 0.7f)
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        val finish = CompletableDeferred<Unit>()
+        var stored = original
+        coEvery { participants.getBySession(42) } answers { listOf(stored) }
+        coEvery { participants.getById(9) } answers { stored }
+        coEvery { participants.upsert(any()) } coAnswers { finish.await(); stored = firstArg(); 9L }
+        val vm = registry.acquire(42L) { store -> createViewModel(participantDao = participants).also { store.put("vm", it) } }
+        var readers = 1
+        try {
+            advanceUntilIdle()
+            val results = mutableListOf<Boolean>()
+            vm.updateParticipantTalkativeness(9, 0.25f) { results += it }; runCurrent()
+            assertEquals(mapOf(9L to 0.25f), vm.state.value.participantTalkativenessSaving)
+            vm.updateParticipantTalkativeness(9, 0.9f) { results += it }
+            vm.toggleMute(9); vm.removeParticipant(9)
+            assertEquals(listOf(false), results)
+            registry.release(42); readers--
+            assertTrue(registry.contains(42)); assertFalse(42L in registry.running.value)
+            val reopened = registry.acquire<ChatViewModel>(42) { error("Duplicate talkativeness owner") }; readers++
+            assertTrue(reopened === vm)
+            assertEquals(0.7f, reopened.state.value.participants.single().talkativeness)
+            finish.complete(Unit); advanceUntilIdle()
+            assertTrue(reopened.state.value.participantTalkativenessSaving.isEmpty())
+            assertEquals(original.copy(talkativeness = 0.25f), reopened.state.value.participants.single())
+            assertEquals(listOf(false, true), results)
+            coVerify(exactly = 1) { participants.upsert(any()) }
+            coVerify(exactly = 0) { participants.delete(any()) }
+        } finally { finish.complete(Unit); repeat(readers) { registry.release(42) }; advanceUntilIdle() }
+    }
+
+    @Test fun talkativenessRejectsForeignSessionParticipantAndReleasesBusy() = runTest(testDispatcher) {
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        coEvery { participants.getById(9) } returns SessionParticipantEntity(id = 9, sessionId = 43, characterId = 7)
+        val vm = createViewModel(participantDao = participants)
+        advanceUntilIdle()
+        val results = mutableListOf<Boolean>()
+        vm.updateParticipantTalkativeness(9, 0.25f) { results += it }; advanceUntilIdle()
+        assertEquals(listOf(false), results)
+        assertTrue(vm.state.value.participantTalkativenessSaving.isEmpty())
+        coVerify(exactly = 0) { participants.upsert(any()) }
     }
 
     @Test
@@ -1787,6 +3026,141 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun thinkMaxSaveFailureKeepsPersistedChoiceAndCanRetry() = runTest(testDispatcher) {
+        val sessions = existingSessionDao(42L)
+        val storage = validSecureStorage()
+        every { storage.allowSessionThinkMax } returns true
+        var persisted = SessionEntity(id = 42L)
+        coEvery { sessions.getById(42L) } answers { persisted }
+        coEvery { sessions.updateThinkMax(42L, true, any()) } throws IllegalStateException("database unavailable")
+        val vm = createViewModel(sessionDao = sessions, secureStorage = storage)
+        advanceUntilIdle()
+
+        vm.setSessionThinkMax(true) {}
+        assertTrue(vm.state.value.sessionThinkMaxSaving)
+        vm.setSessionThinkMax(true) {}
+        advanceUntilIdle()
+        coVerify(exactly = 1) { sessions.updateThinkMax(42L, true, any()) }
+        assertFalse(vm.state.value.sessionThinkMaxEnabled)
+        assertFalse(vm.state.value.sessionThinkMaxSaving)
+        assertEquals("思考/Max 设置未保存，请重试", vm.state.value.sessionThinkMaxSaveError)
+
+        coEvery { sessions.updateThinkMax(42L, true, any()) } answers { persisted = persisted.copy(thinkMaxEnabled = true) }
+        vm.setSessionThinkMax(true) {}
+        assertEquals(null, vm.state.value.sessionThinkMaxSaveError)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.sessionThinkMaxEnabled)
+        assertFalse(vm.state.value.sessionThinkMaxSaving)
+        val reopened = createViewModel(sessionDao = sessions, secureStorage = storage)
+        advanceUntilIdle()
+        assertTrue(reopened.state.value.sessionThinkMaxEnabled)
+    }
+
+    @Test
+    fun delayedAutoNarratorIsCancelledByStopBranchOrLeaving() = runTest(testDispatcher) {
+        for (action in listOf("none", "stop", "branch", "leave", "newRound")) {
+            val storage = validSecureStorage()
+            every { storage.speakerTurnMode } returns "manual"
+            val world = mockk<SessionWorldDao>(relaxed = true)
+            coEvery { world.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L, narratorEnabled = true)
+            val characters = mockk<CharacterDao>(relaxed = true)
+            coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "角色")
+            val participants = mockk<ParticipantDao>(relaxed = true)
+            coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 3L))
+            val messages = mockk<MessageDao>(relaxed = true)
+            coEvery { messages.getMainContextTail(42L, any()) } returns (1L..4L).map {
+                MessageEntity(id = it, sessionId = 42L, speakerType = "character", content = "已有剧情$it")
+            }
+            val engine = mockk<ChatEngine>(relaxed = true)
+            every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+                flowOf(StreamState.Done("角色回复"))
+            every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+                flowOf(StreamState.Done("旁白回复"))
+            val vm = createViewModel(messageDao = messages, secureStorage = storage, sessionWorldDao = world,
+                characterDao = characters, participantDao = participants, chatEngine = engine,
+                llmApiService = validLlmApiService())
+            advanceUntilIdle()
+            vm.setManualReplyCharacterId(3L)
+            vm.updateInput("继续剧情")
+            vm.sendMessage()
+            runCurrent()
+            assertFalse("action=$action error=${vm.state.value.error}", vm.state.value.isGenerating)
+            verify(exactly = 1) { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            testScheduler.advanceTimeBy(200)
+            when (action) {
+                "stop" -> vm.stopGeneration()
+                "branch" -> vm.switchBranch("main")
+                "leave" -> vm.cancelPendingAutoNarrator()
+                "newRound" -> {
+                    vm.setManualReplyCharacterId(3L)
+                    vm.updateInput("新一轮")
+                    vm.sendMessage()
+                }
+            }
+            runCurrent()
+            testScheduler.advanceTimeBy(250)
+            runCurrent()
+            verify(exactly = if (action == "none") 1 else 0) {
+                engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            }
+            advanceUntilIdle()
+            verify(exactly = if (action == "none" || action == "newRound") 1 else 0) {
+                engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            }
+        }
+    }
+
+    @Test
+    fun thinkMaxSaveBlocksReplyUntilPersistedAndRejectsDuplicateChanges() = runTest(testDispatcher) {
+        val sessions = existingSessionDao(42L)
+        val storage = validSecureStorage()
+        val messages = mockk<MessageDao>(relaxed = true)
+        every { storage.allowSessionThinkMax } returns true
+        val saving = CompletableDeferred<Unit>()
+        coEvery { sessions.updateThinkMax(42L, true, any()) } coAnswers { saving.await() }
+        val vm = createViewModel(sessionDao = sessions, secureStorage = storage, messageDao = messages)
+        advanceUntilIdle()
+        vm.setSessionThinkMax(true) {}
+        runCurrent()
+        vm.setSessionThinkMax(false) {}
+        vm.updateInput("保留待发送内容")
+        vm.sendMessage()
+        runCurrent()
+        assertTrue(vm.state.value.sessionThinkMaxSaving)
+        assertFalse(vm.state.value.isGenerating)
+        assertEquals("保留待发送内容", vm.state.value.inputText)
+        coVerify(exactly = 0) { messages.insert(any()) }
+        coVerify(exactly = 0) { sessions.updateThinkMax(42L, false, any()) }
+        saving.complete(Unit)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.sessionThinkMaxEnabled)
+        assertFalse(vm.state.value.sessionThinkMaxSaving)
+    }
+
+    @Test
+    fun thinkMaxSaveRetainsLocalOwnerAndReturnsCommittedChoiceAfterReopen() = runTest(testDispatcher) {
+        val registry = com.mojing.app.ui.chat.RetainedChatSessions.stores
+        val sessions = existingSessionDao(42L)
+        val storage = validSecureStorage()
+        every { storage.allowSessionThinkMax } returns true
+        val saving = CompletableDeferred<Unit>()
+        coEvery { sessions.updateThinkMax(42L, true, any()) } coAnswers { saving.await() }
+        val vm = registry.acquire(42L) { store -> createViewModel(sessionDao = sessions, secureStorage = storage).also { store.put("vm", it) } }
+        try {
+            advanceUntilIdle(); vm.setSessionThinkMax(true) {}; runCurrent()
+            registry.release(42L)
+            assertTrue(registry.contains(42L)); assertFalse(42L in registry.running.value)
+            val reopened = registry.acquire<ChatViewModel>(42L) { error("Lost think/Max save owner") }
+            assertTrue(reopened === vm); assertTrue(vm.state.value.sessionThinkMaxSaving)
+            vm.setSessionThinkMax(false) {}; runCurrent()
+            coVerify(exactly = 0) { sessions.updateThinkMax(42L, false, any()) }
+            saving.complete(Unit); advanceUntilIdle()
+            assertTrue(vm.state.value.sessionThinkMaxEnabled); assertFalse(vm.state.value.sessionThinkMaxSaving)
+            coVerify(exactly = 1) { sessions.updateThinkMax(42L, true, any()) }
+        } finally { saving.complete(Unit); registry.stop(42L); registry.release(42L); advanceUntilIdle() }
+    }
+
+    @Test
     fun removingParticipantClearsItsManualReplySelection() = runTest(testDispatcher) {
         val participant = SessionParticipantEntity(
             id = 9L,
@@ -1828,6 +3202,49 @@ class ChatViewModelTest {
         assertEquals(listOf(9L), vm.state.value.participants.map { it.id })
         assertEquals("移除角色失败，请重试", vm.state.value.error)
         assertFalse(vm.state.value.error.orEmpty().contains("database unavailable"))
+        assertTrue(vm.state.value.participantRemoving.isEmpty())
+    }
+
+    @Test fun participantRemovalRetainsOwnerAndBlocksConflictingRowActions() = runTest(testDispatcher) {
+        val registry = com.mojing.app.ui.chat.RetainedChatSessions.stores
+        val original = SessionParticipantEntity(id = 9, sessionId = 42, characterId = 7)
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        val finish = CompletableDeferred<Unit>()
+        var removed = false
+        coEvery { participants.getBySession(42) } answers { if(removed) emptyList() else listOf(original) }
+        coEvery { participants.getById(9) } returns original
+        coEvery { participants.delete(9) } coAnswers { finish.await(); removed = true }
+        val vm = registry.acquire(42L) { store -> createViewModel(participantDao = participants).also { store.put("vm", it) } }
+        var readers = 1
+        try {
+            advanceUntilIdle(); vm.setManualReplyCharacterId(7)
+            vm.removeParticipant(9); runCurrent()
+            assertEquals(setOf(9L), vm.state.value.participantRemoving)
+            vm.removeParticipant(9); vm.toggleMute(9)
+            val results = mutableListOf<Boolean>()
+            vm.updateParticipantTalkativeness(9, 0.25f) { results += it }
+            assertEquals(listOf(false), results)
+            registry.release(42); readers--
+            assertTrue(registry.contains(42)); assertFalse(42L in registry.running.value)
+            val reopened = registry.acquire<ChatViewModel>(42) { error("Duplicate removal owner") }; readers++
+            assertTrue(reopened === vm)
+            finish.complete(Unit); advanceUntilIdle()
+            assertTrue(reopened.state.value.participantRemoving.isEmpty())
+            assertTrue(reopened.state.value.participants.isEmpty())
+            assertEquals(null, reopened.state.value.manualReplyCharacterId)
+            coVerify(exactly = 1) { participants.delete(9) }
+            coVerify(exactly = 0) { participants.upsert(any()) }
+        } finally { finish.complete(Unit); repeat(readers) { registry.release(42) }; advanceUntilIdle() }
+    }
+
+    @Test fun participantRemovalRejectsForeignRowAndReleasesBusy() = runTest(testDispatcher) {
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        coEvery { participants.getById(9) } returns SessionParticipantEntity(id = 9, sessionId = 43, characterId = 7)
+        val vm = createViewModel(participantDao = participants)
+        advanceUntilIdle(); vm.removeParticipant(9); advanceUntilIdle()
+        assertTrue(vm.state.value.participantRemoving.isEmpty())
+        assertEquals("该角色已不在当前对话中", vm.state.value.error)
+        coVerify(exactly = 0) { participants.delete(any()) }
     }
 
     @Test
@@ -1851,6 +3268,48 @@ class ChatViewModelTest {
         assertFalse(vm.state.value.participants.single().muted)
         assertEquals("角色静音状态保存失败，请重试", vm.state.value.error)
         assertFalse(vm.state.value.error.orEmpty().contains("database unavailable"))
+        assertTrue(vm.state.value.participantMuteSaving.isEmpty())
+    }
+
+    @Test fun participantMuteWriteRetainsOwnerAndBlocksConflictingRowActions() = runTest(testDispatcher) {
+        val registry = com.mojing.app.ui.chat.RetainedChatSessions.stores
+        val original = SessionParticipantEntity(id = 9, sessionId = 42, characterId = 7, talkativeness = 0.25f)
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        val finish = CompletableDeferred<Unit>()
+        var stored = original
+        coEvery { participants.getBySession(42) } answers { listOf(stored) }
+        coEvery { participants.getById(9) } answers { stored }
+        coEvery { participants.upsert(any()) } coAnswers { finish.await(); stored = firstArg(); 9L }
+        val vm = registry.acquire(42L) { store -> createViewModel(participantDao = participants).also { store.put("vm", it) } }
+        var readers = 1
+        try {
+            advanceUntilIdle()
+            vm.toggleMute(9); runCurrent()
+            assertEquals(setOf(9L), vm.state.value.participantMuteSaving)
+            vm.toggleMute(9); vm.removeParticipant(9)
+            val results = mutableListOf<Boolean>()
+            vm.updateParticipantTalkativeness(9, 0.9f) { results += it }
+            assertEquals(listOf(false), results)
+            registry.release(42); readers--
+            assertTrue(registry.contains(42)); assertFalse(42L in registry.running.value)
+            val reopened = registry.acquire<ChatViewModel>(42) { error("Duplicate mute owner") }; readers++
+            assertTrue(reopened === vm)
+            finish.complete(Unit); advanceUntilIdle()
+            assertTrue(reopened.state.value.participantMuteSaving.isEmpty())
+            assertEquals(original.copy(muted = true), reopened.state.value.participants.single())
+            coVerify(exactly = 1) { participants.upsert(any()) }
+            coVerify(exactly = 0) { participants.delete(any()) }
+        } finally { finish.complete(Unit); repeat(readers) { registry.release(42) }; advanceUntilIdle() }
+    }
+
+    @Test fun participantMuteRejectsForeignRowAndReleasesBusy() = runTest(testDispatcher) {
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        coEvery { participants.getById(9) } returns SessionParticipantEntity(id = 9, sessionId = 43, characterId = 7)
+        val vm = createViewModel(participantDao = participants)
+        advanceUntilIdle(); vm.toggleMute(9); advanceUntilIdle()
+        assertTrue(vm.state.value.participantMuteSaving.isEmpty())
+        assertEquals("该角色已不在当前对话中", vm.state.value.error)
+        coVerify(exactly = 0) { participants.upsert(any()) }
     }
 
     @Test
@@ -1868,6 +3327,93 @@ class ChatViewModelTest {
         assertFalse(vm.state.value.world?.narratorEnabled == true)
         assertEquals("本场玩法保存失败，请重试", vm.state.value.error)
         assertFalse(vm.state.value.error.orEmpty().contains("database unavailable"))
+    }
+
+    @Test fun worldSettingWriteRetainsOwnerAndRejectsConflictsBeforeDraftSubmission() = runTest(testDispatcher) {
+        val registry = com.mojing.app.ui.chat.RetainedChatSessions.stores
+        val dao = mockk<SessionWorldDao>(relaxed = true)
+        val messages = mockk<MessageDao>(relaxed = true)
+        val drafts = emptyDraftStore()
+        val original = SessionWorldEntity(id=17,sessionId=42,narratorEnabled=false,worldPrompt="原设定",sessionLlmApiKey="synthetic-old")
+        var stored = original
+        coEvery { dao.getBySession(42) } answers { stored }
+        val gate = CompletableDeferred<Unit>()
+        coEvery { dao.upsert(any()) } coAnswers { gate.await();stored=firstArg();17L }
+        val vm = registry.acquire(42L) { store -> createViewModel(sessionWorldDao=dao,messageDao=messages,chatDraftStore=drafts).also { store.put("vm",it) } }
+        var readers=1
+        try {
+            advanceUntilIdle();vm.updateInput("未发送草稿");advanceUntilIdle()
+            vm.updateWorldSetting("narratorEnabled",true);runCurrent()
+            vm.updateWorldSetting("antiCheatEnabled",false)
+            val results=mutableListOf<Boolean>()
+            vm.saveSessionWorldCredentials(SessionWorldCredentialDraft(sessionLlmApiKey="synthetic-new")) { results+=it }
+            vm.sendMessage();runCurrent()
+            assertEquals(listOf(false),results)
+            assertEquals("未发送草稿",vm.state.value.inputText);assertFalse(vm.state.value.isGenerating)
+            assertEquals("本场设置正在保存，请稍候再发送",vm.state.value.error)
+            coVerify(exactly=0) { messages.insert(any()) }
+            verify(exactly=0) { drafts.saveBeforeSubmission(any(),any()) }
+            registry.release(42);readers--
+            assertTrue(registry.contains(42));assertFalse(42L in registry.running.value)
+            val reopened=registry.acquire<ChatViewModel>(42) { error("Lost world write owner") };readers++
+            assertTrue(reopened===vm)
+            gate.complete(Unit);advanceUntilIdle()
+            assertEquals(original.copy(narratorEnabled=true),stored)
+            assertEquals(stored,reopened.state.value.world)
+            coVerify(exactly=1) { dao.upsert(any()) }
+        } finally { gate.complete(Unit);repeat(readers) { registry.release(42) };advanceUntilIdle() }
+    }
+
+    @Test fun credentialsWriteRejectsWorldMutationAndSendingUntilComplete() = runTest(testDispatcher) {
+        val dao=mockk<SessionWorldDao>(relaxed=true)
+        val messages=mockk<MessageDao>(relaxed=true)
+        val drafts=emptyDraftStore()
+        val original=SessionWorldEntity(id=17,sessionId=42,narratorEnabled=false)
+        var stored=original
+        coEvery { dao.getBySession(42) } answers { stored }
+        val gate=CompletableDeferred<Unit>()
+        coEvery { dao.upsert(any()) } coAnswers { gate.await();stored=firstArg();17L }
+        val vm=createViewModel(sessionWorldDao=dao,messageDao=messages,chatDraftStore=drafts)
+        advanceUntilIdle();vm.updateInput("未发送草稿");advanceUntilIdle()
+        vm.saveSessionWorldCredentials(SessionWorldCredentialDraft(sessionLlmBaseUrl="https://example.test/v1"));runCurrent()
+        vm.updateWorldSetting("narratorEnabled",true);vm.sendMessage();runCurrent()
+        assertEquals("本场设置正在保存，请稍候再发送",vm.state.value.error)
+        gate.complete(Unit);advanceUntilIdle()
+        assertEquals(original.copy(sessionLlmBaseUrl="https://example.test/v1",updatedAt=stored.updatedAt),stored)
+        assertEquals(stored,vm.state.value.world);assertEquals("未发送草稿",vm.state.value.inputText)
+        coVerify(exactly=1) { dao.upsert(any()) }
+        coVerify(exactly=0) { messages.insert(any()) }
+        verify(exactly=0) { drafts.saveBeforeSubmission(any(),any()) }
+    }
+
+    @Test fun sixWorldSettingsUseLatestPersistedRowAndFailureAllowsRetry() = runTest(testDispatcher) {
+        val dao=mockk<SessionWorldDao>(relaxed=true)
+        val original=SessionWorldEntity(id=17,sessionId=42,narratorEnabled=false,choiceGenerationEnabled=false,
+            antiCheatEnabled=false,autoSedimentEnabled=false,autoCharacterImageGen=false,autoCharacterSpeech=false)
+        var stored=original
+        coEvery { dao.getBySession(42) } answers { stored }
+        var fails=false
+        coEvery { dao.upsert(any()) } answers { if(fails) error("private disk error");stored=firstArg();17L }
+        val vm=createViewModel(sessionWorldDao=dao)
+        advanceUntilIdle()
+        vm.updateWorldSetting("unknown",true);runCurrent()
+        assertFalse(vm.state.value.worldSettingSaving)
+        coVerify(exactly=0) { dao.upsert(any()) }
+        stored=original.copy(worldPrompt="持久层更新",sessionLlmBaseUrl="https://example.test/v1")
+        val latest=stored
+        val keys=listOf("narratorEnabled","choiceGenerationEnabled","antiCheatEnabled","autoSedimentEnabled","autoCharacterImageGen","autoCharacterSpeech")
+        keys.forEach { key ->
+            val before=stored
+            fails=true;vm.updateWorldSetting(key,true);advanceUntilIdle()
+            assertEquals(before,stored);assertFalse(vm.state.value.worldSettingSaving)
+            assertEquals("本场玩法保存失败，请重试",vm.state.value.error)
+            fails=false;vm.updateWorldSetting(key,true);advanceUntilIdle()
+            assertFalse(vm.state.value.worldSettingSaving)
+            assertEquals(stored,vm.state.value.world)
+        }
+        assertEquals(latest.copy(narratorEnabled=true,choiceGenerationEnabled=true,antiCheatEnabled=true,
+            autoSedimentEnabled=true,autoCharacterImageGen=true,autoCharacterSpeech=true),stored)
+        coVerify(exactly=12) { dao.upsert(any()) }
     }
 
     @Test
@@ -1985,7 +3531,7 @@ class ChatViewModelTest {
             every { storage.speakerTurnMode } returns "manual"
             val routes = mutableListOf<List<String>>()
             val engine = mockk<ChatEngine>(relaxed = true)
-            every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+            every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
                 routes.add(listOf(args[6] as String, args[7] as String, args[8] as String))
                 flowOf(StreamState.Done("角色回复"))
             }
@@ -2012,6 +3558,95 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun manualMaintenanceFreezesPlatformBeforeAsyncPreparation() = runTest(testDispatcher) {
+        for ((summary, identified) in listOf(false to true, true to true, false to false, true to false)) {
+            val a = com.mojing.app.data.ModelPlatform("a", "A", "https://a.test/v1", "fake-a", listOf("a-model"), modelContextWindows = mapOf("a-model" to 6000))
+            val b = com.mojing.app.data.ModelPlatform("b", "B", "https://b.test/v1", "fake-b", listOf("b-model"), modelContextWindows = mapOf("b-model" to 9000))
+            var selection: Pair<String, String>? = if (identified) "a" to "a-model" else null
+            val storage = validSecureStorage()
+            every { storage.modelPlatforms() } returns listOf(a, b)
+            every { storage.sessionModelSelection(42L) } answers { selection }
+            val characters = mockk<CharacterDao>(relaxed = true)
+            coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "甲")
+            val participants = mockk<ParticipantDao>(relaxed = true)
+            coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 3L))
+            val memory = mockk<com.mojing.app.domain.engine.UniversalContextMemoryManager>(relaxed = true)
+            val compactor = mockk<com.mojing.app.domain.engine.MemoryCompactor>(relaxed = true)
+            coEvery { compactor.pendingBatch(any(), any(), any()) } returns com.mojing.app.domain.engine.MemoryCompactor.PendingBatch(100, 10)
+            val vm = createViewModel(secureStorage = storage, characterDao = characters, participantDao = participants,
+                contextMemory = memory, compactor = compactor, llmApiService = validLlmApiService())
+            advanceUntilIdle()
+            if (summary) vm.continueCurrentStorySummary() else vm.rebuildCurrentContextMemory()
+            selection = "b" to "b-model"
+            advanceUntilIdle()
+            val key = if (identified) "fake-a" else "sk-test"
+            val base = if (identified) "https://a.test/v1" else "https://api.test.com/v1"
+            val model = if (identified) "a-model" else "test-model"
+            val capacity = if (identified) 6000 else null
+            if (summary) coVerify(exactly = 1) { compactor.compactIfNeeded(42L, "main", key, base, model, any(), any(), any(), any(), capacity) }
+            else coVerify(exactly = 1) { memory.rebuild(42L, "main", any(), key, base, model, any(), any(), capacity) }
+            assertFalse(vm.state.value.memoryOperationRunning)
+        }
+    }
+
+    @Test
+    fun manualMaintenanceMissingPlatformReportsWithoutStartingOperation() = runTest(testDispatcher) {
+        val storage = validSecureStorage()
+        every { storage.modelPlatforms() } returns emptyList()
+        every { storage.sessionModelSelection(42L) } returns ("removed" to "model")
+        val vm = createViewModel(secureStorage = storage)
+        advanceUntilIdle()
+        val notices = mutableListOf<String>()
+        vm.continueCurrentStorySummary { notices += it }
+        vm.rebuildCurrentContextMemory { notices += it }
+        assertEquals(2, notices.size)
+        assertTrue(notices.all { it.contains("重新选择") })
+        assertFalse(vm.state.value.memoryOperationRunning)
+    }
+
+    @Test
+    fun postMaintenanceKeepsFrozenRouteAfterGenerationEndsAndSelectionChanges() = runTest(testDispatcher) {
+        for (narrator in listOf(false, true)) {
+            val a = com.mojing.app.data.ModelPlatform("a", "A", "https://a.test/v1", "fake-a", listOf("a-model"), modelContextWindows = mapOf("a-model" to 6000))
+            val b = com.mojing.app.data.ModelPlatform("b", "B", "https://b.test/v1", "fake-b", listOf("b-model"), modelContextWindows = mapOf("b-model" to 9000))
+            var selection = "a" to "a-model"
+            val storage = validSecureStorage()
+            every { storage.modelPlatforms() } returns listOf(a, b)
+            every { storage.sessionModelSelection(42L) } answers { selection }
+            every { storage.speakerTurnMode } returns "manual"
+            val worlds = mockk<SessionWorldDao>(relaxed = true)
+            coEvery { worlds.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L, autoSedimentEnabled = true, encyclopediaId = 9)
+            val characters = mockk<CharacterDao>(relaxed = true)
+            coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "甲")
+            val participants = mockk<ParticipantDao>(relaxed = true)
+            coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 3L))
+            val engine = mockk<ChatEngine>(relaxed = true)
+            every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns flowOf(StreamState.Done("已完成角色正文"))
+            every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns flowOf(StreamState.Done("已完成旁白正文"))
+            val memory = mockk<com.mojing.app.domain.engine.UniversalContextMemoryManager>(relaxed = true)
+            val events = mockk<com.mojing.app.domain.engine.MemoryV2Manager>(relaxed = true)
+            val sediment = mockk<com.mojing.app.domain.engine.SedimentEngine>(relaxed = true)
+            val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>(); val finished = CompletableDeferred<Unit>()
+            coEvery { memory.updateAfterMessages(any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
+                entered.complete(Unit); release.await(); com.mojing.app.domain.engine.UniversalContextMemoryUpdateResult.FAILED
+            }
+            coEvery { sediment.sedimentFromMessages(any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers { finished.complete(Unit); Unit }
+            val vm = createViewModel(secureStorage = storage, sessionWorldDao = worlds, characterDao = characters,
+                participantDao = participants, chatEngine = engine, contextMemory = memory, events = events,
+                sediment = sediment, llmApiService = validLlmApiService())
+            advanceUntilIdle()
+            if (narrator) assertTrue(vm.requestNarrator()) else { vm.setManualReplyCharacterId(3L); vm.updateInput("继续"); vm.sendMessage() }
+            advanceUntilIdle(); entered.await()
+            assertFalse(vm.state.value.isGenerating)
+            selection = "b" to "b-model"; release.complete(Unit); finished.await()
+            coVerify(exactly = 1) { memory.updateAfterMessages(42L, "main", any(), "fake-a", "https://a.test/v1", "a-model", any(), any(), 6000) }
+            coVerify(exactly = 1) { events.extractEventNodes(42L, "main", any(), any(), "fake-a", "https://a.test/v1", "a-model", 6000) }
+            coVerify(exactly = 1) { sediment.sedimentFromMessages(9L, 42L, "main", any(), "fake-a", "https://a.test/v1", "a-model", 6000) }
+            assertEquals(null, vm.state.value.error)
+        }
+    }
+
+    @Test
     fun modelPickerChangesEngineRouteForCharactersAndNarrator() = runTest(testDispatcher) {
         for (narrator in listOf(false, true)) {
             val a = com.mojing.app.data.ModelPlatform("a", "A", "https://a.test/v1", "fake-a", listOf("a-one", "a-two"))
@@ -2027,15 +3662,17 @@ class ChatViewModelTest {
             lateinit var vm: ChatViewModel
             val routes = mutableListOf<List<String>>()
             val engine = mockk<ChatEngine>(relaxed = true)
-            every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+            every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
                 assertEquals(args[5], vm.state.value.lastRequestModel)
                 assertEquals(if (args[3] == "fake-a") "A" else "B", vm.state.value.lastRequestPlatform)
+                assertEquals(if (args[3] == "fake-a") "a" else "b", args[10])
                 routes.add(listOf(args[3] as String, args[4] as String, args[5] as String))
                 flowOf(StreamState.Done("旁白测试回复"))
             }
-            every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+            every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
                 assertEquals(args[8], vm.state.value.lastRequestModel)
                 assertEquals(if (args[6] == "fake-a") "A" else "B", vm.state.value.lastRequestPlatform)
+                assertEquals(if (args[6] == "fake-a") "a" else "b", args[11])
                 routes.add(listOf(args[6] as String, args[7] as String, args[8] as String))
                 flowOf(StreamState.Done("角色测试回复"))
             }
@@ -2067,6 +3704,49 @@ class ChatViewModelTest {
                 listOf("fake-a", "https://a.test/v1", "a-two"),
                 listOf("fake-b", "https://b.test/v1", "b-one"),
             ), routes)
+        }
+    }
+
+    @Test
+    fun followingSettingsUsesFrozenMatchingPlatformCapacityForCharactersAndNarrator() = runTest(testDispatcher) {
+        for (narrator in listOf(false, true)) {
+            val storage = validSecureStorage()
+            val saved = com.mojing.app.data.ModelPlatform("saved", "Saved", "https://api.test.com/v1", "sk-test",
+                listOf("test-model"), modelContextWindows = mapOf("test-model" to 16384))
+            var platforms = listOf(saved)
+            every { storage.modelPlatforms() } answers { platforms }
+            every { storage.speakerTurnMode } returns "manual"
+            val engine = mockk<ChatEngine>(relaxed = true)
+            val capacities = mutableListOf<Int?>()
+            every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+                assertEquals("sk-test", args[3]); assertEquals("test-model", args[5])
+                assertEquals(null, args[10])
+                capacities += args[11] as Int?
+                flowOf(StreamState.Done("旁白测试回复"))
+            }
+            every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+                assertEquals("sk-test", args[6]); assertEquals("test-model", args[8])
+                assertEquals(null, args[11])
+                capacities += (args[5] as com.mojing.app.domain.engine.TokenBudget).contextWindow
+                flowOf(StreamState.Done("角色测试回复"))
+            }
+            val worlds = mockk<SessionWorldDao>(relaxed = true)
+            coEvery { worlds.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L)
+            val characters = mockk<CharacterDao>(relaxed = true)
+            coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "角色", modelName = "test-model")
+            val participants = mockk<ParticipantDao>(relaxed = true)
+            coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 3L))
+            val vm = createViewModel(secureStorage = storage, sessionWorldDao = worlds, characterDao = characters,
+                participantDao = participants, chatEngine = engine, llmApiService = validLlmApiService(),
+                budgetManager = com.mojing.app.domain.engine.TokenBudgetManager())
+            advanceUntilIdle()
+            if (narrator) assertTrue(vm.requestNarrator()) else {
+                vm.setManualReplyCharacterId(3L); vm.updateInput("继续"); vm.sendMessage()
+            }
+            platforms = listOf(saved.copy(modelContextWindows = mapOf("test-model" to 32000)))
+            advanceUntilIdle()
+            assertEquals(listOf(16384), capacities)
+            assertFalse(vm.state.value.isGenerating)
         }
     }
 
@@ -2148,6 +3828,19 @@ class ChatViewModelTest {
         assertEquals("第一条", vm.state.value.inputText)
         assertEquals(listOf("F:/tmp/pending.png"), vm.state.value.pendingLocalImagePaths)
         advanceUntilIdle()
+    }
+
+    @Test
+    fun mediaResultsAreAcceptedOnlyForTheCurrentBranch() = runTest(testDispatcher) {
+        val vm = createViewModel()
+        advanceUntilIdle()
+
+        assertTrue(vm.appendVoiceText("同分支语音", expectedBranchId = "main"))
+        assertFalse(vm.appendVoiceText("迟到语音", expectedBranchId = "branch-late"))
+        assertTrue(vm.queueLocalImageAttachment("F:/pending/current.png", expectedBranchId = "main"))
+        assertFalse(vm.queueLocalImageAttachment("F:/pending/late.png", expectedBranchId = "branch-late"))
+        assertEquals("同分支语音", vm.state.value.inputText)
+        assertEquals(listOf("F:/pending/current.png"), vm.state.value.pendingLocalImagePaths)
     }
 
     @Test
@@ -2842,7 +4535,7 @@ class ChatViewModelTest {
             assertEquals("", vm.state.value.inputText)
             assertEquals("剧情走向已保存，但对话刷新失败，请重新进入对话", vm.state.value.error)
             assertFalse(vm.state.value.isGenerating)
-            verify(exactly = 0) { chatEngine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            verify(exactly = 0) { chatEngine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
             coVerify(exactly = 1) { messageDao.insert(match { it.speakerType == "user" }) }
         }
 
@@ -2915,8 +4608,8 @@ class ChatViewModelTest {
                 emit(StreamState.Generating("第一段第二段尾字"))
                 emit(if (interrupted) StreamState.Error("connection reset") else StreamState.Done("第一段第二段尾字"))
             }
-            every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns stream
-            every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns stream
+            every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns stream
+            every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns stream
             val vm = createViewModel(messageDao = messages, sessionWorldDao = world, characterDao = characters,
                 participantDao = participants, secureStorage = storage, chatEngine = engine, llmApiService = validLlmApiService())
             advanceUntilIdle()
@@ -2963,8 +4656,8 @@ class ChatViewModelTest {
                 emit(StreamState.Generating("最新正文尾字"))
                 kotlinx.coroutines.awaitCancellation()
             }
-            every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns stream
-            every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns stream
+            every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns stream
+            every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns stream
             val vm = createViewModel(messageDao = messages, sessionWorldDao = world, characterDao = characters,
                 participantDao = participants, secureStorage = storage, chatEngine = engine, llmApiService = validLlmApiService())
             advanceUntilIdle()
@@ -3003,7 +4696,7 @@ class ChatViewModelTest {
             gameplayMode = "小说创作",
         )
         val engine = mockk<ChatEngine>(relaxed = true)
-        every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+        every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
             kotlinx.coroutines.flow.flow {
                 emit(StreamState.Generating("章节最新正文"))
                 kotlinx.coroutines.awaitCancellation()
@@ -3030,6 +4723,45 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun narratorAndNovelReadBoundedCurrentBranchSummariesIntoPrompt() = runTest(testDispatcher) {
+        for (mode in listOf("自由对话", "小说创作")) {
+            val worlds = mockk<SessionWorldDao>(relaxed = true)
+            val segments = mockk<com.mojing.app.data.local.dao.SessionMemorySegmentDao>(relaxed = true)
+            val engine = mockk<ChatEngine>(relaxed = true)
+            coEvery { worlds.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L,
+                narratorName = "讲述者", gameplayMode = mode)
+            coEvery { segments.getRecentForBranch(42L, "main", 6) } returns listOf(
+                com.mojing.app.data.local.entity.SessionMemorySegmentEntity(sessionId = 42L, summary = "北塔约定已保存"))
+            val contexts = mockk<ContextBuilder>(relaxed = true)
+            val documents = mutableListOf<com.mojing.app.domain.engine.PromptDocument>()
+            val prompts = mutableListOf<String>()
+            every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+                prompts += arg<CharacterEntity>(1).personaPrompt
+                documents += arg<com.mojing.app.domain.engine.PromptDocument>(12)
+                flowOf(StreamState.Done("新的正文"))
+            }
+            val vm = createViewModel(sessionWorldDao = worlds, memorySegmentDao = segments,
+                secureStorage = validSecureStorage(), llmApiService = validLlmApiService(), chatEngine = engine,
+                promptBuilder = com.mojing.app.domain.engine.PromptBuilder(), contextBuilder = contexts)
+            advanceUntilIdle()
+            assertTrue(vm.requestNarrator(nextChapter = mode == "小说创作"))
+            advanceUntilIdle()
+            assertEquals(1, prompts.size)
+            assertEquals(prompts.single(), documents.single().render())
+            assertTrue(documents.single().blocks.all { it.kind == com.mojing.app.domain.engine.PromptBlock.Kind.PROTECTED })
+            coVerify(exactly = 0) { contexts.areAutomaticSummaries(any()) }
+            assertTrue(prompts.single().contains("- 北塔约定已保存"))
+            if (mode == "小说创作") {
+                assertTrue(prompts.single().contains("不生成选项或大纲"))
+                assertFalse(prompts.single().contains("<CHOICES>"))
+            } else {
+                assertTrue(prompts.single().contains("<CHOICES>"))
+            }
+            coVerify { segments.getRecentForBranch(42L, "main", 6) }
+        }
+    }
+
+    @Test
     fun committedNarratorReplyReportsRefreshFailureInsteadOfGenerationFailure() = runTest(testDispatcher) {
         val messageDao = mockk<MessageDao>(relaxed = true)
         val worldDao = mockk<SessionWorldDao>(relaxed = true)
@@ -3040,7 +4772,7 @@ class ChatViewModelTest {
             narratorName = "旁白",
         )
         every {
-            chatEngine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            chatEngine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } returns flowOf(StreamState.Done("雨声停在窗外。"))
         coEvery { messageDao.insert(match { it.speakerType == "narrator" }) } answers {
             narratorCommitted = true
@@ -3065,6 +4797,151 @@ class ChatViewModelTest {
         assertEquals("旁白回复已保存，但对话刷新失败，请重新进入对话", vm.state.value.error)
         assertFalse(vm.state.value.isGenerating)
         coVerify(exactly = 1) { messageDao.insert(match { it.speakerType == "narrator" }) }
+    }
+
+    @Test
+    fun manualImageFailureRetriesOriginalPromptWithCurrentKeyAndPreservesNewDraft() = runTest(testDispatcher) {
+        val images = mockk<com.mojing.app.data.repository.ImageRepository>(relaxed = true)
+        val storage = validSecureStorage()
+        val prompts = mutableListOf<String>()
+        val keys = mutableListOf<String>()
+        coEvery { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
+            prompts += firstArg<String>(); keys += arg<String>(1)
+            if (prompts.size == 1) Result.failure(IllegalStateException("offline")) else Result.success("mock-image")
+        }
+        coEvery { images.saveGeneratedImageForSession(any(), 42L) } returns "/mock/retry-image.png"
+        val messages = mockk<MessageDao>(relaxed = true)
+        coEvery { messages.insert(any()) } returns 91L
+        val attachments = mockk<AttachmentDao>(relaxed = true)
+        val vm = createViewModel(messageDao = messages, attachmentDao = attachments, imageRepository = images, secureStorage = storage)
+        advanceUntilIdle()
+        vm.updateInput("独立消息草稿")
+        vm.updateImagePrompt("原始雨夜画面")
+        assertTrue(vm.generateAndAttachUserMessage("原始雨夜画面"))
+        advanceUntilIdle()
+        val notice = requireNotNull(vm.state.value.imageRetryNotice)
+        assertEquals(null, vm.state.value.error)
+        vm.updateImagePrompt("后来编辑的画面")
+        every { storage.publicApiKey } returns "changed-test-key"
+        assertTrue(vm.retryFailedImage(notice.token))
+        assertFalse(vm.retryFailedImage(notice.token))
+        advanceUntilIdle()
+        assertEquals(listOf("原始雨夜画面", "原始雨夜画面"), prompts)
+        assertEquals(listOf("sk-test", "changed-test-key"), keys)
+        assertEquals("后来编辑的画面", vm.state.value.imagePrompt)
+        assertEquals("独立消息草稿", vm.state.value.inputText)
+        assertEquals(null, vm.state.value.imageRetryNotice)
+        coVerify(exactly = 1) { messages.insert(match { it.content.contains("原始雨夜画面") }) }
+        coVerify(exactly = 1) { attachments.insert(match { it.messageId == 91L && it.generationPrompt == "原始雨夜画面" }) }
+    }
+
+    @Test
+    fun manualImageDiskFailureRetriesAndOldDismissCannotClearFreshFailure() = runTest(testDispatcher) {
+        val images = mockk<com.mojing.app.data.repository.ImageRepository>(relaxed = true)
+        coEvery { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns Result.success("mock-image")
+        coEvery { images.saveGeneratedImageForSession(any(), 42L) } returns null
+        val messages = mockk<MessageDao>(relaxed = true)
+        val vm = createViewModel(messageDao = messages, imageRepository = images, secureStorage = validSecureStorage())
+        advanceUntilIdle()
+        vm.updateImagePrompt("失败的画面")
+        vm.generateAndAttachUserMessage("失败的画面"); advanceUntilIdle()
+        val old = requireNotNull(vm.state.value.imageRetryNotice)
+        assertTrue(vm.retryFailedImage(old.token)); advanceUntilIdle()
+        val fresh = requireNotNull(vm.state.value.imageRetryNotice)
+        assertFalse(old.token == fresh.token)
+        vm.dismissImageRetry(old.token)
+        assertEquals(fresh, vm.state.value.imageRetryNotice)
+        assertFalse(vm.retryFailedImage(old.token))
+        coEvery { images.saveGeneratedImageForSession(any(), 42L) } returns "/mock/image.png"
+        assertTrue(vm.retryFailedImage(fresh.token)); advanceUntilIdle()
+        assertEquals(null, vm.state.value.imageRetryNotice)
+        assertEquals("", vm.state.value.imagePrompt)
+        coVerify(exactly = 1) { messages.insert(any()) }
+    }
+
+    @Test
+    fun manualImageStopAndDismissInvalidateRetryWithoutChangingDraft() = runTest(testDispatcher) {
+        for (stop in listOf(true, false)) {
+            val images = mockk<com.mojing.app.data.repository.ImageRepository>(relaxed = true)
+            coEvery { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns Result.failure(IllegalStateException("offline"))
+            val vm = createViewModel(imageRepository = images, secureStorage = validSecureStorage())
+            advanceUntilIdle()
+            vm.updateImagePrompt("待保留描述")
+            vm.generateAndAttachUserMessage("待保留描述"); advanceUntilIdle()
+            val notice = requireNotNull(vm.state.value.imageRetryNotice)
+            if (stop) vm.stopGeneration() else vm.dismissImageRetry(notice.token)
+            assertFalse(vm.retryFailedImage(notice.token))
+            assertEquals(null, vm.state.value.imageRetryNotice)
+            assertEquals("待保留描述", vm.state.value.imagePrompt)
+            coVerify(exactly = 1) { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        }
+    }
+
+    @Test
+    fun manualImageCancellationAndNewRequestRejectOldFailure() = runTest(testDispatcher) {
+        val images = mockk<com.mojing.app.data.repository.ImageRepository>(relaxed = true)
+        val gate = CompletableDeferred<Result<String>>()
+        coEvery { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns Result.failure(IllegalStateException("offline"))
+        val vm = createViewModel(imageRepository = images, secureStorage = validSecureStorage())
+        advanceUntilIdle()
+        vm.updateImagePrompt("旧描述")
+        vm.generateAndAttachUserMessage("旧描述"); advanceUntilIdle()
+        val old = requireNotNull(vm.state.value.imageRetryNotice)
+        coEvery { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers { withContext(NonCancellable) { gate.await() } }
+        vm.updateImagePrompt("新描述")
+        assertTrue(vm.generateAndAttachUserMessage("新描述")); runCurrent()
+        assertEquals(null, vm.state.value.imageRetryNotice)
+        vm.dismissImageRetry(old.token)
+        assertFalse(vm.retryFailedImage(old.token))
+        vm.stopGeneration()
+        gate.complete(Result.failure(IllegalStateException("late failure"))); advanceUntilIdle()
+        assertEquals(null, vm.state.value.imageRetryNotice)
+        assertEquals("新描述", vm.state.value.imagePrompt)
+        assertFalse(vm.state.value.isGenerating)
+    }
+
+    @Test
+    fun manualImageRetryRejectsChangedCharacterAndWorldTargetsBeforeProvider() = runTest(testDispatcher) {
+        for (change in listOf("character", "world", "encyclopedia")) {
+            val images = mockk<com.mojing.app.data.repository.ImageRepository>(relaxed = true)
+            coEvery { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns Result.failure(IllegalStateException("offline"))
+            val participants = mockk<ParticipantDao>(relaxed = true)
+            coEvery { participants.getBySession(42L) } returns emptyList()
+            val characters = mockk<CharacterDao>(relaxed = true)
+            coEvery { characters.getById(99L) } returns CharacterEntity(id = 99L, name = "新角色")
+            val worlds = mockk<SessionWorldDao>(relaxed = true)
+            val originalWorld = SessionWorldEntity(id = 8L, sessionId = 42L, encyclopediaId = 12L)
+            coEvery { worlds.getBySession(42L) } returns originalWorld
+            val vm = createViewModel(imageRepository = images, participantDao = participants, characterDao = characters, sessionWorldDao = worlds, secureStorage = validSecureStorage())
+            advanceUntilIdle()
+            vm.generateAndAttachUserMessage("原始画面"); advanceUntilIdle()
+            val notice = requireNotNull(vm.state.value.imageRetryNotice)
+            when (change) {
+                "character" -> coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 99L))
+                "world" -> coEvery { worlds.getBySession(42L) } returns originalWorld.copy(id = 9L)
+                else -> coEvery { worlds.getBySession(42L) } returns originalWorld.copy(encyclopediaId = 13L)
+            }
+            assertTrue(vm.retryFailedImage(notice.token)); advanceUntilIdle()
+            assertEquals("配图对象已改变，请重新生成", vm.state.value.error)
+            assertEquals(null, vm.state.value.imageRetryNotice)
+            coVerify(exactly = 1) { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        }
+    }
+
+    @Test
+    fun manualImageBranchTransitionInvalidatesOldRetry() = runTest(testDispatcher) {
+        val images = mockk<com.mojing.app.data.repository.ImageRepository>(relaxed = true)
+        coEvery { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns Result.failure(IllegalStateException("offline"))
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        coEvery { branches.getBySession(42L) } returns listOf(SessionBranchEntity(sessionId = 42L, branchId = "new-branch", sourceMessageId = 1L))
+        val vm = createViewModel(imageRepository = images, sessionBranchDao = branches, secureStorage = validSecureStorage())
+        advanceUntilIdle()
+        vm.generateAndAttachUserMessage("原画面"); advanceUntilIdle()
+        val notice = requireNotNull(vm.state.value.imageRetryNotice)
+        vm.switchBranch("new-branch"); advanceUntilIdle()
+        assertEquals(null, vm.state.value.imageRetryNotice)
+        assertFalse(vm.retryFailedImage(notice.token))
+        coVerify(exactly = 1) { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -3105,6 +4982,927 @@ class ChatViewModelTest {
         assertEquals(listOf(saved), vm.state.value.messages)
         coVerify(exactly = 1) { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         coVerify(exactly = 1) { messages.insert(any()) }
+    }
+
+    @Test
+    fun initialAutoImageCancellationClosesInsertedLeaseAndActiveRefreshDoesNotRecoverIt() = runTest(testDispatcher) {
+        for (stopDuringInsert in listOf(true, false)) {
+            val messages = mockk<MessageDao>(relaxed = true)
+            val stored = mutableListOf<MessageEntity>()
+            val imageInserted = CompletableDeferred<MessageEntity>()
+            val insertRelease = CompletableDeferred<Unit>()
+            val refreshEntered = CompletableDeferred<Unit>()
+            val refreshRelease = CompletableDeferred<Unit>()
+            var pausedRefresh = false
+            coEvery { messages.insert(any()) } coAnswers {
+                val message = firstArg<MessageEntity>().copy(id = stored.size.toLong() + 1)
+                stored.add(message)
+                if (AutoImageMetadata.parse(message.structuredContentJson)?.state == AutoImageMetadata.STATE_RUNNING) {
+                    imageInserted.complete(message)
+                    if (stopDuringInsert) withContext(NonCancellable) { insertRelease.await() }
+                }
+                message.id
+            }
+            coEvery { messages.getMainMessagesTail(42L, any()) } answers { stored.reversed() }
+            val branches = mockk<SessionBranchDao>(relaxed = true)
+            coEvery { branches.getBySession(42L) } coAnswers {
+                if (!stopDuringInsert && imageInserted.isCompleted && !pausedRefresh) {
+                    pausedRefresh = true
+                    refreshEntered.complete(Unit)
+                    refreshRelease.await()
+                }
+                emptyList()
+            }
+            val failures = mutableListOf<Pair<Long, String>>()
+            coEvery { messages.failAutoImageGeneration(any(), 42L, "main", any(), interrupted = true) } answers {
+                val id = firstArg<Long>()
+                val token = args[3] as String
+                val row = stored.first { it.id == id }
+                assertEquals(AutoImageMetadata.STATE_RUNNING, AutoImageMetadata.parse(row.structuredContentJson)?.state)
+                assertEquals(token, AutoImageMetadata.parse(row.structuredContentJson)?.attemptToken)
+                failures.add(id to token)
+                stored[stored.indexOf(row)] = row.copy(
+                    content = "🖼 配图生成中断，可重试",
+                    structuredContentJson = AutoImageMetadata.update(row.structuredContentJson, AutoImageMetadata.STATE_INTERRUPTED),
+                )
+                true
+            }
+            val world = mockk<SessionWorldDao>(relaxed = true)
+            coEvery { world.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L, autoCharacterImageGen = true, sessionImageApiKey = "local-test-key")
+            val characters = mockk<CharacterDao>(relaxed = true)
+            coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "角色")
+            val participants = mockk<ParticipantDao>(relaxed = true)
+            coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 3L))
+            val storage = validSecureStorage()
+            every { storage.speakerTurnMode } returns "manual"
+            val engine = mockk<ChatEngine>(relaxed = true)
+            every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+                flowOf(StreamState.Done("潮声还在窗外。\n<GEN_IMAGE>原始画面提示</GEN_IMAGE>"))
+            val images = mockk<com.mojing.app.data.repository.ImageRepository>(relaxed = true)
+            val vm = createViewModel(messageDao = messages, sessionBranchDao = branches, sessionWorldDao = world,
+                characterDao = characters, participantDao = participants, secureStorage = storage,
+                chatEngine = engine, imageRepository = images, llmApiService = validLlmApiService())
+            advanceUntilIdle()
+            vm.setManualReplyCharacterId(3L)
+            vm.updateInput("继续")
+            vm.sendMessage()
+            runCurrent()
+            assertTrue("auto image reached insert: ${vm.state.value.error}", imageInserted.isCompleted)
+            if (!stopDuringInsert) assertTrue("auto image reached refresh", refreshEntered.isCompleted)
+            val inserted = imageInserted.await()
+            val token = requireNotNull(AutoImageMetadata.parse(inserted.structuredContentJson)?.attemptToken)
+            assertEquals("原始画面提示", AutoImageMetadata.parse(inserted.structuredContentJson)?.prompt)
+            assertEquals("潮声还在窗外。", stored.first { it.id == inserted.parentMessageId }.content)
+
+            vm.retryInitialization()
+            runCurrent()
+            coVerify(exactly = 0) { messages.markAutoImageRunningInterrupted(any(), any(), any()) }
+            assertEquals(AutoImageMetadata.STATE_RUNNING, AutoImageMetadata.parse(stored.first { it.id == inserted.id }.structuredContentJson)?.state)
+            vm.stopGeneration()
+            insertRelease.complete(Unit)
+            refreshRelease.complete(Unit)
+            advanceUntilIdle()
+            assertEquals(listOf(inserted.id to token), failures)
+            assertEquals(AutoImageMetadata.STATE_INTERRUPTED, AutoImageMetadata.parse(stored.first { it.id == inserted.id }.structuredContentJson)?.state)
+            coVerify(exactly = 0) { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+            coVerify(exactly = 0) { messages.completeAutoImageGeneration(any(), any(), any(), any(), any()) }
+            assertFalse(vm.state.value.isGenerating)
+        }
+    }
+
+    @Test
+    fun autoImageRetryClaimsOnceAndRetainsFailurePrompt() = runTest(testDispatcher) {
+        val images = mockk<com.mojing.app.data.repository.ImageRepository>(relaxed = true)
+        coEvery { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            Result.failure(IllegalStateException("offline"))
+        val messages = mockk<MessageDao>(relaxed = true)
+        val failed = MessageEntity(
+            id = 77L,
+            sessionId = 42L,
+            speakerType = "character",
+            characterId = 3L,
+            branchId = "main",
+            parentMessageId = 11L,
+            content = "🖼 配图生成失败，可重试",
+            structuredContentJson = AutoImageMetadata.create(
+                "保留原始配图提示", AutoImageMetadata.STATE_FAILED, "old-attempt",
+            ),
+            includeInContext = false,
+        )
+        coEvery { messages.getMainMessagesTail(42L, 81) } returns listOf(failed)
+        coEvery { messages.getById(77L) } returns failed
+        coEvery { messages.claimAutoImageGeneration(77L, 42L, "main", "old-attempt", any()) } returns true
+        coEvery { messages.failAutoImageGeneration(77L, 42L, "main", any(), interrupted = false) } returns true
+        val characters = mockk<CharacterDao>(relaxed = true)
+        coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "角色")
+        val world = mockk<SessionWorldDao>(relaxed = true)
+        coEvery { world.getBySession(42L) } returns SessionWorldEntity(
+            sessionId = 42L,
+            sessionImageApiKey = "test-key",
+            sessionImageBaseUrl = "http://127.0.0.1",
+            sessionImageModel = "test-image",
+        )
+        val vm = createViewModel(
+            messageDao = messages,
+            characterDao = characters,
+            sessionWorldDao = world,
+            imageRepository = images,
+            secureStorage = validSecureStorage(apiKey = ""),
+        )
+        advanceUntilIdle()
+
+        assertTrue(vm.retryAutoCharacterImage(77L))
+        assertFalse(vm.retryAutoCharacterImage(77L))
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { messages.claimAutoImageGeneration(77L, 42L, "main", "old-attempt", any()) }
+        coVerify(exactly = 1) { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 1) { messages.failAutoImageGeneration(77L, 42L, "main", any(), interrupted = false) }
+        assertEquals("保留原始配图提示", AutoImageMetadata.parse(failed.structuredContentJson)?.prompt)
+    }
+
+    @Test
+    fun coldStartRunningAutoImageIsInterruptedWithoutRequestingVendor() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val running = MessageEntity(
+            id = 78L,
+            sessionId = 42L,
+            speakerType = "character",
+            characterId = 3L,
+            branchId = "main",
+            parentMessageId = 11L,
+            content = "🖼 配图生成中…",
+            structuredContentJson = AutoImageMetadata.create(
+                "冷启动恢复提示", AutoImageMetadata.STATE_RUNNING, "running-token",
+            ),
+            includeInContext = false,
+        )
+        coEvery { messages.getMainMessagesTail(42L, 81) } returns listOf(running)
+        coEvery { messages.markAutoImageRunningInterrupted(78L, 42L, "main") } returns true
+        val images = mockk<com.mojing.app.data.repository.ImageRepository>(relaxed = true)
+        val vm = createViewModel(messageDao = messages, imageRepository = images)
+        advanceUntilIdle()
+
+        assertEquals("🖼 配图生成中断，可重试", vm.state.value.messages.single().content)
+        coVerify(exactly = 1) { messages.markAutoImageRunningInterrupted(78L, 42L, "main") }
+        coVerify(exactly = 0) { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun claimedAutoImageRefreshFailureClosesTheSameAttempt() = runTest(testDispatcher) {
+        val images = mockk<com.mojing.app.data.repository.ImageRepository>(relaxed = true)
+        val messages = mockk<MessageDao>(relaxed = true)
+        val failed = MessageEntity(
+            id = 79L,
+            sessionId = 42L,
+            speakerType = "character",
+            characterId = 3L,
+            branchId = "main",
+            parentMessageId = 11L,
+            content = "🖼 配图生成失败，可重试",
+            structuredContentJson = AutoImageMetadata.create(
+                "refresh失败仍保留提示", AutoImageMetadata.STATE_FAILED, "old-refresh-token",
+            ),
+            includeInContext = false,
+        )
+        coEvery { messages.getMainMessagesTail(42L, 81) } returns listOf(failed)
+        coEvery { messages.getById(79L) } returns failed
+        coEvery { messages.claimAutoImageGeneration(79L, 42L, "main", "old-refresh-token", any()) } returns true
+        coEvery { messages.failAutoImageGeneration(79L, 42L, "main", any(), interrupted = false) } returns true
+        val world = mockk<SessionWorldDao>(relaxed = true)
+        val configuredWorld = SessionWorldEntity(sessionId = 42L, sessionImageApiKey = "test-key")
+        var worldReads = 0
+        coEvery { world.getBySession(42L) } coAnswers {
+            worldReads++
+            if (worldReads == 1) configuredWorld else error("refresh stopped")
+        }
+        val vm = createViewModel(
+            messageDao = messages,
+            sessionWorldDao = world,
+            imageRepository = images,
+            secureStorage = validSecureStorage(),
+        )
+        advanceUntilIdle()
+
+        assertTrue(vm.retryAutoCharacterImage(79L))
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { messages.claimAutoImageGeneration(79L, 42L, "main", "old-refresh-token", any()) }
+        coVerify(exactly = 1) { messages.failAutoImageGeneration(79L, 42L, "main", any(), interrupted = false) }
+        coVerify(exactly = 0) { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun autoImageClaimThenRefreshCancellationClosesClaimedLease() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val failed = MessageEntity(
+            id = 80L, sessionId = 42L, speakerType = "character", characterId = 3L,
+            branchId = "main", parentMessageId = 11L,
+            content = "🖼 配图生成失败，可重试",
+            structuredContentJson = AutoImageMetadata.create("取消窗口", AutoImageMetadata.STATE_FAILED, "old-token"),
+            includeInContext = false,
+        )
+        coEvery { messages.getMainMessagesTail(42L, 81) } returns listOf(failed)
+        coEvery { messages.getById(80L) } returns failed
+        coEvery { messages.claimAutoImageGeneration(80L, 42L, "main", "old-token", any()) } returns true
+        coEvery { messages.failAutoImageGeneration(80L, 42L, "main", any(), interrupted = true) } returns true
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        val refreshGate = CompletableDeferred<List<SessionBranchEntity>>()
+        var branchReads = 0
+        coEvery { branches.getBySession(42L) } coAnswers {
+            branchReads++
+            if (branchReads == 1) emptyList() else refreshGate.await()
+        }
+        val world = mockk<SessionWorldDao>(relaxed = true)
+        coEvery { world.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L, sessionImageApiKey = "test-key")
+        val vm = createViewModel(messageDao = messages, sessionBranchDao = branches, sessionWorldDao = world)
+        advanceUntilIdle()
+
+        assertTrue(vm.retryAutoCharacterImage(80L))
+        runCurrent()
+        vm.stopGeneration()
+        refreshGate.complete(emptyList())
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { messages.claimAutoImageGeneration(80L, 42L, "main", "old-token", any()) }
+        coVerify(exactly = 1) { messages.failAutoImageGeneration(80L, 42L, "main", any(), interrupted = true) }
+        coVerify(exactly = 0) { messages.completeAutoImageGeneration(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun autoImageSaveCancellationPreventsCompleteAndDeletesUncommittedPath() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val failed = MessageEntity(
+            id = 81L, sessionId = 42L, speakerType = "character", characterId = 3L,
+            branchId = "main", parentMessageId = 11L,
+            content = "🖼 配图生成失败，可重试",
+            structuredContentJson = AutoImageMetadata.create("保存取消", AutoImageMetadata.STATE_FAILED, "old-token"),
+            includeInContext = false,
+        )
+        coEvery { messages.getMainMessagesTail(42L, 81) } returns listOf(failed)
+        coEvery { messages.getById(81L) } returns failed
+        coEvery { messages.claimAutoImageGeneration(81L, 42L, "main", "old-token", any()) } returns true
+        coEvery { messages.failAutoImageGeneration(81L, 42L, "main", any(), interrupted = true) } returns true
+        val images = mockk<com.mojing.app.data.repository.ImageRepository>(relaxed = true)
+        coEvery { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns Result.success("vendor-image")
+        val path = java.io.File.createTempFile("mojing-auto-image", ".png")
+        path.delete()
+        val saveEntered = CompletableDeferred<Unit>()
+        val saveRelease = CompletableDeferred<Unit>()
+        coEvery { images.saveGeneratedImageForSession(any(), 42L) } coAnswers {
+            saveEntered.complete(Unit)
+            withContext(NonCancellable) {
+                saveRelease.await()
+                path.writeText("uncommitted")
+                check(path.exists())
+            }
+            path.absolutePath
+        }
+        val characters = mockk<CharacterDao>(relaxed = true)
+        coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "角色")
+        val world = mockk<SessionWorldDao>(relaxed = true)
+        coEvery { world.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L, sessionImageApiKey = "test-key")
+        val vm = createViewModel(messageDao = messages, characterDao = characters, sessionWorldDao = world, imageRepository = images, secureStorage = validSecureStorage())
+        try {
+            advanceUntilIdle()
+            assertTrue(vm.retryAutoCharacterImage(81L))
+            runCurrent()
+            saveEntered.await()
+            vm.stopGeneration()
+            saveRelease.complete(Unit)
+            advanceUntilIdle()
+
+            coVerify(exactly = 0) { messages.completeAutoImageGeneration(any(), any(), any(), any(), any()) }
+            coVerify(exactly = 1) { messages.failAutoImageGeneration(81L, 42L, "main", any(), interrupted = true) }
+            assertFalse(path.exists())
+        } finally {
+            path.delete()
+        }
+    }
+
+    @Test
+    fun autoImageCompleteCancellationKeepsCommittedPathAndDoesNotRewriteIt() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val failed = MessageEntity(
+            id = 82L, sessionId = 42L, speakerType = "character", characterId = 3L,
+            branchId = "main", parentMessageId = 11L,
+            content = "🖼 配图生成失败，可重试",
+            structuredContentJson = AutoImageMetadata.create("提交取消", AutoImageMetadata.STATE_FAILED, "old-token"),
+            includeInContext = false,
+        )
+        coEvery { messages.getMainMessagesTail(42L, 81) } returns listOf(failed)
+        coEvery { messages.getById(82L) } returns failed
+        coEvery { messages.claimAutoImageGeneration(82L, 42L, "main", "old-token", any()) } returns true
+        val images = mockk<com.mojing.app.data.repository.ImageRepository>(relaxed = true)
+        coEvery { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns Result.success("vendor-image")
+        val path = java.io.File.createTempFile("mojing-auto-image-committed", ".png")
+        path.writeText("owned")
+        coEvery { images.saveGeneratedImageForSession(any(), 42L) } returns path.absolutePath
+        val completeEntered = CompletableDeferred<Unit>()
+        val completeRelease = CompletableDeferred<Unit>()
+        var committedAttachment: MessageAttachmentEntity? = null
+        var committedToken: String? = null
+        coEvery { messages.completeAutoImageGeneration(82L, 42L, "main", any(), any()) } coAnswers {
+            committedToken = args[3] as String
+            committedAttachment = args[4] as MessageAttachmentEntity
+            completeEntered.complete(Unit)
+            withContext(NonCancellable) { completeRelease.await() }
+            true
+        }
+        val characters = mockk<CharacterDao>(relaxed = true)
+        coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "角色")
+        val world = mockk<SessionWorldDao>(relaxed = true)
+        coEvery { world.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L, sessionImageApiKey = "test-key")
+        val vm = createViewModel(messageDao = messages, characterDao = characters, sessionWorldDao = world, imageRepository = images, secureStorage = validSecureStorage())
+        try {
+            advanceUntilIdle()
+            assertTrue(vm.retryAutoCharacterImage(82L))
+            runCurrent()
+            completeEntered.await()
+            vm.stopGeneration()
+            completeRelease.complete(Unit)
+            advanceUntilIdle()
+
+            coVerify(exactly = 1) { messages.completeAutoImageGeneration(82L, 42L, "main", any(), any()) }
+            assertEquals(path.absolutePath, committedAttachment?.storagePath)
+            assertEquals("提交取消", committedAttachment?.generationPrompt)
+            assertEquals(true, committedAttachment?.generationModel?.isNotBlank())
+            assertTrue(committedToken?.isNotBlank() == true && committedToken != "old-token")
+            assertTrue(path.exists())
+        } finally {
+            path.delete()
+        }
+    }
+
+    @Test
+    fun autoImageClaimCancellationAfterDurableSuccessClosesLeaseBeforeVendor() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val failed = MessageEntity(
+            id = 83L, sessionId = 42L, speakerType = "character", characterId = 3L,
+            branchId = "main", parentMessageId = 11L,
+            content = "🖼 配图生成失败，可重试",
+            structuredContentJson = AutoImageMetadata.create("claim取消", AutoImageMetadata.STATE_FAILED, "old-token"),
+            includeInContext = false,
+        )
+        coEvery { messages.getMainMessagesTail(42L, 81) } returns listOf(failed)
+        coEvery { messages.getById(83L) } returns failed
+        val claimEntered = CompletableDeferred<Unit>()
+        val claimRelease = CompletableDeferred<Unit>()
+        coEvery { messages.claimAutoImageGeneration(83L, 42L, "main", "old-token", any()) } coAnswers {
+            claimEntered.complete(Unit)
+            withContext(NonCancellable) { claimRelease.await() }
+            true
+        }
+        coEvery { messages.failAutoImageGeneration(83L, 42L, "main", any(), interrupted = true) } returns true
+        val images = mockk<com.mojing.app.data.repository.ImageRepository>(relaxed = true)
+        val world = mockk<SessionWorldDao>(relaxed = true)
+        coEvery { world.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L, sessionImageApiKey = "test-key")
+        val vm = createViewModel(messageDao = messages, sessionWorldDao = world, imageRepository = images)
+        advanceUntilIdle()
+
+        assertTrue(vm.retryAutoCharacterImage(83L))
+        runCurrent()
+        claimEntered.await()
+        vm.stopGeneration()
+        claimRelease.complete(Unit)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { messages.failAutoImageGeneration(83L, 42L, "main", any(), interrupted = true) }
+        coVerify(exactly = 0) { images.generateImage(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { messages.completeAutoImageGeneration(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun initialAutoVoiceProducerStripsTagKeepsFullTextAndCommitsMultipleFilesWithoutSpeak() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val stored = mutableListOf<MessageEntity>()
+        var inserted: MessageEntity? = null
+        var committed: List<MessageAttachmentEntity> = emptyList()
+        coEvery { messages.insert(any()) } coAnswers {
+            val row = firstArg<MessageEntity>().copy(id = stored.size.toLong() + 1)
+            stored += row
+            if (AutoVoiceMetadata.parse(row.structuredContentJson)?.state == AutoVoiceMetadata.STATE_RUNNING) inserted = row
+            row.id
+        }
+        coEvery { messages.getMainMessagesTail(42L, any()) } answers { stored.reversed() }
+        coEvery { messages.completeAutoVoiceGeneration(any(), 42L, "main", any(), any()) } coAnswers {
+            committed = args[4] as List<MessageAttachmentEntity>
+            true
+        }
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        coEvery { branches.getBySession(42L) } returns emptyList()
+        val world = mockk<SessionWorldDao>(relaxed = true)
+        coEvery { world.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L, autoCharacterSpeech = true)
+        val characters = mockk<CharacterDao>(relaxed = true)
+        coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "角色", voiceProvider = "system", voiceModel = "voice-a")
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 3L))
+        val engine = mockk<ChatEngine>(relaxed = true)
+        val text = "标题\n" + "完整语音正文".repeat(300)
+        every { engine.streamGenerateWithMemory(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            flowOf(StreamState.Done("角色回复\n<GEN_SPEECH>$text</GEN_SPEECH>"))
+        val filesDir = createTempDirectory("mojing-auto-voice-producer").toFile()
+        val context = speechTestContext()
+        every { context.filesDir } returns filesDir
+        mockkObject(AndroidTts)
+        try {
+            every { AndroidTts.stop() } returns Unit
+            coEvery { AndroidTts.synthesizeToFiles(any(), any(), any(), any(), any()) } coAnswers {
+                val directory = arg<File>(3)
+                val first = directory.resolve("segment-0.wav").also { it.writeText("one") }
+                val second = directory.resolve("segment-1.wav").also { it.writeText("two") }
+                listOf(SynthesizedSpeechFile(first, "audio/wav"), SynthesizedSpeechFile(second, "audio/wav"))
+            }
+            val vm = createViewModel(
+                messageDao = messages, sessionBranchDao = branches, sessionWorldDao = world,
+                characterDao = characters, participantDao = participants, chatEngine = engine,
+                appContext = context, secureStorage = validSecureStorage(),
+                llmApiService = validLlmApiService(),
+            )
+            advanceUntilIdle()
+            vm.setManualReplyCharacterId(3L)
+            vm.updateInput("继续")
+            vm.sendMessage()
+            advanceUntilIdle()
+            vm.state.first { !it.isGenerating }
+
+            val row = requireNotNull(inserted)
+            val metadata = requireNotNull(AutoVoiceMetadata.parse(row.structuredContentJson))
+            assertEquals(text, metadata.text)
+            assertEquals("main", row.branchId)
+            assertEquals(2, committed.size)
+            assertTrue(committed.all { it.assetType == "voice" && it.generationPrompt == text })
+            coVerify(exactly = 1) { AndroidTts.synthesizeToFiles(any(), text, any(), any(), any()) }
+            coVerify(exactly = 0) { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) }
+        } finally {
+            unmockkObject(AndroidTts)
+            check(filesDir.canonicalFile.name.startsWith("mojing-auto-voice-producer"))
+            filesDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun autoVoiceRetryClaimsOnceKeepsFullTextAndUsesCharacterVoice() = runTest(testDispatcher) {
+        val text = "章节标题\n" + "完整旁白".repeat(2_000)
+        val failed = MessageEntity(
+            id = 177L, sessionId = 42L, speakerType = "character", characterId = 3L,
+            branchId = "main", parentMessageId = 11L, includeInContext = false,
+            content = "🔊 配音生成失败，可重试",
+            structuredContentJson = AutoVoiceMetadata.create(text, AutoVoiceMetadata.STATE_FAILED, "old-voice-token"),
+        )
+        val messages = mockk<MessageDao>(relaxed = true)
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(failed)
+        coEvery { messages.getById(177L) } returns failed
+        coEvery { messages.claimAutoVoiceGeneration(177L, 42L, "main", "old-voice-token", any()) } returns true
+        var committed: List<MessageAttachmentEntity> = emptyList()
+        var committedToken: String? = null
+        coEvery { messages.completeAutoVoiceGeneration(177L, 42L, "main", any(), any()) } coAnswers {
+            committedToken = args[3] as String
+            committed = args[4] as List<MessageAttachmentEntity>
+            true
+        }
+        val characters = mockk<CharacterDao>(relaxed = true)
+        coEvery { characters.getById(3L) } returns CharacterEntity(
+            id = 3L, name = "角色", voiceProvider = "system", voiceModel = "character-voice",
+        )
+        val filesDir = createTempDirectory("mojing-auto-voice-test").toFile()
+        val context = speechTestContext()
+        every { context.filesDir } returns filesDir
+        mockkObject(AndroidTts)
+        try {
+            every { AndroidTts.stop() } returns Unit
+            coEvery { AndroidTts.synthesizeToFiles(any(), any(), any(), any(), any()) } coAnswers {
+                assertEquals(text, arg<String>(1))
+                assertEquals("system", arg<com.mojing.app.data.VoiceChoice>(2).engineId)
+                assertEquals("character-voice", arg<com.mojing.app.data.VoiceChoice>(2).voiceId)
+                val generated = arg<File>(3).resolve("gen_voice_result_0.wav").also { it.writeText("audio") }
+                listOf(SynthesizedSpeechFile(generated, "audio/wav"))
+            }
+            val vm = createViewModel(messageDao = messages, characterDao = characters, appContext = context)
+            advanceUntilIdle()
+
+            assertTrue(vm.retryAutoCharacterVoice(177L))
+            assertFalse(vm.retryAutoCharacterVoice(177L))
+            advanceUntilIdle()
+            vm.state.first { !it.isGenerating }
+
+            coVerify(exactly = 1) { messages.claimAutoVoiceGeneration(177L, 42L, "main", "old-voice-token", any()) }
+            coVerify(exactly = 1) { AndroidTts.synthesizeToFiles(any(), text, any(), any(), any()) }
+            coVerify(exactly = 1) { messages.completeAutoVoiceGeneration(177L, 42L, "main", any(), any()) }
+            assertTrue(committedToken!!.isNotBlank() && committedToken != "old-voice-token")
+            assertEquals(text, committed.single().generationPrompt)
+            assertEquals("voice", committed.single().assetType)
+        } finally {
+            unmockkObject(AndroidTts)
+            check(filesDir.canonicalFile.name.startsWith("mojing-auto-voice-test"))
+            filesDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun autoVoiceProviderCancellationFailsClaimAndNeverCommits() = runTest(testDispatcher) {
+        val failed = MessageEntity(
+            id = 178L, sessionId = 42L, speakerType = "character", characterId = 3L,
+            branchId = "main", parentMessageId = 11L, includeInContext = false,
+            content = "🔊 配音生成失败，可重试",
+            structuredContentJson = AutoVoiceMetadata.create("取消时仍保留全文", AutoVoiceMetadata.STATE_FAILED, "old-token"),
+        )
+        val messages = mockk<MessageDao>(relaxed = true)
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(failed)
+        coEvery { messages.getById(178L) } returns failed
+        coEvery { messages.claimAutoVoiceGeneration(178L, 42L, "main", "old-token", any()) } returns true
+        coEvery { messages.failAutoVoiceGeneration(178L, 42L, "main", any(), interrupted = true) } returns true
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val characters = mockk<CharacterDao>(relaxed = true)
+        coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "角色")
+        val filesDir = createTempDirectory("mojing-auto-voice-provider-cancel").toFile()
+        val context = speechTestContext()
+        every { context.filesDir } returns filesDir
+        var generated: File? = null
+        mockkObject(AndroidTts)
+        try {
+            every { AndroidTts.stop() } returns Unit
+            coEvery { AndroidTts.synthesizeToFiles(any(), any(), any(), any(), any()) } coAnswers {
+                generated = arg<File>(3).resolve("provider-cancel.wav").also { it.writeText("audio") }
+                entered.complete(Unit)
+                withContext(NonCancellable) { release.await() }
+                listOf(SynthesizedSpeechFile(requireNotNull(generated), "audio/wav"))
+            }
+            val vm = createViewModel(messageDao = messages, characterDao = characters, appContext = context)
+            advanceUntilIdle()
+            assertTrue(vm.retryAutoCharacterVoice(178L))
+            runCurrent()
+            entered.await()
+            vm.stopGeneration()
+            release.complete(Unit)
+            advanceUntilIdle()
+            vm.state.first { !it.isGenerating }
+            assertFalse(requireNotNull(generated).exists())
+
+            coVerify(exactly = 1) { messages.failAutoVoiceGeneration(178L, 42L, "main", any(), interrupted = true) }
+            coVerify(exactly = 0) { messages.completeAutoVoiceGeneration(any(), any(), any(), any(), any()) }
+        } finally {
+            unmockkObject(AndroidTts)
+            check(filesDir.canonicalFile.name.startsWith("mojing-auto-voice-provider-cancel"))
+            filesDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun autoVoiceAcquireCancellationClosesClaimedLeaseBeforeSupplier() = runTest(testDispatcher) {
+        val failed = MessageEntity(
+            id = 180L, sessionId = 42L, speakerType = "character", characterId = 3L,
+            branchId = "main", parentMessageId = 11L, includeInContext = false,
+            content = "🔊 配音生成失败，可重试",
+            structuredContentJson = AutoVoiceMetadata.create("acquire取消", AutoVoiceMetadata.STATE_FAILED, "old-token"),
+        )
+        val messages = mockk<MessageDao>(relaxed = true)
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(failed)
+        coEvery { messages.getById(180L) } returns failed
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        coEvery { messages.claimAutoVoiceGeneration(180L, 42L, "main", "old-token", any()) } coAnswers {
+            entered.complete(Unit)
+            withContext(NonCancellable) { release.await() }
+            true
+        }
+        coEvery { messages.failAutoVoiceGeneration(180L, 42L, "main", any(), interrupted = true) } returns true
+        mockkObject(AndroidTts)
+        try {
+            every { AndroidTts.stop() } returns Unit
+            val vm = createViewModel(messageDao = messages, appContext = speechTestContext())
+            advanceUntilIdle()
+            assertTrue(vm.retryAutoCharacterVoice(180L))
+            runCurrent()
+            entered.await()
+            vm.stopGeneration()
+            release.complete(Unit)
+            advanceUntilIdle()
+            vm.state.first { !it.isGenerating }
+
+            coVerify(exactly = 1) { messages.failAutoVoiceGeneration(180L, 42L, "main", any(), interrupted = true) }
+            coVerify(exactly = 0) { AndroidTts.synthesizeToFiles(any(), any(), any(), any(), any()) }
+        } finally {
+            unmockkObject(AndroidTts)
+        }
+    }
+
+    @Test
+    fun autoVoiceCompleteCancellationKeepsCommittedTempFile() = runTest(testDispatcher) {
+        val failed = MessageEntity(
+            id = 181L, sessionId = 42L, speakerType = "character", characterId = 3L,
+            branchId = "main", parentMessageId = 11L, includeInContext = false,
+            content = "🔊 配音生成失败，可重试",
+            structuredContentJson = AutoVoiceMetadata.create("提交取消", AutoVoiceMetadata.STATE_FAILED, "old-token"),
+        )
+        val messages = mockk<MessageDao>(relaxed = true)
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(failed)
+        coEvery { messages.getById(181L) } returns failed
+        coEvery { messages.claimAutoVoiceGeneration(181L, 42L, "main", "old-token", any()) } returns true
+        val characters = mockk<CharacterDao>(relaxed = true)
+        coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "角色")
+        val filesDir = createTempDirectory("mojing-auto-voice-committed").toFile()
+        val path = filesDir.resolve("attachments/42/committed.wav")
+        path.parentFile!!.mkdirs()
+        path.writeText("owned")
+        val completeEntered = CompletableDeferred<Unit>()
+        val completeRelease = CompletableDeferred<Unit>()
+        var committed: List<MessageAttachmentEntity> = emptyList()
+        coEvery { messages.completeAutoVoiceGeneration(181L, 42L, "main", any(), any()) } coAnswers {
+            committed = args[4] as List<MessageAttachmentEntity>
+            completeEntered.complete(Unit)
+            withContext(NonCancellable) { completeRelease.await() }
+            true
+        }
+        mockkObject(AndroidTts)
+        try {
+            every { AndroidTts.stop() } returns Unit
+            coEvery { AndroidTts.synthesizeToFiles(any(), any(), any(), any(), any()) } returns listOf(
+                SynthesizedSpeechFile(path, "audio/wav"),
+            )
+            val context = speechTestContext()
+            every { context.filesDir } returns filesDir
+            val vm = createViewModel(messageDao = messages, characterDao = characters, appContext = context)
+            advanceUntilIdle()
+            assertTrue(vm.retryAutoCharacterVoice(181L))
+            runCurrent()
+            completeEntered.await()
+            vm.stopGeneration()
+            completeRelease.complete(Unit)
+            advanceUntilIdle()
+            vm.state.first { !it.isGenerating }
+
+            coVerify(exactly = 1) { messages.completeAutoVoiceGeneration(181L, 42L, "main", any(), any()) }
+            assertEquals(path.absolutePath, committed.single().storagePath)
+            assertTrue(path.exists())
+        } finally {
+            unmockkObject(AndroidTts)
+            check(filesDir.canonicalFile.name.startsWith("mojing-auto-voice-committed"))
+            filesDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun activeAutoVoiceSurvivesDetachAndRefreshWithoutStoppingEngine() = runTest(testDispatcher) {
+        val failed = MessageEntity(
+            id = 183L, sessionId = 42L, speakerType = "character", characterId = 3L,
+            branchId = "main", parentMessageId = 11L, includeInContext = false,
+            content = "🔊 配音生成失败，可重试",
+            structuredContentJson = AutoVoiceMetadata.create("后台配音", AutoVoiceMetadata.STATE_FAILED, "old-token"),
+        )
+        val messages = mockk<MessageDao>(relaxed = true)
+        var current = failed
+        coEvery { messages.getMainMessagesTail(42L, any()) } answers { listOf(current) }
+        coEvery { messages.getById(183L) } returns failed
+        coEvery { messages.claimAutoVoiceGeneration(183L, 42L, "main", "old-token", any()) } coAnswers {
+            val token = args[4] as String
+            current = failed.copy(
+                content = "配音生成中…",
+                structuredContentJson = AutoVoiceMetadata.update(failed.structuredContentJson, AutoVoiceMetadata.STATE_RUNNING, token),
+            )
+            true
+        }
+        coEvery { messages.completeAutoVoiceGeneration(183L, 42L, "main", any(), any()) } returns true
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val filesDir = createTempDirectory("mojing-auto-voice-detach").toFile()
+        val characters = mockk<CharacterDao>(relaxed = true)
+        coEvery { characters.getById(3L) } returns CharacterEntity(id = 3L, name = "角色")
+        mockkObject(AndroidTts)
+        try {
+            every { AndroidTts.stop() } returns Unit
+            coEvery { AndroidTts.synthesizeToFiles(any(), any(), any(), any(), any()) } coAnswers {
+                val generated = arg<File>(3).resolve("detach.wav").also { it.writeText("audio") }
+                entered.complete(Unit)
+                withContext(NonCancellable) { release.await() }
+                listOf(SynthesizedSpeechFile(generated, "audio/wav"))
+            }
+            val context = speechTestContext()
+            every { context.filesDir } returns filesDir
+            val vm = createViewModel(messageDao = messages, characterDao = characters, appContext = context)
+            advanceUntilIdle()
+            assertTrue(vm.retryAutoCharacterVoice(183L))
+            runCurrent()
+            entered.await()
+            vm.detachSpeechScreen()
+            release.complete(Unit)
+            advanceUntilIdle()
+            vm.state.first { !it.isGenerating }
+
+            coVerify(exactly = 1) { messages.completeAutoVoiceGeneration(183L, 42L, "main", any(), any()) }
+            coVerify(exactly = 0) { messages.markAutoVoiceRunningInterrupted(any(), any(), any(), any()) }
+            verify(exactly = 0) { AndroidTts.stop() }
+        } finally {
+            unmockkObject(AndroidTts)
+            check(filesDir.canonicalFile.name.startsWith("mojing-auto-voice-detach"))
+            filesDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun coldVoiceRecoveryDeletesOnlyUnreferencedFilesForExactUuidToken() = runTest(testDispatcher) {
+        val token = "123e4567-e89b-12d3-a456-426614174180"
+        val otherToken = "123e4567-e89b-12d3-a456-426614174181"
+        val filesDir = createTempDirectory("mojing-voice-files").toFile()
+        val voiceDir = filesDir.resolve("attachments/42").also { it.mkdirs() }
+        val orphanWav = voiceDir.resolve("gen_voice_${token}_0.wav").also { it.writeText("orphan") }
+        val orphanMp3 = voiceDir.resolve("gen_voice_${token}_1.mp3").also { it.writeText("orphan") }
+        val referenced = voiceDir.resolve("gen_voice_${token}_2.wav").also { it.writeText("referenced") }
+        val other = voiceDir.resolve("gen_voice_${otherToken}_0.wav").also { it.writeText("other") }
+        val running = MessageEntity(
+            id = 182L, sessionId = 42L, speakerType = "character", characterId = 3L,
+            branchId = "main", parentMessageId = 11L, includeInContext = false,
+            content = "配音生成中…",
+            structuredContentJson = AutoVoiceMetadata.create("恢复原文", AutoVoiceMetadata.STATE_RUNNING, token),
+        )
+        val messages = mockk<MessageDao>(relaxed = true)
+        val attachments = mockk<AttachmentDao>(relaxed = true)
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(running)
+        coEvery { messages.markAutoVoiceRunningInterrupted(182L, 42L, "main", token) } returns true
+        coEvery { attachments.countByStoragePath(any()) } returns 0
+        coEvery { attachments.countByStoragePath(referenced.absolutePath) } returns 1
+        val context = speechTestContext()
+        every { context.filesDir } returns filesDir
+        mockkObject(AndroidTts)
+        try {
+            val vm = createViewModel(messageDao = messages, attachmentDao = attachments, appContext = context)
+            advanceUntilIdle()
+            vm.state.first { it.isReady && it.messages.singleOrNull()?.content == "配音生成中断，可重试" }
+            assertFalse(orphanWav.exists())
+            assertFalse(orphanMp3.exists())
+            assertTrue(referenced.exists())
+            assertTrue(other.exists())
+            coVerify(exactly = 1) { attachments.countByStoragePath(referenced.absolutePath) }
+            coVerify(exactly = 0) { AndroidTts.stop() }
+            assertEquals("配音生成中断，可重试", vm.state.value.messages.single().content)
+        } finally {
+            unmockkObject(AndroidTts)
+            check(filesDir.canonicalFile.name.startsWith("mojing-voice-files"))
+            filesDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun coldStartRunningAutoVoiceIsInterruptedWithoutSupplierRequest() = runTest(testDispatcher) {
+        val running = MessageEntity(
+            id = 179L, sessionId = 42L, speakerType = "character", characterId = 3L,
+            branchId = "main", parentMessageId = 11L, includeInContext = false,
+            content = "配音生成中…",
+            structuredContentJson = AutoVoiceMetadata.create("冷启动原文", AutoVoiceMetadata.STATE_RUNNING, "running-token"),
+        )
+        val messages = mockk<MessageDao>(relaxed = true)
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(running)
+        coEvery { messages.markAutoVoiceRunningInterrupted(179L, 42L, "main", "running-token") } returns true
+        mockkObject(AndroidTts)
+        try {
+            coEvery { AndroidTts.synthesizeToFiles(any(), any(), any(), any(), any()) } returns emptyList()
+            val vm = createViewModel(messageDao = messages, appContext = speechTestContext())
+            advanceUntilIdle()
+            coVerify(exactly = 1) { messages.markAutoVoiceRunningInterrupted(179L, 42L, "main", "running-token") }
+            coVerify(exactly = 0) { AndroidTts.synthesizeToFiles(any(), any(), any(), any(), any()) }
+        } finally {
+            unmockkObject(AndroidTts)
+        }
+    }
+
+    @Test
+    fun storedVoicePlaybackUsesOrderedAttachmentsAndKeepsFilesOwned() = runTest(testDispatcher) {
+        val message = MessageEntity(id = 190L, sessionId = 42L, speakerType = "character", branchId = "main", content = "语音")
+        val first = java.io.File.createTempFile("mojing-stored-voice-1", ".wav").also { it.writeText("one") }
+        val second = java.io.File.createTempFile("mojing-stored-voice-2", ".wav").also { it.writeText("two") }
+        val messages = mockk<MessageDao>(relaxed = true)
+        val attachments = mockk<AttachmentDao>(relaxed = true)
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(message)
+        coEvery { messages.getMainMessageById(42L, 190L) } returns message
+        coEvery { attachments.getByMessage(190L) } returns listOf(
+            MessageAttachmentEntity(id = 1L, messageId = 190L, assetType = "voice", mimeType = "audio/wav", storagePath = first.absolutePath),
+            MessageAttachmentEntity(id = 2L, messageId = 190L, assetType = "voice", mimeType = "audio/wav", storagePath = second.absolutePath),
+        )
+        mockkObject(TtsPlayer)
+        val firstHandle = mockk<TtsPlayer.PlaybackHandle>(relaxed = true)
+        val secondHandle = mockk<TtsPlayer.PlaybackHandle>(relaxed = true)
+        try {
+            every { TtsPlayer.playOwned(any(), deleteWhenFinished = false, initialPaused = any(), onPhaseChanged = any()) } returnsMany listOf(firstHandle, secondHandle)
+            coEvery { TtsPlayer.awaitCompletion(firstHandle) } returns true
+            coEvery { TtsPlayer.awaitCompletion(secondHandle) } returns true
+            every { TtsPlayer.stop(any<TtsPlayer.PlaybackHandle>()) } returns Unit
+            val vm = createViewModel(messageDao = messages, attachmentDao = attachments, appContext = speechTestContext())
+            advanceUntilIdle()
+            vm.playVoiceAttachments(190L)
+            runCurrent()
+            advanceUntilIdle()
+            vm.speechActive.first { !it }
+
+            verify(exactly = 1) { TtsPlayer.playOwned(first, deleteWhenFinished = false, initialPaused = any(), onPhaseChanged = any()) }
+            verify(exactly = 1) { TtsPlayer.playOwned(second, deleteWhenFinished = false, initialPaused = any(), onPhaseChanged = any()) }
+            coVerify(exactly = 1) { TtsPlayer.awaitCompletion(firstHandle) }
+            coVerify(exactly = 1) { TtsPlayer.awaitCompletion(secondHandle) }
+            assertTrue(first.exists() && second.exists())
+        } finally {
+            unmockkObject(TtsPlayer)
+            first.delete(); second.delete()
+        }
+    }
+
+    @Test
+    fun storedVoicePlaybackPauseResumeAndStopUseCurrentHandleOnly() = runTest(testDispatcher) {
+        val message = MessageEntity(id = 191L, sessionId = 42L, speakerType = "character", branchId = "main", content = "语音")
+        val file = File.createTempFile("mojing-stored-voice-control", ".wav").also { it.writeText("audio") }
+        val messages = mockk<MessageDao>(relaxed = true)
+        val attachments = mockk<AttachmentDao>(relaxed = true)
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(message)
+        coEvery { messages.getMainMessageById(42L, 191L) } returns message
+        coEvery { attachments.getByMessage(191L) } returns listOf(
+            MessageAttachmentEntity(id = 1L, messageId = 191L, assetType = "voice", mimeType = "audio/wav", storagePath = file.absolutePath),
+        )
+        val handle = mockk<TtsPlayer.PlaybackHandle>(relaxed = true)
+        val entered = CompletableDeferred<Unit>()
+        mockkObject(TtsPlayer)
+        try {
+            every { TtsPlayer.playOwned(any(), deleteWhenFinished = false, initialPaused = any(), onPhaseChanged = any()) } returns handle
+            coEvery { TtsPlayer.awaitCompletion(handle) } coAnswers { entered.complete(Unit); awaitCancellation() }
+            every { TtsPlayer.pause(handle) } returns Unit
+            every { TtsPlayer.resume(handle) } returns Unit
+            every { TtsPlayer.stop(handle) } returns Unit
+            val vm = createViewModel(messageDao = messages, attachmentDao = attachments, appContext = speechTestContext())
+            advanceUntilIdle()
+            vm.playVoiceAttachments(191L)
+            runCurrent()
+            entered.await()
+            vm.pauseSpeaking(); runCurrent()
+            vm.resumeSpeaking(); runCurrent()
+            vm.stopSpeaking(); advanceUntilIdle()
+
+            verify(exactly = 1) { TtsPlayer.pause(handle) }
+            verify(exactly = 1) { TtsPlayer.resume(handle) }
+            verify(exactly = 2) { TtsPlayer.stop(handle) }
+            assertTrue(file.exists())
+        } finally {
+            unmockkObject(TtsPlayer)
+            file.delete()
+        }
+    }
+
+    @Test
+    fun storedVoicePlaybackFailureRetriesOriginalAttachmentsWithoutSynthesis() = runTest(testDispatcher) {
+        val message = MessageEntity(id = 192L, sessionId = 42L, speakerType = "character", branchId = "main", content = "语音")
+        val file = File.createTempFile("mojing-stored-voice-retry", ".wav").also { it.writeText("audio") }
+        val messages = mockk<MessageDao>(relaxed = true)
+        val attachments = mockk<AttachmentDao>(relaxed = true)
+        coEvery { messages.getMainMessagesTail(42L, any()) } returns listOf(message)
+        coEvery { messages.getMainMessageById(42L, 192L) } returns message
+        coEvery { attachments.getByMessage(192L) } returns listOf(
+            MessageAttachmentEntity(id = 1L, messageId = 192L, assetType = "voice", mimeType = "audio/wav", storagePath = file.absolutePath),
+        )
+        val firstHandle = mockk<TtsPlayer.PlaybackHandle>(relaxed = true)
+        val secondHandle = mockk<TtsPlayer.PlaybackHandle>(relaxed = true)
+        var vm: ChatViewModel? = null
+        mockkObject(TtsPlayer)
+        mockkObject(AndroidTts)
+        mockkObject(AzureSpeech)
+        try {
+            every { TtsPlayer.playOwned(file, deleteWhenFinished = false, initialPaused = any(), onPhaseChanged = any()) } returnsMany listOf(firstHandle, secondHandle)
+            coEvery { TtsPlayer.awaitCompletion(firstHandle) } returns false
+            coEvery { TtsPlayer.awaitCompletion(secondHandle) } returns true
+            every { TtsPlayer.stop(any<TtsPlayer.PlaybackHandle>()) } returns Unit
+            every { AndroidTts.stop() } returns Unit
+            coEvery { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) } returns false
+            coEvery { AzureSpeech.speak(any(), any(), any(), any(), any(), any()) } returns false
+            vm = createViewModel(messageDao = messages, attachmentDao = attachments, appContext = speechTestContext())
+            advanceUntilIdle()
+
+            val owner = requireNotNull(vm)
+            owner.playVoiceAttachments(192L)
+            runCurrent()
+            advanceUntilIdle()
+            owner.speechActive.first { !it }
+            val firstNotice = owner.state.first { it.speechRetryNotice != null }.speechRetryNotice!!
+            owner.retryFailedSpeech(firstNotice.token)
+            runCurrent()
+            advanceUntilIdle()
+            owner.speechActive.first { !it }
+
+            verify(exactly = 2) { TtsPlayer.playOwned(file, deleteWhenFinished = false, initialPaused = any(), onPhaseChanged = any()) }
+            coVerify(exactly = 1) { TtsPlayer.awaitCompletion(firstHandle) }
+            coVerify(exactly = 1) { TtsPlayer.awaitCompletion(secondHandle) }
+            coVerify(exactly = 2) { attachments.getByMessage(192L) }
+            coVerify(exactly = 0) { AndroidTts.speakAwaitCompletion(any(), any(), any(), any()) }
+            coVerify(exactly = 0) { AndroidTts.synthesizeToFiles(any(), any(), any(), any(), any()) }
+            coVerify(exactly = 0) { AzureSpeech.speak(any(), any(), any(), any(), any(), any()) }
+            coVerify(exactly = 0) { AzureSpeech.synthesizeToFiles(any(), any(), any(), any(), any(), any()) }
+            assertEquals(null, owner.state.value.speechRetryNotice)
+            assertTrue(file.exists())
+        } finally {
+            vm?.let {
+                it.stopSpeaking()
+                advanceUntilIdle()
+            }
+            unmockkObject(AzureSpeech)
+            unmockkObject(AndroidTts)
+            unmockkObject(TtsPlayer)
+            file.delete()
+        }
     }
 
     @Test
@@ -3260,6 +6058,64 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun recallClearsDeletedQuoteIncludingAttachedMessageAndPreservesInputDraft() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        val drafts = emptyDraftStore()
+        coEvery { dao.recallInSession(42L, 8L) } returns MessageRecallResult(
+            deleted = true, deletedMessageIds = listOf(8L, 9L),
+        )
+        val vm = createViewModel(messageDao = dao, chatDraftStore = drafts)
+        advanceUntilIdle()
+        vm.updateInput("保留输入")
+        vm.setQuotingMessage(MessageEntity(id = 9, sessionId = 42, content = "被一并撤回的引用"))
+        val result = CompletableDeferred<Boolean>()
+        vm.deleteMessage(8L) { result.complete(it) }
+        assertTrue(result.await())
+        assertEquals(null, vm.state.value.quotingMessage)
+        assertEquals(null, vm.state.value.quotingSnippet)
+        assertEquals("保留输入", vm.state.value.inputText)
+        verify { drafts.save(42L, ChatDraftSnapshot(inputText = "保留输入")) }
+    }
+
+    @Test
+    fun lateRecallCompletionKeepsNewQuoteNotInDeletedSet() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        val gate = CompletableDeferred<MessageRecallResult>()
+        coEvery { dao.recallInSession(42L, 8L) } coAnswers { gate.await() }
+        val vm = createViewModel(messageDao = dao)
+        advanceUntilIdle()
+        vm.updateInput("保留输入")
+        vm.setQuotingMessage(MessageEntity(id = 8, sessionId = 42, content = "旧引用"))
+        val result = CompletableDeferred<Boolean>()
+        vm.deleteMessage(8L) { result.complete(it) }
+        runCurrent()
+        val replacement = MessageEntity(id = 10, sessionId = 42, content = "新引用")
+        vm.setQuotingMessage(replacement)
+        gate.complete(MessageRecallResult(deleted = true, deletedMessageIds = listOf(8L, 9L)))
+        assertTrue(result.await())
+        assertEquals(replacement, vm.state.value.quotingMessage)
+        assertEquals("新引用", vm.state.value.quotingSnippet)
+        assertEquals("保留输入", vm.state.value.inputText)
+    }
+
+    @Test
+    fun rejectedRecallKeepsQuoteAndInputDraft() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        coEvery { dao.recallInSession(42L, 8L) } throws com.mojing.app.data.local.dao.MessageRecallBlockedException("需要保留分叉来源")
+        val vm = createViewModel(messageDao = dao)
+        advanceUntilIdle()
+        val source = MessageEntity(id = 8, sessionId = 42, content = "有效引用")
+        vm.updateInput("保留输入")
+        vm.setQuotingMessage(source)
+        val result = CompletableDeferred<Boolean>()
+        vm.deleteMessage(8L) { result.complete(it) }
+        assertFalse(result.await())
+        assertEquals(source, vm.state.value.quotingMessage)
+        assertEquals("有效引用", vm.state.value.quotingSnippet)
+        assertEquals("保留输入", vm.state.value.inputText)
+    }
+
+    @Test
     fun recallingMessageUsesTransactionalOwnerAndCleansOnlyUnreferencedPrivateMedia() = runTest(testDispatcher) {
         val root = createTempDirectory("mojing-recall-test").toFile()
         try {
@@ -3322,6 +6178,68 @@ class ChatViewModelTest {
         assertEquals("需要保留分叉来源", vm.state.value.error)
         assertEquals(listOf(8L), vm.state.value.messages.map { it.id })
         coVerify(exactly = 0) { attachmentDao.countByStoragePath(any()) }
+    }
+
+    @Test fun eventWritesRetainOriginalOwnerAndBusyThroughReadback() = runTest(testDispatcher) {
+        for (delete in listOf(false, true)) {
+            val registry = com.mojing.app.ui.chat.RetainedChatSessions.stores
+            val events = mockk<SessionEventNodeDao>(relaxed = true)
+            val original = SessionEventNodeEntity(id = 1, sessionId = 42, title = "事件")
+            val write = CompletableDeferred<Unit>()
+            val readback = CompletableDeferred<List<SessionEventNodeEntity>>()
+            var written = false
+            coEvery { events.getPageForBranch(42, "main", null, null, any()) } coAnswers {
+                if (written) readback.await() else listOf(original)
+            }
+            coEvery { events.setResolved(1, true) } coAnswers { write.await(); written = true }
+            coEvery { events.deleteById(1) } coAnswers { write.await(); written = true }
+            val vm = registry.acquire(42L) { store -> createViewModel(eventNodeDao = events).also { store.put("vm", it) } }
+            try {
+                advanceUntilIdle(); vm.loadEventNodesIfNeeded(); advanceUntilIdle()
+                if (delete) vm.deleteEventNode(1) else vm.toggleEventNodeResolved(1)
+                runCurrent(); registry.release(42L)
+                assertTrue(registry.contains(42L)); assertFalse(42L in registry.running.value)
+                write.complete(Unit); runCurrent()
+                assertTrue(written); assertTrue(1L in vm.state.value.eventBusyIds)
+                assertTrue(registry.contains(42L))
+                val reopened = registry.acquire<ChatViewModel>(42L) { error("Lost event readback owner") }
+                assertTrue(reopened === vm)
+                vm.deleteEventNode(1); vm.toggleEventNodeResolved(1); runCurrent()
+                coVerify(exactly = if (delete) 1 else 0) { events.deleteById(1) }
+                coVerify(exactly = if (delete) 0 else 1) { events.setResolved(1, true) }
+                registry.release(42L)
+                val result = if (delete) emptyList() else listOf(original.copy(resolved = true))
+                readback.complete(result); advanceUntilIdle()
+                assertEquals(result, vm.state.value.eventNodes)
+                assertTrue(vm.state.value.eventBusyIds.isEmpty())
+                assertFalse(registry.contains(42L))
+            } finally {
+                write.complete(Unit); readback.complete(emptyList()); registry.stop(42L); registry.release(42L); advanceUntilIdle()
+            }
+        }
+    }
+
+    @Test fun eventStatusFailureReleasesBusyAndRetriesOnSameReopenedOwner() = runTest(testDispatcher) {
+        val registry = com.mojing.app.ui.chat.RetainedChatSessions.stores
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        val original = SessionEventNodeEntity(id = 1, sessionId = 42, title = "事件")
+        coEvery { events.getPageForBranch(42, "main", null, null, any()) } returns listOf(original)
+        val gate = CompletableDeferred<Unit>()
+        coEvery { events.setResolved(1, true) } coAnswers { gate.await(); throw IllegalStateException("write failed") }
+        val vm = registry.acquire(42L) { store -> createViewModel(eventNodeDao = events).also { store.put("vm", it) } }
+        try {
+            advanceUntilIdle(); vm.loadEventNodesIfNeeded(); advanceUntilIdle()
+            vm.toggleEventNodeResolved(1); runCurrent(); registry.release(42L)
+            val reopened = registry.acquire<ChatViewModel>(42L) { error("Lost pending event owner") }
+            assertTrue(reopened === vm); assertFalse(42L in registry.running.value)
+            gate.complete(Unit); advanceUntilIdle()
+            assertTrue(vm.state.value.eventBusyIds.isEmpty()); assertNotNull(vm.state.value.eventActionErrors[1])
+            assertEquals(listOf(original), vm.state.value.eventNodes)
+            coEvery { events.setResolved(1, true) } returns Unit
+            coEvery { events.getPageForBranch(42, "main", null, null, any()) } returns listOf(original.copy(resolved = true))
+            vm.toggleEventNodeResolved(1); advanceUntilIdle()
+            assertTrue(vm.state.value.eventActionErrors.isEmpty()); assertTrue(vm.state.value.eventNodes.single().resolved)
+        } finally { gate.complete(Unit); registry.stop(42L); registry.release(42L); advanceUntilIdle() }
     }
 
     @Test fun eventWriteBlocksDuplicateActionsAndRetainsFailureForRetry() = runTest(testDispatcher) {
@@ -3617,23 +6535,26 @@ class ChatViewModelTest {
     @Test fun lateEventRefreshCannotUndoANewerStatusChange() = runTest(testDispatcher) {
         val events = mockk<SessionEventNodeDao>(relaxed = true)
         val source = SessionEventNodeEntity(id = 1, sessionId = 42, title = "事件")
-        coEvery { events.getPageForBranch(42, "main", null, null, any()) } returns listOf(source)
+        val other = source.copy(id = 2, title = "另一事件")
+        coEvery { events.getPageForBranch(42, "main", null, null, any()) } returns listOf(source, other)
         val vm = createViewModel(eventNodeDao = events)
         advanceUntilIdle()
         vm.loadEventNodesIfNeeded()
         advanceUntilIdle()
         val older = CompletableDeferred<List<SessionEventNodeEntity>>()
         var reads = 0
-        coEvery { events.getPageForBranch(42, "main", null, null, any()) } coAnswers { if (++reads == 1) older.await() else listOf(source) }
+        val latest = listOf(source.copy(resolved = true), other.copy(resolved = true))
+        coEvery { events.getPageForBranch(42, "main", null, null, any()) } coAnswers { if (++reads == 1) older.await() else latest }
         vm.toggleEventNodeResolved(1)
         runCurrent()
-        assertTrue(vm.state.value.eventNodes.single().resolved)
-        vm.toggleEventNodeResolved(1)
+        assertTrue(vm.state.value.eventNodes.first { it.id == 1L }.resolved)
+        // A different event may finish while the first event's readback is late.
+        vm.toggleEventNodeResolved(2)
         advanceUntilIdle()
-        assertFalse(vm.state.value.eventNodes.single().resolved)
-        older.complete(listOf(source.copy(resolved = true)))
+        assertEquals(latest, vm.state.value.eventNodes)
+        older.complete(listOf(source.copy(resolved = true), other))
         advanceUntilIdle()
-        assertFalse(vm.state.value.eventNodes.single().resolved)
+        assertEquals(latest, vm.state.value.eventNodes)
     }
 
     @Test
@@ -3817,6 +6738,113 @@ class ChatViewModelTest {
         advanceUntilIdle()
         assertEquals(listOf(true, false, false), outcomes)
         assertEquals(500L, vm.state.value.focusedMessageId)
+    }
+
+    @Test fun memorySourceOpensOwningLineFromMain() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        val branch = SessionBranchEntity(sessionId = 42, branchId = "source", sourceMessageId = 1)
+        val target = MessageEntity(id = 500, sessionId = 42, branchId = "source", content = "子线独有原文")
+        coEvery { dao.getMainMessageById(42, 500) } returns null
+        coEvery { dao.getByIdInSession(500, 42) } returns target
+        coEvery { branches.getBySession(42) } returns listOf(branch)
+        coEvery { branches.getByBranch(42, "source") } returns branch
+        coEvery { dao.getVisibleMessageById(42, "source", 500) } returns target
+        val preferences = uiPreferences()
+        val vm = createViewModel(messageDao = dao, sessionBranchDao = branches, uiPreferencesRepository = preferences)
+        advanceUntilIdle()
+        val results = mutableListOf<Boolean>()
+        assertTrue(vm.openMemorySourceInHistory(500, results::add)); advanceUntilIdle()
+        assertEquals(listOf(true), results)
+        assertEquals("source", vm.state.value.currentBranchId)
+        assertEquals(500L, vm.state.value.focusedMessageId)
+        coVerify { preferences.setLastChatBranch(42, "source") }
+    }
+
+    @Test fun memorySourceKeepsInheritedOriginalInCurrentLine() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        val branch = SessionBranchEntity(sessionId = 42, branchId = "child", sourceMessageId = 600)
+        val target = MessageEntity(id = 500, sessionId = 42, content = "继承主线原文")
+        coEvery { branches.getBySession(42) } returns listOf(branch)
+        coEvery { branches.getByBranch(42, "child") } returns branch
+        coEvery { dao.getVisibleMessageById(42, "child", 500) } returns target
+        val vm = createViewModel(messageDao = dao, sessionBranchDao = branches, uiPreferencesRepository = uiPreferences("child"))
+        advanceUntilIdle()
+        val results = mutableListOf<Boolean>()
+        assertTrue(vm.openMemorySourceInHistory(500, results::add)); advanceUntilIdle()
+        assertEquals(listOf(true), results)
+        assertEquals("child", vm.state.value.currentBranchId)
+        assertEquals(500L, vm.state.value.focusedMessageId)
+        coVerify(exactly = 0) { dao.getByIdInSession(500, 42) }
+    }
+
+    @Test fun memorySourceDeletedLineOrInvisibleMessageKeepsMain() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        val branch = SessionBranchEntity(sessionId = 42, branchId = "source", sourceMessageId = 1)
+        coEvery { dao.getMainMessageById(42, 500) } returns null
+        coEvery { dao.getByIdInSession(500, 42) } returns MessageEntity(id = 500, sessionId = 42, branchId = "source")
+        coEvery { branches.getByBranch(42, "source") } returns null
+        val vm = createViewModel(messageDao = dao, sessionBranchDao = branches)
+        advanceUntilIdle()
+        val results = mutableListOf<Boolean>()
+        assertTrue(vm.openMemorySourceInHistory(500, results::add)); advanceUntilIdle()
+        coEvery { branches.getByBranch(42, "source") } returns branch
+        coEvery { dao.getVisibleMessageById(42, "source", 500) } returns null
+        assertTrue(vm.openMemorySourceInHistory(500, results::add)); advanceUntilIdle()
+        assertEquals(listOf(false, false), results)
+        assertEquals("main", vm.state.value.currentBranchId)
+        assertEquals(null, vm.state.value.focusedMessageId)
+    }
+
+    @Test fun memorySourceReadFailureReturnsFalseAndCanRetry() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        coEvery { dao.getMainMessageById(42, 500) } returns null
+        coEvery { dao.getByIdInSession(500, 42) } throws IllegalStateException("read failed")
+        val vm = createViewModel(messageDao = dao); advanceUntilIdle()
+        val results = mutableListOf<Boolean>()
+        assertTrue(vm.openMemorySourceInHistory(500, results::add)); advanceUntilIdle()
+        assertEquals(listOf(false), results)
+        coEvery { dao.getMainMessageById(42, 500) } returns MessageEntity(id = 500, sessionId = 42)
+        assertTrue(vm.openMemorySourceInHistory(500, results::add)); advanceUntilIdle()
+        assertEquals(listOf(false, true), results)
+        assertEquals(500L, vm.state.value.focusedMessageId)
+    }
+
+    @Test fun memorySourceRejectsConcurrentOwnerWhileLookupIsPending() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        val gate = CompletableDeferred<MessageEntity?>()
+        coEvery { dao.getMainMessageById(42, 500) } returns null
+        coEvery { dao.getByIdInSession(500, 42) } coAnswers { gate.await() }
+        val vm = createViewModel(messageDao = dao); advanceUntilIdle()
+        val results = mutableListOf<Boolean>()
+        assertTrue(vm.openMemorySourceInHistory(500, results::add)); runCurrent()
+        assertFalse(vm.openMemorySourceInHistory(600, results::add))
+        assertTrue(results.isEmpty())
+        gate.complete(null); advanceUntilIdle()
+        assertEquals(listOf(false), results)
+        coVerify(exactly = 0) { dao.getByIdInSession(600, 42) }
+        assertEquals("main", vm.state.value.currentBranchId)
+    }
+
+    @Test fun memorySourceDisappearingDuringRefreshDoesNotFallBackOrReportSuccess() = runTest(testDispatcher) {
+        val dao = mockk<MessageDao>(relaxed = true)
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        val branch = SessionBranchEntity(sessionId = 42, branchId = "source", sourceMessageId = 1)
+        var available = true
+        coEvery { branches.getBySession(42) } answers { if (available) listOf(branch) else emptyList() }
+        coEvery { branches.getByBranch(42, "source") } answers { available = false; branch }
+        val target = MessageEntity(id = 500, sessionId = 42, branchId = "source")
+        coEvery { dao.getMainMessageById(42, 500) } returns null
+        coEvery { dao.getByIdInSession(500, 42) } returns target
+        coEvery { dao.getVisibleMessageById(42, "source", 500) } returns target
+        val vm = createViewModel(messageDao = dao, sessionBranchDao = branches); advanceUntilIdle()
+        val results = mutableListOf<Boolean>()
+        assertTrue(vm.openMemorySourceInHistory(500, results::add)); advanceUntilIdle()
+        assertEquals(listOf(false), results)
+        assertEquals("main", vm.state.value.currentBranchId)
+        assertEquals(null, vm.state.value.focusedMessageId)
     }
 
     @Test fun sourceNavigationLoadsRequestedBranchAndFocusesOriginalMessage() = runTest(testDispatcher) {
@@ -4647,7 +7675,7 @@ class ChatViewModelTest {
         coEvery { world.getBySession(42L) } returns SessionWorldEntity(sessionId = 42L)
         val engine = mockk<ChatEngine>(relaxed = true)
         val finish = CompletableDeferred<Unit>()
-        every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns kotlinx.coroutines.flow.flow {
+        every { engine.streamGenerate(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns kotlinx.coroutines.flow.flow {
             emit(StreamState.Generating("窗外的雨"))
             finish.await()
             emit(StreamState.Done("窗外的雨渐渐停了。"))
@@ -4676,4 +7704,1205 @@ class ChatViewModelTest {
         }
     }
 
+    @Test
+    fun bookmarkNoteSaveKeepsIdentityAndCreatedAt() = runTest(testDispatcher) {
+        val mark = MessageBookmarkEntity(id = 71L, sessionId = 42L, messageId = 501L, note = "旧", createdAt = 1234L)
+        val bookmarks = mockk<BookmarkDao>(relaxed = true)
+        coEvery { bookmarks.getFirstPage(42L, any()) } returns listOf(mark)
+        coEvery { bookmarks.updateNote(42L, 71L, "新备注") } returns 1
+        val vm = createViewModel(bookmarkDao = bookmarks)
+        advanceUntilIdle()
+        vm.loadBookmarksIfNeeded()
+        advanceUntilIdle()
+        vm.updateBookmarkNoteDraft(71L, "新备注")
+        vm.saveBookmarkNote(71L, "新备注")
+        advanceUntilIdle()
+
+        val saved = vm.state.value.bookmarks.single()
+        assertEquals(71L, saved.id)
+        assertEquals(1234L, saved.createdAt)
+        assertEquals("新备注", saved.note)
+        assertTrue(vm.state.value.bookmarkNoteDrafts[71L] == null)
+        coVerify(exactly = 1) { bookmarks.updateNote(42L, 71L, "新备注") }
+    }
+
+    @Test
+    fun bookmarkNoteFailureKeepsDraftAndCanRetry() = runTest(testDispatcher) {
+        val mark = MessageBookmarkEntity(id = 72L, sessionId = 42L, messageId = 502L, createdAt = 2345L)
+        val bookmarks = mockk<BookmarkDao>(relaxed = true)
+        coEvery { bookmarks.getFirstPage(42L, any()) } returns listOf(mark)
+        coEvery { bookmarks.updateNote(42L, 72L, "待重试") } throws IllegalStateException("offline") andThen 1
+        val vm = createViewModel(bookmarkDao = bookmarks)
+        advanceUntilIdle()
+        vm.loadBookmarksIfNeeded()
+        advanceUntilIdle()
+        vm.updateBookmarkNoteDraft(72L, "待重试")
+        vm.saveBookmarkNote(72L, "待重试")
+        advanceUntilIdle()
+        assertEquals("待重试", vm.state.value.bookmarkNoteDrafts[72L])
+        assertEquals("备注保存失败，请重试", vm.state.value.bookmarkNoteErrors[72L])
+        vm.saveBookmarkNote(72L, "待重试")
+        advanceUntilIdle()
+        assertEquals("待重试", vm.state.value.bookmarks.single().note)
+        assertTrue(vm.state.value.bookmarkNoteDrafts[72L] == null)
+        coVerify(exactly = 2) { bookmarks.updateNote(42L, 72L, "待重试") }
+    }
+
+    @Test
+    fun bookmarkNotePreventsDuplicateSaveAndRestoresDraftFromSavedState() = runTest(testDispatcher) {
+        val mark = MessageBookmarkEntity(id = 73L, sessionId = 42L, messageId = 503L)
+        val bookmarks = mockk<BookmarkDao>(relaxed = true)
+        coEvery { bookmarks.getFirstPage(42L, any()) } returns listOf(mark)
+        val saveStarted = CompletableDeferred<Unit>()
+        val releaseSave = CompletableDeferred<Unit>()
+        coEvery { bookmarks.updateNote(42L, 73L, "并发") } coAnswers {
+            saveStarted.complete(Unit)
+            releaseSave.await()
+            1
+        }
+        val handle = SavedStateHandle(mapOf("sessionId" to 42L))
+        val vm = createViewModel(bookmarkDao = bookmarks, savedStateHandle = handle)
+        advanceUntilIdle()
+        vm.loadBookmarksIfNeeded()
+        advanceUntilIdle()
+        vm.updateBookmarkNoteDraft(73L, "并发")
+        vm.saveBookmarkNote(73L, "并发")
+        saveStarted.await()
+        vm.updateBookmarkNoteDraft(73L, "保存期间新编辑")
+        vm.saveBookmarkNote(73L, "并发")
+        runCurrent()
+        coVerify(exactly = 1) { bookmarks.updateNote(42L, 73L, "并发") }
+        assertTrue(73L in vm.state.value.bookmarkNoteSavingIds)
+        releaseSave.complete(Unit)
+        advanceUntilIdle()
+        assertEquals("保存期间新编辑", vm.state.value.bookmarkNoteDrafts[73L])
+        val reopened = createViewModel(bookmarkDao = bookmarks, savedStateHandle = handle)
+        assertEquals("保存期间新编辑", reopened.state.value.bookmarkNoteDrafts[73L])
+    }
+
+    @Test fun eventWindowRecreationRestoresBoundedCursorAndKeepsSameLineRefresh() = runTest(testDispatcher) {
+        val handle = SavedStateHandle(mapOf("sessionId" to 42L))
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        coEvery { events.getPageForBranch(42, "main", any(), any(), any()) } coAnswers {
+            val before = arg<Long?>(3) ?: 101L
+            (before - 1 downTo (before - arg<Int>(4)).coerceAtLeast(1L)).map { id ->
+                SessionEventNodeEntity(id=id,sessionId=42,createdAt=id)
+            }
+        }
+        val vm=createViewModel(eventNodeDao=events,savedStateHandle=handle)
+        advanceUntilIdle();vm.loadEventNodesIfNeeded();advanceUntilIdle()
+        repeat(3) { vm.loadMoreEventNodes();advanceUntilIdle() }
+        assertEquals((76L downTo 5L).toList(),vm.state.value.eventNodes.map { it.id })
+        assertEquals(72,handle.get<Int>("event_window_size_42"))
+        assertEquals(77L,handle.get<Long>("event_window_before_id_42"))
+        vm.switchBranch("main");advanceUntilIdle()
+        assertEquals(72,handle.get<Int>("event_window_size_42"))
+        val reopened=createViewModel(eventNodeDao=events,savedStateHandle=handle)
+        advanceUntilIdle();reopened.loadEventNodesIfNeeded();advanceUntilIdle()
+        assertEquals(vm.state.value.eventNodes,reopened.state.value.eventNodes)
+        assertEquals(77L,reopened.state.value.eventNodesBeforeId)
+        coVerify(atLeast=1) { events.getPageForBranch(42,"main",77L,77L,73) }
+        reopened.resetEventWindow();advanceUntilIdle()
+        assertEquals((100L downTo 77L).toList(),reopened.state.value.eventNodes.map { it.id })
+        assertNull(handle.get<Long>("event_window_before_id_42"))
+        val reset=createViewModel(eventNodeDao=events,savedStateHandle=handle)
+        advanceUntilIdle();reset.loadEventNodesIfNeeded();advanceUntilIdle()
+        assertEquals(24,reset.state.value.eventNodesWindowSize)
+        assertNull(reset.state.value.eventNodesBeforeId)
+    }
+
+    @Test fun eventWindowChildRestorationWaitsForReadyAndRetriesSameCursor() = runTest(testDispatcher) {
+        val handle=SavedStateHandle(mapOf("sessionId" to 42L,"event_criteria_branch_42" to "B", "event_query_42" to "港口", "event_resolved_42" to false,"event_window_size_42" to 72,"event_window_before_at_42" to 77L,"event_window_before_id_42" to 77L))
+        val branches=mockk<SessionBranchDao>(relaxed=true)
+        coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId=42,branchId="B",sourceMessageId=7))
+        val ready=CompletableDeferred<Unit>()
+        val visibility=mockk<BranchVisibilityIndexManager>(relaxed=true)
+        coEvery { visibility.ensureReady() } coAnswers { ready.await() }
+        val events=mockk<SessionEventNodeDao>(relaxed=true)
+        val source=SessionEventNodeEntity(id=10,sessionId=42,branchId="B",title="港口")
+        coEvery { events.getFilteredPageForBranch(42,"B","港口",false,77L,77L,73) } throws IllegalStateException("read failed") andThen listOf(source)
+        val vm=createViewModel(eventNodeDao=events,savedStateHandle=handle,sessionBranchDao=branches,uiPreferencesRepository=uiPreferences("B"),branchVisibilityIndexManager=visibility)
+        runCurrent();vm.loadEventNodesIfNeeded();runCurrent()
+        coVerify(exactly=0) { events.getPageForBranch(any(),any(),any(),any(),any()) }
+        coVerify(exactly=0) { events.getFilteredPageForBranch(any(),any(),any(),any(),any(),any(),any()) }
+        ready.complete(Unit);advanceUntilIdle();vm.loadEventNodesIfNeeded();advanceUntilIdle()
+        assertFalse(vm.state.value.eventNodesLoaded)
+        assertEquals(77L,vm.state.value.eventNodesBeforeId)
+        vm.loadMoreEventNodes();advanceUntilIdle()
+        assertEquals(listOf(source),vm.state.value.eventNodes)
+        assertEquals(72,vm.state.value.eventNodesWindowSize)
+        coVerify(exactly=2) { events.getFilteredPageForBranch(42,"B","港口",false,77L,77L,73) }
+    }
+
+    @Test fun eventWindowRejectsOtherScopeOversizedAndUnpairedCursor() = runTest(testDispatcher) {
+        for (values in listOf(
+            mapOf("event_criteria_branch_42" to "B","event_window_size_42" to 72),
+            mapOf("event_criteria_branch_43" to "main","event_window_size_43" to 72),
+            mapOf("event_criteria_branch_42" to "main","event_window_size_42" to 999),
+            mapOf("event_criteria_branch_42" to "main","event_window_size_42" to 72,"event_window_before_id_42" to 77L),
+            mapOf("event_criteria_branch_42" to "main","event_window_size_42" to 72,"event_window_before_at_42" to 77L,"event_window_before_id_42" to -1L),
+        )) {
+            val vm=createViewModel(savedStateHandle=SavedStateHandle(values+mapOf("sessionId" to 42L)))
+            advanceUntilIdle()
+            assertEquals(24,vm.state.value.eventNodesWindowSize)
+            assertNull(vm.state.value.eventNodesBeforeCreatedAt);assertNull(vm.state.value.eventNodesBeforeId)
+        }
+    }
+
+    @Test fun eventWindowNewCriteriaAndSuccessfulBranchChangeClearDescriptor() = runTest(testDispatcher) {
+        for (action in listOf("query","filter","branch")) {
+            val handle=SavedStateHandle(mapOf("sessionId" to 42L,"event_criteria_branch_42" to "main","event_window_size_42" to 72,"event_window_before_at_42" to 77L,"event_window_before_id_42" to 77L))
+            val branches=mockk<SessionBranchDao>(relaxed=true)
+            coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId=42,branchId="B",sourceMessageId=7))
+            val vm=createViewModel(savedStateHandle=handle,sessionBranchDao=branches)
+            advanceUntilIdle()
+            when(action) { "query" -> vm.updateEventQuery("港口");"filter" -> vm.updateEventResolvedFilter(true);else -> vm.switchBranch("B") }
+            advanceUntilIdle()
+            assertNull(handle.get<Int>("event_window_size_42"));assertNull(handle.get<Long>("event_window_before_id_42"))
+            assertEquals(24,vm.state.value.eventNodesWindowSize)
+            assertNull(vm.state.value.eventNodesBeforeId)
+        }
+    }
+
+    @Test fun eventWindowFailedAndLateLoadsDoNotPublishOldDescriptor() = runTest(testDispatcher) {
+        val handle=SavedStateHandle(mapOf("sessionId" to 42L))
+        val events=mockk<SessionEventNodeDao>(relaxed=true)
+        val first=(100L downTo 76L).map { SessionEventNodeEntity(id=it,sessionId=42,createdAt=it) }
+        coEvery { events.getPageForBranch(42,"main",null,null,25) } returns first
+        coEvery { events.getPageForBranch(42,"main",77L,77L,25) } throws IllegalStateException("older failed")
+        val vm=createViewModel(eventNodeDao=events,savedStateHandle=handle)
+        advanceUntilIdle();vm.loadEventNodesIfNeeded();advanceUntilIdle();vm.loadMoreEventNodes();advanceUntilIdle()
+        assertNull(handle.get<Int>("event_window_size_42"))
+        val delayed=CompletableDeferred<List<SessionEventNodeEntity>>()
+        coEvery { events.getPageForBranch(42,"main",77L,77L,25) } coAnswers { delayed.await() }
+        vm.loadMoreEventNodes();runCurrent()
+        vm.updateEventQuery("new");advanceUntilIdle()
+        delayed.complete((76L downTo 52L).map { SessionEventNodeEntity(id=it,sessionId=42,createdAt=it) });advanceUntilIdle()
+        assertEquals("new",handle.get<String>("event_query_42"))
+        assertNull(handle.get<Int>("event_window_size_42"));assertNull(vm.state.value.eventNodesBeforeId)
+    }
+
+    @Test fun eventCriteriaRestoresMixedQueryAndBothFiltersThroughExistingHandle() = runTest(testDispatcher) {
+        val handle = SavedStateHandle(mapOf("sessionId" to 42L))
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        val source = SessionEventNodeEntity(id = 901, sessionId = 42, title = "港口Alpha")
+        coEvery { events.getFilteredPageForBranch(42, "main", "港口Alpha", false, null, null, 25) } returns listOf(source)
+        coEvery { events.getFilteredPageForBranch(42, "main", "港口Alpha", true, null, null, 25) } returns listOf(source.copy(resolved = true))
+        val first = createViewModel(eventNodeDao = events, savedStateHandle = handle)
+        advanceUntilIdle();first.updateEventQuery("港口Alpha");first.updateEventResolvedFilter(false);advanceUntilIdle()
+        val reopened = createViewModel(eventNodeDao = events, savedStateHandle = handle)
+        advanceUntilIdle();reopened.loadEventNodesIfNeeded();advanceUntilIdle()
+        assertEquals("港口Alpha", reopened.state.value.eventQuery)
+        assertEquals(false, reopened.state.value.eventResolvedFilter)
+        assertEquals(listOf(source), reopened.state.value.eventNodes)
+        reopened.updateEventResolvedFilter(true);advanceUntilIdle()
+        val resolved = createViewModel(eventNodeDao = events, savedStateHandle = handle)
+        advanceUntilIdle();resolved.loadEventNodesIfNeeded();advanceUntilIdle()
+        assertEquals(true, resolved.state.value.eventResolvedFilter)
+        assertTrue(resolved.state.value.eventNodes.single().resolved)
+        resolved.updateEventQuery( "港".repeat(240));advanceUntilIdle()
+        assertEquals(200, handle.get<String>("event_query_42")!!.length)
+        resolved.updateEventQuery("");resolved.updateEventResolvedFilter(null);advanceUntilIdle()
+        val cleared = createViewModel(savedStateHandle = handle)
+        advanceUntilIdle()
+        assertEquals("", cleared.state.value.eventQuery)
+        assertNull(cleared.state.value.eventResolvedFilter)
+    }
+
+    @Test fun eventCriteriaWaitsForChildReadyAndDoesNotReadTransientMain() = runTest(testDispatcher) {
+        val handle = SavedStateHandle(mapOf("sessionId" to 42L, "event_criteria_branch_42" to "B", "event_query_42" to "港口Alpha", "event_resolved_42" to false))
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId = 42, branchId = "B", sourceMessageId = 7))
+        val repair = CompletableDeferred<Unit>()
+        val visibility = mockk<BranchVisibilityIndexManager>(relaxed = true)
+        coEvery { visibility.ensureReady() } coAnswers { repair.await() }
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        val source = SessionEventNodeEntity(id = 901, sessionId = 42, branchId = "B", title = "港口Alpha")
+        coEvery { events.getFilteredPageForBranch(42, "B", "港口Alpha", false, null, null, 25) } returns listOf(source)
+        val vm = createViewModel(savedStateHandle = handle, sessionBranchDao = branches, uiPreferencesRepository = uiPreferences("B"), branchVisibilityIndexManager = visibility, eventNodeDao = events)
+        runCurrent();vm.loadEventNodesIfNeeded();runCurrent()
+        assertFalse(vm.state.value.isReady)
+        coVerify(exactly = 0) { events.getPageForBranch(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { events.getFilteredPageForBranch(any(), any(), any(), any(), any(), any(), any()) }
+        repair.complete(Unit);advanceUntilIdle();vm.loadEventNodesIfNeeded();advanceUntilIdle()
+        assertEquals("B", vm.state.value.currentBranchId)
+        assertEquals("港口Alpha", vm.state.value.eventQuery)
+        assertEquals(listOf(source), vm.state.value.eventNodes)
+    }
+
+    @Test fun eventCriteriaDoesNotRestoreOtherBranchOrOtherSession() = runTest(testDispatcher) {
+        for (scope in listOf("B", "main")) {
+            val suffix = if (scope == "B") "42" else "43"
+            val handle = SavedStateHandle(mapOf("sessionId" to 42L, "event_criteria_branch_$suffix" to scope, "event_query_$suffix" to "港口Alpha", "event_resolved_$suffix" to true))
+            val vm = createViewModel(savedStateHandle = handle)
+            advanceUntilIdle()
+            assertEquals("", vm.state.value.eventQuery)
+            assertNull(vm.state.value.eventResolvedFilter)
+        }
+    }
+
+    @Test fun eventCriteriaSuccessfulSwitchSavesResetBeforeRecreation() = runTest(testDispatcher) {
+        val handle = SavedStateHandle(mapOf("sessionId" to 42L))
+        val branches = mockk<SessionBranchDao>(relaxed = true)
+        coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId = 42, branchId = "B", sourceMessageId = 7))
+        val vm = createViewModel(savedStateHandle = handle, sessionBranchDao = branches)
+        advanceUntilIdle();vm.updateEventQuery("港口Alpha");vm.updateEventResolvedFilter(false);advanceUntilIdle()
+        vm.switchBranch("B");advanceUntilIdle()
+        assertEquals("B", vm.state.value.currentBranchId)
+        assertEquals("B", handle.get<String>("event_criteria_branch_42"))
+        assertEquals("", handle.get<String>("event_query_42"))
+        assertNull(handle.get<Boolean>("event_resolved_42"))
+        val reopened = createViewModel(savedStateHandle = handle, sessionBranchDao = branches, uiPreferencesRepository = uiPreferences("B"))
+        advanceUntilIdle()
+        assertEquals("B", reopened.state.value.currentBranchId)
+        assertEquals("", reopened.state.value.eventQuery)
+        assertNull(reopened.state.value.eventResolvedFilter)
+    }
+
+    @Test fun eventFilterReadsWholeLineAndRejectsLateQueryResults() = runTest(testDispatcher) {
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        val old = CompletableDeferred<List<SessionEventNodeEntity>>()
+        val found = SessionEventNodeEntity(id = 901, sessionId = 42, title = "灯塔旧线索")
+        coEvery { events.getFilteredPageForBranch(42, "main", "old", null, null, null, 25) } coAnswers { old.await() }
+        coEvery { events.getFilteredPageForBranch(42, "main", "灯塔", null, null, null, 25) } returns listOf(found)
+        coEvery { events.getFilteredPageForBranch(42, "main", "灯塔", true, null, null, 25) } returns listOf(found.copy(resolved = true))
+        val vm = createViewModel(eventNodeDao = events)
+        advanceUntilIdle()
+        vm.updateEventQuery("old"); runCurrent()
+        vm.updateEventQuery("灯塔"); advanceUntilIdle()
+        assertEquals(listOf(901L), vm.state.value.eventNodes.map { it.id })
+        old.complete(listOf(found.copy(id = 902))); advanceUntilIdle()
+        assertEquals("灯塔", vm.state.value.eventQuery)
+        assertEquals(listOf(901L), vm.state.value.eventNodes.map { it.id })
+        vm.updateEventResolvedFilter(true); advanceUntilIdle()
+        assertTrue(vm.state.value.eventNodes.single().resolved)
+        coVerify(exactly = 1) { events.getFilteredPageForBranch(42, "main", "灯塔", true, null, null, 25) }
+    }
+
+    @Test fun eventStatusChangeRefillsTheSameFilteredWindow() = runTest(testDispatcher) {
+        val events = mockk<SessionEventNodeDao>(relaxed = true)
+        val source = SessionEventNodeEntity(id = 901, sessionId = 42, title = "灯塔", resolved = false)
+        coEvery { events.getFilteredPageForBranch(42, "main", "", false, null, null, 25) } returns listOf(source) andThen emptyList()
+        val vm = createViewModel(eventNodeDao = events)
+        advanceUntilIdle()
+        vm.updateEventResolvedFilter(false); advanceUntilIdle()
+        vm.toggleEventNodeResolved(901); advanceUntilIdle()
+        assertEquals(false, vm.state.value.eventResolvedFilter)
+        assertTrue(vm.state.value.eventNodes.isEmpty())
+        coVerify(exactly = 1) { events.setResolved(901, true) }
+    }
+
+    @Test fun bookmarkSearchRejectsLateReadsAndPreservesSavedQuery() = runTest(testDispatcher) {
+        val marks = mockk<BookmarkDao>(relaxed = true)
+        val old = CompletableDeferred<List<MessageBookmarkEntity>>()
+        val found = MessageBookmarkEntity(id = 71, sessionId = 42, messageId = 501, note = "灯塔")
+        coEvery { marks.searchPage(42, "old", null, null, 41) } coAnswers {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { old.await() }
+        }
+        coEvery { marks.searchPage(42, "灯塔", null, null, 41) } returns listOf(found)
+        val handle = SavedStateHandle(mapOf("sessionId" to 42L))
+        val vm = createViewModel(bookmarkDao = marks, savedStateHandle = handle)
+        advanceUntilIdle()
+        vm.updateBookmarkQuery("old"); runCurrent()
+        vm.updateBookmarkQuery("灯塔"); runCurrent()
+        old.complete(listOf(found.copy(id = 99))); advanceUntilIdle()
+        assertEquals("灯塔", vm.state.value.bookmarkQuery)
+        assertEquals(listOf(71L), vm.state.value.bookmarks.map { it.id })
+        val reopened = createViewModel(bookmarkDao = marks, savedStateHandle = handle)
+        advanceUntilIdle()
+        assertEquals("灯塔", reopened.state.value.bookmarkQuery)
+    }
+
+    @Test fun editingSearchedBookmarkRemovesItFromResultsAfterCommit() = runTest(testDispatcher) {
+        val marks = mockk<BookmarkDao>(relaxed = true)
+        val found = MessageBookmarkEntity(id = 71, sessionId = 42, messageId = 501, note = "灯塔")
+        coEvery { marks.searchPage(42, "灯塔", null, null, 41) } returns listOf(found) andThen emptyList()
+        coEvery { marks.updateNote(42, 71, "新线索") } returns 1
+        val vm = createViewModel(bookmarkDao = marks)
+        advanceUntilIdle()
+        vm.updateBookmarkQuery("灯塔"); advanceUntilIdle()
+        vm.updateBookmarkNoteDraft(71, "新线索")
+        var saved = false
+        vm.saveBookmarkNote(71, "新线索") { saved = it }; advanceUntilIdle()
+        assertTrue(saved)
+        assertTrue(vm.state.value.bookmarks.isEmpty())
+        assertEquals("灯塔", vm.state.value.bookmarkQuery)
+        assertFalse(71L in vm.state.value.bookmarkNoteDrafts)
+    }
+
+    @Test
+    fun characterStateReadFailureKeepsPanelAndRetryLoadsIt() = runTest(testDispatcher) {
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 9L))
+        val states = mockk<CharacterStateDao>(relaxed = true)
+        val saved = SessionCharacterStateEntity(
+            sessionId = 42L, characterId = 9L, branchId = "main",
+            dynamicStateJson = """{"mood":"平静"}""",
+        )
+        coEvery { states.getBySessionAndCharacter(42L, 9L, "main") } throws IllegalStateException() andThen saved
+        val vm = createViewModel(participantDao = participants, characterStateDao = states)
+        advanceUntilIdle()
+
+        vm.openCharacterState(9L)
+        advanceUntilIdle()
+        assertEquals("读取角色状态失败，内容已保留，请重试", vm.state.value.characterStatePanel?.error)
+        vm.openCharacterState(9L)
+        advanceUntilIdle()
+        assertEquals("平静", vm.state.value.characterStatePanel?.state?.mood)
+    }
+
+    @Test
+    fun sameCharacterReopenRejectsLateReadFromEarlierRevision() = runTest(testDispatcher) {
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 9L))
+        val states = mockk<CharacterStateDao>(relaxed = true)
+        val old = CompletableDeferred<SessionCharacterStateEntity?>()
+        val new = SessionCharacterStateEntity(sessionId = 42L, characterId = 9L, dynamicStateJson = """{"mood":"新"}""")
+        var reads = 0
+        coEvery { states.getBySessionAndCharacter(42L, 9L, "main") } coAnswers {
+            reads++
+            if (reads == 1) withContext(NonCancellable) { old.await() } else new
+        }
+        val vm = createViewModel(participantDao = participants, characterStateDao = states)
+        advanceUntilIdle()
+        vm.openCharacterState(9L); runCurrent()
+        vm.openCharacterState(9L); advanceUntilIdle()
+        assertEquals("新", vm.state.value.characterStatePanel?.state?.mood)
+        old.complete(SessionCharacterStateEntity(sessionId = 42L, characterId = 9L, dynamicStateJson = """{"mood":"旧"}"""))
+        advanceUntilIdle()
+        assertEquals("新", vm.state.value.characterStatePanel?.state?.mood)
+    }
+
+    @Test
+    fun clearFailureKeepsStateAndCanRetry() = runTest(testDispatcher) {
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 9L))
+        val states = mockk<CharacterStateDao>(relaxed = true)
+        val saved = SessionCharacterStateEntity(sessionId = 42L, characterId = 9L, dynamicStateJson = """{"mood":"保留"}""")
+        coEvery { states.getBySessionAndCharacter(42L, 9L, "main") } returns saved andThen null
+        coEvery { states.deleteBySessionCharacterBranch(42L, 9L, "main") } throws IllegalStateException() andThen 1
+        val vm = createViewModel(participantDao = participants, characterStateDao = states)
+        advanceUntilIdle(); vm.openCharacterState(9L); advanceUntilIdle()
+        vm.clearCharacterState(); advanceUntilIdle()
+        assertEquals("清除失败，内容已保留，请重试", vm.state.value.characterStatePanel?.error)
+        assertEquals("保留", vm.state.value.characterStatePanel?.state?.mood)
+        vm.clearCharacterState(); advanceUntilIdle()
+        coVerify(exactly = 2) { states.deleteBySessionCharacterBranch(42L, 9L, "main") }
+        assertEquals(null, vm.state.value.characterStatePanel?.state)
+    }
+
+    @Test
+    fun clearBusyRejectsSendBeforeDraftSubmissionBegins() = runTest(testDispatcher) {
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 9L))
+        val states = mockk<CharacterStateDao>(relaxed = true)
+        coEvery { states.getBySessionAndCharacter(42L, 9L, "main") } returns SessionCharacterStateEntity(
+            sessionId = 42L, characterId = 9L, dynamicStateJson = """{"mood":"清除中"}""",
+        )
+        val gate = CompletableDeferred<Int>()
+        coEvery { states.deleteBySessionCharacterBranch(42L, 9L, "main") } coAnswers { gate.await() }
+        val drafts = emptyDraftStore()
+        val vm = createViewModel(participantDao = participants, characterStateDao = states, chatDraftStore = drafts)
+        advanceUntilIdle(); vm.openCharacterState(9L); advanceUntilIdle()
+        vm.clearCharacterState(); runCurrent()
+        vm.updateInput("清除期间不应发送")
+        vm.sendMessage()
+        assertEquals("角色状态正在清除，请稍后再发送", vm.state.value.error)
+        verify(exactly = 0) { drafts.saveBeforeSubmission(any(), any()) }
+        gate.complete(1); advanceUntilIdle()
+    }
+
+    @Test
+    fun characterStateReloadWaitsForClearAndReadsActualResult() = runTest(testDispatcher) {
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 9L))
+        val states = mockk<CharacterStateDao>(relaxed = true)
+        var stored: SessionCharacterStateEntity? = SessionCharacterStateEntity(sessionId = 42L, characterId = 9L, dynamicStateJson = """{"mood":"待清除"}""")
+        coEvery { states.getBySessionAndCharacter(42L, 9L, "main") } coAnswers { stored }
+        val gate = CompletableDeferred<Unit>()
+        coEvery { states.deleteBySessionCharacterBranch(42L, 9L, "main") } coAnswers { gate.await(); stored = null; 1 }
+        val vm = createViewModel(participantDao = participants, characterStateDao = states)
+        advanceUntilIdle(); vm.openCharacterState(9L); advanceUntilIdle()
+        vm.clearCharacterState(); runCurrent()
+        vm.closeCharacterState(); vm.openCharacterState(9L); runCurrent()
+        try {
+            assertTrue(vm.state.value.characterStatePanel!!.loading)
+            coVerify(exactly = 1) { states.getBySessionAndCharacter(42L, 9L, "main") }
+        } finally {
+            gate.complete(Unit)
+        }
+        advanceUntilIdle()
+        assertFalse(vm.state.value.characterStatePanel!!.loading)
+        assertEquals(null, vm.state.value.characterStatePanel!!.state)
+        coVerify(exactly = 1) { states.deleteBySessionCharacterBranch(42L, 9L, "main") }
+    }
+
+    @Test
+    fun characterStateClearRetainsOwnerThroughActualReadbackWithoutGeneration() = runTest(testDispatcher) {
+        val registry = com.mojing.app.ui.chat.RetainedChatSessions.stores
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 9L))
+        val states = mockk<CharacterStateDao>(relaxed = true)
+        val original = SessionCharacterStateEntity(sessionId = 42L, characterId = 9L, dynamicStateJson = """{"mood":"待清除"}""")
+        val deletion = CompletableDeferred<Unit>()
+        val readback = CompletableDeferred<SessionCharacterStateEntity?>()
+        var deleted = false
+        coEvery { states.getBySessionAndCharacter(42L, 9L, "main") } coAnswers { if (deleted) readback.await() else original }
+        coEvery { states.deleteBySessionCharacterBranch(42L, 9L, "main") } coAnswers { deletion.await(); deleted = true; 1 }
+        val vm = registry.acquire(42L) { store -> createViewModel(participantDao = participants, characterStateDao = states).also { store.put("vm", it) } }
+        try {
+            advanceUntilIdle(); vm.openCharacterState(9L); advanceUntilIdle()
+            vm.clearCharacterState(); runCurrent(); vm.clearCharacterState()
+            registry.release(42L)
+            assertTrue(registry.contains(42L)); assertFalse(42L in registry.running.value)
+            deletion.complete(Unit); runCurrent()
+            // The delete has finished and no screen is reading; the DAO readback
+            // must still own the model instead of being cancelled by eviction.
+            assertTrue(deleted); assertTrue(registry.contains(42L))
+            assertTrue(vm.state.value.characterStatePanel!!.loading)
+            val reopened = registry.acquire<ChatViewModel>(42L) { error("Lost clear readback owner") }
+            assertTrue(reopened === vm); registry.release(42L)
+            readback.complete(null); advanceUntilIdle()
+            assertFalse(vm.state.value.characterStatePanel!!.loading)
+            assertFalse(vm.state.value.characterStatePanel!!.clearing)
+            assertEquals(null, vm.state.value.characterStatePanel!!.state)
+            coVerify(exactly = 1) { states.deleteBySessionCharacterBranch(42L, 9L, "main") }
+            assertFalse(registry.contains(42L))
+        } finally {
+            deletion.complete(Unit); readback.complete(null); registry.stop(42L); registry.release(42L); advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun characterStateClearFailureReturnsToSameOwnerAfterReopen() = runTest(testDispatcher) {
+        val registry = com.mojing.app.ui.chat.RetainedChatSessions.stores
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        coEvery { participants.getBySession(42L) } returns listOf(SessionParticipantEntity(sessionId = 42L, characterId = 9L))
+        val states = mockk<CharacterStateDao>(relaxed = true)
+        val original = SessionCharacterStateEntity(sessionId = 42L, characterId = 9L, dynamicStateJson = """{"mood":"保留"}""")
+        coEvery { states.getBySessionAndCharacter(42L, 9L, "main") } returns original
+        val deletion = CompletableDeferred<Unit>()
+        coEvery { states.deleteBySessionCharacterBranch(42L, 9L, "main") } coAnswers { deletion.await(); throw IllegalStateException("disk failure") }
+        val vm = registry.acquire(42L) { store -> createViewModel(participantDao = participants, characterStateDao = states).also { store.put("vm", it) } }
+        try {
+            advanceUntilIdle(); vm.openCharacterState(9L); advanceUntilIdle()
+            vm.clearCharacterState(); runCurrent(); registry.release(42L)
+            val reopened = registry.acquire<ChatViewModel>(42L) { error("Lost pending clear owner") }
+            assertTrue(reopened === vm); assertFalse(42L in registry.running.value)
+            deletion.complete(Unit); advanceUntilIdle()
+            assertFalse(vm.state.value.characterStatePanel!!.clearing)
+            assertEquals("保留", vm.state.value.characterStatePanel!!.state?.mood)
+            assertEquals("清除失败，内容已保留，请重试", vm.state.value.characterStatePanel!!.error)
+        } finally { deletion.complete(Unit); registry.stop(42L); registry.release(42L); advanceUntilIdle() }
+    }
+
+    @Test
+    fun historyAuthorsLoadWithParticipantsWithoutJoiningFutureRounds() = runTest(testDispatcher) {
+        val active = SessionParticipantEntity(id = 1L, sessionId = 42L, characterId = 7L)
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        coEvery { participants.getBySession(42L) } returns listOf(active)
+        val messages = mockk<MessageDao>(relaxed = true)
+        val historical = MessageEntity(id = 2L, sessionId = 42L, speakerType = "character", characterId = 8L, content = "旧作者")
+        val deleted = historical.copy(id = 3L, characterId = 9L, content = "已删除角色")
+        coEvery { messages.getMainMessagesTail(42L, 81) } returns listOf(deleted, historical)
+        val characters = mockk<CharacterDao>(relaxed = true)
+        coEvery { characters.getChatPresentationByIds(listOf(7L, 8L, 9L)) } returns listOf(
+            ChatCharacterPresentationRow(7L, "现参与者", "active-color", "active-avatar", "", false),
+            ChatCharacterPresentationRow(8L, "旧作者", "old-color", "old-avatar", "old-card", true),
+        )
+        val vm = createViewModel(messageDao = messages, characterDao = characters, participantDao = participants)
+        advanceUntilIdle()
+        assertEquals(listOf(active), vm.state.value.participants)
+        assertEquals(mapOf(7L to "现参与者", 8L to "旧作者"), vm.state.value.characterNames)
+        assertEquals("old-avatar", vm.state.value.characterAvatars[8L])
+        assertEquals("old-card", vm.state.value.characterCardImages[8L])
+        assertEquals(null, vm.state.value.characterNames[9L])
+        assertFalse(vm.state.value.characterForcesThinkMax)
+        coVerify(exactly = 0) { characters.getById(any()) }
+        coVerify(exactly = 0) { participants.upsert(any()) }
+    }
+
+    @Test
+    fun removingParticipantKeepsLoadedHistoryIdentity() = runTest(testDispatcher) {
+        val participant = SessionParticipantEntity(id = 9L, sessionId = 42L, characterId = 7L)
+        val participants = mockk<ParticipantDao>(relaxed = true)
+        var removed = false
+        coEvery { participants.getBySession(42L) } answers { if (removed) emptyList() else listOf(participant) }
+        coEvery { participants.getById(9L) } returns participant
+        coEvery { participants.delete(9L) } answers { removed = true }
+        val messages = mockk<MessageDao>(relaxed = true)
+        val original = MessageEntity(id = 1L, sessionId = 42L, speakerType = "character", characterId = 7L, content = "旧发言")
+        coEvery { messages.getMainMessagesTail(42L, 81) } returns listOf(original)
+        val characters = mockk<CharacterDao>(relaxed = true)
+        coEvery { characters.getChatPresentationByIds(listOf(7L)) } returns listOf(
+            ChatCharacterPresentationRow(7L, "青鸾", "color", "avatar", "card", false),
+        )
+        val vm = createViewModel(messageDao = messages, characterDao = characters, participantDao = participants)
+        advanceUntilIdle()
+        vm.setManualReplyCharacterId(7L)
+        vm.removeParticipant(9L)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.participants.isEmpty())
+        assertEquals(null, vm.state.value.manualReplyCharacterId)
+        assertEquals("青鸾", vm.state.value.characterNames[7L])
+        assertEquals("avatar", vm.state.value.characterAvatars[7L])
+        assertEquals(listOf(original), vm.state.value.messages)
+        coVerify(exactly = 0) { characters.delete(any()) }
+        coVerify(exactly = 0) { messages.delete(any()) }
+    }
+
+    @Test
+    fun olderHistoryLoadsItsAuthorsAndLatestWindowPrunesThem() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val initial = (200L downTo 120L).map { MessageEntity(id = it, sessionId = 42L, content = "本页$it") }
+        val old = MessageEntity(id = 119L, sessionId = 42L, speakerType = "character", characterId = 8L, content = "旧作者发言")
+        coEvery { messages.getMainMessagesTail(42L, 81) } returns initial
+        coEvery { messages.getMainMessagesBefore(42L, 121L, 41) } returns listOf(old)
+        val characters = mockk<CharacterDao>(relaxed = true)
+        coEvery { characters.getChatPresentationByIds(listOf(8L)) } returns listOf(
+            ChatCharacterPresentationRow(8L, "旧作者", "color", "avatar", "card", false),
+        )
+        val vm = createViewModel(messageDao = messages, characterDao = characters)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.characterNames.isEmpty())
+        vm.loadOlderMessages()
+        advanceUntilIdle()
+        assertEquals("旧作者", vm.state.value.characterNames[8L])
+        assertTrue(vm.state.value.messages.contains(old))
+        assertTrue(vm.returnToLatestMessages())
+        advanceUntilIdle()
+        assertFalse(vm.state.value.messages.contains(old))
+        assertTrue(vm.state.value.characterNames.isEmpty())
+        coVerify(exactly = 0) { messages.getMainBranchMessages(any()) }
+        coVerify(exactly = 0) { characters.getById(any()) }
+    }
+
+    @Test
+    fun delayedCharacterMetaCannotDropAuthorsFromNewHistoryWindow() = runTest(testDispatcher) {
+        val messages = mockk<MessageDao>(relaxed = true)
+        val first = MessageEntity(id = 200L, sessionId = 42L, speakerType = "character", characterId = 7L, content = "近页作者")
+        val initial = listOf(first) + (199L downTo 120L).map { MessageEntity(id = it, sessionId = 42L, content = "本页$it") }
+        val old = first.copy(id = 119L, characterId = 8L, content = "更早作者")
+        coEvery { messages.getMainMessagesTail(42L, 81) } returns initial
+        coEvery { messages.getMainMessagesBefore(42L, 121L, 41) } returns listOf(old)
+        val characters = mockk<CharacterDao>(relaxed = true)
+        val late = CompletableDeferred<Unit>()
+        var calls = 0
+        val firstRow = ChatCharacterPresentationRow(7L, "近页作者", "color", "avatar", "", false)
+        val oldRow = firstRow.copy(id = 8L, name = "更早作者")
+        coEvery { characters.getChatPresentationByIds(listOf(7L)) } coAnswers {
+            calls++
+            if (calls == 2) late.await()
+            listOf(firstRow)
+        }
+        coEvery { characters.getChatPresentationByIds(listOf(8L, 7L)) } returns listOf(firstRow, oldRow)
+        val vm = createViewModel(messageDao = messages, characterDao = characters)
+        advanceUntilIdle()
+        vm.refreshParticipantCharacterMeta()
+        runCurrent()
+        assertEquals(2, calls)
+        vm.loadOlderMessages()
+        advanceUntilIdle()
+        assertEquals("更早作者", vm.state.value.characterNames[8L])
+        late.complete(Unit)
+        advanceUntilIdle()
+        assertEquals("更早作者", vm.state.value.characterNames[8L])
+        assertTrue(vm.state.value.messages.contains(old))
+    }
+
+    @Test fun summaryEditReceiptWaitsForWriteAndRejectsDoubleSave() = runTest(testDispatcher) {
+        val maintenance = mockk<SummaryMaintenanceUseCase>()
+        val release = CompletableDeferred<Unit>()
+        coEvery { maintenance.edit(42L, "main", 8L, "旧摘要", "新摘要") } coAnswers {
+            release.await()
+            com.mojing.app.domain.engine.SummaryMaintenanceResult.Updated
+        }
+        val vm = createViewModel(summaryMaintenance = maintenance)
+        advanceUntilIdle()
+        val segment = com.mojing.app.data.local.entity.SessionMemorySegmentEntity(id=8,sessionId=42,summary="旧摘要")
+        var done = 0
+        vm.editMemorySummary(segment,"新摘要") { ok, _ -> assertTrue(ok); done++ }
+        runCurrent()
+        assertTrue(vm.state.value.memoryOperationRunning)
+        assertNull(vm.state.value.memorySummaryEditSavedId)
+        vm.editMemorySummary(segment,"新摘要") { _, _ -> error("duplicate callback") }
+        release.complete(Unit); advanceUntilIdle()
+        assertEquals(1,done)
+        assertFalse(vm.state.value.memoryOperationRunning)
+        assertEquals(8L,vm.state.value.memorySummaryEditSavedId)
+        assertEquals("新摘要",vm.state.value.memorySummaryEditSavedText)
+        coVerify(exactly=1) { maintenance.edit(any(),any(),any(),any(),any()) }
+    }
+
+    @Test fun summaryEditConflictKeepsDraftRetryWithoutSuccessReceipt() = runTest(testDispatcher) {
+        val maintenance=mockk<SummaryMaintenanceUseCase>()
+        coEvery { maintenance.edit(any(),any(),any(),any(),any()) } returns
+            com.mojing.app.domain.engine.SummaryMaintenanceResult.Conflict
+        val vm=createViewModel(summaryMaintenance=maintenance);advanceUntilIdle()
+        val segment=com.mojing.app.data.local.entity.SessionMemorySegmentEntity(id=8,sessionId=42,summary="旧摘要")
+        var result:Boolean?=null
+        vm.editMemorySummary(segment,"新摘要") { ok,_->result=ok };advanceUntilIdle()
+        assertEquals(false,result);assertFalse(vm.state.value.memoryOperationRunning)
+        assertNull(vm.state.value.memorySummaryEditSavedId)
+        coEvery { maintenance.edit(any(),any(),any(),any(),any()) } returns
+            com.mojing.app.domain.engine.SummaryMaintenanceResult.Updated
+        vm.editMemorySummary(segment,"新摘要") { ok,_->result=ok };advanceUntilIdle()
+        assertEquals(true,result);assertEquals(8L,vm.state.value.memorySummaryEditSavedId)
+    }
+
+    @Test fun summaryEditorResolvesOneVisibleOwnedIdWithoutScanningPages() = runTest(testDispatcher) {
+        val dao=mockk<com.mojing.app.data.local.dao.SessionMemorySegmentDao>(relaxed=true)
+        val original=com.mojing.app.data.local.entity.SessionMemorySegmentEntity(id=8,sessionId=42,summary="较早摘要")
+        coEvery { dao.getById(8L) } returns original
+        val vm=createViewModel(memorySegmentDao=dao);advanceUntilIdle()
+        assertEquals(original,vm.resolveMemorySummaryEditor(8L,"main"))
+        assertNull(vm.resolveMemorySummaryEditor(8L,"other"))
+        coEvery { dao.getById(8L) } returns original.copy(branchId="parent")
+        assertNull(vm.resolveMemorySummaryEditor(8L,"main"))
+        coVerify(exactly=2) { dao.getById(8L) }
+        coVerify(exactly=0) { dao.getVisibleById(any(),any(),any()) }
+        coVerify(exactly=0) { dao.getBySessionAndBranch(any(),any()) }
+        coVerify(exactly=0) { dao.getOlderForBranch(any(),any(),any(),any(),any()) }
+    }
+
+    @Test fun summaryEditCommittedWriteSurvivesListRefreshFailure() = runTest(testDispatcher) {
+        val dao=mockk<com.mojing.app.data.local.dao.SessionMemorySegmentDao>(relaxed=true)
+        val maintenance=mockk<SummaryMaintenanceUseCase>()
+        val segment=com.mojing.app.data.local.entity.SessionMemorySegmentEntity(id=8,sessionId=42,summary="旧摘要")
+        coEvery { dao.getRecentForBranch(42L,"main",any()) } returns listOf(segment)
+        coEvery { maintenance.edit(any(),any(),any(),any(),any()) } returns
+            com.mojing.app.domain.engine.SummaryMaintenanceResult.Updated
+        val vm=createViewModel(memorySegmentDao=dao,summaryMaintenance=maintenance);advanceUntilIdle()
+        vm.loadMemorySummariesIfNeeded();advanceUntilIdle();assertTrue(vm.state.value.memorySegmentsLoaded)
+        coEvery { dao.getRecentForBranch(42L,"main",any()) } throws IllegalStateException("synthetic read failure")
+        var success:Boolean?=null
+        var message=""
+        vm.editMemorySummary(segment,"新摘要") { ok,text->success=ok;message=text };advanceUntilIdle()
+        assertEquals(true,success);assertTrue(message.contains("已保存"))
+        assertEquals(8L,vm.state.value.memorySummaryEditSavedId)
+        assertNotNull(vm.state.value.memorySegmentsLoadError)
+        assertFalse(vm.state.value.memoryOperationRunning)
+        coVerify(exactly=1) { maintenance.edit(any(),any(),any(),any(),any()) }
+    }
+
+    @Test fun summaryWindowRecreationRestoresBoundedCursorAndSameLineRefresh() = runTest(testDispatcher) {
+        val handle=SavedStateHandle(mapOf("sessionId" to 42L))
+        val segments=mockk<com.mojing.app.data.local.dao.SessionMemorySegmentDao>(relaxed=true)
+        fun rows(before:Long,limit:Int)=(before-1 downTo (before-limit).coerceAtLeast(1L)).map {
+            com.mojing.app.data.local.entity.SessionMemorySegmentEntity(id=it,sessionId=42,endMessageId=it,summary="摘要$it",createdAt=it)
+        }
+        coEvery { segments.getRecentForBranch(42,"main",any()) } coAnswers { rows(101L,arg(2)) }
+        coEvery { segments.getOlderForBranch(42,"main",any(),any(),any()) } coAnswers { rows(arg(2),arg(4)) }
+        val vm=createViewModel(memorySegmentDao=segments,savedStateHandle=handle)
+        advanceUntilIdle();vm.loadMemorySummariesIfNeeded();advanceUntilIdle()
+        repeat(5) { vm.loadMoreMemorySummaries();advanceUntilIdle() }
+        assertEquals((84L downTo 5L).toList(),vm.state.value.memorySegments.map { it.id })
+        assertEquals(80,handle.get<Int>("summary_window_size_42"));assertEquals(85L,handle.get<Long>("summary_window_before_id_42"))
+        vm.switchBranch("main");advanceUntilIdle()
+        assertEquals(80,vm.state.value.memorySegmentsWindowSize)
+        val reopened=createViewModel(memorySegmentDao=segments,savedStateHandle=handle)
+        advanceUntilIdle();reopened.loadMemorySummariesIfNeeded();advanceUntilIdle()
+        assertEquals(vm.state.value.memorySegments,reopened.state.value.memorySegments)
+        coVerify(atLeast=1) { segments.getOlderForBranch(42,"main",85L,85L,81) }
+        reopened.resetMemorySummaryWindow();advanceUntilIdle()
+        assertEquals((100L downTo 85L).toList(),reopened.state.value.memorySegments.map { it.id })
+        assertNull(handle.get<Long>("summary_window_before_id_42"))
+        val reset=createViewModel(memorySegmentDao=segments,savedStateHandle=handle)
+        advanceUntilIdle();reset.loadMemorySummariesIfNeeded();advanceUntilIdle()
+        assertEquals(16,reset.state.value.memorySegmentsWindowSize)
+    }
+
+    @Test fun summaryWindowChildWaitsForReadyAndRetriesSameCursor() = runTest(testDispatcher) {
+        val handle=SavedStateHandle(mapOf("sessionId" to 42L,"summary_window_branch_42" to "B","summary_window_size_42" to 80,"summary_window_before_end_42" to 85L,"summary_window_before_id_42" to 85L))
+        val branches=mockk<SessionBranchDao>(relaxed=true)
+        coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId=42,branchId="B",sourceMessageId=7))
+        val ready=CompletableDeferred<Unit>();val visibility=mockk<BranchVisibilityIndexManager>(relaxed=true)
+        coEvery { visibility.ensureReady() } coAnswers { ready.await() }
+        val segments=mockk<com.mojing.app.data.local.dao.SessionMemorySegmentDao>(relaxed=true)
+        val row=com.mojing.app.data.local.entity.SessionMemorySegmentEntity(id=10,sessionId=42,branchId="B",endMessageId=10)
+        coEvery { segments.getOlderForBranch(42,"B",85L,85L,81) } throws IllegalStateException("read failed") andThen listOf(row)
+        val vm=createViewModel(memorySegmentDao=segments,savedStateHandle=handle,sessionBranchDao=branches,uiPreferencesRepository=uiPreferences("B"),branchVisibilityIndexManager=visibility)
+        runCurrent();vm.loadMemorySummariesIfNeeded();runCurrent()
+        coVerify(exactly=0) { segments.getRecentForBranch(any(),any(),any()) }
+        coVerify(exactly=0) { segments.getOlderForBranch(any(),any(),any(),any(),any()) }
+        ready.complete(Unit);advanceUntilIdle();vm.loadMemorySummariesIfNeeded();advanceUntilIdle()
+        assertFalse(vm.state.value.memorySegmentsLoaded);assertEquals(85L,vm.state.value.memorySegmentsBeforeId)
+        vm.loadMoreMemorySummaries();advanceUntilIdle()
+        assertEquals(listOf(row),vm.state.value.memorySegments)
+        coVerify(exactly=2) { segments.getOlderForBranch(42,"B",85L,85L,81) }
+    }
+
+    @Test fun summaryWindowRejectsOtherScopeOversizedAndUnpairedCursor() = runTest(testDispatcher) {
+        for(values in listOf(
+            mapOf("summary_window_branch_42" to "B","summary_window_size_42" to 80),
+            mapOf("summary_window_branch_43" to "main","summary_window_size_43" to 80),
+            mapOf("summary_window_branch_42" to "main","summary_window_size_42" to 999),
+            mapOf("summary_window_branch_42" to "main","summary_window_size_42" to 80,"summary_window_before_id_42" to 85L),
+            mapOf("summary_window_branch_42" to "main","summary_window_size_42" to 80,"summary_window_before_end_42" to 85L,"summary_window_before_id_42" to -1L)
+        )) {
+            val vm=createViewModel(savedStateHandle=SavedStateHandle(values+mapOf("sessionId" to 42L)))
+            advanceUntilIdle();assertEquals(16,vm.state.value.memorySegmentsWindowSize)
+            assertNull(vm.state.value.memorySegmentsBeforeId);assertNull(vm.state.value.memorySegmentsBeforeEndId)
+        }
+    }
+
+    @Test fun summaryWindowFailedAndLateLoadsDoNotPublishOldDescriptor() = runTest(testDispatcher) {
+        val handle=SavedStateHandle(mapOf("sessionId" to 42L))
+        val segments=mockk<com.mojing.app.data.local.dao.SessionMemorySegmentDao>(relaxed=true)
+        val first=(100L downTo 84L).map { com.mojing.app.data.local.entity.SessionMemorySegmentEntity(id=it,sessionId=42,endMessageId=it) }
+        coEvery { segments.getRecentForBranch(42,"main",17) } returns first
+        coEvery { segments.getOlderForBranch(42,"main",85L,85L,17) } throws IllegalStateException("older failed")
+        val vm=createViewModel(memorySegmentDao=segments,savedStateHandle=handle)
+        advanceUntilIdle();vm.loadMemorySummariesIfNeeded();advanceUntilIdle();vm.loadMoreMemorySummaries();advanceUntilIdle()
+        assertEquals(first.take(16),vm.state.value.memorySegments);assertNull(handle.get<Int>("summary_window_size_42"))
+        val delayed=CompletableDeferred<List<com.mojing.app.data.local.entity.SessionMemorySegmentEntity>>()
+        coEvery { segments.getOlderForBranch(42,"main",85L,85L,17) } coAnswers { delayed.await() }
+        vm.loadMoreMemorySummaries();runCurrent();vm.resetMemorySummaryWindow();runCurrent()
+        delayed.complete((84L downTo 68L).map { com.mojing.app.data.local.entity.SessionMemorySegmentEntity(id=it,sessionId=42,endMessageId=it) });advanceUntilIdle()
+        assertEquals(first.take(16),vm.state.value.memorySegments)
+        assertEquals(16,handle.get<Int>("summary_window_size_42"));assertNull(handle.get<Long>("summary_window_before_id_42"))
+    }
+
+    @Test fun summaryWindowSuccessfulBranchChangeResetsDescriptor() = runTest(testDispatcher) {
+        val handle=SavedStateHandle(mapOf("sessionId" to 42L,"summary_window_branch_42" to "main","summary_window_size_42" to 80,"summary_window_before_end_42" to 85L,"summary_window_before_id_42" to 85L))
+        val branches=mockk<SessionBranchDao>(relaxed=true)
+        coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId=42,branchId="B",sourceMessageId=7))
+        val vm=createViewModel(savedStateHandle=handle,sessionBranchDao=branches)
+        advanceUntilIdle();vm.switchBranch("B");advanceUntilIdle()
+        assertEquals("B",handle.get<String>("summary_window_branch_42"));assertEquals(16,handle.get<Int>("summary_window_size_42"))
+        assertNull(handle.get<Long>("summary_window_before_id_42"));assertFalse(vm.state.value.memorySegmentsLoaded)
+    }
+
+    @Test fun summaryWindowPageEdgesStayBoundedAndUseLookahead() = runTest(testDispatcher) {
+        for(size in listOf(0,1,15,16,17)) {
+            val segments=mockk<com.mojing.app.data.local.dao.SessionMemorySegmentDao>(relaxed=true)
+            val rows=(size downTo 1).map { com.mojing.app.data.local.entity.SessionMemorySegmentEntity(id=it.toLong(),sessionId=42,endMessageId=it.toLong()) }
+            coEvery { segments.getRecentForBranch(42,"main",17) } returns rows
+            val vm=createViewModel(memorySegmentDao=segments);advanceUntilIdle();vm.loadMemorySummariesIfNeeded();advanceUntilIdle()
+            assertEquals(rows.take(16),vm.state.value.memorySegments);assertEquals(size>16,vm.state.value.memorySegmentsHasMore)
+        }
+    }
+
+    @Test fun summaryWindowEditFailureRetryAndDeleteRefreshKeepSameCursor() = runTest(testDispatcher) {
+        val handle=SavedStateHandle(mapOf("sessionId" to 42L,"summary_window_branch_42" to "main","summary_window_size_42" to 80,"summary_window_before_end_42" to 85L,"summary_window_before_id_42" to 85L))
+        val segments=mockk<com.mojing.app.data.local.dao.SessionMemorySegmentDao>(relaxed=true)
+        val maintenance=mockk<SummaryMaintenanceUseCase>()
+        val original=com.mojing.app.data.local.entity.SessionMemorySegmentEntity(id=10,sessionId=42,endMessageId=10,summary="原摘要",createdAt=1L)
+        val earlier=original.copy(id=9,endMessageId=9)
+        coEvery { segments.getOlderForBranch(42,"main",85L,85L,81) } returns listOf(original,earlier)
+        coEvery { maintenance.edit(any(),any(),any(),any(),any()) } returns com.mojing.app.domain.engine.SummaryMaintenanceResult.Updated
+        coEvery { maintenance.delete(any(),any(),any(),any()) } returns com.mojing.app.domain.engine.SummaryMaintenanceResult.Deleted
+        val vm=createViewModel(memorySegmentDao=segments,summaryMaintenance=maintenance,savedStateHandle=handle)
+        advanceUntilIdle();vm.loadMemorySummariesIfNeeded();advanceUntilIdle()
+        coEvery { segments.getOlderForBranch(42,"main",85L,85L,81) } throws IllegalStateException("refresh failed")
+        vm.editMemorySummary(original,"已编辑");advanceUntilIdle()
+        assertEquals(listOf(original,earlier),vm.state.value.memorySegments)
+        assertNotNull(vm.state.value.memorySegmentsLoadError)
+        coEvery { segments.getOlderForBranch(42,"main",85L,85L,81) } returns listOf(original.copy(summary="已编辑"),earlier)
+        vm.loadMoreMemorySummaries();advanceUntilIdle()
+        assertEquals("已编辑",vm.state.value.memorySegments.first().summary);assertNull(vm.state.value.memorySegmentsLoadError)
+        coEvery { segments.getOlderForBranch(42,"main",85L,85L,81) } returns listOf(earlier)
+        vm.deleteMemorySummary(original.copy(summary="已编辑"));advanceUntilIdle()
+        assertEquals(listOf(earlier),vm.state.value.memorySegments)
+        assertEquals(80,vm.state.value.memorySegmentsWindowSize);assertEquals(85L,vm.state.value.memorySegmentsBeforeId)
+        assertEquals(85L,handle.get<Long>("summary_window_before_id_42"))
+        coVerify(exactly=4) { segments.getOlderForBranch(42,"main",85L,85L,81) }
+        coVerify(exactly=0) { segments.getRecentForBranch(any(),any(),any()) }
+    }
+
+    private fun bookmarkWindowDao(): BookmarkDao = mockk<BookmarkDao>(relaxed=true).also { dao ->
+        fun rows(before:Long,limit:Int)=(before-1 downTo (before-limit).coerceAtLeast(1L)).map {
+            MessageBookmarkEntity(id=it,sessionId=42,messageId=it,note="线索$it",createdAt=it)
+        }
+        coEvery { dao.getFirstPage(42,any()) } coAnswers { rows(221L,arg(1)) }
+        coEvery { dao.getBefore(42,any(),any(),any()) } coAnswers { rows(arg(1),arg(3)) }
+        coEvery { dao.searchPage(42,any(),any(),any(),any()) } coAnswers { rows(arg<Long?>(2) ?: 221L,arg(4)) }
+    }
+
+    @Test fun bookmarkDeepWindowRestoresAndResets() = runTest(testDispatcher) {
+        val dao=bookmarkWindowDao();val handle=SavedStateHandle(mapOf("sessionId" to 42L))
+        val vm=createViewModel(bookmarkDao=dao,savedStateHandle=handle)
+        advanceUntilIdle();vm.loadBookmarksIfNeeded();advanceUntilIdle()
+        repeat(4) { vm.loadMoreBookmarks();advanceUntilIdle() }
+        assertEquals((140L downTo 21L).toList(),vm.state.value.bookmarks.map { it.id })
+        assertEquals(120,handle.get<Int>("bookmark_window_size_42"));assertEquals(141L,handle.get<Long>("bookmark_window_before_id_42"))
+        vm.switchBranch("main");advanceUntilIdle()
+        assertEquals(120,vm.state.value.bookmarksWindowSize)
+        val reopened=createViewModel(bookmarkDao=dao,savedStateHandle=handle)
+        advanceUntilIdle();reopened.loadBookmarksIfNeeded();advanceUntilIdle()
+        assertEquals(vm.state.value.bookmarks,reopened.state.value.bookmarks)
+        coVerify(atLeast=1) { dao.getBefore(42,141L,141L,121) }
+        reopened.resetBookmarkWindow();advanceUntilIdle()
+        assertEquals((220L downTo 181L).toList(),reopened.state.value.bookmarks.map { it.id })
+        assertNull(handle.get<Long>("bookmark_window_before_id_42"))
+        val reset=createViewModel(bookmarkDao=dao,savedStateHandle=handle)
+        advanceUntilIdle();reset.loadBookmarksIfNeeded();advanceUntilIdle()
+        assertEquals(40,reset.state.value.bookmarksWindowSize)
+    }
+
+    @Test fun bookmarkWindowQueryRestoresAndNewQueryResets() = runTest(testDispatcher) {
+        val dao=bookmarkWindowDao();val handle=SavedStateHandle(mapOf("sessionId" to 42L))
+        val vm=createViewModel(bookmarkDao=dao,savedStateHandle=handle);advanceUntilIdle()
+        vm.updateBookmarkQuery("线索");advanceUntilIdle()
+        repeat(4) { vm.loadMoreBookmarks();advanceUntilIdle() }
+        val reopened=createViewModel(bookmarkDao=dao,savedStateHandle=handle)
+        advanceUntilIdle();reopened.loadBookmarksIfNeeded();advanceUntilIdle()
+        assertEquals("线索",reopened.state.value.bookmarkQuery)
+        assertEquals(vm.state.value.bookmarks,reopened.state.value.bookmarks)
+        coVerify(atLeast=1) { dao.searchPage(42,"线索",141L,141L,121) }
+        reopened.updateBookmarkQuery("别的");advanceUntilIdle()
+        assertEquals(40,reopened.state.value.bookmarksWindowSize);assertNull(reopened.state.value.bookmarksBeforeId)
+        assertEquals("别的",handle.get<String>("bookmark_window_query_42"))
+    }
+
+    @Test fun bookmarkWindowRejectsInvalidDescriptorsAndOtherSession() = runTest(testDispatcher) {
+        for(values in listOf(
+            mapOf("bookmark_window_query_42" to "other","bookmark_window_size_42" to 120),
+            mapOf("bookmark_window_query_42" to "","bookmark_window_size_42" to 121),
+            mapOf("bookmark_window_query_42" to "","bookmark_window_size_42" to 120,"bookmark_window_before_id_42" to 9L),
+            mapOf("bookmark_window_query_42" to "","bookmark_window_size_42" to 120,"bookmark_window_before_id_42" to 0L,"bookmark_window_before_at_42" to 8L),
+            mapOf("bookmark_window_query_43" to "","bookmark_window_size_43" to 120)
+        )) {
+            val vm=createViewModel(savedStateHandle=SavedStateHandle(values+mapOf("sessionId" to 42L)));advanceUntilIdle()
+            assertEquals(40,vm.state.value.bookmarksWindowSize);assertNull(vm.state.value.bookmarksBeforeId)
+        }
+    }
+
+    @Test fun bookmarkWindowFailedRestoreRetriesSameCursorAndCapacity() = runTest(testDispatcher) {
+        val handle=SavedStateHandle(mapOf("sessionId" to 42L,"bookmark_window_query_42" to "","bookmark_window_size_42" to 120,"bookmark_window_before_at_42" to 141L,"bookmark_window_before_id_42" to 141L))
+        val dao=bookmarkWindowDao()
+        coEvery { dao.getBefore(42,141L,141L,121) } throws IllegalStateException("disk")
+        val vm=createViewModel(bookmarkDao=dao,savedStateHandle=handle);advanceUntilIdle();vm.loadBookmarksIfNeeded();advanceUntilIdle()
+        assertFalse(vm.state.value.bookmarksLoaded);assertNotNull(vm.state.value.bookmarksLoadError)
+        assertEquals(141L,handle.get<Long>("bookmark_window_before_id_42"))
+        coEvery { dao.getBefore(42,141L,141L,121) } returns (140L downTo 20L).map { MessageBookmarkEntity(id=it,sessionId=42,messageId=it,createdAt=it) }
+        vm.loadMoreBookmarks();advanceUntilIdle()
+        assertEquals(120,vm.state.value.bookmarks.size);assertNull(vm.state.value.bookmarksLoadError)
+        coVerify(exactly=2) { dao.getBefore(42,141L,141L,121) }
+    }
+
+    @Test fun bookmarkWindowLateAppendCannotOverwriteResetDescriptor() = runTest(testDispatcher) {
+        val dao=bookmarkWindowDao();val handle=SavedStateHandle(mapOf("sessionId" to 42L))
+        val vm=createViewModel(bookmarkDao=dao,savedStateHandle=handle);advanceUntilIdle();vm.loadBookmarksIfNeeded();advanceUntilIdle()
+        repeat(3) { vm.loadMoreBookmarks();advanceUntilIdle() }
+        val gate=CompletableDeferred<List<MessageBookmarkEntity>>()
+        coEvery { dao.getBefore(42,61L,61L,41) } coAnswers { gate.await() }
+        vm.loadMoreBookmarks();runCurrent();vm.resetBookmarkWindow();runCurrent()
+        gate.complete((60L downTo 20L).map { MessageBookmarkEntity(id=it,sessionId=42,messageId=it,createdAt=it) });advanceUntilIdle()
+        assertEquals(40,handle.get<Int>("bookmark_window_size_42"));assertNull(handle.get<Long>("bookmark_window_before_id_42"))
+        assertEquals((220L downTo 181L).toList(),vm.state.value.bookmarks.map { it.id })
+    }
+
+    @Test fun bookmarkWindowNoteRefreshFailureRetainsWindowAndDeleteRefills() = runTest(testDispatcher) {
+        val dao=bookmarkWindowDao();val handle=SavedStateHandle(mapOf("sessionId" to 42L))
+        val vm=createViewModel(bookmarkDao=dao,savedStateHandle=handle);advanceUntilIdle();vm.loadBookmarksIfNeeded();advanceUntilIdle()
+        repeat(4) { vm.loadMoreBookmarks();advanceUntilIdle() }
+        coEvery { dao.updateNote(42,30L,"新线索") } returns 1
+        coEvery { dao.getBefore(42,141L,141L,121) } throws IllegalStateException("read")
+        var saved=false;vm.saveBookmarkNote(30L,"新线索") { saved=it };advanceUntilIdle()
+        assertTrue(saved);assertTrue(vm.state.value.bookmarksRefreshFailed)
+        assertEquals(120,vm.state.value.bookmarksWindowSize);assertEquals("新线索",vm.state.value.bookmarks.single { it.id==30L }.note)
+        coEvery { dao.getBefore(42,141L,141L,121) } returns (140L downTo 20L).map { MessageBookmarkEntity(id=it,sessionId=42,messageId=it,note=if(it==30L) "新线索" else "线索$it",createdAt=it) }
+        vm.loadMoreBookmarks();advanceUntilIdle();assertFalse(vm.state.value.bookmarksRefreshFailed)
+        coEvery { dao.getByMessageId(30L) } returns vm.state.value.bookmarks.single { it.id==30L }
+        coEvery { dao.getBefore(42,141L,141L,121) } returns (140L downTo 19L).filter { it!=30L }.map { MessageBookmarkEntity(id=it,sessionId=42,messageId=it,note="线索$it",createdAt=it) }
+        vm.removeBookmark(30L);advanceUntilIdle()
+        assertEquals(120,vm.state.value.bookmarks.size);assertFalse(vm.state.value.bookmarks.any { it.id==30L })
+        assertEquals(141L,vm.state.value.bookmarksBeforeId)
+    }
+    @Test fun bookmarkWindowChildReadyUsesSessionScopeAcrossActualSwitch() = runTest(testDispatcher) {
+        val dao=bookmarkWindowDao();val branches=mockk<SessionBranchDao>(relaxed=true)
+        coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId=42,branchId="B",sourceMessageId=7))
+        val ready=CompletableDeferred<Unit>();val visibility=mockk<BranchVisibilityIndexManager>(relaxed=true)
+        coEvery { visibility.ensureReady() } coAnswers { ready.await() }
+        val handle=SavedStateHandle(mapOf("sessionId" to 42L,"bookmark_window_query_42" to "","bookmark_window_size_42" to 120,"bookmark_window_before_at_42" to 141L,"bookmark_window_before_id_42" to 141L))
+        val vm=createViewModel(bookmarkDao=dao,savedStateHandle=handle,sessionBranchDao=branches,uiPreferencesRepository=uiPreferences("B"),branchVisibilityIndexManager=visibility)
+        runCurrent();vm.loadBookmarksIfNeeded();runCurrent()
+        coVerify(exactly=0) { dao.getBefore(any(),any(),any(),any()) }
+        ready.complete(Unit);advanceUntilIdle();vm.loadBookmarksIfNeeded();advanceUntilIdle()
+        assertEquals("B",vm.state.value.currentBranchId);assertEquals(120,vm.state.value.bookmarks.size)
+        val window=vm.state.value.bookmarks;vm.switchBranch("main");advanceUntilIdle()
+        assertEquals("main",vm.state.value.currentBranchId);assertEquals(window,vm.state.value.bookmarks)
+        assertEquals(141L,handle.get<Long>("bookmark_window_before_id_42"))
+    }
+
+    @Test fun bookmarkWindowPageBoundariesAndSameTimestampCursor() = runTest(testDispatcher) {
+        for(count in listOf(0,1,39,40,41)) {
+            val dao=mockk<BookmarkDao>(relaxed=true)
+            val rows=(count.toLong() downTo 1L).map { MessageBookmarkEntity(id=it,sessionId=42,messageId=it,createdAt=1000L) }
+            coEvery { dao.getFirstPage(42,41) } returns rows
+            if(count==41) coEvery { dao.getBefore(42,1000L,2L,41) } returns rows.takeLast(1)
+            val vm=createViewModel(bookmarkDao=dao);advanceUntilIdle();vm.loadBookmarksIfNeeded();advanceUntilIdle()
+            assertEquals(count.coerceAtMost(40),vm.state.value.bookmarks.size);assertEquals(count>40,vm.state.value.bookmarksHasMore)
+            if(count==41) { vm.loadMoreBookmarks();advanceUntilIdle();assertEquals(41,vm.state.value.bookmarks.size);coVerify(exactly=1) { dao.getBefore(42,1000L,2L,41) } }
+        }
+    }
+
+    private fun bookmarkReaderHandle(id: Long = 500, branch: String = "main") = SavedStateHandle(mapOf(
+        "sessionId" to 42L, "bookmark_reader_id_42" to id, "bookmark_reader_branch_42" to branch))
+
+    @Test fun bookmarkReaderRestoresOnlyIdsWithoutNavigationOrAdoption() = runTest(testDispatcher) {
+        val dao=mockk<MessageDao>(relaxed=true)
+        val row=MessageEntity(id=500,sessionId=42,branchId="source",content="长原文".repeat(2000))
+        coEvery { dao.getByIdInSession(500,42) } returns row
+        val handle=bookmarkReaderHandle();val prefs=uiPreferences()
+        val vm=createViewModel(savedStateHandle=handle,messageDao=dao,uiPreferencesRepository=prefs)
+        advanceUntilIdle()
+        assertEquals(row,vm.state.value.bookmarkReadOnlyMessage)
+        assertEquals("main",vm.state.value.currentBranchId)
+        assertNull(vm.state.value.focusedMessageId)
+        assertTrue(handle.keys().filter { it.startsWith("bookmark_reader_") }.all { handle.get<Any>(it) is Long || handle.get<Any>(it) is String })
+        coVerify(exactly=0) { dao.selectSwipeVariantForBranch(any(),any(),any(),any()) }
+        coVerify(exactly=0) { prefs.setLastChatBranch(any(),any()) }
+    }
+    @Test fun bookmarkReaderWaitsForRealChildScopeAndDropsWrongScope() = runTest(testDispatcher) {
+        val branches=mockk<SessionBranchDao>(relaxed=true)
+        coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId=42,branchId="B",sourceMessageId=1))
+        val prefs=uiPreferences();coEvery { prefs.getLastChatBranch(42) } returns "B"
+        val dao=mockk<MessageDao>(relaxed=true);val row=MessageEntity(id=500,sessionId=42,content="来自主线")
+        coEvery { dao.getByIdInSession(500,42) } returns row
+        val vm=createViewModel(savedStateHandle=bookmarkReaderHandle(branch="B"),messageDao=dao,sessionBranchDao=branches,uiPreferencesRepository=prefs)
+        advanceUntilIdle();assertEquals("B",vm.state.value.currentBranchId);assertEquals(row,vm.state.value.bookmarkReadOnlyMessage)
+        val wrong=bookmarkReaderHandle(branch="main")
+        val vm2=createViewModel(savedStateHandle=wrong,messageDao=dao,sessionBranchDao=branches,uiPreferencesRepository=prefs)
+        advanceUntilIdle();assertNull(vm2.state.value.bookmarkReadOnlyId);assertFalse(wrong.contains("bookmark_reader_id_42"))
+        coVerify(exactly=1) { dao.getByIdInSession(500,42) }
+    }
+    @Test fun bookmarkReaderDelayedReadCanCloseAndNeverReopen() = runTest(testDispatcher) {
+        val dao=mockk<MessageDao>(relaxed=true);val gate=CompletableDeferred<MessageEntity?>()
+        coEvery { dao.getByIdInSession(500,42) } coAnswers { withContext(NonCancellable) { gate.await() } }
+        val handle=bookmarkReaderHandle();val vm=createViewModel(savedStateHandle=handle,messageDao=dao)
+        runCurrent();assertTrue(vm.state.value.isReady);assertTrue(vm.state.value.bookmarkReadOnlyLoading)
+        vm.closeBookmarkedReadOnlyMessage();assertNull(vm.state.value.bookmarkReadOnlyId);assertNull(vm.state.value.bookmarkLocatingId)
+        gate.complete(MessageEntity(id=500,sessionId=42,content="晚到"));advanceUntilIdle()
+        assertNull(vm.state.value.bookmarkReadOnlyMessage);assertFalse(handle.contains("bookmark_reader_id_42"))
+        val next=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle();assertNull(next.state.value.bookmarkReadOnlyId)
+    }
+    @Test fun bookmarkReaderFailedReadRetainsTargetAndRetries() = runTest(testDispatcher) {
+        val dao=mockk<MessageDao>(relaxed=true);coEvery { dao.getByIdInSession(500,42) } throws IllegalStateException("synthetic")
+        val handle=bookmarkReaderHandle();val vm=createViewModel(savedStateHandle=handle,messageDao=dao)
+        advanceUntilIdle();assertEquals(500L,vm.state.value.bookmarkReadOnlyId);assertNotNull(vm.state.value.bookmarkReadOnlyError);assertFalse(vm.state.value.bookmarkReadOnlyLoading)
+        val row=MessageEntity(id=500,sessionId=42,content="恢复原文");coEvery { dao.getByIdInSession(500,42) } returns row
+        vm.retryBookmarkedReadOnlyMessage();advanceUntilIdle();assertEquals(row,vm.state.value.bookmarkReadOnlyMessage);assertNull(vm.state.value.bookmarkReadOnlyError)
+    }
+    @Test fun bookmarkReaderMissingOrWrongSessionClearsIntent() = runTest(testDispatcher) {
+        listOf(null,MessageEntity(id=500,sessionId=43,content="其他会话")).forEach { row ->
+            val dao=mockk<MessageDao>(relaxed=true);coEvery { dao.getByIdInSession(500,42) } returns row
+            val handle=bookmarkReaderHandle();val vm=createViewModel(savedStateHandle=handle,messageDao=dao)
+            advanceUntilIdle();assertNull(vm.state.value.bookmarkReadOnlyId);assertNull(vm.state.value.bookmarkReadOnlyMessage);assertFalse(handle.contains("bookmark_reader_id_42"))
+        }
+    }
+    @Test fun bookmarkReaderOtherSessionSavedKeysAreIgnored() = runTest(testDispatcher) {
+        val dao=mockk<MessageDao>(relaxed=true);val handle=SavedStateHandle(mapOf("sessionId" to 42L,"bookmark_reader_id_43" to 500L,"bookmark_reader_branch_43" to "main"))
+        val vm=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle();assertNull(vm.state.value.bookmarkReadOnlyId)
+        coVerify(exactly=0) { dao.getByIdInSession(any(),any()) }
+    }
+    @Test fun bookmarkReaderNewTargetReplacesLightweightIntent() = runTest(testDispatcher) {
+        val dao=mockk<MessageDao>(relaxed=true)
+        coEvery { dao.getByIdInSession(500,42) } returns MessageEntity(id=500,sessionId=42,content="原目标")
+        val next=MessageEntity(id=600,sessionId=42,swipeGroupId="group",content="新目标")
+        coEvery { dao.getMainMessageById(42,600) } returns next
+        coEvery { dao.getEffectiveSwipeSelectionsForGroups(42,"main",listOf("group")) } returns listOf(BranchSwipeSelectionEntity(42,"main","group",601))
+        val handle=bookmarkReaderHandle();val vm=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle()
+        vm.openBookmarkedMessage(600);advanceUntilIdle();assertEquals(next,vm.state.value.bookmarkReadOnlyMessage);assertEquals(600L,handle.get<Long>("bookmark_reader_id_42"))
+    }
+
+    @Test fun bookmarkReaderLateOldReadCannotReplaceNewTarget() = runTest(testDispatcher) {
+        val dao=mockk<MessageDao>(relaxed=true);val gate=CompletableDeferred<MessageEntity?>()
+        coEvery { dao.getByIdInSession(500,42) } coAnswers { withContext(NonCancellable) { gate.await() } }
+        val next=MessageEntity(id=600,sessionId=42,swipeGroupId="new",content="新目标")
+        coEvery { dao.getMainMessageById(42,600) } returns next
+        coEvery { dao.getEffectiveSwipeSelectionsForGroups(42,"main",listOf("new")) } returns listOf(BranchSwipeSelectionEntity(42,"main","new",601))
+        val vm=createViewModel(savedStateHandle=bookmarkReaderHandle(),messageDao=dao);runCurrent()
+        vm.closeBookmarkedReadOnlyMessage();vm.openBookmarkedMessage(600);runCurrent()
+        assertEquals(next,vm.state.value.bookmarkReadOnlyMessage)
+        gate.complete(MessageEntity(id=500,sessionId=42,content="旧请求晚到"));advanceUntilIdle()
+        assertEquals(next,vm.state.value.bookmarkReadOnlyMessage);assertEquals(600L,vm.state.value.bookmarkReadOnlyId);assertNull(vm.state.value.bookmarkLocatingId)
+    }
+    @Test fun bookmarkReaderActualBranchChangeClosesIntent() = runTest(testDispatcher) {
+        val dao=mockk<MessageDao>(relaxed=true)
+        coEvery { dao.getByIdInSession(500,42) } returns MessageEntity(id=500,sessionId=42,content="旧原文")
+        val branches=mockk<SessionBranchDao>(relaxed=true)
+        coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId=42,branchId="B",sourceMessageId=1))
+        val handle=bookmarkReaderHandle();val vm=createViewModel(savedStateHandle=handle,messageDao=dao,sessionBranchDao=branches)
+        advanceUntilIdle();assertNotNull(vm.state.value.bookmarkReadOnlyMessage)
+        vm.switchBranch("B");advanceUntilIdle();assertEquals("B",vm.state.value.currentBranchId)
+        assertNull(vm.state.value.bookmarkReadOnlyId);assertFalse(handle.contains("bookmark_reader_id_42"))
+    }
+
+    private fun historyHandle(branch: String = "main", size: Int = 81) = SavedStateHandle(mapOf(
+        "sessionId" to 42L, "history_window_branch_42" to branch, "history_window_end_42" to 540L,
+        "history_window_size_42" to size, "history_window_anchor_42" to 500L))
+    private fun historyDao(): MessageDao = mockk<MessageDao>(relaxed=true).also { dao ->
+        coEvery { dao.getMainMessageById(42,540) } returns MessageEntity(id=540,sessionId=42,content="窗口末尾")
+        coEvery { dao.getMainMessageById(42,500) } returns MessageEntity(id=500,sessionId=42,content="原文")
+        coEvery { dao.getMainMessagesBefore(42,541,82) } returns (540L downTo 459L).map { MessageEntity(id=it,sessionId=42,content="消息$it") }
+        coEvery { dao.getMainMessagesAfter(42,540,1) } returns listOf(MessageEntity(id=541,sessionId=42))
+        coEvery { dao.getMainMessagesTail(42,81) } returns (700L downTo 620L).map { MessageEntity(id=it,sessionId=42) }
+    }
+    @Test fun historyWindowRestoreKeepsBoundedRowsWithoutRepeatedFocus() = runTest(testDispatcher) {
+        val dao=historyDao();val handle=historyHandle();val vm=createViewModel(savedStateHandle=handle,messageDao=dao)
+        advanceUntilIdle();assertTrue(vm.state.value.isReady);assertTrue(vm.state.value.historyWindowRestored)
+        assertEquals(81,vm.state.value.messages.size);assertEquals(460L,vm.state.value.messages.first().id)
+        assertNull(vm.state.value.focusedMessageId);assertTrue(vm.state.value.hasNewerMessages)
+        coVerify(exactly=0) { dao.getMainMessagesTail(any(),any()) }
+        assertTrue(handle.keys().filter { it.startsWith("history_window_") }.all { handle.get<Any>(it) is Long || handle.get<Any>(it) is Int || handle.get<Any>(it) is String })
+    }
+    @Test fun historyWindowPendingFocusIsConsumedSeparately() = runTest(testDispatcher) {
+        val dao=historyDao();val handle=historyHandle();handle["history_window_focus_42"]=500L
+        val vm=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle();assertEquals(500L,vm.state.value.focusedMessageId)
+        vm.clearFocusedMessage();assertFalse(handle.contains("history_window_focus_42"));assertEquals(540L,handle.get<Long>("history_window_end_42"))
+        val next=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle();assertNull(next.state.value.focusedMessageId)
+    }
+    @Test fun historyWindowReadFailureRetainsCursorForRealRetry() = runTest(testDispatcher) {
+        val dao=historyDao();val handle=historyHandle();coEvery { dao.getMainMessagesBefore(42,541,82) } throws IllegalStateException("synthetic")
+        val vm=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle();assertFalse(vm.state.value.isReady);assertNotNull(vm.state.value.initialLoadError)
+        assertEquals(540L,handle.get<Long>("history_window_end_42"))
+        coEvery { dao.getMainMessagesBefore(42,541,82) } returns (540L downTo 459L).map { MessageEntity(id=it,sessionId=42) }
+        vm.retryInitialization();advanceUntilIdle();assertTrue(vm.state.value.isReady);assertTrue(vm.state.value.historyWindowRestored)
+    }
+    @Test fun historyWindowMissingWrongSessionOrInactiveAnchorFallsBackWithoutAdoption() = runTest(testDispatcher) {
+        for(mode in 0..2) {
+            val dao=historyDao();val handle=historyHandle()
+            when(mode) {
+                0 -> coEvery { dao.getMainMessageById(42,540) } returns null
+                1 -> coEvery { dao.getMainMessageById(42,500) } returns MessageEntity(id=500,sessionId=43)
+                else -> { coEvery { dao.getMainMessageById(42,500) } returns MessageEntity(id=500,sessionId=42,swipeGroupId="group")
+                    coEvery { dao.getEffectiveSwipeSelectionsForGroups(42,"main",listOf("group")) } returns listOf(BranchSwipeSelectionEntity(sessionId=42,branchId="main",swipeGroupId="group",selectedMessageId=501)) }
+            }
+            val vm=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle()
+            assertFalse(vm.state.value.historyWindowRestored);assertFalse(handle.contains("history_window_end_42"));assertEquals(700L,vm.state.value.messages.last().id)
+            coVerify(exactly=0) { dao.selectSwipeVariantForBranch(any(),any(),any(),any()) }
+        }
+    }
+    @Test fun historyWindowWrongScopeAndOversizedCapacityAreDiscarded() = runTest(testDispatcher) {
+        for(handle in listOf(historyHandle(branch="other"),historyHandle(size=201))) {
+            val dao=historyDao();val vm=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle()
+            assertFalse(vm.state.value.historyWindowRestored);assertFalse(handle.contains("history_window_end_42"))
+            coVerify(exactly=0) { dao.getMainMessagesBefore(any(),any(),any()) }
+        }
+    }
+    @Test fun historyWindowLatestResetCannotReopenOldBookmark() = runTest(testDispatcher) {
+        val dao=historyDao();val handle=historyHandle();val vm=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle()
+        assertTrue(vm.returnToLatestMessages());advanceUntilIdle();assertFalse(handle.contains("history_window_end_42"))
+        val next=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle();assertEquals(700L,next.state.value.messages.last().id);assertFalse(next.state.value.hasNewerMessages)
+    }
+    @Test fun historyWindowPagingReplacesCursorAndDropsCroppedAnchor() = runTest(testDispatcher) {
+        val dao=historyDao();val handle=historyHandle();val vm=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle()
+        for(page in 0..3) {
+            val end=vm.state.value.messages.last().id
+            coEvery { dao.getMainMessagesAfter(42,end,41) } returns (end+1..end+41).map { MessageEntity(id=it,sessionId=42) }
+            vm.loadNewerMessages();advanceUntilIdle()
+        }
+        assertEquals(200,vm.state.value.messages.size);assertEquals(vm.state.value.messages.last().id,handle.get<Long>("history_window_end_42"))
+        assertFalse(handle.contains("history_window_anchor_42"));assertNull(vm.state.value.focusedMessageId)
+    }
+    @Test fun historyWindowNavigationArgumentIsOnlyInitialCommand() = runTest(testDispatcher) {
+        val dao=historyDao();val handle=historyHandle();handle["sourceMessageId"]=500L;handle["sourceBranchId"]="main";handle["history_navigation_consumed_42"]=true
+        val vm=createViewModel(savedStateHandle=handle,messageDao=dao,sourceMessageId=500L,sourceBranchId="main");advanceUntilIdle();assertTrue(vm.state.value.historyWindowRestored);assertNull(vm.state.value.focusedMessageId)
+        vm.returnToLatestMessages();advanceUntilIdle();val next=createViewModel(savedStateHandle=handle,messageDao=dao,sourceMessageId=500L,sourceBranchId="main");advanceUntilIdle()
+        assertFalse(next.state.value.hasNewerMessages);assertNull(next.state.value.focusedMessageId)
+    }
+
+    @Test fun historyWindowChildWaitsForBoundedReadWithoutMainFallback() = runTest(testDispatcher) {
+        val dao=mockk<MessageDao>(relaxed=true);val branches=mockk<SessionBranchDao>(relaxed=true)
+        coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId=42,branchId="B",sourceMessageId=1))
+        val prefs=uiPreferences();coEvery { prefs.getLastChatBranch(42) } returns "B"
+        coEvery { dao.getVisibleMessageById(42,"B",540) } returns MessageEntity(id=540,sessionId=42,branchId="B")
+        coEvery { dao.getVisibleMessageById(42,"B",500) } returns MessageEntity(id=500,sessionId=42,branchId="B")
+        val gate=CompletableDeferred<Unit>()
+        coEvery { dao.getVisibleMessagesBefore(42,"B",541,82) } coAnswers { gate.await();(540L downTo 459L).map { MessageEntity(id=it,sessionId=42,branchId="B") } }
+        coEvery { dao.getVisibleMessagesAfter(42,"B",540,1) } returns listOf(MessageEntity(id=541,sessionId=42,branchId="B"))
+        val handle=historyHandle(branch="B");val vm=createViewModel(savedStateHandle=handle,messageDao=dao,sessionBranchDao=branches,uiPreferencesRepository=prefs)
+        runCurrent();assertFalse(vm.state.value.isReady);assertEquals(540L,handle.get<Long>("history_window_end_42"))
+        gate.complete(Unit);advanceUntilIdle();assertTrue(vm.state.value.isReady);assertEquals("B",vm.state.value.currentBranchId);assertTrue(vm.state.value.historyWindowRestored)
+        coVerify(exactly=0) { dao.getMainMessagesTail(any(),any()) }
+        vm.switchBranch("main");advanceUntilIdle();assertFalse(vm.state.value.historyWindowRestored);assertFalse(handle.contains("history_window_end_42"))
+    }
+    @Test fun historyWindowLatePagingCannotReplaceNewBookmarkCursor() = runTest(testDispatcher) {
+        val dao=historyDao();val handle=historyHandle();val vm=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle()
+        val late=CompletableDeferred<Unit>()
+        coEvery { dao.getMainMessagesAfter(42,540,41) } coAnswers { withContext(NonCancellable) { late.await();(541L..581L).map { MessageEntity(id=it,sessionId=42) } } }
+        vm.loadNewerMessages();runCurrent()
+        coEvery { dao.getMainMessageById(42,600) } returns MessageEntity(id=600,sessionId=42)
+        coEvery { dao.getMainMessagesBefore(42,600,41) } returns (599L downTo 559L).map { MessageEntity(id=it,sessionId=42) }
+        coEvery { dao.getMainMessagesAfter(42,600,41) } returns (601L..641L).map { MessageEntity(id=it,sessionId=42) }
+        vm.openBookmarkedMessage(600);runCurrent();assertEquals(640L,handle.get<Long>("history_window_end_42"))
+        late.complete(Unit);advanceUntilIdle();assertEquals(640L,handle.get<Long>("history_window_end_42"));assertEquals(600L,vm.state.value.focusedMessageId)
+        assertFalse(vm.state.value.historyWindowRestored)
+    }
+
+    @Test fun historyWindowConsumedSourceKeepsActualBranchWhenPreferencesDiffer() = runTest(testDispatcher) {
+        val dao=mockk<MessageDao>(relaxed=true);val branches=mockk<SessionBranchDao>(relaxed=true)
+        coEvery { branches.getBySession(42) } returns listOf(SessionBranchEntity(sessionId=42,branchId="B",sourceMessageId=1))
+        val prefs=uiPreferences();coEvery { prefs.getLastChatBranch(42) } returns "main"
+        coEvery { dao.getVisibleMessageById(42,"B",540) } returns MessageEntity(id=540,sessionId=42,branchId="B")
+        coEvery { dao.getVisibleMessageById(42,"B",500) } returns MessageEntity(id=500,sessionId=42,branchId="B")
+        coEvery { dao.getVisibleMessagesBefore(42,"B",541,82) } returns (540L downTo 459L).map { MessageEntity(id=it,sessionId=42,branchId="B") }
+        coEvery { dao.getVisibleMessagesAfter(42,"B",540,1) } returns listOf(MessageEntity(id=541,sessionId=42,branchId="B"))
+        coEvery { dao.getVisibleMessagesTail(42,"B",81) } returns (700L downTo 620L).map { MessageEntity(id=it,sessionId=42,branchId="B") }
+        val handle=historyHandle(branch="B");handle["sourceMessageId"]=500L;handle["sourceBranchId"]="B"
+        handle["history_navigation_consumed_42"]=true;handle["history_navigation_branch_42"]="B"
+        val vm=createViewModel(savedStateHandle=handle,messageDao=dao,sessionBranchDao=branches,uiPreferencesRepository=prefs,sourceMessageId=500L,sourceBranchId="B");advanceUntilIdle()
+        assertTrue("branch=${vm.state.value.currentBranchId}, error=${vm.state.value.initialLoadError}, keys=${handle.keys()}", vm.state.value.historyWindowRestored);assertEquals("B",vm.state.value.currentBranchId);assertNull(vm.state.value.focusedMessageId)
+        vm.returnToLatestMessages();advanceUntilIdle();assertFalse(handle.contains("history_window_end_42"));assertEquals("B",handle.get<String>("history_navigation_branch_42"))
+        val next=createViewModel(savedStateHandle=handle,messageDao=dao,sessionBranchDao=branches,uiPreferencesRepository=prefs,sourceMessageId=500L,sourceBranchId="B");advanceUntilIdle()
+        assertEquals("B",next.state.value.currentBranchId);assertEquals(700L,next.state.value.messages.last().id);assertNull(next.state.value.focusedMessageId)
+        coVerify(exactly=0) { prefs.setLastChatBranch(any(),any()) }
+    }
+
+    @Test fun recentReadingManualTailRestoresBoundedRowsWithoutFocus() = runTest(testDispatcher) {
+        val dao=historyDao();val handle=SavedStateHandle(mapOf("sessionId" to 42L))
+        coEvery { dao.getMainMessageById(42,700) } returns MessageEntity(id=700,sessionId=42,createdAt=1L)
+        coEvery { dao.getMainMessageById(42,680) } returns MessageEntity(id=680,sessionId=42,createdAt=1L)
+        coEvery { dao.getMainMessagesTail(42,81) } returns (700L downTo 620L).map { MessageEntity(id=it,sessionId=42,createdAt=1L) }
+        coEvery { dao.getMainMessagesBefore(42,701,81) } returns (700L downTo 620L).map { MessageEntity(id=it,sessionId=42,createdAt=1L) }
+        coEvery { dao.getMainMessagesAfter(42,700,1) } returns emptyList()
+        val vm=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle()
+        assertFalse(handle.contains("history_window_end_42"))
+        vm.rememberMessageReadingPosition("main",700,80,680)
+        assertEquals(80,handle.get<Int>("history_window_size_42"));assertEquals(680L,handle.get<Long>("history_window_anchor_42"))
+        val next=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle()
+        assertTrue(next.state.value.historyWindowRestored);assertFalse(next.state.value.hasNewerMessages)
+        assertEquals(vm.state.value.messages,next.state.value.messages);assertNull(next.state.value.focusedMessageId)
+        next.returnToLatestMessages();advanceUntilIdle();assertFalse(handle.contains("history_window_end_42"))
+        val latest=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle()
+        assertFalse(latest.state.value.historyWindowRestored);assertEquals(700L,latest.state.value.messages.last().id)
+    }
+    @Test fun recentReadingNearTailBookmarkKeepsSmallWindowAfterFocusConsumed() = runTest(testDispatcher) {
+        val dao=historyDao();val handle=SavedStateHandle(mapOf("sessionId" to 42L))
+        coEvery { dao.getMainMessageById(42,680) } returns MessageEntity(id=680,sessionId=42,createdAt=1L)
+        coEvery { dao.getMainMessageById(42,700) } returns MessageEntity(id=700,sessionId=42,createdAt=1L)
+        coEvery { dao.getMainMessagesBefore(42,680,41) } returns (679L downTo 639L).map { MessageEntity(id=it,sessionId=42,createdAt=1L) }
+        coEvery { dao.getMainMessagesAfter(42,680,41) } returns (681L..700L).map { MessageEntity(id=it,sessionId=42,createdAt=1L) }
+        coEvery { dao.getMainMessagesBefore(42,701,62) } returns (700L downTo 639L).map { MessageEntity(id=it,sessionId=42,createdAt=1L) }
+        coEvery { dao.getMainMessagesAfter(42,700,1) } returns emptyList()
+        val vm=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle()
+        vm.openBookmarkedMessage(680);advanceUntilIdle();assertEquals(61,vm.state.value.messages.size)
+        vm.clearFocusedMessage();assertEquals(700L,handle.get<Long>("history_window_end_42"))
+        val next=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle()
+        assertTrue(next.state.value.historyWindowRestored);assertEquals(vm.state.value.messages,next.state.value.messages)
+        assertNull(next.state.value.focusedMessageId);assertFalse(next.state.value.hasNewerMessages)
+    }
+    @Test fun recentReadingStaleWindowOrBranchCannotSaveReadingIntent() = runTest(testDispatcher) {
+        val dao=historyDao();val handle=SavedStateHandle(mapOf("sessionId" to 42L))
+        val vm=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle()
+        vm.rememberMessageReadingPosition("B",700,80,680)
+        vm.rememberMessageReadingPosition("main",699,80,680)
+        vm.rememberMessageReadingPosition("main",700,79,680)
+        vm.rememberMessageReadingPosition("main",700,80,1)
+        assertFalse(handle.contains("history_window_end_42"))
+        val gate=CompletableDeferred<Unit>()
+        coEvery { dao.getMainMessagesTail(42,81) } coAnswers { gate.await();(700L downTo 620L).map { MessageEntity(id=it,sessionId=42,createdAt=1L) } }
+        vm.returnToLatestMessages();runCurrent();assertTrue(vm.state.value.isLoadingHistory)
+        vm.rememberMessageReadingPosition("main",700,80,680);assertFalse(handle.contains("history_window_end_42"))
+        gate.complete(Unit);advanceUntilIdle();assertFalse(handle.contains("history_window_end_42"))
+    }
+    @Test fun recentReadingFailedLatestReadKeepsOriginalIntent() = runTest(testDispatcher) {
+        val dao=historyDao();val handle=historyHandle();val vm=createViewModel(savedStateHandle=handle,messageDao=dao);advanceUntilIdle()
+        coEvery { dao.getMainMessagesTail(42,81) } throws IllegalStateException("synthetic")
+        vm.returnToLatestMessages();advanceUntilIdle()
+        assertEquals(540L,handle.get<Long>("history_window_end_42"));assertEquals(500L,handle.get<Long>("history_window_anchor_42"))
+        assertNotNull(vm.state.value.error);assertEquals(540L,vm.state.value.messages.last().id)
+    }
 }

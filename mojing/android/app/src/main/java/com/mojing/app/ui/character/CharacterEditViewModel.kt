@@ -109,7 +109,28 @@ data class CharacterEditState(
     val draftError: String? = null,
     val draftUnreadable: Boolean = false,
     val isDiscardingDraft: Boolean = false,
+    val draftFlushing: Boolean = false,
 )
+
+private const val NEW_CHARACTER_TEMPERATURE = "0.9"
+private const val NEW_CHARACTER_MAX_TOKENS = "1200"
+private const val NEW_CHARACTER_TOP_P = "1.0"
+
+internal fun validatedCharacterCardJson(raw: String): String {
+    val json = raw.trim().ifBlank { "{}" }
+    val parsed = runCatching { JsonParser.parseString(json) }.getOrNull()
+    require(parsed?.isJsonObject == true) { "扩展设定 JSON 须为对象 {…}，请修正后重试" }
+    return json
+}
+
+internal fun newCharacterTemperature(raw: String): String =
+    raw.trim().toFloatOrNull()?.takeIf { it in 0f..2f }?.let { raw.trim() } ?: NEW_CHARACTER_TEMPERATURE
+
+internal fun newCharacterMaxTokens(raw: String): String =
+    raw.trim().toIntOrNull()?.takeIf { it in 1..200_000 }?.toString() ?: NEW_CHARACTER_MAX_TOKENS
+
+internal fun newCharacterTopP(raw: String): String =
+    raw.trim().toFloatOrNull()?.takeIf { it in 0f..1f }?.let { raw.trim() } ?: NEW_CHARACTER_TOP_P
 
 internal fun CharacterEditState.samplingError(): String? = listOf(
     "温度" to samplingParameterError(temperature),
@@ -248,7 +269,7 @@ class CharacterEditViewModel @Inject constructor(
     private var draftWriteJob: Job? = null
 
     private fun updateDraft(transform: (CharacterEditState) -> CharacterEditState) {
-        if (!_state.value.isLoaded || _state.value.loadError != null || _state.value.recoverableDraft != null || _state.value.draftUnreadable || _state.value.isDiscardingDraft) return
+        if (!_state.value.isLoaded || _state.value.loadError != null || _state.value.recoverableDraft != null || _state.value.draftUnreadable || _state.value.isDiscardingDraft || _state.value.draftFlushing) return
         val next = transform(_state.value)
         _state.value = next.copy(isDirty = next.saveError != null || next.toDraftSnapshot() != savedDraft)
         persistCurrentDraft()
@@ -278,6 +299,40 @@ class CharacterEditViewModel @Inject constructor(
 
     fun retryDraftSave() {
         if (_state.value.isLoaded && _state.value.recoverableDraft == null && !_state.value.draftUnreadable) persistCurrentDraft()
+    }
+
+    fun flushDraft(onResult: (Boolean) -> Unit = {}) {
+        val id = lastLoadedCharacterId?.takeIf { it > 0L }
+        val current = _state.value
+        if (current.isSaving || current.isDiscardingDraft || current.draftFlushing) {
+            onResult(false)
+            return
+        }
+        if (id == null || !current.isLoaded || current.loadError != null || current.recoverableDraft != null || current.draftUnreadable) {
+            onResult(true)
+            return
+        }
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        _state.update { it.copy(draftFlushing = true, draftError = null) }
+        draftWriteJob = viewModelScope.launch {
+            var ok = false
+            try {
+                draftWriteMutex.withLock {
+                    if (revision == draftWriteRevision && lastLoadedCharacterId == id) {
+                        val snapshot = _state.value.toDraftSnapshot()
+                        if (_state.value.isDirty) draftStore.save(id, snapshot) else draftStore.clear(id)
+                        ok = true
+                    }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (revision == draftWriteRevision && lastLoadedCharacterId == id) _state.update { it.copy(draftError = "角色草稿暂存失败，当前输入仍在页面中；请重试") }
+            } finally {
+                if (revision == draftWriteRevision && lastLoadedCharacterId == id) _state.update { it.copy(draftFlushing = false) }
+                onResult(ok)
+            }
+        }
     }
 
     private suspend fun syncDraftAfterSave(id: Long) {
@@ -462,10 +517,10 @@ class CharacterEditViewModel @Inject constructor(
         if (lastLoadedCharacterId != characterId || _state.value.isAiCompleting) return
         when (task.status) {
             GenerationTaskStatus.COMPLETED -> {
-                if (task.errorMessage.trim() == "人设未变化") {
-                    showSnackbar(UserFacingStrings.characterAiNoNewPersona())
-                } else {
+                if (task.errorMessage.isBlank()) {
                     showSnackbar(UserFacingStrings.characterAiPersonaApplied())
+                } else {
+                    showSnackbar("补全已结束，未覆盖当前人设；可在生成记录中查看并手动应用")
                 }
             }
             GenerationTaskStatus.FAILED ->
@@ -510,6 +565,9 @@ class CharacterEditViewModel @Inject constructor(
                     id <= 0L -> CharacterEditState(
                         isLoaded = true,
                         hasPublicTextKey = secureStorage.publicApiKey.isNotBlank(),
+                        temperature = newCharacterTemperature(secureStorage.defaultTemperature),
+                        maxTokens = newCharacterMaxTokens(secureStorage.defaultMaxTokens),
+                        topP = newCharacterTopP(secureStorage.defaultTopP),
                     )
                     else -> CharacterEditState(
                         isLoaded = true,
@@ -816,15 +874,8 @@ class CharacterEditViewModel @Inject constructor(
             showSnackbar(UserFacingStrings.characterNameRequired())
             return
         }
-        val rawJson = submittedState.characterCardJsonRaw.trim()
-        if (rawJson.isNotBlank()) {
-            val parsed = runCatching { JsonParser.parseString(rawJson) }.getOrNull()
-            if (parsed == null || !parsed.isJsonObject) {
-                showSnackbar("扩展设定 JSON 须为对象 {…}，请修正后重试")
-                return
-            }
-        }
-        val profileJsonForStorage = rawJson.ifBlank { "{}" }
+        val profileJsonForStorage = try { validatedCharacterCardJson(submittedState.characterCardJsonRaw) }
+        catch (e: IllegalArgumentException) { showSnackbar(checkNotNull(e.message)); return }
         val previousProfileJson = savedDraft.characterCardJsonRaw
         _state.value = _state.value.copy(isSaving = true, saveError = null)
         viewModelScope.launch {
@@ -927,12 +978,8 @@ class CharacterEditViewModel @Inject constructor(
         }
     }
 
-    private suspend fun mergedEntityForExport(routeCharacterId: Long): CharacterEntity? {
-        val s = _state.value
+    private fun mergedEntityForExport(s: CharacterEditState, base: CharacterEntity): CharacterEntity {
         s.samplingError()?.let { throw IllegalArgumentException(it) }
-        val base = currentEntity
-            ?: (if (routeCharacterId != 0L) characterDao.getById(routeCharacterId) else null)
-            ?: return null
         return base.copy(
             name = s.name,
             personaPrompt = s.personaPrompt,
@@ -960,6 +1007,24 @@ class CharacterEditViewModel @Inject constructor(
         )
     }
 
+    private data class ExportSnapshot(val entity: CharacterEntity, val profile: CharacterProfileEntity)
+
+    private fun exportBase(routeCharacterId: Long, submitted: CharacterEditState): CharacterEntity? {
+        if (!submitted.isLoaded || submitted.loadError != null || !submitted.isPersisted ||
+            submitted.recoverableDraft != null || submitted.draftUnreadable || submitted.isDiscardingDraft ||
+            lastLoadedCharacterId != routeCharacterId) return null
+        return currentEntity?.takeIf { it.id == routeCharacterId }
+    }
+
+    private suspend fun prepareExportSnapshot(submitted: CharacterEditState, base: CharacterEntity): ExportSnapshot {
+        val entity = mergedEntityForExport(submitted, base)
+        val profileJson = withContext(Dispatchers.Default) { validatedCharacterCardJson(submitted.characterCardJsonRaw) }
+        val stored = characterProfileDao.getByCharacter(entity.id)
+        return ExportSnapshot(entity, (stored ?: CharacterProfileEntity(characterId = entity.id)).copy(
+            characterCardJson = profileJson,
+        ))
+    }
+
     private fun collectDump(entity: CharacterEntity, profile: CharacterProfileEntity?): String = buildString {
         appendLine("名称: ${entity.name}")
         appendLine("性格设定(persona_prompt):\n${entity.personaPrompt}")
@@ -972,6 +1037,7 @@ class CharacterEditViewModel @Inject constructor(
             if (profile.characterCardMarkdown.isNotBlank()) {
                 appendLine("人物卡 Markdown:\n${profile.characterCardMarkdown.take(20000)}")
             }
+            appendLine("当前扩展设定 JSON:\n${profile.characterCardJson}")
         }
     }
 
@@ -984,7 +1050,13 @@ class CharacterEditViewModel @Inject constructor(
         summary: Boolean,
         onResult: (Pair<String, ByteArray>?) -> Unit
     ) {
-        if (_state.value.isPreparingExport) return
+        val submitted = _state.value
+        if (submitted.isPreparingExport) return
+        val base = exportBase(routeCharacterId, submitted) ?: run {
+            _state.update { it.copy(exportMessage = UserFacingStrings.exportCharacterNotLoaded()) }
+            onResult(null)
+            return
+        }
         _state.value = _state.value.copy(
             exportMessage = null,
             isPreparingExport = true,
@@ -994,11 +1066,9 @@ class CharacterEditViewModel @Inject constructor(
             var result: Pair<String, ByteArray>? = null
             var shouldReportResult = true
             try {
-                val entityRaw = mergedEntityForExport(routeCharacterId) ?: run {
-                    _state.update { it.copy(exportMessage = UserFacingStrings.exportCharacterNotLoaded()) }
-                    return@launch
-                }
-                val profile = characterProfileDao.getByCharacter(entityRaw.id)
+                val snapshot = prepareExportSnapshot(submitted, base)
+                val entityRaw = snapshot.entity
+                val profile = snapshot.profile
                 val payloadJson: JsonObject = if (summary) {
                     val apiKey = secureStorage.publicApiKey
                     if (apiKey.isBlank()) {
@@ -1019,7 +1089,7 @@ class CharacterEditViewModel @Inject constructor(
                     )
                     withContext(Dispatchers.Default) {
                         val parsed = CharacterPortableCodec.extractJsonFromLlmResponse(raw)
-                        CharacterPortableCodec.mergeSummaryIntoPortable(parsed)
+                        CharacterPortableCodec.mergeSummaryIntoPortable(parsed, entityRaw)
                     }
                 } else {
                     withContext(Dispatchers.Default) {
@@ -1027,7 +1097,7 @@ class CharacterEditViewModel @Inject constructor(
                     }
                 }
                 result = withContext(Dispatchers.Default) {
-                    val gson = com.google.gson.Gson()
+                    val gson = com.google.gson.GsonBuilder().serializeNulls().create()
                     val baseName = (entityRaw.name.ifBlank { "character" })
                         .replace(Regex("[^\\w\\-.一-龥]"), "_")
                         .take(80)
@@ -1062,7 +1132,13 @@ class CharacterEditViewModel @Inject constructor(
 
     /** 导出内嵌 JSON 的 PNG 竖版形象卡；底图优先卡图/头像 PNG，否则白底占位。 */
     fun buildTavernPngExport(routeCharacterId: Long, onResult: (Pair<String, ByteArray>?) -> Unit) {
-        if (_state.value.isPreparingExport) return
+        val submitted = _state.value
+        if (submitted.isPreparingExport) return
+        val exportBase = exportBase(routeCharacterId, submitted) ?: run {
+            _state.update { it.copy(exportMessage = UserFacingStrings.exportCharacterNotLoaded()) }
+            onResult(null)
+            return
+        }
         _state.value = _state.value.copy(
             exportMessage = null,
             isPreparingExport = true,
@@ -1072,11 +1148,9 @@ class CharacterEditViewModel @Inject constructor(
             var result: Pair<String, ByteArray>? = null
             var shouldReportResult = true
             try {
-                val entity = mergedEntityForExport(routeCharacterId) ?: run {
-                    _state.update { it.copy(exportMessage = UserFacingStrings.exportCharacterNotLoaded()) }
-                    return@launch
-                }
-                val profile = characterProfileDao.getByCharacter(entity.id)
+                val snapshot = prepareExportSnapshot(submitted, exportBase)
+                val entity = snapshot.entity
+                val profile = snapshot.profile
                 val base = withContext(Dispatchers.IO) { loadBasePngBytesForExport(entity) }
                 result = withContext(Dispatchers.Default) {
                     val root = CharacterCardV2Converter.buildV2Export(entity, profile)

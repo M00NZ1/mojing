@@ -36,6 +36,7 @@ class MemoryCompactor @Inject constructor(
         onProgress: (Int) -> Unit = {},
         maxChunksPerRun: Int = 4,
         scanHistoricalGaps: Boolean = false,
+        contextWindow: Int? = null,
     ): Boolean {
         require(threshold in 1..2000)
         require(maxChunksPerRun in 1..1000)
@@ -99,6 +100,7 @@ class MemoryCompactor @Inject constructor(
                 )
                 val result = llmRetry.chatCompletionWithRetry(
                     apiKey, baseUrl, model, llmMessages, temperature = 0.5f, maxTokens = 400,
+                    contextWindow = contextWindow,
                 )
                 val map: Map<*, *> = Gson().fromJson(extractJson(result), Map::class.java) ?: return false
                 val summary = (map["summary"] as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: return false

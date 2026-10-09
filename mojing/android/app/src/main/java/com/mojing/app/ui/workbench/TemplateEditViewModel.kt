@@ -2,6 +2,8 @@ package com.mojing.app.ui.workbench
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mojing.app.data.TemplateEditDraft
+import com.mojing.app.data.TemplateEditDraftStore
 import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.local.dao.WorldLoreEntryDao
 import com.mojing.app.data.local.dao.WorldTemplateDao
@@ -26,6 +28,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 import javax.inject.Inject
 
@@ -57,18 +61,11 @@ data class TemplateEditState(
     val coverBuiltinAssets: List<AssetItemDto> = emptyList(),
     val isCoverBuiltinLoading: Boolean = false,
     val hasPublicLlmKey: Boolean = false,
-)
-
-private data class TemplateDraftSnapshot(
-    val label: String,
-    val templateId: String,
-    val category: String,
-    val summary: String,
-    val gameplayMode: String,
-    val worldPrompt: String,
-    val antiCheatPrompt: String,
-    val suggestedChoicesJson: String,
-    val coverImagePath: String,
+    val recoverableDraft: TemplateEditDraft? = null,
+    val draftError: String? = null,
+    val draftUnreadable: Boolean = false,
+    val isDiscardingDraft: Boolean = false,
+    val isWritingDraft: Boolean = false,
 )
 
 private object TemplateAlreadyInEncyclopediaException : IllegalStateException()
@@ -83,7 +80,7 @@ private fun templateEditErrorMessage(error: Throwable, loading: Boolean): String
     else -> "模板未能保存到本机，请检查内容后重试。"
 }
 
-private fun TemplateEditState.toDraftSnapshot() = TemplateDraftSnapshot(
+private fun TemplateEditState.toDraftSnapshot() = TemplateEditDraft(
     label = label,
     templateId = templateId,
     category = category,
@@ -93,6 +90,18 @@ private fun TemplateEditState.toDraftSnapshot() = TemplateDraftSnapshot(
     antiCheatPrompt = antiCheatPrompt,
     suggestedChoicesJson = suggestedChoicesJson,
     coverImagePath = coverImagePath,
+)
+
+private fun TemplateEditState.withRecoveredDraft(draft: TemplateEditDraft) = copy(
+    label = draft.label,
+    templateId = draft.templateId,
+    category = draft.category,
+    summary = draft.summary,
+    gameplayMode = draft.gameplayMode,
+    worldPrompt = draft.worldPrompt,
+    antiCheatPrompt = draft.antiCheatPrompt,
+    suggestedChoicesJson = draft.suggestedChoicesJson,
+    coverImagePath = draft.coverImagePath,
 )
 
 private fun TemplateEditState.withPersistedDraft(entity: WorldTemplateEntity) = copy(
@@ -119,6 +128,7 @@ class TemplateEditViewModel @Inject constructor(
     private val backendAssetsApi: BackendAssetsApi,
     private val secureStorage: SecureStorage,
     private val generationQueueProcessor: GenerationQueueProcessor,
+    private val draftStore: TemplateEditDraftStore,
 ) : ViewModel() {
     private val gson = Gson()
     private val _state = MutableStateFlow(TemplateEditState())
@@ -130,14 +140,211 @@ class TemplateEditViewModel @Inject constructor(
     private var completionReadRevision = 0L
     private var prevTemplateGenBusy = false
     private var savedDraft = _state.value.toDraftSnapshot()
+    private var draftWriteRevision = 0L
+    private var draftWriteJob: Job? = null
+    private val draftWriteMutex = Mutex()
+    private var pendingNewDraftTransfer = false
+    private var draftReadRevision = 0L
 
     private fun updateDraft(transform: (TemplateEditState) -> TemplateEditState) {
+        if (!_state.value.isLoaded || _state.value.loadError != null || _state.value.recoverableDraft != null ||
+            _state.value.draftUnreadable || _state.value.isDiscardingDraft || _state.value.isWritingDraft) return
         val next = transform(_state.value)
         _state.value = next.copy(
             isDirty = next.toDraftSnapshot() != savedDraft,
             saveError = null,
             saveErrorCanReturn = false,
         )
+        persistCurrentDraft()
+    }
+
+    private fun persistCurrentDraft() {
+        val rowId = loadedForRowId ?: return
+        val snapshot = _state.value.toDraftSnapshot()
+        val dirty = _state.value.isDirty
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        draftWriteJob = viewModelScope.launch {
+            try {
+                draftWriteMutex.withLock {
+                    if (revision != draftWriteRevision || loadedForRowId != rowId) return@withLock
+                    if (rowId == 0L) {
+                        if (dirty) draftStore.saveNew(snapshot) else draftStore.clearNew()
+                    } else if (pendingNewDraftTransfer) {
+                        draftStore.syncAfterFirstSave(rowId, snapshot.takeIf { dirty })
+                        pendingNewDraftTransfer = false
+                    } else if (dirty) draftStore.save(rowId, snapshot) else draftStore.clear(rowId)
+                }
+                if (revision == draftWriteRevision && loadedForRowId == rowId) {
+                    _state.value = _state.value.copy(draftError = null)
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (revision == draftWriteRevision && loadedForRowId == rowId) {
+                    _state.value = _state.value.copy(draftError = "模板草稿暂存失败，当前输入仍在页面中；可重试或直接保存模板")
+                }
+            }
+        }
+    }
+
+    fun retryDraftSave() {
+        if (_state.value.isLoaded && _state.value.recoverableDraft == null && !_state.value.draftUnreadable &&
+            !_state.value.isDiscardingDraft) {
+            val rowId = loadedForRowId ?: return
+            if (pendingNewDraftTransfer && rowId > 0L) syncPendingNewDraft(rowId) else persistCurrentDraft()
+        }
+    }
+
+    private fun syncPendingNewDraft(rowId: Long) {
+        if (rowId <= 0L || _state.value.isWritingDraft || _state.value.isDiscardingDraft) return
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        val snapshot = _state.value.toDraftSnapshot()
+        val dirty = _state.value.isDirty
+        draftWriteJob = viewModelScope.launch {
+            try {
+                draftWriteMutex.withLock { draftStore.syncAfterFirstSave(rowId, snapshot.takeIf { dirty }) }
+                if (revision == draftWriteRevision && loadedForRowId == rowId) {
+                    pendingNewDraftTransfer = false
+                    _state.value = _state.value.copy(draftError = null)
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (revision == draftWriteRevision && loadedForRowId == rowId)
+                    _state.value = _state.value.copy(draftError = if (dirty) "模板已保存，但新的修改暂存失败；请重试" else "模板已保存，但旧草稿清除失败；请重试清理后离开")
+            }
+        }
+    }
+
+    private suspend fun readRecoveryDraft(rowId: Long, readRevision: Long = draftReadRevision) {
+        val draft = try {
+            if (rowId == 0L) draftStore.loadNew() else draftStore.load(rowId)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) {
+            if (loadedForRowId == rowId && readRevision == draftReadRevision) _state.value = _state.value.copy(
+                draftUnreadable = true,
+                draftError = "本机模板草稿无法读取，已保留原始草稿。可重试读取或明确丢弃。",
+            )
+            return
+        }
+        if (loadedForRowId != rowId || readRevision != draftReadRevision) return
+        _state.value = _state.value.copy(
+            recoverableDraft = draft?.takeIf { it != savedDraft },
+            draftUnreadable = false,
+            draftError = null,
+        )
+        if (draft == savedDraft) {
+            try {
+                if (rowId == 0L) draftStore.clearNew() else draftStore.clear(rowId)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (loadedForRowId == rowId && readRevision == draftReadRevision) _state.value = _state.value.copy(draftError = "已保存模板可用，但旧草稿清除失败；可重试清理")
+            }
+        }
+    }
+
+    fun retryDraftLoad() {
+        val rowId = loadedForRowId ?: return
+        if (!_state.value.draftUnreadable || _state.value.isDiscardingDraft) return
+        val readRevision = ++draftReadRevision
+        viewModelScope.launch { readRecoveryDraft(rowId, readRevision) }
+    }
+
+    fun restoreDraft() {
+        if (_state.value.isDiscardingDraft) return
+        val draft = _state.value.recoverableDraft ?: return
+        val restored = _state.value.withRecoveredDraft(draft).copy(recoverableDraft = null, draftError = null)
+        _state.value = restored.copy(isDirty = restored.toDraftSnapshot() != savedDraft)
+        persistCurrentDraft()
+    }
+
+    fun discardStoredDraft() {
+        val rowId = loadedForRowId ?: return
+        if (_state.value.isDiscardingDraft) return
+        _state.value = _state.value.copy(isDiscardingDraft = true)
+        draftReadRevision++
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        viewModelScope.launch {
+            try {
+                draftWriteMutex.withLock {
+                    if (pendingNewDraftTransfer && rowId > 0L) {
+                        draftStore.syncAfterFirstSave(rowId, null)
+                        pendingNewDraftTransfer = false
+                    } else if (rowId == 0L) draftStore.clearNew() else draftStore.clear(rowId)
+                }
+                if (revision == draftWriteRevision && loadedForRowId == rowId) {
+                    _state.value = _state.value.copy(recoverableDraft = null, draftUnreadable = false, draftError = null, isDiscardingDraft = false)
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (revision == draftWriteRevision && loadedForRowId == rowId) {
+                    _state.value = _state.value.copy(draftError = "未能丢弃模板草稿，请重试", isDiscardingDraft = false)
+                }
+            }
+        }
+    }
+
+    fun discardChangesAndLeave(onDiscarded: () -> Unit) {
+        val rowId = loadedForRowId ?: run { onDiscarded(); return }
+        if (_state.value.isDiscardingDraft) return
+        _state.value = _state.value.copy(isDiscardingDraft = true)
+        draftReadRevision++
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        viewModelScope.launch {
+            try {
+                draftWriteMutex.withLock {
+                    if (pendingNewDraftTransfer && rowId > 0L) {
+                        draftStore.syncAfterFirstSave(rowId, null)
+                        pendingNewDraftTransfer = false
+                    } else if (rowId == 0L) draftStore.clearNew() else draftStore.clear(rowId)
+                }
+                if (revision == draftWriteRevision && loadedForRowId == rowId) onDiscarded()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (revision == draftWriteRevision && loadedForRowId == rowId) _state.value = _state.value.copy(
+                    draftError = "草稿清除失败，已留在编辑页；可重试后离开",
+                    isDiscardingDraft = false,
+                )
+            }
+        }
+    }
+
+    fun saveDraftAndLeave(onSaved: () -> Unit) {
+        val rowId = loadedForRowId ?: run { onSaved(); return }
+        if (_state.value.draftUnreadable || _state.value.recoverableDraft != null) {
+            onSaved()
+            return
+        }
+        if (_state.value.isWritingDraft || _state.value.isDiscardingDraft) return
+        _state.value = _state.value.copy(isWritingDraft = true)
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        val snapshot = _state.value.toDraftSnapshot()
+        val dirty = _state.value.isDirty
+        viewModelScope.launch {
+            try {
+                draftWriteMutex.withLock {
+                    if (pendingNewDraftTransfer && rowId > 0L) {
+                        draftStore.syncAfterFirstSave(rowId, snapshot.takeIf { dirty })
+                        pendingNewDraftTransfer = false
+                    } else if (rowId == 0L) {
+                        if (dirty) draftStore.saveNew(snapshot) else draftStore.clearNew()
+                    } else if (dirty) draftStore.save(rowId, snapshot) else draftStore.clear(rowId)
+                }
+                if (revision == draftWriteRevision && loadedForRowId == rowId) {
+                    _state.value = _state.value.copy(isWritingDraft = false, draftError = null)
+                    onSaved()
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (revision == draftWriteRevision && loadedForRowId == rowId) _state.value = _state.value.copy(
+                    isWritingDraft = false,
+                    draftError = "模板草稿暂存失败，已留在编辑页；可重试后离开",
+                )
+            }
+        }
     }
 
     private fun startTemplateQueueObservation(rowId: Long) {
@@ -232,6 +439,10 @@ class TemplateEditViewModel @Inject constructor(
             return
         }
         loadedForRowId = effectiveId
+        draftWriteRevision++
+        draftReadRevision++
+        draftWriteJob?.cancel()
+        pendingNewDraftTransfer = false
         genObserveJob?.cancel()
         _state.value = _state.value.copy(isLoaded = false, loadError = null)
         viewModelScope.launch {
@@ -268,7 +479,10 @@ class TemplateEditViewModel @Inject constructor(
                     )
                 }
                 savedDraft = loaded.toDraftSnapshot()
-                _state.value = loaded
+                _state.value = loaded.copy(isLoaded = false)
+                val readRevision = draftReadRevision
+                readRecoveryDraft(effectiveId, readRevision)
+                if (loadedForRowId == effectiveId) _state.value = _state.value.copy(isLoaded = true)
                 startTemplateQueueObservation(effectiveId)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -489,7 +703,9 @@ class TemplateEditViewModel @Inject constructor(
 
     fun save() {
         val s = _state.value
-        if (s.isSaving || s.isAiCompleting || s.isRefreshingCompletion || s.completionRefreshError != null || !s.isLoaded || s.loadError != null) return
+        if (s.isSaving || s.isAiCompleting || s.isRefreshingCompletion || s.completionRefreshError != null ||
+            s.isDiscardingDraft || s.isWritingDraft || s.recoverableDraft != null || s.draftUnreadable ||
+            !s.isLoaded || s.loadError != null) return
         if (s.label.isBlank()) {
             showSnackbar(UserFacingStrings.templateLabelRequired())
             return
@@ -536,8 +752,11 @@ class TemplateEditViewModel @Inject constructor(
                     return@launch
                 }
                 currentEntity = saved
+                val wasNew = loadedForRowId == 0L
                 loadedForRowId = saved.id
+                if (wasNew) pendingNewDraftTransfer = true
                 startTemplateQueueObservation(saved.id)
+                _state.value = _state.value.copy(isWritingDraft = true)
                 val current = _state.value
                 val persisted = current.withPersistedDraft(saved).copy(
                     isSaving = false,
@@ -547,18 +766,40 @@ class TemplateEditViewModel @Inject constructor(
                 )
                 savedDraft = persisted.toDraftSnapshot()
                 val draftChangedWhileSaving = current.toDraftSnapshot() != submittedDraft
+                draftWriteRevision++
+                draftWriteJob?.cancel()
+                var draftSyncError: String? = null
+                try {
+                    draftWriteMutex.withLock {
+                        if (wasNew || pendingNewDraftTransfer) {
+                            draftStore.syncAfterFirstSave(saved.id, current.toDraftSnapshot().takeIf { draftChangedWhileSaving })
+                            pendingNewDraftTransfer = false
+                        } else if (draftChangedWhileSaving) {
+                            draftStore.save(saved.id, current.toDraftSnapshot())
+                        } else {
+                            draftStore.clear(saved.id)
+                        }
+                    }
+                    _state.value = _state.value.copy(draftError = null)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    draftSyncError = if (draftChangedWhileSaving) "模板已保存，但新的修改暂存失败；请重试" else "模板已保存，但旧草稿清除失败；请重试清理后离开"
+                }
                 _state.value = if (draftChangedWhileSaving) {
                     current.copy(
                         isSaving = false,
                         isPersisted = true,
                         isDirty = current.toDraftSnapshot() != savedDraft,
                         snackbar = "已保存，当前还有未保存的修改",
+                        draftError = draftSyncError,
+                        isWritingDraft = false,
                     )
                 } else {
-                    persisted.copy(snackbar = UserFacingStrings.saveSuccessGeneric())
+                    persisted.copy(snackbar = UserFacingStrings.saveSuccessGeneric(), draftError = draftSyncError, isWritingDraft = false)
                 }
             } catch (cancelled: CancellationException) {
-                _state.value = _state.value.copy(isSaving = false)
+                _state.value = _state.value.copy(isSaving = false, isWritingDraft = false)
                 throw cancelled
             } catch (e: Exception) {
                 _state.value = _state.value.copy(

@@ -1,6 +1,6 @@
 package com.mojing.app.ui.encyclopedia
 
-import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingCenterAlignedTopAppBar as TopAppBar
 import com.mojing.app.ui.common.MoJingIcon as Icon
 import com.mojing.app.ui.common.MoJingFilterChip as FilterChip
 import androidx.compose.material.icons.automirrored.outlined.Article
@@ -15,6 +15,7 @@ import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.ArrowDropDown
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.Checkbox
 import androidx.compose.ui.semantics.semantics
@@ -39,6 +40,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -90,6 +93,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.mojing.app.util.ContentDocumentReader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -102,11 +107,38 @@ import com.mojing.app.ui.encyclopedia.components.GraphEdge
 import com.mojing.app.ui.encyclopedia.components.GraphNode
 import androidx.hilt.navigation.compose.hiltViewModel
 import coil.compose.AsyncImage
-import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
 import com.mojing.app.data.local.entity.TimelineEventEntity
 import com.mojing.app.ui.common.SwipeRevealListRow
 import com.mojing.app.ui.common.EmptyState
 import com.mojing.app.ui.common.avatarImageModel
+import com.mojing.app.domain.encyclopedia.sourceReferences
+
+@Composable
+private fun RelationEndpointAction(
+    endpoint: com.mojing.app.data.local.dao.EncyclopediaRelationEndpoint?,
+    direction: String,
+    enabled: Boolean,
+    onOpen: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth()
+            .clickable(enabled = enabled && endpoint != null, role = androidx.compose.ui.semantics.Role.Button, onClick = onOpen)
+            .semantics { contentDescription = if (endpoint == null) "$direction：资料不可用" else "打开${direction}条目：${endpoint.title}" }
+            .heightIn(min = 48.dp)
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        com.mojing.app.ui.common.MoJingCoverImage(endpoint?.coverImagePath.orEmpty(), Modifier.size(48.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(endpoint?.title ?: "资料不可用", style = MaterialTheme.typography.titleSmall,
+                maxLines = 2, overflow = TextOverflow.Ellipsis,
+                color = if (endpoint != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(if (endpoint == null) "$direction · 无法打开条目" else "$direction · ${ENTRY_TYPE_LABELS[endpoint.entryType] ?: "其他"}",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
 
 private val WorldInfoImportMimeTypes = arrayOf(
     "application/json",
@@ -129,6 +161,9 @@ fun EncyclopediaDetailScreen(
     onBack: () -> Unit,
     onOpenGenerationTasks: () -> Unit,
     onOpenSettings: () -> Unit,
+    onWorldSettings: () -> Unit,
+    relationEntryId: Long = 0L,
+    onViewSource: (Long) -> Unit = onEditEntry,
     viewModel: EncyclopediaDetailViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -143,7 +178,7 @@ fun EncyclopediaDetailScreen(
     }
     val filteredSediment = state.sedimentEntries
 
-    LaunchedEffect(encyclopediaId) { viewModel.load(encyclopediaId) }
+    LaunchedEffect(encyclopediaId, relationEntryId) { viewModel.load(encyclopediaId, relationEntryId) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(state.snackbar) {
@@ -156,12 +191,26 @@ fun EncyclopediaDetailScreen(
     var newTitle by remember { mutableStateOf("") }
     var newType by remember { mutableStateOf("character") }
     var tlTitle by remember { mutableStateOf("") }
+    var tlDescription by remember { mutableStateOf("") }
+    var timelineEditorExpanded by rememberSaveable(encyclopediaId) { mutableStateOf(false) }
     var tlTime by remember { mutableStateOf("") }
     var tlOrder by remember { mutableStateOf("0") }
-    LaunchedEffect(state.mainTab, state.timelineLoaded) {
-        if (state.mainTab == EncyclopediaMainTab.TIMELINE && state.timelineLoaded) {
+    var timelineEditId by rememberSaveable(encyclopediaId) { mutableStateOf<Long?>(null) }
+    val timelineEditTarget = state.timelineEvents.firstOrNull { it.id == timelineEditId && it.entryId == null }
+    var editTlTitle by remember { mutableStateOf("") }
+    var editTlDescription by remember { mutableStateOf("") }
+    var editTlTime by remember { mutableStateOf("") }
+    var editTlOrder by remember { mutableStateOf("0") }
+    LaunchedEffect(encyclopediaId, state.mainTab, state.timelineLoaded, timelineEditorExpanded) {
+        if (state.mainTab == EncyclopediaMainTab.TIMELINE && state.timelineLoaded && !timelineEditorExpanded) {
             val next = state.timelineMaxSortOrder + 1
             tlOrder = next.coerceAtLeast(0).toString()
+        }
+        if (state.timelineLoaded && timelineEditorExpanded) {
+            tlTitle = viewModel.timelineDraft(null, "title")
+            tlDescription = viewModel.timelineDraft(null, "description")
+            tlTime = viewModel.timelineDraft(null, "time")
+            tlOrder = viewModel.timelineDraft(null, "order", (state.timelineMaxSortOrder + 1).coerceAtLeast(0).toString())
         }
     }
     var showRelDialog by remember { mutableStateOf(false) }
@@ -177,11 +226,39 @@ fun EncyclopediaDetailScreen(
     var showBatchMetaConfirm by remember { mutableStateOf(false) }
     var showBatchDialog by remember { mutableStateOf(false) }
     var showEncyclopediaMenu by remember { mutableStateOf(false) }
-    var deleteEntryTarget by remember { mutableStateOf<EncyclopediaEntryEntity?>(null) }
-    var timelineDetailTarget by remember { mutableStateOf<TimelineEventEntity?>(null) }
-    var timelineDeleteTarget by remember { mutableStateOf<TimelineEventEntity?>(null) }
+    var deleteEntryTarget by remember(encyclopediaId) { mutableStateOf<com.mojing.app.data.local.dao.EncyclopediaEntryOption?>(null) }
+    var timelineDetailId by rememberSaveable(encyclopediaId) { mutableStateOf<Long?>(null) }
+    var timelineDeleteId by rememberSaveable(encyclopediaId) { mutableStateOf<Long?>(null) }
+    val timelineDetailTarget = state.timelineEvents.firstOrNull { it.id == timelineDetailId }
+    val timelineDeleteTarget = state.timelineEvents.firstOrNull { it.id == timelineDeleteId }
+    val timelineActionsReady = state.isLoaded && state.loadError == null && state.timelineLoaded &&
+        !state.timelineLoading && state.timelineError == null
+    LaunchedEffect(timelineEditTarget?.id) {
+        timelineEditTarget?.let { event ->
+            editTlTitle = viewModel.timelineDraft(event.id, "title", event.title)
+            editTlDescription = viewModel.timelineDraft(event.id, "description", event.description)
+            editTlTime = viewModel.timelineDraft(event.id, "time", event.eventTime)
+            editTlOrder = viewModel.timelineDraft(event.id, "order", event.sortOrder.toString())
+        }
+    }
+    LaunchedEffect(state.timelineLoaded, state.timelineLoading, state.timelineError, state.timelineEvents) {
+        if (state.timelineLoaded && !state.timelineLoading && state.timelineError == null) {
+            if (timelineDetailTarget == null) timelineDetailId = null
+            if (timelineEditTarget == null) timelineEditId = null
+            if (timelineDeleteTarget == null) timelineDeleteId = null
+        }
+    }
     var relationDeleteTarget by remember(encyclopediaId) { mutableStateOf<com.mojing.app.data.local.entity.EntryRelationEntity?>(null) }
+    var expandedRelationLabels by remember(encyclopediaId) { mutableStateOf(emptySet<Long>()) }
     var pinnedTimelineIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var selectedGraphNodeId by rememberSaveable(encyclopediaId) { mutableStateOf<Long?>(null) }
+    var graphSelectionType by rememberSaveable(encyclopediaId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(state.isLoaded, state.relationTypeFilter) {
+        if (state.isLoaded) {
+            if (graphSelectionType != null && graphSelectionType != state.relationTypeFilter) selectedGraphNodeId = null
+            graphSelectionType = state.relationTypeFilter
+        }
+    }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -257,12 +334,6 @@ fun EncyclopediaDetailScreen(
                                 contentDescription = "查看 AI 生成任务",
                             )
                         }
-                    }
-                    TextButton(
-                        onClick = viewModel::beginRename,
-                        enabled = state.encyclopedia != null && !state.renameSaving,
-                    ) {
-                        Text("重命名")
                     }
                     Box {
                         IconButton(
@@ -367,7 +438,7 @@ fun EncyclopediaDetailScreen(
                             snackbarHostState.showSnackbar("请至少添加 2 条条目后再建立关系")
                         }
                     } else {
-                        relFrom = null
+                        relFrom = state.relationAnchor
                         relTo = null
                         viewModel.clearRelationError()
                         showRelDialog = true
@@ -387,7 +458,7 @@ fun EncyclopediaDetailScreen(
                 title = "无法打开百科",
                 message = state.loadError.orEmpty(),
                 actionLabel = "重新加载",
-                onAction = { viewModel.load(encyclopediaId) },
+                onAction = { viewModel.load(encyclopediaId, relationEntryId) },
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
         } else if (!state.isLoaded) {
@@ -402,6 +473,12 @@ fun EncyclopediaDetailScreen(
             }
         } else {
         Column(modifier = Modifier.padding(padding)) {
+            if (state.mainTab == EncyclopediaMainTab.ENTRIES) state.encyclopedia?.let { world ->
+                WorldOverviewHeader(
+                    world = world.copy(entryCount = state.entryCount),
+                    stats = state.overviewStats,
+                )
+            }
             com.mojing.app.ui.common.MoJingSectionTabs(
                 labels = listOf("条目", "时间线", "关系图", "沉积"),
                 selectedIndex = state.mainTab.ordinal,
@@ -411,6 +488,24 @@ fun EncyclopediaDetailScreen(
                         EncyclopediaMainTab.SEDIMENT)[index])
                 },
             )
+
+            // Tabs and the create FAB keep every action available on short landscape windows.
+            if (state.mainTab == EncyclopediaMainTab.ENTRIES &&
+                androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp >= 600) {
+                WorldOverviewActions(
+                    onCreateEntry = {
+                        viewModel.clearCreateEntryError()
+                        showCreateDialog = true
+                    },
+                    onOpenTimeline = { viewModel.setMainTab(EncyclopediaMainTab.TIMELINE) },
+                    onOpenGraph = { viewModel.setMainTab(EncyclopediaMainTab.GRAPH) },
+                    onOpenSediment = { viewModel.setMainTab(EncyclopediaMainTab.SEDIMENT) },
+                )
+            }
+
+            if (state.encyclopedia != null) {
+                WorldSettingsAction(onClick = onWorldSettings)
+            }
 
             if (state.mainTab == EncyclopediaMainTab.ENTRIES) {
                 LazyRow(
@@ -468,12 +563,12 @@ fun EncyclopediaDetailScreen(
                                                     selected = state.previewEntryId == entry.id,
                                                     onRowClick = { viewModel.setPreviewEntry(entry.id) },
                                                     onToggleFeatured = { viewModel.toggleEntryFeatured(entry.id) },
-                                                    onDelete = { deleteEntryTarget = entry },
+                                                    onDelete = { viewModel.clearEntryDeleteError(); deleteEntryTarget = com.mojing.app.data.local.dao.EncyclopediaEntryOption(entry.id, entry.title, entry.entryType) },
                                                 )
                                             }
                                         }
                                         VerticalDivider(Modifier.width(1.dp).fillMaxHeight())
-                                        val preview = state.entries.find { it.id == state.previewEntryId }
+                                        val preview = state.previewEntry
                                         Column(
                                             modifier = Modifier
                                                 .weight(0.58f)
@@ -483,11 +578,19 @@ fun EncyclopediaDetailScreen(
                                         ) {
                                             Text("预览", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                                             if (preview == null) {
-                                                Text(
-                                                    "选择条目预览",
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                                                )
+                                                when {
+                                                    state.previewLoading -> {
+                                                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                                                        Text("正在读取条目…", style = MaterialTheme.typography.bodyMedium)
+                                                    }
+                                                    state.previewError != null -> {
+                                                        Text(state.previewError.orEmpty(), color = MaterialTheme.colorScheme.error)
+                                                        TextButton(onClick = viewModel::retryEntryPreview) { Text("重试预览") }
+                                                        TextButton(onClick = viewModel::reloadEntryPage) { Text("刷新列表") }
+                                                    }
+                                                    else -> Text("选择条目预览", style = MaterialTheme.typography.bodyMedium,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                }
                                             } else {
                                                 if (preview.coverImagePath.isNotBlank()) {
                                                     AsyncImage(
@@ -528,7 +631,7 @@ fun EncyclopediaDetailScreen(
                                                 selected = false,
                                                 onRowClick = { onEditEntry(entry.id) },
                                                 onToggleFeatured = { viewModel.toggleEntryFeatured(entry.id) },
-                                                onDelete = { deleteEntryTarget = entry },
+                                                onDelete = { viewModel.clearEntryDeleteError(); deleteEntryTarget = com.mojing.app.data.local.dao.EncyclopediaEntryOption(entry.id, entry.title, entry.entryType) },
                                             )
                                         }
                                     }
@@ -538,125 +641,173 @@ fun EncyclopediaDetailScreen(
                     }
                 }
                 EncyclopediaMainTab.TIMELINE -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                    ) {
-                        OutlinedTextField(value = tlTitle, onValueChange = { tlTitle = it; viewModel.clearTimelineSaveError() }, label = { Text("事件标题") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
-                            enabled = !state.timelineSaving)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            OutlinedTextField(value = tlTime, onValueChange = { tlTime = it; viewModel.clearTimelineSaveError() }, label = { Text("时间标签") }, modifier = Modifier.weight(1f), singleLine = true,
-                                enabled = !state.timelineSaving)
-                            OutlinedTextField(value = tlOrder, onValueChange = { tlOrder = it.filter { ch -> ch.isDigit() || ch == '-' }; viewModel.clearTimelineSaveError() }, label = { Text("排序") }, modifier = Modifier.width(100.dp), singleLine = true,
-                                enabled = !state.timelineSaving)
-                        }
-                        Button(onClick = {
-                            val order = tlOrder.toIntOrNull() ?: 0
-                            val prevMax = state.timelineMaxSortOrder
-                            viewModel.addTimelineEvent(tlTitle, tlTime, order) { saved ->
-                                if (saved) {
-                                    tlTitle = ""
-                                    tlTime = ""
-                                    tlOrder = (kotlin.math.max(prevMax, order) + 1).toString()
+                    BoxWithConstraints(Modifier.fillMaxSize()) {
+                        // Measure the remaining viewport after the actual top bar, tabs and world action.
+                        val scrollTimelineHeader = maxHeight < 320.dp
+                        val timelineHeader: @Composable () -> Unit = {
+                            Column {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Text("时间线", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                                    TextButton(onClick = {
+                                        tlTitle = viewModel.timelineDraft(null, "title")
+                                        tlDescription = viewModel.timelineDraft(null, "description")
+                                        tlTime = viewModel.timelineDraft(null, "time")
+                                        tlOrder = viewModel.timelineDraft(null, "order", state.timelineMaxSortOrder.plus(1).coerceAtLeast(0).toString())
+                                        viewModel.clearTimelineSaveError()
+                                        timelineEditorExpanded = true
+                                    }, enabled = timelineActionsReady && !state.timelineSaving) {
+                                        Text("添加事件")
+                                    }
+                                }
+                                var sourceMenuOpen by remember { mutableStateOf(false) }
+                                val sourceLabel = when (state.timelineSource) {
+                                    "standalone" -> "独立事件"
+                                    "linked" -> "关联条目"
+                                    else -> "全部事件"
+                                }
+                                Box {
+                                    TextButton(onClick = { sourceMenuOpen = true },
+                                        modifier = Modifier.heightIn(min = 48.dp),
+                                        enabled = !state.timelineSaving && state.timelineDeletingId == null) {
+                                        Text("来源：$sourceLabel")
+                                        Icon(Icons.Outlined.ArrowDropDown, contentDescription = null)
+                                    }
+                                    DropdownMenu(expanded = sourceMenuOpen, onDismissRequest = { sourceMenuOpen = false }) {
+                                        listOf("" to "全部事件", "standalone" to "独立事件", "linked" to "关联条目").forEach { (source, label) ->
+                                            DropdownMenuItem(text = { Text(label) }, onClick = {
+                                                sourceMenuOpen = false
+                                                viewModel.selectTimelineSource(source)
+                                            })
+                                        }
+                                    }
+                                }
+                                Spacer(Modifier.height(12.dp))
+                                if (state.timelineLoading && !state.timelineLoaded) {
+                                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                                    Text("正在读取时间线…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                state.timelineError?.let { error ->
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(error, Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
+                                        TextButton(onClick = viewModel::retryTimelinePage) { Text("重试") }
+                                    }
+                                }
+                                if (state.timelineLoaded && state.timelineEvents.isEmpty() && state.timelineError == null) {
+                                    Text(
+                                        if (state.timelineSource.isEmpty()) "还没有时间线事件，点击添加事件记录故事的转折。" else "没有${sourceLabel}，可切换来源查看其他事件。",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(vertical = 12.dp),
+                                    )
+                                }
+                                if (state.timelineLoaded && state.timelineEvents.isNotEmpty()) {
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween) {
+                                        TextButton(onClick = viewModel::previousTimelinePage,
+                                            enabled = state.timelinePageIndex > 0 && !state.timelineLoading) { Text("上一页") }
+                                        Text("第 ${state.timelinePageIndex + 1} 页",
+                                            modifier = Modifier.weight(1f),
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                            maxLines = 1,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        TextButton(onClick = viewModel::nextTimelinePage,
+                                            enabled = state.timelineHasNext && !state.timelineLoading && state.timelineError == null) { Text("下一页") }
+                                    }
                                 }
                             }
-                        }, enabled = tlTitle.isNotBlank() && state.timelineLoaded && !state.timelineLoading && !state.timelineSaving) {
-                            Text(if (state.timelineSaving) "正在保存…" else "添加事件")
                         }
-                        state.timelineSaveError?.let { error ->
-                            Text(error, color = MaterialTheme.colorScheme.error,
-                                style = MaterialTheme.typography.bodySmall)
-                        }
-                        Spacer(Modifier.height(12.dp))
-                        if (state.timelineLoading && !state.timelineLoaded) {
-                            LinearProgressIndicator(Modifier.fillMaxWidth())
-                            Text("正在读取时间线…", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        state.timelineError?.let { error ->
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(error, Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
-                                TextButton(onClick = viewModel::retryTimelinePage) { Text("重试") }
-                            }
-                        }
-                        if (state.timelineLoaded && state.timelineEvents.isEmpty() && state.timelineError == null) {
-                            Text(
-                                "还没有时间线事件，在上方填写标题后即可添加。",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(vertical = 12.dp),
-                            )
-                        }
-                        if (state.timelineLoaded && state.timelineEvents.isNotEmpty()) {
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween) {
-                                TextButton(onClick = viewModel::previousTimelinePage,
-                                    enabled = state.timelinePageIndex > 0 && !state.timelineLoading) { Text("上一页") }
-                                Text("第 ${state.timelinePageIndex + 1} 页 · 本页 ${state.timelineEvents.size} 条",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                TextButton(onClick = viewModel::nextTimelinePage,
-                                    enabled = state.timelineHasNext && !state.timelineLoading) { Text("下一页") }
-                            }
-                        }
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            items(
-                                state.timelineEvents.sortedWith(
-                                    compareByDescending<TimelineEventEntity> { it.id in pinnedTimelineIds }
-                                        .thenBy { it.sortOrder }
-                                        .thenBy { it.id },
-                                ),
-                                key = { it.id },
-                            ) { ev ->
-                                SwipeRevealListRow(
-                                    swipeEnabled = true,
-                                    isPinned = ev.id in pinnedTimelineIds,
-                                    onPinToggle = {
-                                        val wasPinned = ev.id in pinnedTimelineIds
-                                        pinnedTimelineIds = if (wasPinned) {
-                                            pinnedTimelineIds - ev.id
-                                        } else {
-                                            pinnedTimelineIds + ev.id
-                                        }
-                                        scope.launch {
-                                            snackbarHostState.showSnackbar(
-                                                if (wasPinned) "已取消本页置顶" else "已在本页置顶",
+                        Column(
+                            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp),
+                        ) {
+                            if (!scrollTimelineHeader) timelineHeader()
+                            LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                if (scrollTimelineHeader) {
+                                    item(key = "timeline-page-controls") { timelineHeader() }
+                                }
+                                items(
+                                    state.timelineEvents.sortedWith(
+                                        compareByDescending<TimelineEventEntity> { it.id in pinnedTimelineIds }
+                                            .thenBy { it.sortOrder }
+                                            .thenBy { it.id },
+                                    ),
+                                    key = { it.id },
+                                ) { ev ->
+                                    SwipeRevealListRow(
+                                        swipeEnabled = true,
+                                        showMenuButton = true,
+                                        clickEnabled = timelineActionsReady && !state.timelineSaving && state.timelineDeletingId == null,
+                                        isPinned = ev.id in pinnedTimelineIds,
+                                        onPinToggle = {
+                                            val wasPinned = ev.id in pinnedTimelineIds
+                                            pinnedTimelineIds = if (wasPinned) {
+                                                pinnedTimelineIds - ev.id
+                                            } else {
+                                                pinnedTimelineIds + ev.id
+                                            }
+                                            scope.launch {
+                                                snackbarHostState.showSnackbar(
+                                                    if (wasPinned) "已取消本页置顶" else "已在本页置顶",
+                                                )
+                                            }
+                                        },
+                                        onDelete = { viewModel.clearTimelineDeleteError(); timelineDeleteId = ev.id },
+                                        onClick = {
+                                            ev.entryId?.let(onEditEntry) ?: run { timelineDetailId = ev.id }
+                                        },
+                                        menuExtras = { dismissMenu ->
+                                            DropdownMenuItem(
+                                                text = { Text("查看事件") },
+                                                enabled = timelineActionsReady && !state.timelineSaving && state.timelineDeletingId == null,
+                                                onClick = { dismissMenu(); timelineDetailId = ev.id },
                                             )
-                                        }
-                                    },
-                                    onDelete = { viewModel.clearTimelineDeleteError(); timelineDeleteTarget = ev },
-                                    onClick = {
-                                        ev.entryId?.let { entryId ->
-                                            onEditEntry(entryId)
-                                        } ?: run {
-                                            timelineDetailTarget = ev
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Card(
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                                            ev.entryId?.let { entryId ->
+                                                DropdownMenuItem(
+                                                    text = { Text("编辑条目") },
+                                                    enabled = timelineActionsReady && !state.timelineSaving && state.timelineDeletingId == null,
+                                                    onClick = { dismissMenu(); onEditEntry(entryId) },
+                                                )
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
                                     ) {
-                                        Row(
-                                            Modifier.fillMaxWidth().padding(12.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically,
+                                        Card(
+                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                                         ) {
-                                            Column(Modifier.weight(1f)) {
-                                                Text(ev.eventTime.ifBlank { "未标注" }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Text(ev.title, style = MaterialTheme.typography.titleSmall)
-                                                    if (ev.id in pinnedTimelineIds) {
-                                                        Icon(
-                                                            Icons.Outlined.Star,
-                                                            contentDescription = "本页置顶",
-                                                            tint = MaterialTheme.colorScheme.primary,
-                                                            modifier = Modifier.padding(start = 6.dp).size(16.dp),
-                                                        )
-                                                    }
+                                            Row(
+                                                Modifier.fillMaxWidth().padding(12.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.Top,
+                                            ) {
+                                                Text(ev.eventTime.ifBlank { "未标注" }, Modifier.width(76.dp).padding(end = 8.dp),
+                                                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Column(
+                                                    modifier = Modifier.width(24.dp),
+                                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                                ) {
+                                                    Text("●", color = MaterialTheme.colorScheme.primary,
+                                                        style = MaterialTheme.typography.labelSmall)
+                                                    Spacer(Modifier.height(4.dp))
+                                                    VerticalDivider(
+                                                        modifier = Modifier.height(24.dp).width(1.dp),
+                                                        color = MaterialTheme.colorScheme.outlineVariant,
+                                                    )
                                                 }
-                                                if (ev.description.isNotBlank()) {
-                                                    Text(ev.description, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                                                Column(Modifier.weight(1f)) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Text(ev.title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                                                        if (ev.id in pinnedTimelineIds) {
+                                                            Icon(
+                                                                Icons.Outlined.Star,
+                                                                contentDescription = "本页置顶",
+                                                                tint = MaterialTheme.colorScheme.primary,
+                                                                modifier = Modifier.padding(start = 6.dp).size(16.dp),
+                                                            )
+                                                        }
+                                                    }
+                                                    if (ev.description.isNotBlank()) {
+                                                        Text(ev.description, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                                                    }
                                                 }
                                             }
                                         }
@@ -670,14 +821,41 @@ fun EncyclopediaDetailScreen(
                     val nodeIds = buildSet {
                         state.relations.forEach { add(it.fromEntryId); add(it.toEntryId) }
                     }
-                    val nodes = nodeIds.map { GraphNode(it, state.entryTitles[it] ?: "#$it") }
-                    val edges = state.relations.map { GraphEdge(it.fromEntryId, it.toEntryId, it.relationType) }
+                    val nodes = nodeIds.map { GraphNode(it, state.relationEndpoints[it]?.title ?: "资料不可用",
+                        state.relationEndpoints[it]?.coverImagePath.orEmpty()) }
+                    val edges = state.relations.map { relation ->
+                        GraphEdge(
+                            relation.fromEntryId,
+                            relation.toEntryId,
+                            buildString {
+                                append(relation.relationType)
+                                relation.label.trim().takeIf { it.isNotBlank() }?.let {
+                                    append(" · ")
+                                    append(it.take(8))
+                                        if (it.length > 8) append("…")
+                                }
+                            },
+                        )
+                    }
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(horizontal = 12.dp, vertical = 8.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 88.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
+                        item(key = "relation_type_filter") {
+                            Text("按关联条目类型筛选", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                listOf("" to "全部", "character" to "人物", "faction" to "组织", "location" to "地点").forEach { (type, label) ->
+                                    FilterChip(selected = state.relationTypeFilter == type,
+                                        onClick = { viewModel.selectRelationType(type) }, label = { Text(label) },
+                                        enabled = state.relationDeletingId == null && !state.relationSaving,
+                                        modifier = Modifier.heightIn(min = 48.dp))
+                                }
+                            }
+                        }
                         if (state.relationsLoading && !state.relationsLoaded) item {
                             LinearProgressIndicator(Modifier.fillMaxWidth())
                             Text("正在读取关系…", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -691,8 +869,10 @@ fun EncyclopediaDetailScreen(
                         if (state.relationsLoaded && nodes.isEmpty() && state.relationsLoadError == null) item {
                             EmptyState(
                                 icon = Icons.Outlined.Link,
-                                title = "还没有条目关系",
-                                message = if (state.entryCount < 2) {
+                                title = if (state.relationTypeFilter.isBlank()) "还没有条目关系" else "当前分类没有关系",
+                                message = if (state.relationTypeFilter.isNotBlank()) {
+                                    "显示起点或终点属于所选分类的关系，可切换分类或建立新的联系。"
+                                } else if (state.entryCount < 2) {
                                     "至少创建两个条目后，才能建立角色、地点或事件之间的关系。"
                                 } else {
                                     "建立条目之间的联系，关系图会在这里呈现。"
@@ -700,7 +880,7 @@ fun EncyclopediaDetailScreen(
                                 actionLabel = if (state.entryCount >= 2) "添加关系" else null,
                                 onAction = if (state.entryCount >= 2) {
                                     {
-                                        relFrom = null
+                                        relFrom = state.relationAnchor
                                         relTo = null
                                         viewModel.clearRelationError()
                                         showRelDialog = true
@@ -714,32 +894,107 @@ fun EncyclopediaDetailScreen(
                             EncyclopediaRelationCanvas(
                                 nodes = nodes,
                                 edges = edges,
-                                highlightId = null,
-                                onNodeTap = { onEditEntry(it) }
+                                highlightId = selectedGraphNodeId,
+                                onNodeTap = { selectedGraphNodeId = it }
                             )
+                            val selectedNode = nodes.firstOrNull { it.id == selectedGraphNodeId }
+                            if (selectedNode != null) {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)),
+                                ) {
+                                    BoxWithConstraints(Modifier.fillMaxWidth().padding(12.dp)) {
+                                        val compact = maxWidth < 360.dp
+                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Row(
+                                                Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            ) {
+                                                com.mojing.app.ui.common.MoJingCoverImage(selectedNode.imagePath, Modifier.size(48.dp))
+                                                Column(Modifier.weight(1f)) {
+                                                    Text(selectedNode.title, style = MaterialTheme.typography.titleSmall)
+                                                    Text(ENTRY_TYPE_LABELS[state.relationEndpoints[selectedNode.id]?.entryType] ?: "其他",
+                                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                }
+                                                if (!compact) TextButton(onClick = { onEditEntry(selectedNode.id) }) { Text("打开条目") }
+                                            }
+                                            if (compact) TextButton(onClick = { onEditEntry(selectedNode.id) }, modifier = Modifier.fillMaxWidth()) { Text("打开条目") }
+                                        }
+                                    }
+                                }
+                            }
                         }
                         items(state.relations, key = { it.id }) { r ->
+                            val hasLabel = r.label.isNotBlank()
+                            val labelExpanded = r.id in expandedRelationLabels
+                            var labelOverflow by remember(r.id, r.label) { mutableStateOf(false) }
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = 4.dp)
                             ) {
-                                Row(
-                                    Modifier.fillMaxWidth().padding(8.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        "${state.entryTitles[r.fromEntryId] ?: "资料不可用"} —[${r.relationType}]→ ${state.entryTitles[r.toEntryId] ?: "资料不可用"}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        modifier = Modifier.weight(1f)
+                                Column(Modifier.fillMaxWidth().padding(8.dp)) {
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            "${r.relationType} →",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        IconButton(onClick = {
+                                            viewModel.clearRelationDeleteError()
+                                            relationDeleteTarget = r
+                                        }, enabled = state.relationDeletingId == null) {
+                                            Icon(Icons.Outlined.Close, "删除关系", tint = MaterialTheme.colorScheme.error)
+                                        }
+                                    }
+                                    RelationEndpointAction(
+                                        endpoint = state.relationEndpoints[r.fromEntryId],
+                                        direction = "起点",
+                                        enabled = !state.relationsLoading && state.relationsLoadError == null && state.relationDeletingId == null,
+                                        onOpen = { onEditEntry(r.fromEntryId) },
                                     )
-                                    IconButton(onClick = {
-                                        viewModel.clearRelationDeleteError()
-                                        relationDeleteTarget = r
-                                    }, enabled = state.relationDeletingId == null) {
-                                        Icon(Icons.Outlined.Close, "删除关系", tint = MaterialTheme.colorScheme.error)
+                                    RelationEndpointAction(
+                                        endpoint = state.relationEndpoints[r.toEntryId],
+                                        direction = "终点",
+                                        enabled = !state.relationsLoading && state.relationsLoadError == null && state.relationDeletingId == null,
+                                        onOpen = { onEditEntry(r.toEntryId) },
+                                    )
+                                    if (hasLabel) {
+                                        Column(Modifier.padding(end = 44.dp)) {
+                                            if (labelExpanded) {
+                                                Text(
+                                                    "备注：",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                                Text(
+                                                    r.label,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState()),
+                                                )
+                                            } else {
+                                                Text(
+                                                    "备注：${r.label}",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    onTextLayout = { labelOverflow = it.hasVisualOverflow },
+                                                )
+                                            }
+                                            if (labelExpanded || labelOverflow) {
+                                                TextButton(onClick = {
+                                                    expandedRelationLabels = if (labelExpanded) expandedRelationLabels - r.id else expandedRelationLabels + r.id
+                                                }) { Text(if (labelExpanded) "收起备注" else "展开备注") }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -749,7 +1004,10 @@ fun EncyclopediaDetailScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween) {
                                 TextButton(onClick = viewModel::previousRelationPage,
                                     enabled = state.relationPageIndex > 0 && !state.relationsLoading) { Text("上一页") }
-                                Text("第 ${state.relationPageIndex + 1} 页 · 本页 ${state.relations.size} 条",
+                                Text("第 ${state.relationPageIndex + 1} 页",
+                                    modifier = Modifier.weight(1f),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                    maxLines = 1,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 TextButton(onClick = viewModel::nextRelationPage,
@@ -770,7 +1028,7 @@ fun EncyclopediaDetailScreen(
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         Text(
-                            "打开条目查看原文、编辑内容或更新确认状态",
+                            "核对对话原文后确认资料，也可打开条目继续编辑",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 4.dp),
@@ -802,7 +1060,7 @@ fun EncyclopediaDetailScreen(
                             state.sedimentLoading, state.sedimentConfirming, state.sedimentError,
                             viewModel::previousSedimentPage, viewModel::nextSedimentPage, viewModel::reloadSediment)
                         SedimentBatchControls(
-                            selecting = sedimentBatchMode, selectedCount = sedimentSelected.size, busy = state.sedimentConfirming || state.sedimentLoading,
+                            selecting = sedimentBatchMode, selectedCount = sedimentSelected.size, busy = state.sedimentConfirming || state.sedimentLoading || state.sedimentError != null,
                             onToggle = { sedimentBatchMode = !sedimentBatchMode; sedimentSelected = emptySet() },
                             onSelect = { sedimentSelected = filteredSediment.filter { it.confidence != "confirmed" }.take(100).map { it.id }.toSet() },
                             onClear = { sedimentSelected = emptySet() },
@@ -838,10 +1096,11 @@ fun EncyclopediaDetailScreen(
                                 ) {
                                     items(filteredSediment, key = { it.id }) { entry ->
                                         SwipeRevealListRow(
-                                            swipeEnabled = true,
+                                            swipeEnabled = !state.sedimentConfirming && !state.sedimentLoading && state.sedimentError == null,
+                                            clickEnabled = !state.sedimentConfirming && !state.sedimentLoading && state.sedimentError == null,
                                             isPinned = entry.isFeatured,
                                             onPinToggle = { viewModel.toggleEntryFeatured(entry.id) },
-                                            onDelete = { deleteEntryTarget = entry },
+                                            onDelete = { viewModel.clearEntryDeleteError(); deleteEntryTarget = com.mojing.app.data.local.dao.EncyclopediaEntryOption(entry.id, entry.title, entry.entryType) },
                                             onClick = { onEditEntry(entry.id) },
                                             modifier = Modifier.fillMaxWidth(),
                                         ) {
@@ -856,7 +1115,7 @@ fun EncyclopediaDetailScreen(
                                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                                             Checkbox(checked = entry.id in sedimentSelected,
                                                                 modifier = Modifier.semantics { contentDescription = "选择资料：${entry.title}" },
-                                                                enabled = !state.sedimentConfirming && (entry.id in sedimentSelected || sedimentSelected.size < 100),
+                                                                enabled = !state.sedimentConfirming && !state.sedimentLoading && state.sedimentError == null && (entry.id in sedimentSelected || sedimentSelected.size < 100),
                                                                 onCheckedChange = { checked -> sedimentSelected = if (checked) sedimentSelected + entry.id else sedimentSelected - entry.id })
                                                             Text("选择资料", style = MaterialTheme.typography.labelMedium)
                                                         }
@@ -864,7 +1123,7 @@ fun EncyclopediaDetailScreen(
                                                     Text(
                                                         entry.title,
                                                         style = MaterialTheme.typography.titleMedium,
-                                                        maxLines = 1,
+                                                        maxLines = 2,
                                                         overflow = TextOverflow.Ellipsis,
                                                     )
                                                     Text(
@@ -883,14 +1142,20 @@ fun EncyclopediaDetailScreen(
                                                         )
                                                     }
                                                     Text(
-                                                        DateUtils.getRelativeTimeSpanString(
+                                                        "资料更新：${DateUtils.getRelativeTimeSpanString(
                                                             entry.updatedAt,
                                                             System.currentTimeMillis(),
                                                             DateUtils.MINUTE_IN_MILLIS,
-                                                        ).toString(),
+                                                        )}",
                                                         style = MaterialTheme.typography.labelSmall,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                         modifier = Modifier.padding(top = 4.dp),
+                                                    )
+                                                    SedimentSourceActions(
+                                                        entry = entry,
+                                                        busy = state.sedimentConfirming || state.sedimentLoading || state.sedimentError != null,
+                                                        onViewSource = { onViewSource(entry.id) },
+                                                        onConfirm = { viewModel.confirmSedimentEntries(setOf(entry.id)) },
                                                     )
                                                 }
                                             }
@@ -978,8 +1243,102 @@ fun EncyclopediaDetailScreen(
         }
     }
 
+    if (timelineEditorExpanded) {
+        val parsedOrder = tlOrder.trim().takeIf { Regex("-?\\d+").matches(it) }?.toIntOrNull()
+        val sortError = tlOrder.isNotBlank() && parsedOrder == null
+        Dialog(
+            onDismissRequest = { if (!state.timelineSaving) timelineEditorExpanded = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().systemBarsPadding().imePadding().padding(horizontal = 16.dp, vertical = 16.dp),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp,
+            ) {
+                Column(Modifier.fillMaxWidth().heightIn(max = 680.dp)) {
+                    Column(
+                        Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text("添加时间线事件", style = MaterialTheme.typography.titleLarge)
+                        OutlinedTextField(
+                            value = tlTitle,
+                            onValueChange = { tlTitle = it; viewModel.saveTimelineDraft(null, "title", it); viewModel.clearTimelineSaveError() },
+                            label = { Text("事件标题") },
+                            singleLine = true,
+                            enabled = !state.timelineSaving,
+                            modifier = Modifier.fillMaxWidth(),
+                            inputModifier = Modifier.semantics { contentDescription = "事件标题" },
+                        )
+                        OutlinedTextField(
+                            value = tlDescription,
+                            onValueChange = { tlDescription = it; viewModel.saveTimelineDraft(null, "description", it); viewModel.clearTimelineSaveError() },
+                            label = { Text("事件描述（可选）") },
+                            minLines = 3,
+                            maxLines = 6,
+                            enabled = !state.timelineSaving,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 88.dp),
+                            inputModifier = Modifier.semantics { contentDescription = "事件描述" },
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            OutlinedTextField(
+                                value = tlTime,
+                                onValueChange = { tlTime = it; viewModel.saveTimelineDraft(null, "time", it); viewModel.clearTimelineSaveError() },
+                                label = { Text("时间标签") },
+                                singleLine = true,
+                                enabled = !state.timelineSaving,
+                                modifier = Modifier.weight(1f),
+                                inputModifier = Modifier.semantics { contentDescription = "时间标签" },
+                            )
+                            OutlinedTextField(
+                                value = tlOrder,
+                                onValueChange = { value ->
+                                    tlOrder = value
+                                    viewModel.saveTimelineDraft(null, "order", value)
+                                    viewModel.clearTimelineSaveError()
+                                },
+                                label = { Text("排序") },
+                                singleLine = true,
+                                enabled = !state.timelineSaving,
+                                isError = sortError,
+                                supportingText = if (sortError) ({ Text("请输入有效整数") }) else null,
+                                modifier = Modifier.width(100.dp),
+                                inputModifier = Modifier.semantics { contentDescription = "排序" },
+                            )
+                        }
+                        state.timelineSaveError?.let { error ->
+                            Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    FlowRow(
+                        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(onClick = { viewModel.discardTimelineDraft(null); tlTitle = ""; tlDescription = ""; tlTime = ""; tlOrder = "0"; timelineEditorExpanded = false }, enabled = !state.timelineSaving) { Text("放弃草稿") }
+                        TextButton(onClick = { timelineEditorExpanded = false }, enabled = !state.timelineSaving) { Text("关闭") }
+                        TextButton(
+                            onClick = {
+                                viewModel.addTimelineEvent(tlTitle, tlDescription, tlTime, parsedOrder ?: 0) { saved ->
+                                    if (saved) {
+                                        tlTitle = ""
+                                        tlDescription = ""
+                                        tlTime = ""
+                                        tlOrder = "0"
+                                        timelineEditorExpanded = false
+                                    }
+                                }
+                            },
+                            enabled = tlTitle.isNotBlank() && parsedOrder != null && state.timelineLoaded && !state.timelineLoading && !state.timelineSaving,
+                        ) { Text(if (state.timelineSaving) "正在保存…" else "保存事件") }
+                    }
+                }
+            }
+        }
+    }
+
     if (showWorldInfoDialog) {
-        AlertDialog(
+        com.mojing.app.ui.common.MoJingFormDialog(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { showWorldInfoDialog = false },
             title = { Text("粘贴导入设定") },
@@ -1016,7 +1375,7 @@ fun EncyclopediaDetailScreen(
 
     if (showRelDialog) {
         val endpointsReady = relFrom != null && relTo != null && relFrom?.id != relTo?.id
-        AlertDialog(
+        com.mojing.app.ui.common.MoJingFormDialog(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { if (!state.relationSaving) showRelDialog = false },
             title = { Text("添加条目关系") },
@@ -1107,7 +1466,7 @@ fun EncyclopediaDetailScreen(
     timelineDeleteTarget?.let { event ->
         AlertDialog(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-            onDismissRequest = { if (state.timelineDeletingId != event.id) timelineDeleteTarget = null },
+            onDismissRequest = { if (state.timelineDeletingId != event.id) timelineDeleteId = null },
             title = { Text("确认删除时间线事件") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1120,16 +1479,16 @@ fun EncyclopediaDetailScreen(
                     viewModel.deleteTimelineEvent(event.id) { deleted ->
                         if (deleted) {
                             pinnedTimelineIds = pinnedTimelineIds - event.id
-                            timelineDeleteTarget = null
+                            timelineDeleteId = null
                             scope.launch { snackbarHostState.showSnackbar("时间线事件已删除") }
                         }
                     }
-                }, enabled = state.timelineDeletingId != event.id) {
+                }, enabled = timelineActionsReady && state.timelineDeletingId != event.id) {
                     Text(if (state.timelineDeletingId == event.id) "正在删除…" else "删除",
                         color = MaterialTheme.colorScheme.error)
                 }
             },
-            dismissButton = { TextButton(onClick = { timelineDeleteTarget = null },
+            dismissButton = { TextButton(onClick = { timelineDeleteId = null },
                 enabled = state.timelineDeletingId != event.id) { Text("取消") } },
         )
     }
@@ -1142,7 +1501,7 @@ fun EncyclopediaDetailScreen(
             title = { Text("确认删除关系") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("确定删除「${state.entryTitles[relation.fromEntryId] ?: "资料不可用"} —[${relation.relationType}]→ ${state.entryTitles[relation.toEntryId] ?: "资料不可用"}」吗？")
+                    Text("确定删除「${state.relationEndpoints[relation.fromEntryId]?.title ?: "资料不可用"} —[${relation.relationType}]→ ${state.relationEndpoints[relation.toEntryId]?.title ?: "资料不可用"}」吗？")
                     state.relationDeleteError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 }
             },
@@ -1167,7 +1526,7 @@ fun EncyclopediaDetailScreen(
     timelineDetailTarget?.let { event ->
         AlertDialog(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-            onDismissRequest = { timelineDetailTarget = null },
+            onDismissRequest = { timelineDetailId = null },
             title = { Text(event.title.ifBlank { "时间线事件" }) },
             text = {
                 Column(
@@ -1187,49 +1546,155 @@ fun EncyclopediaDetailScreen(
                 }
             },
             confirmButton = {
-                event.entryId?.let { entryId ->
-                    TextButton(onClick = {
-                        timelineDetailTarget = null
-                        onEditEntry(entryId)
-                    }) { Text("编辑条目") }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (event.entryId == null) {
+                        TextButton(onClick = {
+                            editTlTitle = viewModel.timelineDraft(event.id, "title", event.title)
+                            editTlDescription = viewModel.timelineDraft(event.id, "description", event.description)
+                            editTlTime = viewModel.timelineDraft(event.id, "time", event.eventTime)
+                            editTlOrder = viewModel.timelineDraft(event.id, "order", event.sortOrder.toString())
+                            timelineDetailId = null
+                            timelineEditId = event.id
+                            viewModel.clearTimelineSaveError()
+                        }, enabled = timelineActionsReady) { Text("编辑事件") }
+                    }
+                    event.entryId?.let { entryId ->
+                        TextButton(onClick = {
+                            timelineDetailId = null
+                            onEditEntry(entryId)
+                        }) { Text("编辑条目") }
+                    }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { timelineDetailTarget = null }) { Text("关闭") }
+                TextButton(onClick = { timelineDetailId = null }) { Text("关闭") }
             },
         )
     }
 
+    timelineEditTarget?.let { event ->
+        val parsedOrder = editTlOrder.trim().takeIf { Regex("-?\\d+").matches(it) }?.toIntOrNull()
+        val sortError = editTlOrder.isNotBlank() && parsedOrder == null
+        Dialog(
+            onDismissRequest = { if (!state.timelineSaving) timelineEditId = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().systemBarsPadding().imePadding().padding(horizontal = 16.dp, vertical = 16.dp),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp,
+            ) {
+                Column(Modifier.fillMaxWidth().heightIn(max = 680.dp)) {
+                    Column(
+                        Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text("编辑时间线事件", style = MaterialTheme.typography.titleLarge)
+                        OutlinedTextField(
+                            value = editTlTitle,
+                            onValueChange = { editTlTitle = it; viewModel.saveTimelineDraft(event.id, "title", it); viewModel.clearTimelineSaveError() },
+                            label = { Text("事件标题") },
+                            singleLine = true,
+                            enabled = !state.timelineSaving,
+                            modifier = Modifier.fillMaxWidth(),
+                            inputModifier = Modifier.semantics { contentDescription = "事件标题" },
+                        )
+                        OutlinedTextField(
+                            value = editTlDescription,
+                            onValueChange = { editTlDescription = it; viewModel.saveTimelineDraft(event.id, "description", it); viewModel.clearTimelineSaveError() },
+                            label = { Text("事件描述（可选）") },
+                            minLines = 3,
+                            maxLines = 6,
+                            enabled = !state.timelineSaving,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 88.dp),
+                            inputModifier = Modifier.semantics { contentDescription = "事件描述" },
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            OutlinedTextField(
+                                value = editTlTime,
+                                onValueChange = { editTlTime = it; viewModel.saveTimelineDraft(event.id, "time", it); viewModel.clearTimelineSaveError() },
+                                label = { Text("时间标签") },
+                                singleLine = true,
+                                enabled = !state.timelineSaving,
+                                modifier = Modifier.weight(1f),
+                                inputModifier = Modifier.semantics { contentDescription = "时间标签" },
+                            )
+                            OutlinedTextField(
+                                value = editTlOrder,
+                                onValueChange = { value -> editTlOrder = value; viewModel.saveTimelineDraft(event.id, "order", value); viewModel.clearTimelineSaveError() },
+                                label = { Text("排序") },
+                                singleLine = true,
+                                enabled = !state.timelineSaving,
+                                isError = sortError,
+                                supportingText = if (sortError) ({ Text("请输入有效整数") }) else null,
+                                modifier = Modifier.width(100.dp),
+                                inputModifier = Modifier.semantics { contentDescription = "排序" },
+                            )
+                        }
+                        state.timelineSaveError?.let { error ->
+                            Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    FlowRow(
+                        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(onClick = { viewModel.discardTimelineDraft(event.id); timelineEditId = null }, enabled = !state.timelineSaving) { Text("放弃草稿") }
+                        TextButton(onClick = { timelineEditId = null }, enabled = !state.timelineSaving) { Text("关闭") }
+                        TextButton(
+                            onClick = {
+                                viewModel.updateTimelineEvent(event.id, editTlTitle, editTlDescription, editTlTime, parsedOrder ?: 0) { saved ->
+                                    if (saved) {
+                                        timelineEditId = null
+                                    }
+                                }
+                            },
+                            enabled = editTlTitle.isNotBlank() && parsedOrder != null && timelineActionsReady && !state.timelineSaving,
+                        ) { Text(if (state.timelineSaving) "正在保存…" else "保存事件") }
+                    }
+                }
+            }
+        }
+    }
+
     deleteEntryTarget?.let { entry ->
+        val deleting = state.entryDeletingId == entry.id
         AlertDialog(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-            onDismissRequest = { deleteEntryTarget = null },
+            onDismissRequest = { if (!deleting) deleteEntryTarget = null },
             title = { Text("确认删除条目") },
             text = {
-                Text(
-                    "确定删除条目「${entry.title.ifBlank { "未命名条目" }}」吗？\n\n" +
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("确定删除条目「${entry.title.ifBlank { "未命名条目" }}」吗？")
+                    Text(
                         if (entry.entryType == "character") {
-                            "该条目可能与角色或其他资料关联，删除后将无法恢复。"
+                            "若有关联角色，会连同其百科镜像删除，并从已有会话移除；聊天正文保留。"
                         } else {
                             "删除后将无法恢复。"
                         },
-                )
+                    )
+                    state.entryDeleteError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.deleteEntry(entry.id)
-                    deleteEntryTarget = null
-                    scope.launch { snackbarHostState.showSnackbar("条目已删除") }
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                    viewModel.deleteEntry(entry.id) { deleted ->
+                        if (deleted) {
+                            deleteEntryTarget = null
+                            scope.launch { snackbarHostState.showSnackbar("条目已删除") }
+                        }
+                    }
+                }, enabled = !deleting) { Text(if (deleting) "正在删除…" else "删除", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
-                TextButton(onClick = { deleteEntryTarget = null }) { Text("取消") }
+                TextButton(onClick = { deleteEntryTarget = null }, enabled = !deleting) { Text("取消") }
             },
         )
     }
 
     state.renameDraft?.let { draft ->
-        AlertDialog(
+        com.mojing.app.ui.common.MoJingFormDialog(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = viewModel::dismissRename,
             title = { Text("重命名百科") },
@@ -1258,7 +1723,7 @@ fun EncyclopediaDetailScreen(
     }
 
     if (showCreateDialog) {
-        AlertDialog(
+        com.mojing.app.ui.common.MoJingFormDialog(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { if (!state.entryCreating) showCreateDialog = false },
             title = { Text("新建条目") },
@@ -1295,7 +1760,7 @@ fun EncyclopediaDetailScreen(
 
 @Composable
 private fun EncyclopediaSwipeableEntryRow(
-    entry: EncyclopediaEntryEntity,
+    entry: com.mojing.app.data.local.dao.EncyclopediaEntryListItem,
     isWideLayout: Boolean,
     selected: Boolean,
     onRowClick: () -> Unit,
@@ -1370,5 +1835,63 @@ private fun EncyclopediaSwipeableEntryRow(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
         }
+    }
+}
+
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SedimentSourceActions(
+    entry: com.mojing.app.data.local.entity.EncyclopediaEntryEntity,
+    busy: Boolean,
+    onViewSource: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val sourcesState = remember(entry.metaJson, entry.sourceMessageId, entry.sourceSessionId) {
+        mutableStateOf<com.mojing.app.domain.encyclopedia.EncyclopediaSourceReferences?>(
+            if ((entry.sourceSessionId ?: 0L) <= 0L)
+                com.mojing.app.domain.encyclopedia.EncyclopediaSourceReferences(emptyList(), null) else null,
+        )
+    }
+    LaunchedEffect(sourcesState) {
+        if (sourcesState.value == null) {
+            sourcesState.value = withContext(Dispatchers.Default) { entry.sourceReferences() }
+        }
+    }
+    val sources = sourcesState.value
+    val sourceLoading = sources == null
+    val hasSource = (entry.sourceSessionId ?: 0L) > 0L && sources?.messageIds?.isNotEmpty() == true
+    val sourceLabel = when {
+        sourceLoading -> "来源：正在读取记录"
+        !hasSource -> "来源：未记录原文"
+        sources?.branchId == "main" -> "来源：主线对话 · ${sources?.messageIds?.size ?: 0} 条"
+        sources?.branchId != null -> "来源：分支对话 · ${sources?.messageIds?.size ?: 0} 条"
+        else -> "来源：对话原文 · ${sources?.messageIds?.size ?: 0} 条"
+    }
+    Text(sourceLabel, style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
+    FlowRow(
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OutlinedButton(
+            onClick = onViewSource,
+            enabled = hasSource && !busy,
+            modifier = Modifier.heightIn(min = 48.dp).semantics {
+                contentDescription = when {
+                    sourceLoading -> "正在读取来源：${entry.title}"
+                    hasSource -> "查看来源：${entry.title}"
+                    else -> "无原文来源：${entry.title}"
+                }
+            },
+        ) { Text(if (sourceLoading) "正在读取" else if (hasSource) "查看来源" else "无原文来源") }
+        Button(
+            onClick = onConfirm,
+            enabled = entry.confidence != "confirmed" && !busy,
+            modifier = Modifier.heightIn(min = 48.dp).semantics {
+                contentDescription = "确认资料：${entry.title}"
+            },
+        ) { Text(if (entry.confidence == "confirmed") "已确认" else "确认资料") }
     }
 }

@@ -1,11 +1,15 @@
 package com.mojing.app.ui.story
+import androidx.compose.foundation.layout.size
 
-import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingCenterAlignedTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingOptionRow
 import com.mojing.app.ui.common.MoJingIcon as Icon
 import com.mojing.app.ui.common.MoJingFilterChip as FilterChip
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.AutoAwesome
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingButton as Button
@@ -60,7 +64,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
-import com.mojing.app.ui.navigation.MainAppBottomNavigation
 import com.mojing.app.ui.navigation.returnToCreationHub
 import com.mojing.app.ui.session.NewSessionWorldPicker
 import com.mojing.app.ui.session.NewSessionCharacterPicker
@@ -88,6 +91,8 @@ fun StorySimulationScreen(
     val isImeOpen = com.mojing.app.ui.common.isImeKeyboardOpen()
     var worldPickerOpen by remember { mutableStateOf(false) }
     var characterPickerOpen by remember { mutableStateOf(false) }
+    var editingStoryOption by remember { mutableStateOf<String?>(null) }
+    var showWorldPreview by remember { mutableStateOf(false) }
     var showStopAndLeaveDialog by remember { mutableStateOf(false) }
     var showSavingDialog by remember { mutableStateOf(false) }
     var pendingNavigation by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -119,8 +124,13 @@ fun StorySimulationScreen(
             else -> {
                 isLeaving = true
                 scope.launch {
-                    try { if (viewModel.flushInputDraftBeforeLeaving()) action() }
-                    finally { isLeaving = false }
+                    try {
+                        if (viewModel.flushInputDraftBeforeLeaving()) {
+                            withContext(Dispatchers.Main.immediate) { action() }
+                        }
+                    } finally {
+                        withContext(Dispatchers.Main.immediate) { isLeaving = false }
+                    }
                 }
             }
         }
@@ -167,7 +177,7 @@ fun StorySimulationScreen(
         },
         bottomBar = {
             Column {
-                if (!isImeOpen && !state.hasPendingStory && state.savedSessionId == null && !state.isRestoring && state.recoveryError == null) {
+                if (!isImeOpen && !state.hasInterruptedGeneration && !state.hasPendingStory && state.savedSessionId == null && !state.isRestoring && state.recoveryError == null) {
                     Surface(color = MaterialTheme.colorScheme.surface) {
                         Column {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -197,17 +207,13 @@ fun StorySimulationScreen(
                                     ) {
                                         Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
                                         Spacer(Modifier.width(8.dp))
-                                        Text("生成小说并开始创作")
+                                        Text("开始创作")
                                     }
                                 }
                             }
                         }
                     }
                 }
-                MainAppBottomNavigation(
-                    navController = navController,
-                    onNavigateRequest = { action -> requestNavigation(action) },
-                )
             }
         },
     ) { padding ->
@@ -216,24 +222,36 @@ fun StorySimulationScreen(
                 .padding(padding)
                 .consumeWindowInsets(padding)
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
                 .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             StoryRecoveryCard(state,
                 onSaveOrOpen = { viewModel.createStory(onOpenSession) },
-                onCopy = { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(viewModel.pendingStoryText())) },
+                onCopy = {
+                    if (state.hasInterruptedGeneration) {
+                        viewModel.loadInterruptedStoryText { text ->
+                            clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(text))
+                        }
+                    } else clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(viewModel.pendingStoryText()))
+                },
                 onDiscard = { pendingNavigation = {}; showStopAndLeaveDialog = true },
                 onNewStory = viewModel::startNewStory, onRetryRecovery = viewModel::retryRecovery,
                 onCopyRecovery = { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(viewModel.recoveryDataText())) },
                 onDiscardUnreadable = { showDiscardUnreadableDialog = true },
                 onRetryInterrupted = { viewModel.retryInterruptedGeneration(onOpenSession) },
+                onSaveCompleted = { viewModel.saveCompletedInterruptedChapters(onOpenSession) },
                 onDiscardInterrupted = viewModel::discardInterruptedGeneration)
-            if (!state.hasPendingStory && state.savedSessionId == null && !state.isRestoring && state.recoveryError == null) {
-            Text("从一个想法开始，结合人物与世界写下开篇。",
+            if (!state.hasPendingStory && !state.hasInterruptedGeneration && state.savedSessionId == null && !state.isRestoring && state.recoveryError == null) {
+            Text(if (state.isGenerating || state.isSaving) "正在创作故事" else "写下背景，开始故事",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (state.hasInputDraft) {
+            if (state.isGenerating || state.isSaving) {
+                Text(state.storyTitle.ifBlank { state.premise }, maxLines = 3,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleMedium)
+            }
+            if (state.hasInputDraft && !isBusy && !state.hasInterruptedGeneration) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(if (state.recoveredInputDraft) "已恢复上次填写的创作设定" else "创作设定已在本机暂存",
@@ -251,61 +269,45 @@ fun StorySimulationScreen(
                     }
                 }
             }
-            StoryGenerationProgressCard(state, onStop = { viewModel.stopGeneration() }, onCopy = clipboardManager::setText,
+            if (!state.hasInterruptedGeneration) StoryGenerationProgressCard(state, onStop = { viewModel.stopGeneration() }, onCopy = clipboardManager::setText,
                 onRetry = { viewModel.createStory(onOpenSession) })
+            if (!isBusy && !state.hasInterruptedGeneration) {
             OutlinedTextField(
                 value = state.premise,
                 onValueChange = viewModel::updatePremise,
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("故事背景 *") },
-                placeholder = { Text("例如：海边小城每逢大雾就会收到来自未来的信。一名修钟师发现，信中提到的人正逐一失踪。") },
-                supportingText = { Text("否定设定和人物知情范围会作为持续规则，请尽量明确写出。") },
-                minLines = 4,
-                maxLines = 10,
+                placeholder = { Text("写下故事发生在哪里、主角是谁、将遇到什么") },
+                minLines = 3,
+                maxLines = 6,
                 enabled = !isBusy,
             )
-            OutlinedTextField(
-                value = state.direction,
-                onValueChange = viewModel::updateDirection,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("开篇剧情走向（可选）") },
-                placeholder = { Text("例如：修钟师先找到第一封信，顺着收信日期调查失踪者。") },
-                minLines = 2,
-                maxLines = 5,
-                enabled = !isBusy,
-            )
-            OutlinedTextField(
-                value = state.tone,
-                onValueChange = viewModel::updateTone,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("风格与节奏") },
-                placeholder = { Text("例如：温暖克制，节奏舒缓，在关键处逐步加深悬念。") },
-                singleLine = true,
-                enabled = !isBusy,
-            )
-            Text("常用风格", style = MaterialTheme.typography.labelLarge)
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                storyTonePresets.forEach { preset ->
-                    FilterChip(
-                        selected = state.tone == preset,
-                        onClick = { viewModel.updateTone(preset) },
-                        enabled = !isBusy,
-                        label = { Text(preset) },
-                    )
-                }
-            }
+            com.mojing.app.ui.common.MoJingOptionRow("开篇方向", state.direction.ifBlank { "未指定" },
+                { focusManager.clearFocus(); editingStoryOption = "direction" }, enabled = !isBusy)
+            com.mojing.app.ui.common.MoJingOptionRow("风格与节奏", state.tone.ifBlank { "自由发挥" },
+                { focusManager.clearFocus(); editingStoryOption = "tone" }, enabled = !isBusy)
 
             val selectedTemplate = state.selectedTemplate
             val selectedEncyclopedia = state.selectedEncyclopedia
-            OutlinedButton(onClick = { worldPickerOpen = true }, enabled = !isBusy,
-                modifier = Modifier.fillMaxWidth()) {
-                Text("世界 · " + (selectedEncyclopedia?.name ?: selectedTemplate?.label
-                    ?: if (state.selectedTemplateId != null || state.selectedEncyclopediaId != null) "已选资料待确认" else "不绑定世界"))
-            }
+            if (selectedEncyclopedia != null) {
+                Text("世界", style = MaterialTheme.typography.labelLarge)
+                Surface(onClick = { worldPickerOpen = true }, enabled = !isBusy,
+                    shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                    Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        com.mojing.app.ui.common.MoJingCoverImage(selectedEncyclopedia.coverImagePath,
+                            Modifier.size(60.dp), "已选世界封面")
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(selectedEncyclopedia.name, style = MaterialTheme.typography.titleSmall)
+                            Text(selectedEncyclopedia.description, maxLines = 2,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            } else MoJingOptionRow(title = "世界", value = selectedTemplate?.label
+                ?: if (state.selectedTemplateId != null || state.selectedEncyclopediaId != null) "已选资料待确认" else "不绑定世界",
+                onClick = { worldPickerOpen = true }, enabled = !isBusy)
             if (state.selectionsLoading) Text("正在核对已选资料…", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             state.selectionsError?.let { message ->
@@ -316,6 +318,8 @@ fun StorySimulationScreen(
                 }
             }
             if (selectedTemplate != null || selectedEncyclopedia != null) {
+                TextButton(onClick = { showWorldPreview = !showWorldPreview }) { Text(if (showWorldPreview) "收起本次设定" else "查看本次设定") }
+                if (showWorldPreview) {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("本次使用的设定", style = MaterialTheme.typography.titleSmall)
@@ -329,17 +333,34 @@ fun StorySimulationScreen(
                         }
                     }
                 }
+                }
             }
 
-            OutlinedButton(onClick = { characterPickerOpen = true }, enabled = !isBusy,
-                modifier = Modifier.fillMaxWidth()) {
-                Text(if (state.selectedCharacterIds.isEmpty()) "参与角色 · 不指定"
-                    else "参与角色 · 已选择 ${state.selectedCharacterIds.size} 人")
-            }
+            MoJingOptionRow(title = "参与角色", value = if (state.selectedCharacterIds.isEmpty()) "不指定"
+                else "已选择 ${state.selectedCharacterIds.size} 人", onClick = { characterPickerOpen = true }, enabled = !isBusy)
 
+            if (state.selectedCharacterCards.isNotEmpty()) FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                state.selectedCharacterCards.forEach { character ->
+                    Surface(onClick = { characterPickerOpen = true }, enabled = !isBusy,
+                        shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                        Row(Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            com.mojing.app.ui.common.MoJingCoverImage(character.avatarImagePath, Modifier.size(32.dp),
+                                character.name, shape = androidx.compose.foundation.shape.CircleShape, person = true)
+                            Text(character.name, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+            }
             Text("首次连续生成", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                (1..3).forEach { count ->
+            if (state.chapterCount == 2) Text("已恢复旧草稿：2章，可重新选择章数", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                listOf(1, 3, 5, 10).forEach { count ->
                     FilterChip(
                         selected = state.chapterCount == count,
                         onClick = { viewModel.updateChapterCount(count) },
@@ -349,14 +370,32 @@ fun StorySimulationScreen(
                 }
             }
             Text(
-                "生成后直接进入会话；之后在输入框写下一段走向即可继续，也可以使用“生成旁白”连续续写。",
+                "生成后进入故事，可自由续写",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-
+            }
             }
             Spacer(Modifier.height(24.dp))
         }
+    }
+
+    editingStoryOption?.let { option ->
+        com.mojing.app.ui.common.MoJingTextEditorSheet(
+            title = if (option == "tone") "风格与节奏" else "开篇方向",
+            value = if (option == "tone") state.tone else state.direction,
+            onValueChange = { if (option == "tone") viewModel.updateTone(it) else viewModel.updateDirection(it) },
+            placeholder = if (option == "tone") "例如：温暖克制，逐步加深悬念" else "写下故事最先发生的一幕",
+            onDismiss = { editingStoryOption = null }, enabled = !isBusy,
+            suggestions = if (option == "tone") ({
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    storyTonePresets.forEach { preset ->
+                        FilterChip(selected = state.tone == preset, onClick = { viewModel.updateTone(preset) },
+                            enabled = !isBusy, label = { Text(preset) })
+                    }
+                }
+            }) else null,
+        )
     }
 
     state.error?.takeIf { state.generationModel == null && !state.hasPendingStory && state.savedSessionId == null }?.let { message ->
@@ -374,7 +413,7 @@ fun StorySimulationScreen(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { dismissStopDialog() },
             title = { Text(if (state.hasPendingStory) "放弃尚未保存的正文？" else "停止生成并离开？") },
-            text = { Text(if (state.hasPendingStory) "放弃后将清除这篇待保存正文。可以先返回保存或复制全文。" else "当前小说还在生成。停止后会保留故事设定和已收到的有限预览；完整小说不会保存。若预览暂存失败，将留在此页供你复制或重试。") },
+            text = { Text(if (state.hasPendingStory) "放弃后将清除这篇待保存正文。可以先返回保存或复制全文。" else "停止后会保留设定和已收到的正文，回来后可保存为草稿。若暂存失败，将留在此页供你重试或复制。") },
             confirmButton = {
                 TextButton(onClick = {
                     if (state.isSaving) {
@@ -388,8 +427,10 @@ fun StorySimulationScreen(
                     scope.launch {
                         try {
                             if (if (state.hasPendingStory) viewModel.discardPendingStory()
-                                else viewModel.stopGenerationAndWaitForPreview()) action?.invoke()
-                        } finally { isLeaving = false }
+                                else viewModel.stopGenerationAndWaitForPreview()) {
+                                withContext(Dispatchers.Main.immediate) { action?.invoke() }
+                            }
+                        } finally { withContext(Dispatchers.Main.immediate) { isLeaving = false } }
                     }
                 }) { Text(if (state.hasPendingStory) "放弃正文" else "停止并离开") }
             },

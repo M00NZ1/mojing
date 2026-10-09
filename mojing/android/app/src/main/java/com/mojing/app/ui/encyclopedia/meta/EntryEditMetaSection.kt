@@ -91,6 +91,7 @@ fun EntryEditMetaSection(
     metaJson: String,
     onMetaJsonChange: (String) -> Unit,
     modifier: Modifier = Modifier,
+    excludedKeys: Set<String> = emptySet(),
 ) {
     val fields = remember(entryType) { EncyclopediaMetaDefinitions.fieldsFor(entryType) }
     val knownKeys = remember(entryType) { fields.map { it.key }.toSet() }
@@ -136,7 +137,7 @@ fun EntryEditMetaSection(
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("结构化 Meta（按条目类型预设字段）", style = MaterialTheme.typography.titleSmall)
-        fields.forEach { f ->
+        fields.filterNot { it.key in excludedKeys }.forEach { f ->
             when (f.kind) {
                 MetaFieldKind.Text -> {
                     val v = getEl(f.key)?.takeIf { it.isJsonPrimitive }?.asJsonPrimitive?.asString ?: ""

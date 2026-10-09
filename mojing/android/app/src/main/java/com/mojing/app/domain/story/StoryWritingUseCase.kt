@@ -7,6 +7,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.ensureActive
 
 data class StoryWritingRequest(
     val premise: String,
@@ -29,6 +30,7 @@ data class StoryWritingResult(
     val title: String,
     val chapters: List<StoryChapter>,
     val nextChoices: List<String>,
+    val incompleteChapterNumbers: Set<Int> = emptySet(),
 )
 
 data class StoryWritingProgress(
@@ -40,6 +42,17 @@ data class StoryWritingProgress(
     val preview: String = "",
     val attempt: Int = 1,
     val retryDelayMs: Long? = null,
+    val completedChapters: Int = 0,
+    val totalChapters: Int = 0,
+    /** One provider delta, when available. It is intentionally short lived and never the durable body. */
+    val rawDelta: String? = null,
+    /** Character offset of rawDelta within its batch. Used for retry-safe journal writes. */
+    val rawOffset: Int? = null,
+    /** Chapters that have already passed the strict JSON parser in an earlier batch. */
+    val completedChapterDrafts: List<StoryChapter> = emptyList(),
+    /** Current batch only; it may still be an incomplete JSON string. */
+    val partialPreview: String = "",
+    val batchIndex: Int = 0,
 )
 
 class StoryWritingException(message: String) : IllegalStateException(message)
@@ -58,6 +71,51 @@ class StoryWritingUseCase @Inject constructor(
     ): StoryWritingResult {
         val premise = request.premise.trim()
         if (premise.isBlank()) throw StoryWritingException("请先填写故事背景")
+        val requestedCount = request.chapterCount.coerceIn(1, 10)
+        // Bound each response to the existing output budget; keep later batches continuous.
+        if (requestedCount > 3) {
+            val startedAt = System.nanoTime()
+            val completed = mutableListOf<StoryChapter>()
+            var title = ""
+            var choices = emptyList<String>()
+            var receivedBefore = 0
+            while (completed.size < requestedCount) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                val batchSize = minOf(3, requestedCount - completed.size)
+                val previousText = completed.joinToString("\n\n") { "${it.title}\n${it.content}" }
+                val continuity = if (completed.isEmpty()) request.direction else buildString {
+                    appendLine(request.direction)
+                    appendLine("这是同一部小说的连续创作。已完成 ${completed.size} 章，本次写后续 $batchSize 章，章节从 ${completed.size + 1} 开始。不要重写或总结前文。")
+                    appendLine("小说标题：$title\n已有正文：\n$previousText")
+                }
+                var batchReceived = 0
+                val result = write(apiKey, baseUrl, model, request.copy(chapterCount = batchSize, direction = continuity)) { progress ->
+                    batchReceived = progress.receivedChars
+                    onProgress(progress.copy(
+                        elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L,
+                        receivedChars = receivedBefore + progress.receivedChars,
+                        preview = listOf(previousText, progress.preview).filter(String::isNotBlank).joinToString("\n\n"),
+                        completedChapters = completed.size, totalChapters = requestedCount,
+                        rawDelta = progress.rawDelta,
+                        rawOffset = progress.rawOffset,
+                        batchIndex = completed.size / 3,
+                        completedChapterDrafts = completed.toList(),
+                        partialPreview = progress.preview,
+                    ))
+                }
+                if (title.isBlank()) title = result.title
+                val firstNumber = completed.size + 1
+                completed += result.chapters.mapIndexed { index, chapter -> chapter.copy(number = firstNumber + index) }
+                choices = result.nextChoices
+                receivedBefore += batchReceived
+                onProgress(StoryWritingProgress("已完成 ${completed.size}/$requestedCount 章", model,
+                    (System.nanoTime() - startedAt) / 1_000_000L, receivedChars = receivedBefore,
+                    preview = completed.joinToString("\n\n") { "${it.title}\n${it.content}" },
+                    completedChapters = completed.size, totalChapters = requestedCount,
+                    completedChapterDrafts = completed.toList(), batchIndex = completed.size / 3))
+            }
+            return StoryWritingResult(title, completed.toList(), choices)
+        }
         val chapterCount = request.chapterCount.coerceIn(1, 3)
         val prompt = buildString {
             appendLine("请把用户提供的故事背景直接写成长篇小说开篇，共 $chapterCount 章。")
@@ -87,13 +145,15 @@ class StoryWritingUseCase @Inject constructor(
         fun log(message: String) = com.mojing.app.util.UsbSessionLog.i("StoryWriting", "request=$requestId $message")
         log("start host=$host modelTag=$modelTag chapters=$chapterCount promptChars=${prompt.length}")
         var firstContentMs: Long? = null
+        var rawOffset = 0
         var lastPublishedMs = -100L
         var attempt = 1
         val previewParser = StoryStreamingPreviewParser()
         fun publish(stage: String, retryDelay: Long? = null) {
             lastPublishedMs = elapsed()
             onProgress(StoryWritingProgress(stage, model, lastPublishedMs, firstContentMs,
-                previewParser.receivedChars, previewParser.previewText(), attempt, retryDelay))
+                previewParser.receivedChars, previewParser.previewText(), attempt, retryDelay,
+                totalChapters = chapterCount))
         }
         val raw = try {
             llmRetry.chatCompletionStreamingWithRetry(
@@ -105,7 +165,15 @@ class StoryWritingUseCase @Inject constructor(
                 temperature = StoryCanon.temperatureFor(model),
                 maxTokens = (chapterCount * 2_600 + 2_000).coerceAtMost(10_000),
                 onDelta = { delta ->
+                    val deltaOffset = rawOffset
+                    rawOffset += delta.length
                     previewParser.append(delta)
+                    // Publish each delta as a bounded event so the caller can stream it to an IO file.
+                    // The UI still receives throttled state updates below.
+                    onProgress(StoryWritingProgress("接收正文", model, elapsed(), firstContentMs,
+                        previewParser.receivedChars, previewParser.previewText(), attempt,
+                        totalChapters = chapterCount, rawDelta = delta, rawOffset = deltaOffset,
+                        partialPreview = previewParser.previewText(), batchIndex = 0))
                     if (previewParser.receivedChars > 0 && firstContentMs == null) {
                         firstContentMs = elapsed()
                         log("firstContent elapsedMs=$firstContentMs")
@@ -121,7 +189,11 @@ class StoryWritingUseCase @Inject constructor(
             throw error
         }
         publish("校验完整正文")
-        return parse(raw, chapterCount, premise).also {
+        return parse(raw, chapterCount, premise).also { result ->
+            onProgress(StoryWritingProgress("已完成 $chapterCount/$chapterCount 章", model, elapsed(),
+                firstContentMs, previewParser.receivedChars, result.chapters.joinToString("\n\n") { "${it.title}\n${it.content}" }, attempt,
+                completedChapters = result.chapters.size, totalChapters = chapterCount,
+                completedChapterDrafts = result.chapters))
             log("complete elapsedMs=${elapsed()} firstContentMs=${firstContentMs ?: -1} receivedChars=${previewParser.receivedChars}")
         }
     }
@@ -175,12 +247,13 @@ class StoryWritingUseCase @Inject constructor(
         }
     }
 
-    fun toStructuredJson(chapter: StoryChapter, choices: List<String>): String = Gson().toJson(
+    fun toStructuredJson(chapter: StoryChapter, choices: List<String>, incomplete: Boolean = false): String = Gson().toJson(
         mapOf(
             "mode" to "story_writing",
             "chapter_number" to chapter.number,
             "chapter_title" to chapter.title,
             "choices" to choices,
+            "chapter_incomplete" to incomplete,
         ),
     )
 

@@ -26,11 +26,20 @@ internal fun MessageEditDialog(
     saving: Boolean = false,
     failure: String? = null,
     committed: Boolean = false,
+    loading: Boolean = false,
+    sourceMissing: Boolean = false,
+    recoverableDraft: Boolean = false,
+    onRetainDraft: () -> Unit = {},
+    onRestoreDraft: () -> Unit = {},
+    onCopyDraft: () -> Unit = {},
+    canRetryLoad: Boolean = false,
+    onRetryLoad: () -> Unit = {},
+    onRetryCleanup: () -> Unit = {},
 ) {
     var confirmDiscard by rememberSaveable { mutableStateOf(false) }
-    val requestDismiss = { if (!saving) { if (hasChanges && !committed) confirmDiscard = true else onDismiss() } }
-    val dirty by rememberUpdatedState(hasChanges && !committed)
-    val busy by rememberUpdatedState(saving)
+    val requestDismiss = { if (!saving && !loading) { if (hasChanges && !committed) confirmDiscard = true else onDismiss() } }
+    val dirty by rememberUpdatedState((hasChanges || recoverableDraft) && !committed)
+    val busy by rememberUpdatedState(saving || loading)
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true,
         confirmValueChange = {
@@ -54,11 +63,16 @@ internal fun MessageEditDialog(
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("编辑消息", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                IconButton(onClick = requestDismiss, enabled = !saving) { Icon(Icons.Outlined.Close, "关闭消息编辑") }
+                IconButton(onClick = requestDismiss, enabled = !saving && !loading) { Icon(Icons.Outlined.Close, "关闭消息编辑") }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             if (!WindowInsets.isImeVisible) Text(
-                if (isUser) "保存到新故事线，并重新生成回复。" else "保存到新故事线，保留原故事线。",
+                when {
+                    sourceMissing -> "消息已不存在；草稿仍可复制保存。"
+                    recoverableDraft -> "原文已改变；确认后可恢复旧草稿。"
+                    isUser -> "保存到新故事线，并重新生成回复。"
+                    else -> "保存到新故事线，保留原故事线。"
+                },
                 modifier = Modifier.padding(horizontal = 20.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -66,7 +80,7 @@ internal fun MessageEditDialog(
             MoJingWritingField(
                 value = content,
                 onValueChange = onContentChange,
-                enabled = !saving && !committed,
+                enabled = !saving && !loading && !committed && !recoverableDraft,
                 modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 16.dp),
                 label = "消息正文",
                 placeholder = "输入消息正文",
@@ -75,7 +89,14 @@ internal fun MessageEditDialog(
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (failure != null) Text(failure, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                    MoJingButton(onClick = onSave, enabled = canSave && !saving && !committed, modifier = Modifier.fillMaxWidth()) {
+                    when {
+                        loading -> Text("正在恢复编辑草稿…", style = MaterialTheme.typography.bodySmall)
+                        canRetryLoad -> OutlinedButton(onClick = onRetryLoad, modifier = Modifier.fillMaxWidth()) { Text("重新读取") }
+                        sourceMissing -> OutlinedButton(onClick = onCopyDraft, modifier = Modifier.fillMaxWidth()) { Text("复制草稿") }
+                        recoverableDraft -> OutlinedButton(onClick = onRestoreDraft, modifier = Modifier.fillMaxWidth()) { Text("恢复旧草稿") }
+                        committed -> OutlinedButton(onClick = onRetryCleanup, modifier = Modifier.fillMaxWidth()) { Text("重试清理并关闭") }
+                    }
+                    MoJingButton(onClick = onSave, enabled = canSave && !saving && !loading && !committed && !sourceMissing && !recoverableDraft, modifier = Modifier.fillMaxWidth()) {
                         Text(if (saving) "正在保存…" else if (committed) "已保存" else "创建编辑分支")
                     }
                 }
@@ -89,7 +110,12 @@ internal fun MessageEditDialog(
             title = { Text("放弃这次编辑？") },
             text = { Text("尚未保存的修改将被放弃。") },
             confirmButton = { TextButton(onClick = onDismiss) { Text("放弃修改") } },
-            dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("继续编辑") } },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { confirmDiscard = false; onRetainDraft() }) { Text("保留草稿") }
+                    TextButton(onClick = { confirmDiscard = false }) { Text("继续编辑") }
+                }
+            },
         )
     }
 }

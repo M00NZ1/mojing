@@ -31,14 +31,16 @@ internal fun ChatModelTitle(title: String, model: String, generating: Boolean, o
 
 @Composable
 internal fun ChatInputModelSelector(model: String, generating: Boolean, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = RoundedCornerShape(8.dp), color = androidx.compose.ui.graphics.Color.Transparent) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("模型", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Box(Modifier.heightIn(min = 48.dp), contentAlignment = Alignment.Center) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Text((if (generating) "下次 · " else "") + model, modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             Icon(Icons.Outlined.KeyboardArrowDown, "切换平台和模型", modifier = Modifier.size(18.dp))
         }
+    }
     }
 }

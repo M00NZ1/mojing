@@ -43,29 +43,28 @@ fun MoJingLongTextField(
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     Column(modifier) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween) {
+            Text(label, style = MaterialTheme.typography.labelLarge)
+            TextButton(onClick = { expanded = !expanded }, enabled = enabled) { Text("全屏编辑") }
+        }
         MoJingTextField(
             value = value,
             onValueChange = onValueChange,
-            label = { Text(label) },
             placeholder = { Text(placeholder) },
             enabled = enabled,
             minLines = 4,
             maxLines = 6,
             modifier = Modifier.fillMaxWidth(),
         )
-        TextButton(
-            onClick = { expanded = !expanded },
-            enabled = enabled,
-            modifier = Modifier.align(Alignment.End),
-        ) {
-            Text("全屏编辑")
-        }
+
     }
     if (expanded) {
         Dialog(
             onDismissRequest = { expanded = false },
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false, dismissOnBackPress = false),
         ) {
+            com.mojing.app.ui.theme.DialogSystemBarAppearance(MaterialTheme.colorScheme.background)
             val keyboard = LocalSoftwareKeyboardController.current
             val focus = LocalFocusManager.current
             val imeOpen = isImeKeyboardOpen()

@@ -13,4 +13,7 @@ interface CharacterStateDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: SessionCharacterStateEntity): Long
+
+    @Query("DELETE FROM session_character_states WHERE sessionId = :sessionId AND characterId = :characterId AND branchId = :branchId")
+    suspend fun deleteBySessionCharacterBranch(sessionId: Long, characterId: Long, branchId: String): Int
 }

@@ -4,6 +4,7 @@ import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.CharacterProfileEntity
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import com.google.gson.JsonElement
 
 /**
  * 与 Web/后端 `mojing_character_portable` v1 对齐的便携角色包编解码。
@@ -15,7 +16,7 @@ object CharacterPortableCodec {
     const val VERSION = 1
     private val TXT_HEADER = "# $KIND v$VERSION"
     private const val TXT_SEP = "\n---\n"
-    private val gson = Gson()
+    private val gson = com.google.gson.GsonBuilder().serializeNulls().create()
 
     fun buildPayload(entity: CharacterEntity, profile: CharacterProfileEntity?): JsonObject {
         val o = JsonObject()
@@ -27,6 +28,9 @@ object CharacterPortableCodec {
         o.addProperty("api_base_url", entity.apiBaseUrl)
         o.addProperty("temperature", entity.temperature)
         o.addProperty("max_tokens", entity.maxTokens)
+        o.addProperty("top_p", entity.topP)
+        o.addProperty("frequency_penalty", entity.frequencyPenalty)
+        o.addProperty("presence_penalty", entity.presencePenalty)
         o.addProperty("avatar_color", entity.avatarColor)
         o.addProperty("notes", "包里不带 Key，导入后自己在角色里填。")
         if (entity.avatarImagePath.isNotBlank()) {
@@ -91,7 +95,10 @@ object CharacterPortableCodec {
         val avatarColor: String?,
         val avatarImagePath: String? = null,
         val cardImagePath: String? = null,
-        val profile: ProfileSlice?
+        val profile: ProfileSlice?,
+        val topP: Float? = null,
+        val frequencyPenalty: Float? = null,
+        val presencePenalty: Float? = null,
     ) {
         data class ProfileSlice(
             val sourceFilename: String,
@@ -102,6 +109,23 @@ object CharacterPortableCodec {
     }
 
     fun isPortableKind(kind: String?): Boolean = kind in PORTABLE_KINDS
+
+    fun parseOptionalMaxTokens(value: JsonElement?): Int? {
+        if (value == null || value.isJsonNull) return null
+        if (value.isJsonPrimitive && value.asJsonPrimitive.isString && value.asString.isEmpty()) return null
+        return runCatching { value.asBigDecimal.intValueExact() }.getOrNull()?.takeIf { it > 0 }
+            ?: throw IllegalArgumentException("角色最大 Token 必须是正整数")
+    }
+
+    /** Same finite-number contract as the character editor; provider ranges are not guessed. */
+    fun parseOptionalSampling(value: JsonElement?, label: String): Float? {
+        if (value == null || value.isJsonNull) return null
+        val primitive = value.takeIf { it.isJsonPrimitive }?.asJsonPrimitive
+        if (primitive?.isString == true && primitive.asString.isEmpty()) return null
+        val number = primitive?.takeIf { it.isNumber || it.isString }
+            ?.asString?.trim()?.toFloatOrNull()?.takeIf { it.isFinite() }
+        return number ?: throw IllegalArgumentException("角色${label}必须是有效数字")
+    }
 
     fun parsePortableJson(root: JsonObject): ParsedPortable {
         if (!isPortableKind(root.get("kind")?.asString)) {
@@ -124,8 +148,11 @@ object CharacterPortableCodec {
             personaPrompt = root.get("persona_prompt")?.asString ?: "",
             modelName = root.get("model_name")?.asString,
             apiBaseUrl = root.get("api_base_url")?.asString,
-            temperature = root.get("temperature")?.takeIf { !it.isJsonNull }?.asFloat,
-            maxTokens = root.get("max_tokens")?.takeIf { !it.isJsonNull }?.asInt,
+            temperature = parseOptionalSampling(root.get("temperature"), "温度"),
+            maxTokens = parseOptionalMaxTokens(root.get("max_tokens")),
+            topP = parseOptionalSampling(root.get("top_p"), "Top P"),
+            frequencyPenalty = parseOptionalSampling(root.get("frequency_penalty"), "频率惩罚"),
+            presencePenalty = parseOptionalSampling(root.get("presence_penalty"), "存在惩罚"),
             avatarColor = root.get("avatar_color")?.asString,
             avatarImagePath = root.get("avatar_image_path")?.takeIf { !it.isJsonNull }?.asString,
             cardImagePath = root.get("card_image_path")?.takeIf { !it.isJsonNull }?.asString,
@@ -162,27 +189,13 @@ object CharacterPortableCodec {
     }
 
     /** 酒馆式 JSON：顶层或 data 下含 name / description 等 */
-    fun tryParseTavernLike(root: JsonObject): ParsedPortable? {
+    fun tryParseTavernLike(root: JsonObject, sourceFilename: String = "imported.json"): ParsedPortable? {
         val data = root.getAsJsonObject("data") ?: root
-        val name = data.get("name")?.asString ?: return null
-        val desc = data.get("description")?.asString
-            ?: data.get("personality")?.asString
-            ?: ""
-        return ParsedPortable(
-            name = name,
-            personaPrompt = desc,
-            modelName = null,
-            apiBaseUrl = null,
-            temperature = null,
-            maxTokens = null,
-            avatarColor = null,
-            avatarImagePath = null,
-            cardImagePath = null,
-            profile = null
-        )
+        data.get("name")?.takeIf { !it.isJsonNull }?.asString ?: return null
+        return CharacterCardV2Converter.jsonRootToParsedPortable(root, sourceFilename)
     }
 
-    fun mergeSummaryIntoPortable(summaryJson: JsonObject): JsonObject {
+    fun mergeSummaryIntoPortable(summaryJson: JsonObject, entity: CharacterEntity? = null): JsonObject {
         val out = JsonObject()
         out.addProperty("kind", KIND)
         out.addProperty("version", VERSION)
@@ -191,6 +204,13 @@ object CharacterPortableCodec {
         out.addProperty("model_name", summaryJson.get("model_name")?.asString ?: "")
         out.addProperty("api_base_url", summaryJson.get("api_base_url")?.asString ?: "")
         out.addProperty("notes", summaryJson.get("notes")?.asString ?: "")
+        entity?.let {
+            out.addProperty("temperature", it.temperature)
+            out.addProperty("max_tokens", it.maxTokens)
+            out.addProperty("top_p", it.topP)
+            out.addProperty("frequency_penalty", it.frequencyPenalty)
+            out.addProperty("presence_penalty", it.presencePenalty)
+        }
         return out
     }
 

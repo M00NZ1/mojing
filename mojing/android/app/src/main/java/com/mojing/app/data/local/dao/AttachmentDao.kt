@@ -5,10 +5,10 @@ import com.mojing.app.data.local.entity.MessageAttachmentEntity
 
 @Dao
 interface AttachmentDao {
-    @Query("SELECT * FROM message_attachments WHERE messageId = :messageId")
+    @Query("SELECT * FROM message_attachments WHERE messageId = :messageId ORDER BY id ASC")
     suspend fun getByMessage(messageId: Long): List<MessageAttachmentEntity>
 
-    @Query("SELECT * FROM message_attachments WHERE messageId IN (:messageIds)")
+    @Query("SELECT * FROM message_attachments WHERE messageId IN (:messageIds) ORDER BY messageId ASC, id ASC")
     suspend fun getByMessages(messageIds: List<Long>): List<MessageAttachmentEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

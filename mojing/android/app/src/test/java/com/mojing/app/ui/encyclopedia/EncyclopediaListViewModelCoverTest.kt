@@ -13,6 +13,7 @@ import com.mojing.app.data.remote.BackendEncyclopediaApi
 import com.mojing.app.data.repository.ImageRepository
 import com.mojing.app.domain.usecase.SmartImportUseCase
 import com.mojing.app.domain.usecase.ImportEncyclopediaJsonUseCase
+import com.mojing.app.domain.usecase.DeleteWorldUseCase
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import io.mockk.coEvery
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.TestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
@@ -62,6 +64,7 @@ class EncyclopediaListViewModelCoverTest {
         imageRepository: ImageRepository,
         secureStorage: SecureStorage,
         entryDao: EncyclopediaEntryDao = mockk(relaxed = true),
+        deleteWorld: DeleteWorldUseCase = mockk(relaxed = true),
     ): EncyclopediaListViewModel {
         val uiPreferences = mockk<UiPreferencesRepository> {
             every { encyclopediaListLayout } returns flowOf("list")
@@ -70,7 +73,7 @@ class EncyclopediaListViewModelCoverTest {
             every { observeActiveCount() } returns flowOf(0)
         }
         return EncyclopediaListViewModel(
-            deleteWorld = io.mockk.mockk(relaxed = true),
+            deleteWorld = deleteWorld,
             encyclopediaDao = encyclopediaDao,
             entryDao = entryDao,
             characterDao = mockk<CharacterDao>(relaxed = true),
@@ -83,6 +86,64 @@ class EncyclopediaListViewModelCoverTest {
             generationTaskDao = generationTaskDao,
         )
     }
+
+    @Test
+    fun deletingLastWorldOnSecondPageFallsBackToPreviousPage() = runTest(dispatcher) {
+        val page = List(25) { encyclopediaItem(it.toLong() + 1) }
+        val secondPage = listOf(encyclopediaItem(25L))
+        val previousPage = List(24) { encyclopediaItem(it.toLong() + 1) }
+        val encyclopediaDao = mockk<EncyclopediaDao> {
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returnsMany
+                listOf(page, secondPage, emptyList(), previousPage)
+        }
+        val deleteWorld = mockk<DeleteWorldUseCase>()
+        coEvery { deleteWorld(25L) } returns null
+        val vm = createViewModel(
+            encyclopediaDao = encyclopediaDao,
+            backend = mockk(relaxed = true), imageRepository = mockk(relaxed = true),
+            secureStorage = mockk(relaxed = true), deleteWorld = deleteWorld,
+        )
+        // Constructor loads page 0; page 1 is empty after the deleted last item.
+        advanceUntilIdle()
+        vm.nextPage()
+        advanceUntilIdle()
+        assertEquals(null, vm.delete(25L))
+        advanceUntilIdle()
+        assertEquals(0, vm.library.value.pageIndex)
+        assertEquals(24, vm.library.value.items.size)
+    }
+
+    @Test
+    fun deletingWorldWithRemainingSecondPageRowsKeepsPageAndFailureCanRetry() = runTest(dispatcher) {
+        val page = List(25) { encyclopediaItem(it.toLong() + 1) }
+        val secondPage = listOf(encyclopediaItem(25L), encyclopediaItem(26L))
+        val refreshedSecondPage = listOf(encyclopediaItem(26L))
+        val encyclopediaDao = mockk<EncyclopediaDao> {
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returnsMany
+                listOf(page, secondPage, refreshedSecondPage)
+        }
+        val deleteWorld = mockk<DeleteWorldUseCase>()
+        coEvery { deleteWorld(25L) } returnsMany listOf("写入失败，请重试", null)
+        val vm = createViewModel(
+            encyclopediaDao = encyclopediaDao,
+            backend = mockk(relaxed = true), imageRepository = mockk(relaxed = true),
+            secureStorage = mockk(relaxed = true), deleteWorld = deleteWorld,
+        )
+        advanceUntilIdle()
+        vm.nextPage()
+        advanceUntilIdle()
+        assertEquals("写入失败，请重试", vm.delete(25L))
+        assertEquals(1, vm.library.value.pageIndex)
+        assertEquals(null, vm.delete(25L))
+        advanceUntilIdle()
+        assertEquals(1, vm.library.value.pageIndex)
+        assertEquals(26L, vm.library.value.items.single().id)
+    }
+
+    private fun encyclopediaItem(id: Long) = EncyclopediaLibraryItem(
+        id = id, name = "百科$id", coverImagePath = "", pinnedAt = 0L,
+        updatedAt = id, genreTags = "", preview = "",
+    )
 
     @Test
     fun backendGeneratedImageDownloadFailureDoesNotGenerateAnotherImage() = runTest(dispatcher) {
@@ -189,7 +250,7 @@ class EncyclopediaListViewModelCoverTest {
         val original = EncyclopediaEntity(id = 7L, name = "测试百科", coverImagePath = "old.jpg")
         val updated = original.copy(coverImagePath = localFile.absolutePath)
         val encyclopediaDao = mockk<EncyclopediaDao> {
-            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any()) } returnsMany
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returnsMany
                 listOf(listOf(original.libraryItem()), listOf(updated.libraryItem()))
             coEvery { updateCover(7L, localFile.absolutePath, any()) } returns 1
         }
@@ -233,7 +294,7 @@ class EncyclopediaListViewModelCoverTest {
     fun createNewReturnsInsertedIdOnlyAfterRoomUpsertAndRefresh() = runTest(dispatcher) {
         val created = EncyclopediaEntity(id = 42L, name = "新百科库")
         val encyclopediaDao = mockk<EncyclopediaDao> {
-            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any()) } returns listOf(created.libraryItem())
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns listOf(created.libraryItem())
             coEvery { upsert(any()) } returns 42L
         }
         val viewModel = createViewModel(
@@ -279,7 +340,7 @@ class EncyclopediaListViewModelCoverTest {
         val last = EncyclopediaEntity(id = 26L, name = "最后一个世界", updatedAt = 100L).libraryItem()
         var nextReads = 0
         val encyclopediaDao = mockk<EncyclopediaDao> {
-            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any()) } coAnswers {
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
                 if (arg<Long?>(4) == null) first else {
                     nextReads++
                     if (nextReads == 1) throw IllegalStateException("read failed")
@@ -314,7 +375,7 @@ class EncyclopediaListViewModelCoverTest {
             EncyclopediaEntryEntity(id = id, encyclopediaId = 33L, title = "条目$id", content = "正文$id")
         }
         val encyclopediaDao = mockk<EncyclopediaDao> {
-            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any()) } returns emptyList()
+            coEvery { getLibraryPage(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns emptyList()
             coEvery { getExportPage(any(), any(), any(), any(), 32) } coAnswers {
                 worlds.filter { world -> arg<Long?>(3)?.let { world.id < it } ?: true }.take(32)
             }

@@ -1,12 +1,16 @@
 package com.mojing.app.ui.encyclopedia
 
-import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingCenterAlignedTopAppBar as TopAppBar
 import com.mojing.app.ui.common.MoJingIcon as Icon
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Toc
 import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.FormatBold
+import androidx.compose.material.icons.outlined.FormatItalic
+import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.FormatListBulleted
 import com.mojing.app.ui.common.MoJingLongTextField
 
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
@@ -29,6 +33,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -77,14 +82,27 @@ fun EntryEditScreen(
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenSource: (EntrySourceTarget) -> Unit = {},
+    onOpenRelations: (Long) -> Unit = {},
+    onOpenRelatedEntry: (Long) -> Unit = {},
     onOpenSavedEntry: (Long) -> Unit = {},
+    openSourceOnEntry: Boolean = false,
     viewModel: EntryEditViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    var sourceIntentConsumed by rememberSaveable(encyclopediaId, entryId) { mutableStateOf(false) }
+    LaunchedEffect(openSourceOnEntry, sourceIntentConsumed, state.isLoaded, state.hasSourceMessage, state.loadError,
+        state.recoverableDraft, state.draftUnreadable, state.isDiscardingDraft) {
+        if (openSourceOnEntry && !sourceIntentConsumed && state.isLoaded && state.loadError == null &&
+            state.recoverableDraft == null && !state.draftUnreadable && !state.isDiscardingDraft) {
+            sourceIntentConsumed = true
+            if (state.hasSourceMessage) viewModel.openSourcePreview()
+        }
+    }
     DisposableEffect(viewModel) { onDispose { viewModel.closeSourcePreview() } }
     if (state.sourcePreviewOpen) {
         EntrySourcePreview(state.sourceLoading, state.sourceContent, state.sourceError,
             onClose = viewModel::closeSourcePreview, onRetry = viewModel::openSourcePreview,
+            verification = state.sourceVerification,
             sourceIndex = state.sourceIndex, sourceCount = state.sourceMessageIds.size,
             onSourceChange = viewModel::showSourceMessage,
             onOpenConversation = state.sourceTarget?.let { target -> { onOpenSource(target) } })
@@ -102,7 +120,8 @@ fun EntryEditScreen(
     val sectionTargets = remember(entryId, encyclopediaId) { List(4) { BringIntoViewRequester() } }
     val sectionLabels = listOf("基本资料", "正文与摘要", "条目封面", "高级设置")
     var showDiscardDialog by rememberSaveable { mutableStateOf(false) }
-    var pendingExit by remember { mutableStateOf("back") }
+    var pendingExit by rememberSaveable { mutableStateOf("back") }
+    var pendingEntryId by rememberSaveable { mutableLongStateOf(0L) }
     val canSave = state.loadError == null && state.recoverableDraft == null && !state.draftUnreadable &&
         (!state.isPersisted || state.isDirty)
     val blockingBusy = state.isSaving || state.isGeneratingCover || isCoverImporting || state.isDiscardingDraft
@@ -117,11 +136,17 @@ fun EntryEditScreen(
     }
 
     fun leaveEditor(destination: String) {
-        if (destination == "settings") onOpenSettings() else onBack()
+        when (destination) {
+            "settings" -> onOpenSettings()
+            "relations" -> if (state.persistedEntryId > 0L) onOpenRelations(state.persistedEntryId)
+            "entry" -> if (pendingEntryId > 0L) onOpenRelatedEntry(pendingEntryId)
+            else -> onBack()
+        }
     }
 
     fun requestExit(destination: String) {
         focusManager.clearFocus()
+        viewModel.cancelAiComplete()
         when {
             blockingBusy -> scope.launch { snackbarHostState.showSnackbar("正在保存或处理封面，请稍候") }
             state.recoverableDraft != null || state.draftUnreadable ->
@@ -173,6 +198,12 @@ fun EntryEditScreen(
         if (entryId == 0L && state.isLoaded && state.isPersisted && !state.isSaving &&
             state.draftError == null && state.persistedEntryId > 0L) onOpenSavedEntry(state.persistedEntryId)
     }
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        viewModel.refreshRelatedEntries()
+    }
+    LaunchedEffect(state.isLoaded, state.persistedEntryId) {
+        if (state.isLoaded && state.persistedEntryId > 0L) viewModel.refreshRelatedEntries()
+    }
     LaunchedEffect(state.recoverableDraft, state.draftUnreadable) {
         if (state.recoverableDraft != null || state.draftUnreadable) showDiscardDialog = false
     }
@@ -194,6 +225,11 @@ fun EntryEditScreen(
     }
     fun formatVersionTime(v: EntryVersionEntity): String =
         versionTimeFmt.format(Instant.ofEpochMilli(v.createdAt))
+
+    fun insertMarkdown(prefix: String, suffix: String = prefix) {
+        val current = state.content
+        viewModel.updateContent(current + if (current.isBlank()) "$prefix$suffix" else "\n$prefix$suffix")
+    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -223,7 +259,7 @@ fun EntryEditScreen(
                             }
                         }
                     }
-                    if (isImeOpen) {
+                    if (state.isLoaded && state.loadError == null) {
                         TextButton(onClick = { viewModel.save() }, enabled = saveEnabled) {
                             Text(saveLabel)
                         }
@@ -267,7 +303,7 @@ fun EntryEditScreen(
         } else {
         Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(padding).consumeWindowInsets(padding).imePadding()) {
             state.draftError?.takeIf { !state.draftUnreadable && state.recoverableDraft == null }?.let { draftError ->
-                Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.small) {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
                         Text(draftError, color = MaterialTheme.colorScheme.onErrorContainer,
                             style = MaterialTheme.typography.bodyMedium)
@@ -279,7 +315,7 @@ fun EntryEditScreen(
             }
             val feedback = state.saveError ?: state.versionError
             if (feedback != null) {
-                Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                Surface(color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.small) {
                     Column(
                         Modifier.fillMaxWidth().heightIn(max = 160.dp)
                             .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
@@ -316,23 +352,13 @@ fun EntryEditScreen(
                         .padding(top = 16.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("基本资料", Modifier.bringIntoViewRequester(sectionTargets[0]), style = MaterialTheme.typography.titleLarge)
-                    EntryConfidenceSelector(state.confidence, viewModel::updateConfidence, enabled = !pageBusy)
-                    if (state.hasSourceMessage) {
-                        OutlinedButton(onClick = viewModel::openSourcePreview) { Text("查看对话原文") }
-                    }
-                    if (state.isConversationNote) {
-                        Text(
-                            "对话资料 · 在此编辑正文与确认状态；角色设定在角色页管理。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
                     // 内置名称生成器（generate-names）：与 Web 一致见 [EncyclopediaUiConfig]；当前关闭且 Android 无独立入口。
                     OutlinedTextField(
                         value = state.title, onValueChange = { viewModel.updateTitle(it) },
-                        label = { Text("标题") }, placeholder = { Text("如：云霄剑派") }, modifier = Modifier.fillMaxWidth(), singleLine = true
+                        label = { Text("标题") }, placeholder = { Text("如：云霄剑派") }, modifier = Modifier.fillMaxWidth().bringIntoViewRequester(sectionTargets[0]), singleLine = true
                     )
+
+                    EntryAliasField(state.entryType, state.metaJson, viewModel::updateMetaJson, enabled = !pageBusy)
 
                     ExposedDropdownMenuBox(expanded = typeExpanded, onExpandedChange = { if (it) focusManager.clearFocus(); typeExpanded = it }) {
                         OutlinedTextField(
@@ -353,18 +379,41 @@ fun EntryEditScreen(
                     }
 
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                    Text("正文与摘要", Modifier.bringIntoViewRequester(sectionTargets[1]), style = MaterialTheme.typography.titleLarge)
+                    Text("正文", Modifier.bringIntoViewRequester(sectionTargets[1]), style = MaterialTheme.typography.titleMedium)
                     if (state.isAiCompleting) {
                         EntryAiCompleteSkeletonBlock()
                     } else {
-                        OutlinedTextField(
-                            value = state.summary, onValueChange = { viewModel.updateSummary(it) },
-                            label = { Text("摘要") }, placeholder = { Text("一句话描述...") }, modifier = Modifier.fillMaxWidth(), maxLines = 2
-                        )
+
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("正文工具", style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            IconButton(onClick = { insertMarkdown("**", "**") }, enabled = !pageBusy) {
+                                Icon(Icons.Outlined.FormatBold, "插入粗体")
+                            }
+                            IconButton(onClick = { insertMarkdown("_", "_") }, enabled = !pageBusy) {
+                                Icon(Icons.Outlined.FormatItalic, "插入斜体")
+                            }
+                            IconButton(onClick = { insertMarkdown("[链接](", ")") }, enabled = !pageBusy) {
+                                Icon(Icons.Outlined.Link, "插入链接")
+                            }
+                            IconButton(onClick = { insertMarkdown("- ", "") }, enabled = !pageBusy) {
+                                Icon(Icons.Outlined.FormatListBulleted, "插入列表")
+                            }
+                        }
 
                         MoJingLongTextField(
                             value = state.content, onValueChange = { viewModel.updateContent(it) },
                             label = "详细内容", placeholder = "详细的百科条目内容...", modifier = Modifier.fillMaxWidth(),
+                        )
+
+                        OutlinedTextField(
+                            value = state.summary, onValueChange = { viewModel.updateSummary(it) },
+                            label = { Text("摘要") }, placeholder = { Text("一句话描述...") }, modifier = Modifier.fillMaxWidth(), maxLines = 2
                         )
 
                         OutlinedTextField(
@@ -373,9 +422,47 @@ fun EntryEditScreen(
                         )
                     }
 
+                    EntryRelatedSection(
+                        state = state,
+                        onManage = { requestExit("relations") },
+                        onOpen = { id -> pendingEntryId = id; requestExit("entry") },
+                        onRetry = viewModel::retryRelatedPage,
+                        onPrevious = viewModel::previousRelatedPage,
+                        onNext = viewModel::nextRelatedPage,
+                        enabled = !blockingBusy,
+                    )
+
+                    Text("来源与确认", style = MaterialTheme.typography.titleMedium)
+                    EntryConfidenceSelector(state.confidence, viewModel::updateConfidence, enabled = !pageBusy)
+                    if (state.hasSourceMessage) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f)),
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("来源关联", style = MaterialTheme.typography.labelLarge)
+                                    Text("内容来自对话，可直接查看原文并定位来源故事线。",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                TextButton(onClick = viewModel::openSourcePreview) { Text("查看原文") }
+                            }
+                        }
+                    }
+                    if (state.isConversationNote) {
+                        Text(
+                            "对话资料 · 在此编辑正文与确认状态；角色设定在角色页管理。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     OutlinedButton(
-                        onClick = { viewModel.aiComplete() },
-                        enabled = state.title.isNotBlank() && !pageBusy,
+                        onClick = { if (state.isAiCompleting) viewModel.cancelAiComplete() else viewModel.aiComplete() },
+                        enabled = state.title.isNotBlank() && !blockingBusy,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                     ) {
                         if (state.isAiCompleting) {
@@ -386,7 +473,7 @@ fun EntryEditScreen(
                             )
                             Spacer(Modifier.width(8.dp))
                         }
-                        Text(if (state.isAiCompleting) "正在补全…" else "补全空白内容")
+                        Text(if (state.isAiCompleting) "停止补全" else "补全空白内容")
                     }
                     if (!state.hasPublicLlmKey) {
                         LlmKeySetupHintCard(
@@ -429,6 +516,7 @@ fun EntryEditScreen(
                         onValueChange = { viewModel.updateCoverPromptHint(it) },
                         label = { Text("生图补充说明（可选）") },
                         modifier = Modifier.fillMaxWidth(),
+                        inputModifier = Modifier.testTag("entry-cover-prompt-hint"),
                         singleLine = true,
                     )
                     Row(
@@ -472,6 +560,7 @@ fun EntryEditScreen(
                         entryType = state.entryType,
                         metaJson = state.metaJson,
                         onMetaJsonChange = { viewModel.updateMetaJson(it) },
+                        excludedKeys = setOf("alias"),
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -502,6 +591,11 @@ fun EntryEditScreen(
                         .padding(top = 16.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    Text(
+                        "历史版本记录标题、摘要、正文、标签和扩展资料。载入时，类型、确认状态、精选和封面保留当前值；检查后再保存。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         TextButton(onClick = { viewModel.loadVersionPage(false) },
                             enabled = state.isOlderVersionPage && !state.isLoadingVersions && !state.isSaving) {
@@ -544,7 +638,7 @@ fun EntryEditScreen(
                                     }
                                     TextButton(onClick = {
                                         if (viewModel.applyVersionToForm(v)) subTab = EntryEditSubTab.EDIT
-                                    }, enabled = !pageBusy && !state.isLoadingVersions) { Text("载入") }
+                                    }, enabled = !pageBusy && !state.isLoadingVersions) { Text("载入文本资料") }
                                 }
                                 HorizontalDivider()
                             }
@@ -560,8 +654,8 @@ fun EntryEditScreen(
         AlertDialog(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = viewModel::dismissVersionReplacement,
-            title = { Text("载入 v${version.version}？") },
-            text = { Text("当前未保存的修改将被替换。载入后可继续编辑，再保存为新版本。") },
+            title = { Text("载入 v${version.version} 文本资料？") },
+            text = { Text("当前未保存的标题、摘要、正文、标签和扩展资料将被替换。类型、确认状态、精选和封面保留当前值。载入后可继续编辑，再保存为新版本。") },
             confirmButton = {
                 TextButton(onClick = {
                     if (viewModel.applyVersionToForm(version, replaceDraft = true)) subTab = EntryEditSubTab.EDIT
@@ -577,18 +671,29 @@ fun EntryEditScreen(
         AlertDialog(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { showDiscardDialog = false },
-            title = { Text("放弃未保存的修改？") },
-            text = { Text("离开后，本次尚未保存的词条修改不会保留。") },
+            title = { Text("尚未保存的修改") },
+            text = { Text("保留草稿，下次可以继续编辑。") },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        showDiscardDialog = false
-                        viewModel.discardChangesAndLeave { leaveEditor(pendingExit) }
-                    },
-                ) { Text("放弃修改", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDiscardDialog = false }) { Text("继续编辑") }
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        onClick = {
+                            showDiscardDialog = false
+                            viewModel.saveDraftAndLeave { leaveEditor(pendingExit) }
+                        },
+                    ) { Text("保留草稿并离开") }
+                    TextButton(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        onClick = {
+                            showDiscardDialog = false
+                            viewModel.discardChangesAndLeave { leaveEditor(pendingExit) }
+                        },
+                    ) { Text("放弃修改", color = MaterialTheme.colorScheme.error) }
+                    TextButton(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        onClick = { showDiscardDialog = false },
+                    ) { Text("继续编辑") }
+                }
             },
         )
     }

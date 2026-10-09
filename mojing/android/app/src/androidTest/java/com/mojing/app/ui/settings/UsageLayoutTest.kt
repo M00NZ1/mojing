@@ -39,7 +39,7 @@ class UsageLayoutTest {
         db.costRecordDao().insert(CostRecordEntity(platformId = "other", modelName = "test/model", totalTokens = 99999))
         Unit
     }
-    private fun vm(): UsageViewModel = UsageViewModel(db.costRecordDao(), currency).also {
+    private fun vm(dao: com.mojing.app.data.local.dao.CostRecordDao = db.costRecordDao()): UsageViewModel = UsageViewModel(dao, currency).also {
         androidx.lifecycle.ViewModelStore().apply { put("vm", it); stores.add(this) }
     }
     @After fun finish() {
@@ -47,7 +47,7 @@ class UsageLayoutTest {
         db.close(); context.getSharedPreferences(prefsName, 0).edit().clear().commit()
     }
     private fun saveShot(name: String) {
-        val file = java.io.File(context.getExternalFilesDir(null), "$name.png")
+        val file = java.io.File(context.getExternalFilesDir(null), "$prefsName-$name.png")
         file.outputStream().use { compose.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
     }
     @Test fun summaryHasNoSecondAppBar() {
@@ -70,6 +70,46 @@ class UsageLayoutTest {
         assertEquals(12, model.state.value.requests.first().record.totalTokens)
         assertTrue(model.state.value.requests.all { it.record.platformId == "p" })
         saveShot("usage-requests")
+    }
+    @Test fun failedMonthReadLabelsTheRetainedDataWithItsLoadedMonth() {
+        val failRead = java.util.concurrent.atomic.AtomicBoolean(false)
+        val source = db.costRecordDao()
+        val dao = object : com.mojing.app.data.local.dao.CostRecordDao by source {
+            override suspend fun dailyUsage(fromMillis: Long, toMillis: Long): List<com.mojing.app.data.local.dao.DailyUsageSummary> {
+                check(!failRead.get()) { "isolated monthly read unavailable" }
+                return source.dailyUsage(fromMillis, toMillis)
+            }
+        }
+        val model = vm(dao)
+        compose.setContent { com.mojing.app.ui.theme.MoJingTheme(themeMode = "sky") { UsageScreen(model) } }
+        compose.waitUntil(10000) { !model.state.value.loading }
+        val loaded = model.state.value.loadedMonth!!
+        failRead.set(true)
+        compose.runOnIdle { model.setMonth(loaded.minusMonths(1)) }
+        compose.waitUntil(10000) { !model.state.value.loading && model.state.value.error != null }
+        fun label(month: java.time.YearMonth) = "${month.year}年${month.monthValue}月"
+        compose.onNodeWithText("${label(loaded)}费用").assertIsDisplayed()
+        compose.onNodeWithText("${label(loaded)} Token").assertIsDisplayed()
+        compose.onNodeWithText("下方保留 ${label(loaded)} 的已加载数据").assertIsDisplayed()
+        compose.onNodeWithText("${label(loaded.minusMonths(1))}费用").assertDoesNotExist()
+        assertEquals(loaded, model.state.value.loadedMonth)
+        saveShot("usage-failed-month-retained")
+    }
+    @Test fun firstMonthReadFailureIsNotPresentedAsZeroUsage() {
+        val source = db.costRecordDao()
+        val dao = object : com.mojing.app.data.local.dao.CostRecordDao by source {
+            override suspend fun dailyUsage(fromMillis: Long, toMillis: Long): List<com.mojing.app.data.local.dao.DailyUsageSummary> =
+                error("isolated first monthly read unavailable")
+        }
+        val model = vm(dao)
+        compose.setContent { com.mojing.app.ui.theme.MoJingTheme(themeMode = "sky") { UsageScreen(model) } }
+        compose.waitUntil(10000) { !model.state.value.loading && model.state.value.error != null }
+        assertNull(model.state.value.loadedMonth)
+        compose.onNodeWithText("所选月份尚未加载，请重试").assertIsDisplayed()
+        compose.onNodeWithText("重试").assertIsDisplayed()
+        compose.onNodeWithText("该月暂无已计价记录").assertDoesNotExist()
+        compose.onNodeWithText("0 次请求").assertDoesNotExist()
+        saveShot("usage-first-month-failed")
     }
     @Test fun tokenPaginationDoesNotLoseTiesOrMixPlatforms() = runBlocking {
         val dao = db.costRecordDao()

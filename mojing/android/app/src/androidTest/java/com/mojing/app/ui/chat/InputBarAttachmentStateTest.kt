@@ -6,6 +6,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertHeightIsAtLeast
@@ -14,6 +17,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -23,6 +27,39 @@ class InputBarAttachmentStateTest {
 
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test
+    fun openingToolsRetainsSelectedInsertionTargetAfterFocusLoss() {
+        val field = mutableStateOf(TextFieldValue("甲乙丁"))
+        var voiceCalls = 0
+        composeRule.setContent {
+            MaterialTheme {
+                InputBar(
+                    value = field.value,
+                    onValueChange = { field.value = it },
+                    onSend = {}, onStop = {}, isGenerating = false,
+                    onRequestNarrator = {}, onInsertMacro = {},
+                    onClearPendingAttachments = {},
+                    onVoiceClick = { voiceCalls++ },
+                    onImageGenClick = {}, onAttachImageClick = {},
+                    onOpenEmoji = {}, onPreviewSpeak = {},
+                )
+            }
+        }
+        composeRule.onNode(hasSetTextAction(), useUnmergedTree = true).performClick()
+        composeRule.onNode(hasSetTextAction(), useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.SetSelection) { it(1, 3, false) }
+        composeRule.runOnIdle { assertEquals(TextRange(1, 3), field.value.selection) }
+        composeRule.onNodeWithContentDescription("更多输入工具").performClick()
+        composeRule.onNodeWithText("输入工具").assertIsDisplayed()
+        composeRule.runOnIdle {
+            assertEquals("甲乙丁", field.value.text)
+            assertEquals(TextRange(1, 3), field.value.selection)
+            assertEquals(null, field.value.composition)
+        }
+        composeRule.onNodeWithText("语音输入").performSemanticsAction(SemanticsActions.OnClick) { it() }
+        composeRule.runOnIdle { assertEquals(1, voiceCalls) }
+    }
 
     @Test
     fun compactComposerKeepsAttachmentAndSendReachableAndClosesToolsOnGeneration() {

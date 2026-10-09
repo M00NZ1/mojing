@@ -4,7 +4,9 @@ import android.app.Application
 import android.content.SharedPreferences
 import com.mojing.app.data.local.branch.BranchVisibilityIndexManager
 import com.mojing.app.data.local.dao.MessageDao
+import com.mojing.app.data.local.dao.SessionBranchDao
 import com.mojing.app.data.local.entity.MessageEntity
+import com.mojing.app.data.local.entity.SessionBranchEntity
 import com.mojing.app.data.local.search.MessageSearchIndexManager
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -34,6 +36,7 @@ class SearchViewModelTest {
     private val preferences = mockk<SharedPreferences>(relaxed = true)
     private val editor = mockk<SharedPreferences.Editor>(relaxed = true)
     private lateinit var dao: MessageDao
+    private lateinit var branchDao: SessionBranchDao
     private lateinit var indexManager: MessageSearchIndexManager
     private lateinit var visibilityManager: BranchVisibilityIndexManager
     private lateinit var presentation: SearchPresentationLoader
@@ -46,6 +49,7 @@ class SearchViewModelTest {
         every { preferences.getLong(any(), any()) } returns 0L
         every { preferences.edit() } returns editor
         dao = mockk(relaxed = true)
+        branchDao = mockk(relaxed = true)
         indexManager = mockk(relaxed = true)
         coEvery { indexManager.ensureSessionReady(any()) } returns Unit
         visibilityManager = mockk(relaxed = true)
@@ -53,7 +57,7 @@ class SearchViewModelTest {
         presentation = io.mockk.mockk()
         io.mockk.coEvery { presentation.load(any(), any()) } returns SearchPresentation()
         coEvery { presentation.loadSpeakerLabels(any(), any()) } returns SearchSpeakerLabels()
-        viewModel = SearchViewModel(application, dao, indexManager, visibilityManager,
+        viewModel = SearchViewModel(application, dao, branchDao, indexManager, visibilityManager,
             presentation, SearchResultFormatter(dispatcher))
         viewModel.initialize(1L, "main")
     }
@@ -72,12 +76,38 @@ class SearchViewModelTest {
         assertEquals("", viewModel.state.value.hits.single().message.content)
     }
 
+    @Test fun allScopeUsesGlobalFortyHitPageAfterEmptyFirstBranchMetadataPage() = runTest(dispatcher) {
+        val first = (1L..40L).map { SessionBranchEntity(id = it, sessionId = 1L, branchId = "b$it", sourceMessageId = it) }
+        val late = SessionBranchEntity(id = 41L, sessionId = 1L, branchId = "late", sourceMessageId = 41L)
+        val branches = first + late
+        coEvery { branchDao.getPage(1L, any(), any()) } answers { branches.filter { it.id > secondArg<Long>() }.take(thirdArg()) }
+        coEvery { branchDao.getByBranch(1L, any()) } answers { branches.firstOrNull { it.branchId == secondArg<String>() } }
+        coEvery { dao.searchVisibleMessages(any(), any(), any(), any(), any(), any()) } returns emptyList()
+        coEvery { dao.searchVisibleMessages(1L, "late", "命中", 0, any(), Long.MAX_VALUE) } returns listOf(message(900L, "命中"))
+        viewModel.setScope(SearchScope.ALL); viewModel.setQuery("命中"); viewModel.search(1L, "main"); advanceUntilIdle()
+        assertEquals(1, viewModel.state.value.hits.size)
+        assertEquals("late", viewModel.state.value.hits.single().branchId)
+        assertTrue(viewModel.state.value.hasOlder.not())
+    }
+
+    @Test fun allScopeCacheUsesBranchAndMessageIdentityForDuplicateMessageIds() = runTest(dispatcher) {
+        val branches = listOf(
+            SessionBranchEntity(id = 1L, sessionId = 1L, branchId = "a", sourceMessageId = 1L),
+            SessionBranchEntity(id = 2L, sessionId = 1L, branchId = "b", sourceMessageId = 1L),
+        )
+        coEvery { branchDao.getPage(1L, any(), any()) } answers { branches.filter { it.id > secondArg<Long>() }.take(thirdArg()) }
+        coEvery { branchDao.getByBranch(1L, any()) } answers { branches.firstOrNull { it.branchId == secondArg<String>() } }
+        coEvery { dao.searchVisibleMessages(1L, any(), "同一", 0, any(), any()) } returns listOf(message(7L, "同一"))
+        viewModel.setScope(SearchScope.ALL); viewModel.setQuery("同一"); viewModel.search(1L, "main"); advanceUntilIdle()
+        assertEquals(setOf("a:7", "b:7"), viewModel.state.value.hits.map { "${it.branchId}:${it.message.id}" }.toSet())
+    }
+
     @Test fun returningFromOriginalKeepsResultPositionUntilAnotherSearch() = runTest(dispatcher) {
         val row = message(7L, "雨夜")
         coEvery { dao.searchMainMessages(1L, "雨夜", 0, 40, Long.MAX_VALUE) } returns listOf(row)
-        coEvery { dao.getMainMessageById(1L, 7L) } returns row
-        coEvery { dao.getMainMessagesBefore(1L, any(), any()) } returns emptyList()
-        coEvery { dao.getMainMessagesAfter(1L, any(), any()) } returns emptyList()
+         coEvery { dao.getMainAdoptedSearchMessageById(1L, 7L) } returns row
+        coEvery { dao.getMainAdoptedSearchMessagesBefore(1L, any(), any()) } returns emptyList()
+        coEvery { dao.getMainAdoptedSearchMessagesAfter(1L, any(), any()) } returns emptyList()
         viewModel.setQuery("雨夜"); viewModel.search(1L, "main"); advanceUntilIdle()
         val firstSearchRevision = viewModel.state.value.resultRevision
 
@@ -214,7 +244,7 @@ class SearchViewModelTest {
         val page = (1L..40L).reversed().map { message(it, "hit") }
         coEvery { dao.searchMainMessages(any(), any(), any(), any(), any()) } returns page
         coEvery { dao.countMainMessages(any(), any(), any()) } coAnswers { gate.await() }
-        coEvery { dao.getMainMessageById(1L, 40L) } returns page.first()
+        coEvery { dao.getMainAdoptedSearchMessageById(1L, 40L) } returns page.first()
         viewModel.setQuery("hit"); viewModel.search(1L, "main"); runCurrent()
         assertEquals(40, viewModel.state.value.hits.size)
         assertFalse(viewModel.state.value.searching)
@@ -257,7 +287,7 @@ class SearchViewModelTest {
     @Test fun changingQueryWhileSnippetIsQueuedCannotPublishOldResults() = runTest(dispatcher) {
         val cpu = QueuedSearchDispatcher()
         val presentation = mockk<SearchPresentationLoader>()
-        val vm = SearchViewModel(application, dao, indexManager, visibilityManager,
+        val vm = SearchViewModel(application, dao, branchDao, indexManager, visibilityManager,
             presentation, SearchResultFormatter(cpu))
         vm.initialize(1L)
         coEvery { dao.searchMainMessages(any(), any(), any(), any(), any()) } returns listOf(message(8L, "old body"))
@@ -304,10 +334,10 @@ class SearchViewModelTest {
         coEvery { dao.searchMainMessages(1L, "hit", 0, 40, Long.MAX_VALUE) } returns first
         coEvery { dao.searchMainMessages(1L, "hit", 0, 40, 2L) } returns next
         coEvery { dao.countMainMessages(1L, "hit", 0) } returns 41
-        coEvery { dao.getMainMessageById(1L, 2L) } returns first.last()
-        coEvery { dao.getMainMessageById(1L, 1L) } returns next.single()
-        coEvery { dao.getMainMessagesBefore(1L, any(), any()) } returns emptyList()
-        coEvery { dao.getMainMessagesAfter(1L, any(), any()) } returns emptyList()
+         coEvery { dao.getMainAdoptedSearchMessageById(1L, 2L) } returns first.last()
+         coEvery { dao.getMainAdoptedSearchMessageById(1L, 1L) } returns next.single()
+        coEvery { dao.getMainAdoptedSearchMessagesBefore(1L, any(), any()) } returns emptyList()
+        coEvery { dao.getMainAdoptedSearchMessagesAfter(1L, any(), any()) } returns emptyList()
         viewModel.setQuery("hit"); viewModel.search(1L, "main"); advanceUntilIdle()
         viewModel.openHit(1L, "main", 2L); advanceUntilIdle()
         viewModel.navigateHit(1L, "main", 1); advanceUntilIdle()
@@ -324,10 +354,10 @@ class SearchViewModelTest {
         coEvery { dao.searchMainMessagesAfter(1L, "hit", 0, 40, 120L) } returns pages[1].asReversed()
         coEvery { dao.searchMainMessagesAfter(1L, "hit", 0, 40, 160L) } returns pages[0].asReversed()
         coEvery { dao.countMainMessages(1L, "hit", 0) } returns 200
-        coEvery { dao.getMainMessageById(1L, 120L) } returns pages[2].first()
-        coEvery { dao.getMainMessageById(1L, 121L) } returns pages[1].last()
-        coEvery { dao.getMainMessagesBefore(1L, any(), any()) } returns emptyList()
-        coEvery { dao.getMainMessagesAfter(1L, any(), any()) } returns emptyList()
+         coEvery { dao.getMainAdoptedSearchMessageById(1L, 120L) } returns pages[2].first()
+         coEvery { dao.getMainAdoptedSearchMessageById(1L, 121L) } returns pages[1].last()
+        coEvery { dao.getMainAdoptedSearchMessagesBefore(1L, any(), any()) } returns emptyList()
+        coEvery { dao.getMainAdoptedSearchMessagesAfter(1L, any(), any()) } returns emptyList()
 
         viewModel.setQuery("hit"); viewModel.search(1L, "main"); advanceUntilIdle()
         repeat(4) { viewModel.loadOlder(1L, "main"); advanceUntilIdle() }
@@ -378,25 +408,48 @@ class SearchViewModelTest {
 
     @Test fun closeHitPreventsLateDetailResponseFromReopeningReader() = runTest(dispatcher) {
         val gate = CompletableDeferred<MessageEntity?>()
-        coEvery { dao.getMainMessageById(1L, 7L) } coAnswers { gate.await() }
+        coEvery { dao.getMainAdoptedSearchMessageById(1L, 7L) } coAnswers { gate.await() }
         viewModel.openHit(1L, "main", 7L); advanceUntilIdle()
         viewModel.closeHit(); gate.complete(message(7L, "late")); advanceUntilIdle()
         assertNull(viewModel.state.value.selectedMessageId)
         assertTrue(viewModel.state.value.contextMessages.isEmpty())
     }
 
+    @Test fun adoptedSwipeChangeBeforeReaderPublishDoesNotOpenStaleVersion() = runTest(dispatcher) {
+        val old = message(7L, "old adopted version").copy(swipeGroupId = "g")
+        val presentationGate = CompletableDeferred<Unit>()
+        var lookupCount = 0
+        coEvery { dao.getMainAdoptedSearchMessageById(1L, 7L) } coAnswers {
+            lookupCount++
+            if (lookupCount == 1) old else null
+        }
+        coEvery { presentation.load(1L, listOf(old)) } coAnswers {
+            presentationGate.await()
+            SearchPresentation()
+        }
+
+        viewModel.openHit(1L, "main", 7L)
+        runCurrent()
+        presentationGate.complete(Unit)
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.contextMessages.isEmpty())
+        assertEquals("该消息已删除或不在当前故事线", viewModel.state.value.error)
+        assertTrue(lookupCount >= 2)
+    }
+
     @Test fun missingTargetProducesRecoverableError() = runTest(dispatcher) {
-        coEvery { dao.getMainMessageById(1L, 99L) } returns null
+        coEvery { dao.getMainAdoptedSearchMessageById(1L, 99L) } returns null
         viewModel.openHit(1L, "main", 99L); advanceUntilIdle()
         assertEquals("该消息已删除或不在当前故事线", viewModel.state.value.error)
         assertFalse(viewModel.state.value.searching)
     }
 
     @Test fun readerStartsWithSmallContextAndLoadsRemainingWindowOnDemand() = runTest(dispatcher) {
-        coEvery { dao.getMainMessageById(1L, 10L) } returns message(10L, "target")
-        coEvery { dao.getMainMessagesBefore(1L, 10L, 2) } returns listOf(message(9L, "before 9"), message(8L, "before 8"))
-        coEvery { dao.getMainMessagesAfter(1L, 10L, 2) } returns listOf(message(11L, "after 11"), message(12L, "after 12"))
-        coEvery { dao.getMainMessagesBefore(1L, 8L, 6) } returns
+        coEvery { dao.getMainAdoptedSearchMessageById(1L, 10L) } returns message(10L, "target")
+        coEvery { dao.getMainAdoptedSearchMessagesBefore(1L, 10L, 2) } returns listOf(message(9L, "before 9"), message(8L, "before 8"))
+        coEvery { dao.getMainAdoptedSearchMessagesAfter(1L, 10L, 2) } returns listOf(message(11L, "after 11"), message(12L, "after 12"))
+        coEvery { dao.getMainAdoptedSearchMessagesBefore(1L, 8L, 6) } returns
             (2L..7L).reversed().map { message(it, "before $it") }
 
         viewModel.openHit(1L, "main", 10L); advanceUntilIdle()
@@ -410,16 +463,16 @@ class SearchViewModelTest {
     }
 
     @Test fun contextFailureKeepsTargetAndRetryAddsOriginalText() = runTest(dispatcher) {
-        coEvery { dao.getMainMessageById(1L, 10L) } returns message(10L, "target body")
-        coEvery { dao.getMainMessagesBefore(1L, 10L, 2) } throws IllegalStateException("offline")
-        coEvery { dao.getMainMessagesAfter(1L, 10L, 2) } returns emptyList()
+        coEvery { dao.getMainAdoptedSearchMessageById(1L, 10L) } returns message(10L, "target body")
+        coEvery { dao.getMainAdoptedSearchMessagesBefore(1L, 10L, 2) } throws IllegalStateException("offline")
+        coEvery { dao.getMainAdoptedSearchMessagesAfter(1L, 10L, 2) } returns emptyList()
 
         viewModel.openHit(1L, "main", 10L); advanceUntilIdle()
         assertEquals(listOf(10L), viewModel.state.value.contextMessages.map { it.id })
         assertTrue(viewModel.state.value.contextFailedBefore)
         assertEquals("无法加载上文，请重试", viewModel.state.value.error)
 
-        coEvery { dao.getMainMessagesBefore(1L, 10L, 2) } returns listOf(message(9L, "before 9"), message(8L, "before 8"))
+        coEvery { dao.getMainAdoptedSearchMessagesBefore(1L, 10L, 2) } returns listOf(message(9L, "before 9"), message(8L, "before 8"))
         viewModel.retryContext(1L, "main"); advanceUntilIdle()
         assertEquals(listOf(8L, 9L, 10L), viewModel.state.value.contextMessages.map { it.id })
         assertFalse(viewModel.state.value.contextFailedBefore)
@@ -438,12 +491,12 @@ class SearchViewModelTest {
             }
             SearchPresentation()
         }
-        val vm = SearchViewModel(application, dao, indexManager, visibilityManager,
+        val vm = SearchViewModel(application, dao, branchDao, indexManager, visibilityManager,
             presentation, SearchResultFormatter(dispatcher))
         vm.initialize(1L, "main")
-        coEvery { dao.getMainMessageById(1L, 10L) } returns message(10L, "target")
-        coEvery { dao.getMainMessagesBefore(1L, 10L, 2) } returns listOf(message(9L, "before 9"), message(8L, "before 8"))
-        coEvery { dao.getMainMessagesAfter(1L, 10L, 2) } returns listOf(message(11L, "after 11"), message(12L, "after 12"))
+        coEvery { dao.getMainAdoptedSearchMessageById(1L, 10L) } returns message(10L, "target")
+        coEvery { dao.getMainAdoptedSearchMessagesBefore(1L, 10L, 2) } returns listOf(message(9L, "before 9"), message(8L, "before 8"))
+        coEvery { dao.getMainAdoptedSearchMessagesAfter(1L, 10L, 2) } returns listOf(message(11L, "after 11"), message(12L, "after 12"))
 
         vm.openHit(1L, "main", 10L)
         runCurrent()

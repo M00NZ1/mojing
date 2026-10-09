@@ -226,8 +226,23 @@ internal fun NavGraph(
             CharacterListScreen(
                 navController = navController,
                 onEdit = { navController.navigateSingleTop(Routes.characterEdit(it)) },
+                onDetail = { navController.navigateSingleTop(Routes.characterDetail(it)) },
                 onChat = { navController.navigateSingleTop(Routes.chat(it)) },
                 onSettingsClick = { navController.navigateToModelSettings() }
+            )
+        }
+
+        composable(
+            Routes.CHARACTER_DETAIL,
+            arguments = listOf(navArgument("characterId") { type = NavType.LongType }),
+        ) { entry ->
+            val id = validatedRouteId(entry.arguments?.getLong("characterId"))
+            if (id == null) {
+                InvalidRouteRedirect(navController, Routes.CHARACTER_LIST)
+            } else com.mojing.app.ui.character.CharacterDetailScreen(
+                characterId = id, onBack = { navController.popBackStack() },
+                onEdit = { navController.navigateSingleTop(Routes.characterEdit(it)) },
+                onChat = { navController.navigateSingleTop(Routes.chat(it)) },
             )
         }
 
@@ -250,8 +265,19 @@ internal fun NavGraph(
             )
         }
 
-        composable(Routes.ENCYCLOPEDIA_LIST) {
+        composable(Routes.ENCYCLOPEDIA_LIST) { entry ->
+            val libraryViewModel: com.mojing.app.ui.encyclopedia.EncyclopediaListViewModel =
+                androidx.hilt.navigation.compose.hiltViewModel()
+            val worldSaved by entry.savedStateHandle.getStateFlow("world_library_saved", false)
+                .collectAsStateWithLifecycle()
+            androidx.compose.runtime.LaunchedEffect(worldSaved) {
+                if (worldSaved) {
+                    libraryViewModel.refreshCurrentPage()
+                    entry.savedStateHandle["world_library_saved"] = false
+                }
+            }
             EncyclopediaScreen(
+                viewModel = libraryViewModel,
                 navController = navController,
                 onDetail = { navController.navigateSingleTop(Routes.encyclopediaDetail(it)) },
                 onWorldSettings = { navController.navigateSingleTop(Routes.worldSettings(it)) },
@@ -262,7 +288,8 @@ internal fun NavGraph(
 
         composable(
             Routes.ENCYCLOPEDIA_DETAIL,
-            arguments = listOf(navArgument("encId") { type = NavType.LongType })
+            arguments = listOf(navArgument("encId") { type = NavType.LongType },
+                navArgument("relationEntryId") { type = NavType.LongType; defaultValue = 0L })
         ) { entry ->
             val encId = validatedRouteId(
                 entry.arguments?.takeIf { it.containsKey("encId") }?.getLong("encId"),
@@ -273,7 +300,10 @@ internal fun NavGraph(
             }
             EncyclopediaDetailScreen(
                 encyclopediaId = encId,
+                relationEntryId = entry.arguments?.getLong("relationEntryId")?.takeIf { it > 0L } ?: 0L,
+                onWorldSettings = { navController.navigateSingleTop(Routes.worldSettings(encId)) },
                 onEditEntry = { entryId -> navController.navigateSingleTop(Routes.entryEdit(encId, entryId)) },
+                onViewSource = { entryId -> navController.navigateSingleTop(Routes.entrySourcePreview(encId, entryId)) },
                 onBack = { navController.popBackStack() },
                 onOpenGenerationTasks = { navController.navigateSingleTop(Routes.GENERATION_TASKS) },
                 onOpenSettings = { navController.navigateToModelSettings() },
@@ -284,7 +314,8 @@ internal fun NavGraph(
             Routes.ENTRY_EDIT,
             arguments = listOf(
                 navArgument("encId") { type = NavType.LongType },
-                navArgument("entryId") { type = NavType.LongType }
+                navArgument("entryId") { type = NavType.LongType },
+                navArgument("showSource") { type = NavType.BoolType; defaultValue = false }
             )
         ) { entry ->
             val encId = validatedRouteId(
@@ -301,6 +332,14 @@ internal fun NavGraph(
             EntryEditScreen(
                 encyclopediaId = encId,
                 entryId = entryId,
+                openSourceOnEntry = entry.arguments?.getBoolean("showSource") == true,
+                onOpenRelations = { id -> navController.navigateSingleTop(Routes.entryRelations(encId, id)) },
+                onOpenRelatedEntry = { id ->
+                    // Different IDs need distinct editor/VM owners so Back restores the original draft.
+                    if (navController.currentBackStackEntry?.arguments?.getLong("entryId") != id) {
+                        navController.navigate(Routes.entryEdit(encId, id))
+                    }
+                },
                 onOpenSource = { source -> navController.navigateSingleTop(Routes.chatSource(source.sessionId, source.messageId, source.branchId)) },
                 onOpenSavedEntry = { savedId -> navController.navigate(Routes.entryEdit(encId, savedId)) {
                     popUpTo(entry.destination.id) { inclusive = true }
@@ -349,7 +388,12 @@ internal fun NavGraph(
         ) { entry ->
             val worldId = validatedRouteId(entry.arguments?.getLong("worldId"))
             if (worldId == null) InvalidRouteRedirect(navController, Routes.ENCYCLOPEDIA_LIST)
-            else WorldSettingsScreen(worldId = worldId, onBack = { navController.popBackStack() })
+            else WorldSettingsScreen(worldId = worldId, onBack = { navController.popBackStack() },
+                onSaved = {
+                    // A saved world's name/order changed; invalidate only the existing library page.
+                    runCatching { navController.getBackStackEntry(Routes.ENCYCLOPEDIA_LIST) }
+                        .getOrNull()?.savedStateHandle?.set("world_library_saved", true)
+                })
         }
 
         composable("usage?notice={notice}", arguments = listOf(

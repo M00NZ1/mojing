@@ -84,7 +84,7 @@ object CharacterEncyclopediaSync {
                 title = character.name.trim().ifBlank { "未命名角色" },
                 entryType = "character",
                 summary = summary,
-                content = persona.take(8000),
+                content = persona,
                 metaJson = metaRoot.toString(),
                 updatedAt = now,
             )
@@ -94,7 +94,7 @@ object CharacterEncyclopediaSync {
                 title = character.name.trim().ifBlank { "未命名角色" },
                 entryType = "character",
                 summary = summary,
-                content = persona.take(8000),
+                content = persona,
                 metaJson = metaRoot.toString(),
                 createdAt = now,
                 updatedAt = now,

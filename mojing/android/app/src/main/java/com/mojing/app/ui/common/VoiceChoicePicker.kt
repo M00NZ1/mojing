@@ -296,7 +296,7 @@ fun VoiceChoicePicker(
             }
             if (allowInherit) {
                 val inheritSelected = choice.engineId == "inherit"
-                Surface(
+                Surface(shape = MaterialTheme.shapes.small,
                     enabled = !saving,
                     onClick = { stopPreview(); onSelected(VoiceChoice("inherit", "")) },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -419,7 +419,7 @@ fun VoiceChoicePicker(
                         }
                         items(displayVoices, key = { "${selectedEngine}:${it.id}" }) { voice ->
                             val selected = selectedEngine == choice.engineId && voice.id == choice.voiceId
-                            Surface(
+                            Surface(shape = MaterialTheme.shapes.small,
                                 enabled = !saving,
                                 onClick = { stopPreview(); onSelected(VoiceChoice(selectedEngine, voice.id)) },
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),

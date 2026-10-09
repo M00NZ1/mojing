@@ -10,6 +10,7 @@ import com.mojing.app.data.local.dao.CostRecordDao
 import com.mojing.app.data.local.dao.EncyclopediaDao
 import com.mojing.app.data.local.dao.WorldTemplateDao
 import com.mojing.app.data.remote.BackendSystemProbeApi
+import com.mojing.app.domain.config.ApiKeyResolver
 import dagger.hilt.android.lifecycle.HiltViewModel
 import com.google.gson.JsonObject
 import kotlinx.coroutines.CancellationException
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.util.UUID
 import javax.inject.Inject
 
 internal data class CreationDefaultOption(
@@ -42,6 +44,19 @@ data class CreationDefaultLabels(
     val encyclopediaMissing: Boolean = false,
     val loading: Boolean = false,
     val error: String? = null,
+)
+
+enum class ReadingPreferenceKind { DENSITY, FONT, NARRATOR_ITALIC }
+
+data class ReadingPreferenceSaveRequest(
+    val kind: ReadingPreferenceKind,
+    val stringValue: String? = null,
+    val booleanValue: Boolean? = null,
+)
+
+data class ReadingPreferencesSaveNotice(
+    val token: String,
+    val request: ReadingPreferenceSaveRequest,
 )
 
 @HiltViewModel
@@ -76,8 +91,20 @@ class SettingsViewModel @Inject constructor(
     val chatFont = uiPreferencesRepository.chatFont.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "system")
     val narratorItalic = uiPreferencesRepository.narratorItalic.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
-    fun setChatFont(font: String) { viewModelScope.launch { uiPreferencesRepository.setChatFont(font) } }
-    fun setNarratorItalic(enabled: Boolean) { viewModelScope.launch { uiPreferencesRepository.setNarratorItalic(enabled) } }
+    private val _readingPreferencesSaving = MutableStateFlow(false)
+    val readingPreferencesSaving: StateFlow<Boolean> = _readingPreferencesSaving.asStateFlow()
+    private val _readingPreferencesSaveNotice = MutableStateFlow<ReadingPreferencesSaveNotice?>(null)
+    val readingPreferencesSaveNotice: StateFlow<ReadingPreferencesSaveNotice?> = _readingPreferencesSaveNotice.asStateFlow()
+    private var readingPreferencesSaveSerial = 0L
+    private var readingPreferencesSaveJob: Job? = null
+
+    fun setChatFont(font: String) {
+        saveReadingPreference(ReadingPreferenceSaveRequest(ReadingPreferenceKind.FONT, stringValue = font))
+    }
+
+    fun setNarratorItalic(enabled: Boolean) {
+        saveReadingPreference(ReadingPreferenceSaveRequest(ReadingPreferenceKind.NARRATOR_ITALIC, booleanValue = enabled))
+    }
 
     fun updateApiKey(value: String) { _apiKey.value = value; secureStorage.publicApiKey = value }
     fun updateBaseUrl(value: String) { _baseUrl.value = value; secureStorage.publicBaseUrl = value }
@@ -101,6 +128,20 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    suspend fun deletePlatform(platformId: String): List<com.mojing.app.data.ModelPlatform> {
+        val wasActive = platformId == _activePlatformId.value
+        val remaining = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            secureStorage.deleteModelPlatform(platformId)
+        }
+        if (wasActive) {
+            _apiKey.value = ""
+            _baseUrl.value = ""
+            _model.value = ""
+            _activePlatformId.value = ""
+        }
+        return remaining
+    }
+
     suspend fun fetchPlatformModels(base: String, key: String) = systemProbeApi.listModels(base, key)
 
     fun setThemeMode(mode: String) {
@@ -116,7 +157,55 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun setChatDensity(mode: String) {
-        viewModelScope.launch { uiPreferencesRepository.setChatDensity(mode) }
+        saveReadingPreference(ReadingPreferenceSaveRequest(ReadingPreferenceKind.DENSITY, stringValue = mode))
+    }
+
+    fun retryReadingPreferences(token: String) {
+        val notice = _readingPreferencesSaveNotice.value ?: return
+        if (notice.token != token || _readingPreferencesSaving.value) return
+        saveReadingPreference(notice.request)
+    }
+
+    fun dismissReadingPreferencesNotice(token: String) {
+        if (_readingPreferencesSaveNotice.value?.token == token) {
+            _readingPreferencesSaveNotice.value = null
+        }
+    }
+
+    fun cancelReadingPreferencesSave() {
+        if (!_readingPreferencesSaving.value) return
+        readingPreferencesSaveSerial++
+        readingPreferencesSaveJob?.cancel()
+        readingPreferencesSaveJob = null
+        _readingPreferencesSaving.value = false
+        _readingPreferencesSaveNotice.value = null
+    }
+
+    private fun saveReadingPreference(request: ReadingPreferenceSaveRequest) {
+        if (_readingPreferencesSaving.value) return
+        val serial = ++readingPreferencesSaveSerial
+        _readingPreferencesSaveNotice.value = null
+        _readingPreferencesSaving.value = true
+        readingPreferencesSaveJob = viewModelScope.launch {
+            try {
+                when (request.kind) {
+                    ReadingPreferenceKind.DENSITY -> uiPreferencesRepository.setChatDensity(request.stringValue.orEmpty())
+                    ReadingPreferenceKind.FONT -> uiPreferencesRepository.setChatFont(request.stringValue.orEmpty())
+                    ReadingPreferenceKind.NARRATOR_ITALIC -> uiPreferencesRepository.setNarratorItalic(request.booleanValue == true)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (serial == readingPreferencesSaveSerial) {
+                    _readingPreferencesSaveNotice.value = ReadingPreferencesSaveNotice(UUID.randomUUID().toString(), request)
+                }
+            } finally {
+                if (serial == readingPreferencesSaveSerial) {
+                    readingPreferencesSaveJob = null
+                    _readingPreferencesSaving.value = false
+                }
+            }
+        }
     }
 
     // User Profile
@@ -173,9 +262,18 @@ class SettingsViewModel @Inject constructor(
     private val _defaultTopP = MutableStateFlow(secureStorage.defaultTopP)
     val defaultTopP: StateFlow<String> = _defaultTopP.asStateFlow()
 
-    fun updateDefaultTemperature(value: String) { _defaultTemperature.value = value; secureStorage.defaultTemperature = value }
-    fun updateDefaultMaxTokens(value: String) { _defaultMaxTokens.value = value; secureStorage.defaultMaxTokens = value }
-    fun updateDefaultTopP(value: String) { _defaultTopP.value = value; secureStorage.defaultTopP = value }
+    fun updateDefaultTemperature(value: String) {
+        _defaultTemperature.value = value
+        if (value.trim().toFloatOrNull()?.let { it in 0f..2f } == true) secureStorage.defaultTemperature = value
+    }
+    fun updateDefaultMaxTokens(value: String) {
+        _defaultMaxTokens.value = value
+        if (value.trim().toIntOrNull()?.let { it in 1..200_000 } == true) secureStorage.defaultMaxTokens = value
+    }
+    fun updateDefaultTopP(value: String) {
+        _defaultTopP.value = value
+        if (value.trim().toFloatOrNull()?.let { it in 0f..1f } == true) secureStorage.defaultTopP = value
+    }
 
     private val _defaultWorldTemplateId = MutableStateFlow(secureStorage.defaultWorldTemplateId)
     val defaultWorldTemplateId: StateFlow<String> = _defaultWorldTemplateId.asStateFlow()
@@ -437,11 +535,10 @@ class SettingsViewModel @Inject constructor(
 
     fun runProbeImage(onMessage: (String) -> Unit) {
         viewModelScope.launch {
-            val base = _imageBaseUrl.value.trim()
-            val imageKeyOnly = _imageApiKey.value.trim()
-            val dialogKey = _apiKey.value.trim()
-            val key = imageKeyOnly.ifBlank { dialogKey }
-            val model = _imageModel.value.trim().ifBlank { "dall-e-3" }
+            val resolved = ApiKeyResolver.resolveImageGenPrimaryResolved(null, null, secureStorage)
+            val base = resolved.baseUrlRaw.trim()
+            val key = resolved.apiKey.trim()
+            val model = resolved.model.trim().ifBlank { "dall-e-3" }
             if (base.isBlank()) {
                 onMessage(ProbeUiMessages.missingUrl("image"))
                 return@launch
@@ -459,7 +556,7 @@ class SettingsViewModel @Inject constructor(
                 onSuccess = { done ->
                     val ok = done.get("ok")?.asBoolean == true
                     val err = done.get("error")?.asString?.trim().orEmpty()
-                    onMessage(ProbeUiMessages.formatProbeDone("image", ok, err, done, _imageBaseUrl.value))
+                    onMessage(ProbeUiMessages.formatProbeDone("image", ok, err, done, base))
                 },
                 onFailure = { onMessage(it.message ?: "请求失败") },
             )

@@ -25,12 +25,16 @@ import androidx.compose.ui.text.input.*
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 
 @Composable
 private fun fieldColors() = OutlinedTextFieldDefaults.colors(
     focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
     unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
     disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+    focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+    unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+    disabledPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
     focusedBorderColor = MaterialTheme.colorScheme.primary,
     unfocusedBorderColor = MaterialTheme.colorScheme.outline,
     disabledBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
@@ -54,14 +58,15 @@ fun MoJingTextField(
     singleLine: Boolean = false, maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE, minLines: Int = 1,
     interactionSource: MutableInteractionSource? = null,
     shape: Shape = MaterialTheme.shapes.small, colors: TextFieldColors = fieldColors(),
+    inputModifier: Modifier = Modifier,
 ) {
     val source = interactionSource ?: remember { MutableInteractionSource() }
     FieldFrame(modifier, label, enabled, isError) {
     Box((if (label == null) modifier else Modifier.fillMaxWidth()).heightIn(min = 48.dp).padding(vertical = 2.dp),
-        contentAlignment = Alignment.CenterStart) {
+        contentAlignment = Alignment.TopStart, propagateMinConstraints = true) {
         BasicTextField(
             value = value, onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth().heightIn(min = if (minLines > 1) 112.dp else 44.dp),
+            modifier = inputModifier.fillMaxWidth().heightIn(min = if (minLines > 1) 112.dp else 44.dp),
             enabled = enabled, readOnly = readOnly,
             textStyle = textStyle.copy(color = if (textStyle.color != Color.Unspecified) textStyle.color
                 else if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant),
@@ -72,7 +77,9 @@ fun MoJingTextField(
                 OutlinedTextFieldDefaults.DecorationBox(
                     value = value, innerTextField = inner, enabled = enabled, singleLine = singleLine,
                     visualTransformation = visualTransformation, interactionSource = source, isError = isError,
-                    label = null, placeholder = placeholder, leadingIcon = leadingIcon, trailingIcon = trailingIcon,
+                    label = null, placeholder = placeholder ?: label?.let { fallback ->
+                        { Box(Modifier.clearAndSetSemantics {}) { fallback() } }
+                    }, leadingIcon = leadingIcon, trailingIcon = trailingIcon,
                     prefix = prefix, suffix = suffix, supportingText = supportingText, colors = colors,
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                     container = { OutlinedTextFieldDefaults.Container(enabled = enabled, isError = isError,
@@ -101,14 +108,15 @@ fun MoJingTextField(
     singleLine: Boolean = false, maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE, minLines: Int = 1,
     interactionSource: MutableInteractionSource? = null,
     shape: Shape = MaterialTheme.shapes.small, colors: TextFieldColors = fieldColors(),
+    inputModifier: Modifier = Modifier,
 ) {
     val source = interactionSource ?: remember { MutableInteractionSource() }
     FieldFrame(modifier, label, enabled, isError) {
     Box((if (label == null) modifier else Modifier.fillMaxWidth()).heightIn(min = 48.dp).padding(vertical = 2.dp),
-        contentAlignment = Alignment.CenterStart) {
+        contentAlignment = Alignment.TopStart, propagateMinConstraints = true) {
         BasicTextField(
             value = value, onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth().heightIn(min = if (minLines > 1) 112.dp else 44.dp),
+            modifier = inputModifier.fillMaxWidth().heightIn(min = if (minLines > 1) 112.dp else 44.dp),
             enabled = enabled, readOnly = readOnly,
             textStyle = textStyle.copy(color = if (textStyle.color != Color.Unspecified) textStyle.color
                 else if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant),
@@ -119,7 +127,9 @@ fun MoJingTextField(
                 OutlinedTextFieldDefaults.DecorationBox(
                     value = value.text, innerTextField = inner, enabled = enabled, singleLine = singleLine,
                     visualTransformation = visualTransformation, interactionSource = source, isError = isError,
-                    label = null, placeholder = placeholder, leadingIcon = leadingIcon, trailingIcon = trailingIcon,
+                    label = null, placeholder = placeholder ?: label?.let { fallback ->
+                        { Box(Modifier.clearAndSetSemantics {}) { fallback() } }
+                    }, leadingIcon = leadingIcon, trailingIcon = trailingIcon,
                     prefix = prefix, suffix = suffix, supportingText = supportingText, colors = colors,
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                     container = { OutlinedTextFieldDefaults.Container(enabled = enabled, isError = isError,

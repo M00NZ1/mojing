@@ -3,6 +3,7 @@ package com.mojing.app.domain.engine
 import com.mojing.app.data.remote.ChatMessage
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -64,6 +65,8 @@ class BatchGenerator @Inject constructor(
             )
             val json = extractJsonArray(result)
             Gson().fromJson(json, object : TypeToken<List<Map<String, Any>>>() {}.type) ?: emptyList()
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
             emptyList()
         }
@@ -109,6 +112,8 @@ class BatchGenerator @Inject constructor(
             )
             val json = extractJsonArray(result)
             Gson().fromJson(json, object : TypeToken<List<Map<String, Any>>>() {}.type) ?: emptyList()
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
             emptyList()
         }

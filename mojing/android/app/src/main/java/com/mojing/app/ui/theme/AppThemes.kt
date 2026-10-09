@@ -3,6 +3,7 @@ package com.mojing.app.ui.theme
 /** 应用内可选主题 id（与 [SecureStorage.themeMode] 持久化一致）。 */
 object AppThemes {
     val ORDER: List<String> = listOf(
+        "system",
         "dark",
         "light",
         "midnight",
@@ -17,7 +18,8 @@ object AppThemes {
 
     fun normalize(id: String): String = if (isKnown(id)) id else "dark"
 
-    fun label(id: String): String = when (normalize(id)) {
+    fun label(id: String): String = when (id) {
+        "system" -> "跟随系统"
         "dark" -> "深色"
         "light" -> "浅色"
         "midnight" -> "午夜"

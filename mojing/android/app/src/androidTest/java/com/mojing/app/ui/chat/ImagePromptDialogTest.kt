@@ -23,7 +23,7 @@ class ImagePromptDialogTest {
         rule.onNodeWithText("生成并加入对话").assertIsDisplayed().performClick()
         rule.runOnIdle { busy = true }
         rule.onNodeWithText("正在生成，请稍候").assertIsNotEnabled()
-        rule.onNodeWithText("返回对话").assertIsDisplayed().performClick()
+        rule.onNodeWithContentDescription("关闭生成配图").assertIsDisplayed().performClick()
         rule.runOnIdle { assertEquals(1, generates); assertEquals(1, dismisses) }
     }
 }

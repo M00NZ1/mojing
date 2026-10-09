@@ -11,9 +11,18 @@ import com.mojing.app.data.local.entity.MessageBookmarkEntity
 import com.mojing.app.data.local.entity.SessionMemoryCorrectionEntity
 
 internal const val EVENT_NODE_PAGE_SIZE = 24
+internal const val EVENT_NODE_WINDOW_SIZE = EVENT_NODE_PAGE_SIZE * 3
 internal const val MEMORY_CORRECTION_PAGE_SIZE = 16
 
 data class SavedImageNotice(val messageId: Long, val branchId: String)
+
+data class ImageRetryNotice(val token: String, val message: String)
+
+data class SpeechRetryNotice(
+    val token: String,
+    val snapshotToken: String,
+    val message: String,
+)
 
 /** A reply retained after generation stopped, pending an explicit user decision. */
 data class ReplyRecoveryNotice(
@@ -38,6 +47,9 @@ sealed class MessageAction {
     data class Quote(val message: MessageEntity) : MessageAction()
     data class Copy(val message: MessageEntity) : MessageAction()
     data class SaveImages(val message: MessageEntity) : MessageAction()
+    data class RetryAutoImage(val message: MessageEntity) : MessageAction()
+    data class RetryAutoVoice(val message: MessageEntity) : MessageAction()
+    data class PlayVoiceAttachments(val message: MessageEntity) : MessageAction()
     data class Edit(val message: MessageEntity) : MessageAction()
     data class ContinueReply(val message: MessageEntity) : MessageAction()
     data class Regenerate(val message: MessageEntity) : MessageAction()
@@ -78,6 +90,7 @@ object ChatContract {
         val hasOlderMessages: Boolean = false,
         val hasNewerMessages: Boolean = false,
         val isLoadingHistory: Boolean = false,
+        val historyWindowRestored: Boolean = false,
         val focusedMessageId: Long? = null,
         val messageAttachments: Map<Long, List<MessageAttachmentEntity>> = emptyMap(),
         val streamingText: String = "",
@@ -92,6 +105,7 @@ object ChatContract {
         val voiceSelectionSaving: Boolean = false,
         val voiceSelectionError: String? = null,
         val speechVoiceRequestLabel: String = "",
+        val speechRetryNotice: SpeechRetryNotice? = null,
         val novelMetadataSaving: Boolean = false,
         val novelMetadataError: String? = null,
         val memoryCompactionChunk: Int? = null,
@@ -106,15 +120,25 @@ object ChatContract {
         val currentChoices: List<String> = emptyList(),
         val isDrawerOpen: Boolean = false,
         val error: String? = null,
+        val contextBudgetError: String? = null,
         val inputText: String = "",
         val narratorGuidance: String = "",
         val imagePrompt: String = "",
+        val imageRetryNotice: ImageRetryNotice? = null,
         val savedImageNotice: SavedImageNotice? = null,
         val pendingLocalImagePaths: List<String> = emptyList(),
         val isReady: Boolean = false,
         /** 首次读取本机会话失败；与普通聊天操作错误分离，以便页面持续提供重试。 */
         val initialLoadError: String? = null,
         val world: SessionWorldEntity? = null,
+        val worldCredentialsSaving: Boolean = false,
+        val worldSettingSaving: Boolean = false,
+        val participantAdding: Boolean = false,
+        val participantAddError: String? = null,
+        val participantAddedId: Long? = null,
+        val participantTalkativenessSaving: Map<Long, Float> = emptyMap(),
+        val participantMuteSaving: Set<Long> = emptySet(),
+        val participantRemoving: Set<Long> = emptySet(),
         val encyclopediaFoundation: String = "",
         val encyclopediaFoundationLoaded: Boolean = false,
         val encyclopediaFoundationLoading: Boolean = false,
@@ -123,11 +147,17 @@ object ChatContract {
         val contextMemoryLoaded: Boolean = false,
         val contextMemoryLoading: Boolean = false,
         val contextMemoryLoadError: String? = null,
+        val contextMemoryClearError: String? = null,
         val contextMemoryStatus: ContextMemoryStatus = ContextMemoryStatus.IDLE,
         val memoryOperationRunning: Boolean = false,
+        val memorySummaryEditSavedId: Long? = null,
+        val memorySummaryEditSavedText: String? = null,
         val manualCompactionRunning: Boolean = false,
         val manualCompactionChunk: Int? = null,
         val memorySegments: List<SessionMemorySegmentEntity> = emptyList(),
+        val memorySegmentsWindowSize: Int = 16,
+        val memorySegmentsBeforeEndId: Long? = null,
+        val memorySegmentsBeforeId: Long? = null,
         val memorySegmentsLoaded: Boolean = false,
         val memorySegmentsLoading: Boolean = false,
         val memorySegmentsHasMore: Boolean = false,
@@ -141,30 +171,49 @@ object ChatContract {
         val memoryCorrectionsLoadError: String? = null,
         val lastMemoryCorrectionPromptTrace: MemoryCorrectionPromptTrace? = null,
         val eventNodes: List<SessionEventNodeEntity> = emptyList(),
+        val eventQuery: String = "",
+        val eventResolvedFilter: Boolean? = null,
+        val eventNodesBeforeCreatedAt: Long? = null,
+        val eventNodesBeforeId: Long? = null,
         val eventNodesLoaded: Boolean = false,
         /** User-expanded capacity survives optimistic deletion until the page is refilled. */
         val eventNodesWindowSize: Int = EVENT_NODE_PAGE_SIZE,
         val eventNodesHasMore: Boolean = false,
         val eventNodesLoadingMore: Boolean = false,
         val eventNodesLoadError: String? = null,
+        val eventNodesRefreshFailed: Boolean = false,
         val eventBusyIds: Set<Long> = emptySet(),
         val eventActionErrors: Map<Long, String> = emptyMap(),
         val characterNames: Map<Long, String> = emptyMap(),
         val characterAvatars: Map<Long, String> = emptyMap(),
+        val characterSummaries: Map<Long, String> = emptyMap(),
         /** 竖版封面本地路径；对话气泡只显示头像，点此路径用于「点头像看封面」 */
         val characterCardImages: Map<Long, String> = emptyMap(),
+        val characterStatePanel: CharacterStatePanel? = null,
         val characterColors: Map<Long, String> = emptyMap(),
         val bookmarks: List<MessageBookmarkEntity> = emptyList(),
+        val bookmarkQuery: String = "",
+        val bookmarksWindowSize: Int = 40,
+        val bookmarksBeforeCreatedAt: Long? = null,
+        val bookmarksBeforeId: Long? = null,
         val bookmarksLoaded: Boolean = false,
         val bookmarksHasMore: Boolean = false,
         val bookmarksLoadingMore: Boolean = false,
         val bookmarksLoadError: String? = null,
+        val bookmarksRefreshFailed: Boolean = false,
         val bookmarkLocatingId: Long? = null,
         val bookmarkBusyIds: Set<Long> = emptySet(),
         val bookmarkedMessageIds: Set<Long> = emptySet(),
         val excludedContextKeys: Set<String> = emptySet(),
         val bookmarkPreviews: Map<Long, String> = emptyMap(),
+        val bookmarkNoteDrafts: Map<Long, String> = emptyMap(),
+        val bookmarkNoteErrors: Map<Long, String> = emptyMap(),
+        val bookmarkNoteSavingIds: Set<Long> = emptySet(),
         val bookmarkReadOnlyMessage: MessageEntity? = null,
+        val bookmarkReadOnlyId: Long? = null,
+        val bookmarkReadOnlyBranchId: String? = null,
+        val bookmarkReadOnlyLoading: Boolean = false,
+        val bookmarkReadOnlyError: String? = null,
         /** 当前用户在加密偏好中的展示信息（与设置「个人资料」一致） */
         val userDisplayName: String = "",
         val userAvatarImagePath: String = "",
@@ -173,6 +222,8 @@ object ChatContract {
         val allowSessionThinkMax: Boolean = false,
         /** 当前会话是否启用思考/Max（Room） */
         val sessionThinkMaxEnabled: Boolean = false,
+        val sessionThinkMaxSaving: Boolean = false,
+        val sessionThinkMaxSaveError: String? = null,
         /** 当前对话首位角色是否在资料中固定开启思考/Max（开启后无需再开本会话开关） */
         val characterForcesThinkMax: Boolean = false,
         /** 与 Web `data-chat-density` 对齐：`comfortable` | `compact` | `reader` */

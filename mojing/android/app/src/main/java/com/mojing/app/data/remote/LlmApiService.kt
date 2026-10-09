@@ -29,6 +29,34 @@ private val JSON = "application/json; charset=utf-8".toMediaType()
 
 @Singleton
 class LlmApiService @Inject constructor() {
+    companion object {
+        fun normalizeOpenAiBase(baseUrl: String): String {
+            val trimmed = baseUrl.trim()
+            if (trimmed.isBlank()) return ""
+            val normalized = trimmed.trimEnd('/')
+            return when {
+                normalized.endsWith("/v1", ignoreCase = true) -> normalized
+                normalized.endsWith("/v2", ignoreCase = true) -> normalized
+                normalized.endsWith("/v3", ignoreCase = true) -> normalized
+                normalized.contains("/v1/", ignoreCase = true) -> normalized.substringBefore("/v1/") + "/v1"
+                normalized.contains("/v2/", ignoreCase = true) -> normalized.substringBefore("/v2/") + "/v2"
+                normalized.contains("/v3/", ignoreCase = true) -> normalized.substringBefore("/v3/") + "/v3"
+                else -> normalized
+            }
+        }
+
+        /** Same final endpoint used by requests and saved-platform identity matching. */
+        fun openAiChatCompletionUrl(baseUrl: String): String {
+            val root = normalizeOpenAiBase(baseUrl).trimEnd('/')
+            return when {
+                root.endsWith("/v1", ignoreCase = true) -> "$root/chat/completions"
+                root.endsWith("/v2", ignoreCase = true) -> "$root/chat/completions"
+                root.endsWith("/v3", ignoreCase = true) -> "$root/chat/completions"
+                else -> "$root/v1/chat/completions"
+            }
+        }
+    }
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(5, TimeUnit.MINUTES)
@@ -79,20 +107,7 @@ class LlmApiService @Inject constructor() {
         names.toList()
     }
 
-    fun normalizeOpenAiCompatibleBase(baseUrl: String): String {
-        val trimmed = baseUrl.trim()
-        if (trimmed.isBlank()) return ""
-        val normalized = trimmed.trimEnd('/')
-        return when {
-            normalized.endsWith("/v1", ignoreCase = true) -> normalized
-            normalized.endsWith("/v2", ignoreCase = true) -> normalized
-            normalized.endsWith("/v3", ignoreCase = true) -> normalized
-            normalized.contains("/v1/", ignoreCase = true) -> normalized.substringBefore("/v1/") + "/v1"
-            normalized.contains("/v2/", ignoreCase = true) -> normalized.substringBefore("/v2/") + "/v2"
-            normalized.contains("/v3/", ignoreCase = true) -> normalized.substringBefore("/v3/") + "/v3"
-            else -> normalized
-        }
-    }
+    fun normalizeOpenAiCompatibleBase(baseUrl: String): String = normalizeOpenAiBase(baseUrl)
 
     suspend fun chatCompletion(
         apiKey: String,
@@ -287,13 +302,7 @@ class LlmApiService @Inject constructor() {
         baseUrl: String,
         request: ChatRequest,
     ): Request {
-        val root = normalizeOpenAiCompatibleBase(baseUrl).trimEnd('/')
-        val url = when {
-            root.endsWith("/v1", ignoreCase = true) -> "$root/chat/completions"
-            root.endsWith("/v2", ignoreCase = true) -> "$root/chat/completions"
-            root.endsWith("/v3", ignoreCase = true) -> "$root/chat/completions"
-            else -> "$root/v1/chat/completions"
-        }
+        val url = openAiChatCompletionUrl(baseUrl)
         return Request.Builder()
             .url(url)
             .header("Authorization", OpenAiCompatibleRouting.bearerAuth(apiKey))

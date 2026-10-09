@@ -7,6 +7,20 @@ import org.junit.Test
 import java.io.ByteArrayOutputStream
 
 class NovelChapterTest {
+    @Test fun tailCompletionRequiresOwnIncompleteNumberedChapter() {
+        val draft = NovelChapter.draftMetadata("{}", 1, "北塔")
+        assertTrue(NovelChapter.canResumeTail("main", "main", draft))
+        assertTrue(NovelChapter.canResumeTail("child", "child", draft))
+        assertFalse(NovelChapter.canResumeTail("child", "main", draft))
+        assertFalse(NovelChapter.canResumeTail("main", "main", NovelChapter.metadata("{}", 1, "北塔")))
+        assertFalse(NovelChapter.canResumeTail("main", "main", "{\"chapter_incomplete\":true}"))
+        assertFalse(NovelChapter.canResumeTail("main", "main", "bad"))
+    }
+    @Test fun headingOnlyNarrationKeepsClosingTagWithTrailingLineBreak() {
+        assertEquals("<NARRATION>归航</NARRATION>\r\n",
+            NovelChapter.renameContent("<NARRATION># 夜雨</NARRATION>\r\n", "夜雨", "归航"))
+        assertEquals("第十二章 夜雨", NovelChapter.leadingTitleFromText("旁白 ：第十二章 夜雨")?.title)
+    }
     @Test fun chineseZeroAndDigitHeadingsSurviveGenerationAndExportOnce() = runTest {
         mapOf("第一百零二章 归途" to 102, "第两百章 来信" to 200, "第二〇二四章 冬日" to 2024).forEach { (title, number) ->
             val (savedTitle, content) = NovelChapter.generated(number, "", "# $title\n\n正文。")
@@ -33,6 +47,36 @@ class NovelChapterTest {
             NovelChapter.renameContent("<NARRATION>她在夜雨中启程。</NARRATION>", "夜雨", "渡口"))
         assertEquals("渡口\n\n夜雨之后，她回到家。",
             NovelChapter.renameContent("夜雨之后，她回到家。", "夜雨", "渡口"))
+    }
+
+    @Test fun missingMetadataRenamesRecognizedChineseOrMarkdownHeadingOnly() {
+        assertEquals("渡口\n\n正文。", NovelChapter.renameContent("第十二章 夜雨\n\n正文。", "", "渡口"))
+        assertEquals("渡口\n\n正文。", NovelChapter.renameContent("# 第 12 章 夜雨\n\n正文。", "", "渡口"))
+        assertEquals("渡口\n\n正文。", NovelChapter.renameContent("#夜雨\n\n正文。", "", "渡口"))
+        assertEquals("渡口\n\n她推开门，夜雨之后回到家。",
+            NovelChapter.renameContent("她推开门，夜雨之后回到家。", "", "渡口"))
+    }
+
+    @Test fun existingMetadataStillRenamesMarkdownHeadingWithoutDuplicatingIt() {
+        assertEquals("新标题\n\n正文。", NovelChapter.renameContent("# 第十二章 旧标题\n\n正文。", "第十二章 旧标题", "新标题"))
+        assertEquals("新标题\n\n正文。", NovelChapter.renameContent("# 夜雨\n\n正文。", "夜雨", "新标题"))
+    }
+
+    @Test fun missingMetadataRenameKeepsReaderBodyAndTxtExportSingleHeadings() = runTest {
+        val content = NovelChapter.renameContent("第十二章 旧标题\n\n正文。", "", "新标题")
+        val message = MessageEntity(id = 1, sessionId = 1, speakerType = "narrator",
+            content = content, structuredContentJson = NovelChapter.metadata("{}", 12, "新标题"))
+        assertEquals("正文。", NovelChapter.body(message))
+        val output = ByteArrayOutputStream()
+        NovelChapter.export(output, "小说", 1) { _, _ -> listOf(message) }
+        assertEquals("小说\n\n第 12 章 新标题\n\n正文。\n\n", output.toString("UTF-8").replace("\r\n", "\n"))
+    }
+
+    @Test fun narrationClosingTagAndCrLfSurviveHeadingRename() {
+        assertEquals("<NARRATION>新标题</NARRATION>",
+            NovelChapter.renameContent("<NARRATION># 夜雨</NARRATION>", "", "新标题"))
+        assertEquals("<NARRATION>新标题\r\n正文。</NARRATION>",
+            NovelChapter.renameContent("<NARRATION># 夜雨\r\n正文。</NARRATION>", "", "新标题"))
     }
 
     @Test fun renamedChapterExportsOneHeadingAndUnchangedStory() = runTest {

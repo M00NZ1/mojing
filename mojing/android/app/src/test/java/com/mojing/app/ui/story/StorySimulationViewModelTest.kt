@@ -110,6 +110,11 @@ class StorySimulationViewModelTest {
         coEvery { characters.existingIdsForNewSession(any(), any()) } answers {
             if (secondArg<Long?>() == 7L) listOf(10L) else listOf(9L, 10L)
         }
+        coEvery { characters.getChatPresentationByIds(any()) } answers {
+            firstArg<List<Long>>().map { id ->
+                com.mojing.app.data.local.dao.ChatCharacterPresentationRow(id, "角色 $id", "", "", "", false, "已选角色简介")
+            }
+        }
         val viewModel = createViewModel(mockk(relaxed = true), worlds, characters)
         runCurrent()
         viewModel.setCharacterSelection(setOf(9L, 10L))
@@ -117,6 +122,7 @@ class StorySimulationViewModelTest {
         runCurrent()
         assertEquals(setOf(10L), viewModel.state.value.selectedCharacterIds)
         assertEquals(setOf(10L), viewModel.state.value.selectedCharacterIdsAvailable)
+        assertEquals(listOf(10L), viewModel.state.value.selectedCharacterCards.map { it.id })
     }
 
     @Test
@@ -520,6 +526,45 @@ class StorySimulationViewModelTest {
         callback.captured(StoryWritingProgress("接收正文", "model", 999, 40, 99, "迟到回调"))
         assertEquals("已收到", vm.state.value.preview)
         assertEquals("已停止", vm.state.value.generationStage)
+        assertTrue(vm.state.value.hasInterruptedGeneration)
+    }
+
+    @Test
+    fun stoppedOpeningCanSaveReceivedChaptersWithoutReopeningOrAnotherRequest() = runTest(dispatcher) {
+        val callback = slot<(StoryWritingProgress) -> Unit>()
+        val writing = mockk<StoryWritingUseCase>(relaxed = true)
+        val gate = CompletableDeferred<StoryWritingResult>()
+        coEvery { writing.write(any(), any(), any(), any(), capture(callback)) } coAnswers { gate.await() }
+        val storage = mockk<SecureStorage>(relaxed = true) {
+            every { publicApiKey } returns "key"; every { publicBaseUrl } returns "https://example.com"; every { publicModel } returns "model"
+        }
+        val inputDrafts = mockk<StoryOpeningInputDraftStore>(relaxed = true) {
+            coEvery { load() } returns null
+            every { loadGeneration() } returns null
+            coEvery { persistCompletedChapters(any(), any()) } returns true
+            coEvery { persistGenerationPreview(any()) } returns true
+        }
+        val drafts = mockk<StoryOpeningDraftStore>(relaxed = true) { coEvery { load() } returns null }
+        val stored = slot<StoryOpeningDraft>()
+        coEvery { drafts.persist(capture(stored)) } returns Unit
+        val createSession = mockk<CreateSessionUseCase>(relaxed = true)
+        coEvery { createSession.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            CreateSessionUseCase.Result.Created(99L)
+        val vm = createViewModel(mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true),
+            storyWriting = writing, secureStorage = storage, inputDraftStore = inputDrafts,
+            draftStore = drafts, createSession = createSession)
+        runCurrent(); vm.updatePremise("雾港来信"); vm.updateChapterCount(5)
+        vm.createStory {}; runCurrent()
+        val chapters = listOf(StoryChapter(1, "灯塔来信", "真实已完成正文"))
+        callback.captured(StoryWritingProgress("接收正文", "model", 120, 40, 8, "真实已完成正文",
+            completedChapters = 1, totalChapters = 5, completedChapterDrafts = chapters))
+        assertTrue(vm.stopGeneration()); runCurrent()
+        assertTrue(vm.state.value.hasInterruptedGeneration)
+        vm.saveCompletedInterruptedChapters {}; runCurrent()
+        assertEquals(chapters, stored.captured.result.chapters)
+        assertEquals(99L, vm.state.value.savedSessionId)
+        coVerify(exactly = 1) { writing.write(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 1) { drafts.persist(any()) }
     }
 
     @Test
@@ -880,6 +925,58 @@ class StorySimulationViewModelTest {
     }
 
     @Test
+    fun repeatedInterruptedPromotionWritesFourCompleteAndOnePartialChapterOnce() = runTest(dispatcher) {
+        val completed = (1..4).map { StoryChapter(it, "第 ${it} 章", "完整正文$it".repeat(20_001)) }
+        val raw = """{"title":"书","chapters":[${completed.joinToString(",") { chapter ->
+            "{\"title\":\"${chapter.title}\",\"content\":\"${chapter.content}\"}"
+        }},{"title":"第五章","content":"${"半章".repeat(20_001)}"""
+        val generation = StoryOpeningGenerationState(
+            requestId = "request-1",
+            input = StoryOpeningInputDraft("背景", "", "风格", 5, null, null, emptySet()),
+            preview = "预览",
+            model = "model",
+            stage = "中断",
+            receivedChars = raw.length,
+            elapsedMs = 1L,
+            contentFileName = "request-1.raw",
+            completedChapterFileName = "request-1.chapters.json",
+        )
+        var batchesGate = CompletableDeferred<Unit>().also { it.complete(Unit) }
+        val drafts = mockk<StoryOpeningDraftStore>(relaxed = true) {
+            coEvery { load() } returns null
+        }
+        val stored = slot<StoryOpeningDraft>()
+        coEvery { drafts.persist(capture(stored)) } returns Unit
+        val inputDrafts = mockk<StoryOpeningInputDraftStore>(relaxed = true) {
+            coEvery { load() } returns null
+            every { loadGeneration() } returns generation
+            coEvery { loadCompletedChapters(any()) } returns completed
+            coEvery { loadGenerationBatches(any()) } coAnswers { batchesGate.await(); listOf(raw) }
+        }
+        val createSession = mockk<CreateSessionUseCase>(relaxed = true)
+        coEvery { createSession.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            CreateSessionUseCase.Result.Created(99L)
+        val vm = createViewModel(
+            mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true),
+            storyWriting = mockk(relaxed = true), createSession = createSession,
+            draftStore = drafts, inputDraftStore = inputDrafts,
+        )
+        runCurrent()
+        batchesGate = CompletableDeferred()
+
+        vm.saveCompletedInterruptedChapters {}
+        vm.saveCompletedInterruptedChapters {}
+        assertTrue(vm.state.value.isSaving)
+        batchesGate.complete(Unit)
+        runCurrent()
+
+        assertEquals(5, stored.captured.result.chapters.size)
+        assertEquals(setOf(5), stored.captured.result.incompleteChapterNumbers)
+        coVerify(exactly = 1) { drafts.persist(any()) }
+        coVerify(exactly = 1) { createSession.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
     fun refreshedReferenceDataDoesNotDiscardResultOrReplaceSubmittedWorld() = runTest(dispatcher) {
         val templates = mockk<WorldTemplateDao> { coEvery { getWorldMappings() } returns emptyList() }
         val characters = mockk<CharacterDao>()
@@ -965,5 +1062,6 @@ class StorySimulationViewModelTest {
         createSession = createSession,
         draftStore = draftStore,
         inputDraftStore = inputDraftStore,
+        worker = dispatcher,
     )
 }

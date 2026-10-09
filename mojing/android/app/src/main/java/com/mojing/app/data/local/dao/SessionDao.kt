@@ -12,6 +12,16 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface SessionDao {
+    @Query("""SELECT s.* FROM sessions s WHERE EXISTS(
+        SELECT 1 FROM session_participants sp WHERE sp.sessionId=s.id AND sp.characterId=:characterId)
+        AND (:cursorId IS NULL OR s.updatedAt < :cursorUpdatedAt
+          OR (s.updatedAt = :cursorUpdatedAt AND s.id < :cursorId))
+        ORDER BY s.updatedAt DESC, s.id DESC LIMIT :limit""")
+    suspend fun getRecentForCharacter(characterId: Long, limit: Int = 6,
+        cursorUpdatedAt: Long? = null, cursorId: Long? = null): List<SessionEntity>
+    @Query("SELECT * FROM sessions ORDER BY updatedAt DESC, id DESC LIMIT 3")
+    fun observeRecentProjects(): Flow<List<SessionEntity>>
+
     @Query("SELECT * FROM sessions ORDER BY CASE WHEN pinnedAt > 0 THEN 0 ELSE 1 END, pinnedAt DESC, updatedAt DESC")
     fun observeAll(): Flow<List<SessionEntity>>
 
@@ -22,17 +32,22 @@ interface SessionDao {
           (SELECT substr(m.content, 1, 1024) FROM messages m WHERE m.sessionId = s.id AND m.branchId = 'main' ORDER BY m.id DESC LIMIT 1) AS last_msg_preview,
           (SELECT m.speakerType FROM messages m WHERE m.sessionId = s.id AND m.branchId = 'main' ORDER BY m.id DESC LIMIT 1) AS last_msg_speaker_type,
           (SELECT COUNT(*) FROM messages m2 WHERE m2.sessionId = s.id AND m2.branchId = 'main') AS msg_count,
-          (SELECT COUNT(*) FROM session_participants sp WHERE sp.sessionId = s.id) AS participant_count
+          (SELECT COUNT(*) FROM session_participants sp WHERE sp.sessionId = s.id) AS participant_count,
+          COALESCE(
+            (SELECT NULLIF(e.coverImagePath, '') FROM session_worlds sw JOIN world_encyclopedias e ON e.id = sw.encyclopediaId WHERE sw.sessionId = s.id LIMIT 1),
+            (SELECT COALESCE(NULLIF(c.cardImagePath, ''), NULLIF(c.avatarImagePath, '')) FROM session_participants sp JOIN characters c ON c.id = sp.characterId WHERE sp.sessionId = s.id ORDER BY sp.sortOrder, sp.id LIMIT 1)
+          ) AS cover_image_path
         FROM (
           SELECT * FROM sessions
           WHERE (:query = '' OR instr(lower(title), lower(:query)) > 0)
-            AND (:cursorId IS NULL OR pinnedAt < :cursorPinnedAt
-              OR (pinnedAt = :cursorPinnedAt AND updatedAt < :cursorUpdatedAt)
-              OR (pinnedAt = :cursorPinnedAt AND updatedAt = :cursorUpdatedAt AND id < :cursorId))
-          ORDER BY pinnedAt DESC, updatedAt DESC, id DESC
+            AND (:pinnedOnly = 0 OR pinnedAt > 0)
+            AND (:cursorId IS NULL OR (CASE WHEN :recentFirst THEN 0 ELSE pinnedAt END) < :cursorPinnedAt
+              OR ((CASE WHEN :recentFirst THEN 0 ELSE pinnedAt END) = :cursorPinnedAt AND updatedAt < :cursorUpdatedAt)
+              OR ((CASE WHEN :recentFirst THEN 0 ELSE pinnedAt END) = :cursorPinnedAt AND updatedAt = :cursorUpdatedAt AND id < :cursorId))
+          ORDER BY (CASE WHEN :recentFirst THEN 0 ELSE pinnedAt END) DESC, updatedAt DESC, id DESC
           LIMIT :limit
         ) s
-        ORDER BY s.pinnedAt DESC, s.updatedAt DESC, s.id DESC
+        ORDER BY (CASE WHEN :recentFirst THEN 0 ELSE s.pinnedAt END) DESC, s.updatedAt DESC, s.id DESC
         """,
     )
     fun observeListPageWithMeta(
@@ -41,7 +56,24 @@ interface SessionDao {
         cursorUpdatedAt: Long?,
         cursorId: Long?,
         limit: Int,
+        pinnedOnly: Boolean = false,
+        recentFirst: Boolean = false,
     ): Flow<List<SessionWithListMeta>>
+
+    @Query("""
+        SELECT s.*,
+          (SELECT substr(m.content, 1, 1024) FROM messages m WHERE m.sessionId = s.id AND m.branchId = 'main' ORDER BY m.id DESC LIMIT 1) AS last_msg_preview,
+          (SELECT m.speakerType FROM messages m WHERE m.sessionId = s.id AND m.branchId = 'main' ORDER BY m.id DESC LIMIT 1) AS last_msg_speaker_type,
+          (SELECT COUNT(*) FROM messages m WHERE m.sessionId = s.id AND m.branchId = 'main') AS msg_count,
+          (SELECT COUNT(*) FROM session_participants sp WHERE sp.sessionId = s.id) AS participant_count,
+          COALESCE(
+            (SELECT NULLIF(e.coverImagePath, '') FROM session_worlds sw JOIN world_encyclopedias e ON e.id = sw.encyclopediaId WHERE sw.sessionId = s.id LIMIT 1),
+            (SELECT COALESCE(NULLIF(c.cardImagePath, ''), NULLIF(c.avatarImagePath, '')) FROM session_participants sp JOIN characters c ON c.id = sp.characterId WHERE sp.sessionId = s.id ORDER BY sp.sortOrder, sp.id LIMIT 1)
+          ) AS cover_image_path
+        FROM (SELECT * FROM sessions ORDER BY updatedAt DESC, id DESC LIMIT 3) s
+        ORDER BY s.updatedAt DESC, s.id DESC
+    """)
+    fun observeRecentProjectsWithMeta(): Flow<List<SessionWithListMeta>>
 
     @Query("SELECT * FROM sessions WHERE id = :id")
     suspend fun getById(id: Long): SessionEntity?
@@ -84,6 +116,9 @@ interface SessionDao {
 
     @Query("UPDATE sessions SET updatedAt = :updatedAt WHERE id = :id")
     suspend fun bumpUpdatedAt(id: Long, updatedAt: Long = System.currentTimeMillis())
+
+    @Query("UPDATE sessions SET pinnedAt = :pinnedAt WHERE id = :id")
+    suspend fun updatePinnedAt(id: Long, pinnedAt: Long): Int
 
     @Query("UPDATE sessions SET thinkMaxEnabled = :enabled, updatedAt = :updatedAt WHERE id = :id")
     suspend fun updateThinkMax(id: Long, enabled: Boolean, updatedAt: Long = System.currentTimeMillis())

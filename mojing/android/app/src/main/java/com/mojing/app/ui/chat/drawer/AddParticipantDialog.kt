@@ -18,6 +18,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -27,6 +29,17 @@ import com.mojing.app.ui.common.MoJingTextField
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
+// Keep only keyset sort anchors; candidate rows and names are always re-read from Room.
+private val ParticipantCursorSaver = listSaver<List<NewSessionCharacterOption?>, Any>(
+    save = { anchors -> anchors.flatMap { cursor ->
+        listOf(cursor?.id ?: 0L, cursor?.pinnedAt ?: 0L, cursor?.favorite ?: false, cursor?.createdAt ?: 0L)
+    } },
+    restore = { saved -> saved.chunked(4).map { fields ->
+        val id = fields[0] as Long
+        if (id == 0L) null else NewSessionCharacterOption(id, "", fields[1] as Long, fields[2] as Boolean, fields[3] as Long)
+    } },
+)
+
 @Composable
 internal fun AddParticipantDialog(
     loadPage: suspend (String, NewSessionCharacterOption?) -> AddParticipantPage,
@@ -35,10 +48,12 @@ internal fun AddParticipantDialog(
     onDismiss: () -> Unit,
     onSelect: (Long) -> Unit,
 ) {
-    var query by remember { mutableStateOf("") }
-    var requestedPage by remember { mutableIntStateOf(0) }
-    var displayedPage by remember { mutableIntStateOf(0) }
-    var cursors by remember { mutableStateOf<List<NewSessionCharacterOption?>>(listOf(null)) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var requestedPage by rememberSaveable { mutableIntStateOf(0) }
+    var displayedPage by remember { mutableIntStateOf(requestedPage) }
+    var cursors by rememberSaveable(stateSaver = ParticipantCursorSaver) {
+        mutableStateOf<List<NewSessionCharacterOption?>>(listOf(null))
+    }
     var rows by remember { mutableStateOf<List<NewSessionCharacterOption>>(emptyList()) }
     var hasMore by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(true) }
@@ -63,7 +78,7 @@ internal fun AddParticipantDialog(
         }
     }
 
-    AlertDialog(
+    com.mojing.app.ui.common.MoJingFormDialog(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
         onDismissRequest = { if (!isSubmitting) onDismiss() },
         title = { Text("添加参与角色") },

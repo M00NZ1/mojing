@@ -33,3 +33,12 @@ data class UsageModelUi(
 )
 
 data class UsageRequestUi(val record: CostRecordEntity)
+
+data class UsageDayUi(
+    val day: String,
+    val currency: String,
+    val costKnownAmount: Double,
+    val unknownCalls: Long,
+    val tokens: Long,
+    val totalCalls: Long,
+)

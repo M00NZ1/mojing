@@ -48,6 +48,7 @@ object AppModule {
                 Migrations.MIGRATION_24_25,
                 Migrations.MIGRATION_25_26,
                 Migrations.MIGRATION_26_27,
+                Migrations.MIGRATION_27_28,
             )
             .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
             .build()

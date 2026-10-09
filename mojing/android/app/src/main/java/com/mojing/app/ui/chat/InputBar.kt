@@ -1,10 +1,11 @@
 package com.mojing.app.ui.chat
 
+import androidx.compose.ui.text.style.TextOverflow
+
 import com.mojing.app.ui.common.MoJingIcon as Icon
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.KeyboardHide
-import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.TheaterComedy
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.EmojiEmotions
@@ -28,10 +29,14 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -48,10 +53,13 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
@@ -182,7 +190,10 @@ fun InputBar(
                 modifier = Modifier.padding(bottom = 6.dp),
             )
         }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Surface(
+            modifier = Modifier.weight(1f),
             shape = MaterialTheme.shapes.medium,
             color = MaterialTheme.colorScheme.surfaceContainerLowest,
             border = BorderStroke(1.dp, if (inputFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
@@ -191,10 +202,6 @@ fun InputBar(
                 Modifier.fillMaxWidth().padding(4.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
-                IconButton(onClick = { dismissKeyboard(); showActionSheet = true },
-                    enabled = !isGenerating && !isAddingAttachment) {
-                    Icon(Icons.Outlined.Add, "更多输入工具", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
                 BasicTextField(
                     value = value,
                     onValueChange = onValueChange,
@@ -210,10 +217,11 @@ fun InputBar(
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     decorationBox = { innerTextField ->
-                        Box(Modifier.padding(vertical = 8.dp, horizontal = 4.dp), contentAlignment = Alignment.CenterStart) {
-                            if (value.text.isEmpty()) Text("输入消息…",
+                        Box(Modifier.padding(vertical = 8.dp, horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
+                            if (value.text.isEmpty()) Text("写下你的回应…",
                                 style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
                             innerTextField()
                         }
                     },
@@ -230,70 +238,104 @@ fun InputBar(
                         },
                     ),
                 )
+            }
+        }
                 FilledIconButton(
                     onClick = if (isGenerating) onStop else onSend,
                     enabled = isGenerating || (!isAddingAttachment && (value.text.isNotBlank() || pendingAttachmentCount > 0)),
                     modifier = Modifier.size(48.dp),
-                    shape = MaterialTheme.shapes.small,
+                    shape = androidx.compose.foundation.shape.CircleShape,
                 ) {
                     if (isGenerating) Icon(Icons.Outlined.Stop, "停止")
                     else Icon(Icons.AutoMirrored.Outlined.Send, "发送")
                 }
             }
-        }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { dismissKeyboard(); onAttachImageClick() },
+                modifier = Modifier.size(48.dp),
+                enabled = !isGenerating && !isAddingAttachment) {
+                Icon(Icons.Outlined.Image, "添加图片", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Box(Modifier.weight(1f)) { modelSelector?.invoke() }
+            IconButton(onClick = {
+                // Clearing focus collapses a selected range. Keep the insertion
+                // target for tools while committing any active IME composition.
+                val toolInput = value.copy(composition = null)
+                dismissKeyboard()
+                if (!toolInput.selection.collapsed) onValueChange(toolInput)
+                showActionSheet = true
+            },
+                modifier = Modifier.size(48.dp),
+                enabled = !isGenerating && !isAddingAttachment) {
+                Icon(Icons.Outlined.Add, "更多输入工具", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             if (isImeOpen) {
-                IconButton(onClick = ::dismissKeyboard) { Icon(Icons.Outlined.KeyboardHide, "收起键盘") }
+                IconButton(onClick = ::dismissKeyboard, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Outlined.KeyboardHide, "收起键盘")
+                }
             }
         }
     }
 
     if (showActionSheet && !isGenerating && !isAddingAttachment) {
         ModalBottomSheet(
-        scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),onDismissRequest = { showActionSheet = false }, dragHandle = null,
+            scrimColor = MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),
+            onDismissRequest = { showActionSheet = false }, dragHandle = null,
             containerColor = MaterialTheme.colorScheme.surface,
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-            Column(Modifier.fillMaxWidth().heightIn(max = 560.dp)) {
+            Column(Modifier.fillMaxWidth().heightIn(max = LocalConfiguration.current.screenHeightDp.dp * 0.75f)) {
                 Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     Text("输入工具", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                     IconButton(onClick = { showActionSheet = false }) { Icon(Icons.Outlined.Close, "关闭输入工具") }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth()) {
+                LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth(),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 12.dp)) {
                     item {
-                        ChatToolRow("语音输入", "转成文字", Icons.Outlined.Mic) {
-                            showActionSheet = false
-                            onVoiceClick()
-                        }
-                        ChatToolRow("表情", "插入到消息", Icons.Outlined.EmojiEmotions) {
-                            showActionSheet = false
-                            onOpenEmoji()
-                        }
-                        ChatToolRow("添加图片", "选择本机图片", Icons.Outlined.AttachFile) {
-                            showActionSheet = false
-                            onAttachImageClick()
-                        }
-                        ChatToolRow("试听朗读", if (value.text.isBlank()) "输入文字后可试听" else "朗读输入框内容",
-                            Icons.AutoMirrored.Outlined.VolumeUp, enabled = value.text.isNotBlank()) {
-                            showActionSheet = false
-                            onPreviewSpeak()
+                        val tools = listOf(
+                            InputTool("语音输入", Icons.Outlined.Mic) {
+                                showActionSheet = false
+                                onVoiceClick()
+                            },
+                            InputTool("表情", Icons.Outlined.EmojiEmotions) {
+                                showActionSheet = false
+                                onOpenEmoji()
+                            },
+                            InputTool("添加图片", Icons.Outlined.Image) {
+                                showActionSheet = false
+                                onAttachImageClick()
+                            },
+                            InputTool("试听朗读", Icons.AutoMirrored.Outlined.VolumeUp,
+                                enabled = value.text.isNotBlank()) {
+                                showActionSheet = false
+                                onPreviewSpeak()
+                            },
+                            InputTool("生成旁白", Icons.Outlined.TheaterComedy) {
+                                showNarratorDialog = true
+                                showActionSheet = false
+                            },
+                            InputTool("生成配图", Icons.Outlined.Image) {
+                                showActionSheet = false
+                                onImageGenClick()
+                            },
+                        )
+                        BoxWithConstraints(Modifier.fillMaxWidth().padding(16.dp)) {
+                            val columns = if (maxWidth / LocalDensity.current.fontScale < 300.dp) 2 else 3
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                tools.chunked(columns).forEach { row ->
+                                    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        row.forEach { tool ->
+                                            InputToolTile(tool, Modifier.weight(1f).fillMaxHeight())
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     item {
-                        Text("创作", style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp))
-                        ChatToolRow("生成旁白", "场景与剧情", Icons.Outlined.TheaterComedy) {
-                            showNarratorDialog = true
-                            showActionSheet = false
-                        }
-                        ChatToolRow("生成配图", "描述画面", Icons.Outlined.Image) {
-                            showActionSheet = false
-                            onImageGenClick()
-                        }
-                        ChatToolRow("快捷词", "角色名、时间与场景变量", Icons.Outlined.DataObject,
+                        ChatToolRow("快捷词", "角色、时间、场景", Icons.Outlined.DataObject,
                             trailingIcon = if (showMacros) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore) {
                             showMacros = !showMacros
                         }
@@ -326,6 +368,32 @@ fun InputBar(
                 onRequestNarrator(guidance)
             },
         )
+    }
+}
+
+private data class InputTool(
+    val title: String,
+    val icon: ImageVector,
+    val enabled: Boolean = true,
+    val onClick: () -> Unit,
+)
+
+@Composable
+private fun InputToolTile(tool: InputTool, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Surface(onClick = tool.onClick, enabled = tool.enabled,
+        shape = MaterialTheme.shapes.small, color = colors.surfaceContainerLow,
+        modifier = modifier) {
+        Column(Modifier.heightIn(min = 80.dp).padding(horizontal = 8.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically)) {
+            Icon(tool.icon, null, Modifier.size(24.dp),
+                tint = if (tool.enabled) colors.primary else colors.onSurface.copy(alpha = 0.38f))
+            Text(tool.title, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center,
+                color = if (tool.enabled) colors.onSurface else colors.onSurface.copy(alpha = 0.38f))
+            if (!tool.enabled) Text("先输入文字", style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant, textAlign = TextAlign.Center)
+        }
     }
 }
 

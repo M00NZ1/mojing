@@ -45,9 +45,15 @@ class MainActivity : ComponentActivity() {
     private var nextExternalNavigationRequestId = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
+        val platformSplash = installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        platformSplash.setOnExitAnimationListener { provider ->
+            provider.remove()
+            // SplashScreen 1.0 restores its saved decor policy on exit. Compose
+            // owns the insets, so restore edge-to-edge after that hand-off.
+            androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        }
         queueExternalNavigation(intent)
 
         val themeMode = AppThemes.normalize(secureStorage.themeMode)
@@ -64,7 +70,7 @@ class MainActivity : ComponentActivity() {
             }
             CompositionLocalProvider(LocalChatReadingStyle provides ChatReadingStyle(chatFont, narratorItalic)) {
                 MoJingTheme(themeMode = currentTheme, contentFontScale = currentFontScale) {
-                    SystemBarAppearance(window, MaterialTheme.colorScheme.background, showInkSplash)
+                    SystemBarAppearance(this@MainActivity, MaterialTheme.colorScheme.background, showInkSplash)
                     Surface(modifier = Modifier.fillMaxSize()) {
                         Box(Modifier.fillMaxSize()) {
                             NavGraph(

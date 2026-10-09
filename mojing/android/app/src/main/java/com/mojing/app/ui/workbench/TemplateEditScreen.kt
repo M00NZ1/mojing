@@ -1,6 +1,6 @@
 package com.mojing.app.ui.workbench
 
-import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import com.mojing.app.ui.common.MoJingCenterAlignedTopAppBar as TopAppBar
 import com.mojing.app.ui.common.MoJingIcon as Icon
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Save
@@ -91,14 +91,15 @@ fun TemplateEditScreen(
     var isCoverImporting by remember { mutableStateOf(false) }
     var moreToolsOpen by rememberSaveable { mutableStateOf(false) }
     var showDiscardDialog by rememberSaveable { mutableStateOf(false) }
-    val canSave = state.loadError == null && state.completionRefreshError == null && !state.isRefreshingCompletion && (!state.isPersisted || state.isDirty)
-    val saveBusy = state.isSaving || isCoverImporting
+    val editable = state.recoverableDraft == null && !state.draftUnreadable && !state.isDiscardingDraft && !state.isWritingDraft
+    val canSave = editable && state.loadError == null && state.completionRefreshError == null && !state.isRefreshingCompletion && (!state.isPersisted || state.isDirty)
+    val saveBusy = state.isSaving || isCoverImporting || state.isDiscardingDraft || state.isWritingDraft
 
     fun requestBack() {
         focusManager.clearFocus()
         when {
             saveBusy -> scope.launch { snackbarHostState.showSnackbar("正在保存或读取封面，请稍候") }
-            state.isDirty -> showDiscardDialog = true
+            state.isDirty || state.draftError != null -> showDiscardDialog = true
             else -> onBack()
         }
     }
@@ -264,6 +265,48 @@ fun TemplateEditScreen(
                     }
                 }
 
+                state.draftError?.let { message ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                        shape = MaterialTheme.shapes.medium,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("草稿暂存未完成", style = MaterialTheme.typography.titleSmall)
+                            Text(message, style = MaterialTheme.typography.bodyMedium)
+                            OutlinedButton(onClick = viewModel::retryDraftSave, enabled = !saveBusy) {
+                                Icon(Icons.Outlined.Refresh, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("重试草稿操作")
+                            }
+                        }
+                    }
+                }
+
+                if (state.recoverableDraft != null || state.draftUnreadable) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shape = MaterialTheme.shapes.medium,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(if (state.draftUnreadable) "模板草稿无法读取" else "发现未保存的模板草稿", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                if (state.draftUnreadable) "原始草稿仍保留在本机。可重试读取，或明确丢弃后继续编辑。"
+                                else "恢复后可继续编辑，点击保存后更新模板。",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = if (state.draftUnreadable) viewModel::retryDraftLoad else viewModel::restoreDraft) {
+                                    Text(if (state.draftUnreadable) "重试读取" else "恢复草稿")
+                                }
+                                TextButton(onClick = viewModel::discardStoredDraft, enabled = !state.isDiscardingDraft) { Text("丢弃草稿") }
+                            }
+                        }
+                    }
+                }
+
                 com.mojing.app.ui.common.WorkspaceSectionHeading("基本信息", "名称、分类与故事模式")
                 OutlinedTextField(
                     value = state.label,
@@ -272,11 +315,13 @@ fun TemplateEditScreen(
                     placeholder = { Text("如：修仙大世界") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
+                    enabled = editable,
                 )
 
                 ExposedDropdownMenuBox(
                     expanded = categoryExpanded,
                     onExpandedChange = {
+                        if (!editable) return@ExposedDropdownMenuBox
                         if (it) focusManager.clearFocus()
                         categoryExpanded = it
                     },
@@ -285,7 +330,7 @@ fun TemplateEditScreen(
                     OutlinedTextField(
                         value = state.category, onValueChange = {}, readOnly = true,
                         label = { Text("分类") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryExpanded) },
-                        modifier = Modifier.fillMaxWidth().menuAnchor()
+                         modifier = Modifier.fillMaxWidth().menuAnchor(), enabled = editable,
                     )
                     ExposedDropdownMenu(expanded = categoryExpanded, onDismissRequest = { categoryExpanded = false }) {
                         CATEGORIES.forEach { cat ->
@@ -297,6 +342,7 @@ fun TemplateEditScreen(
                 ExposedDropdownMenuBox(
                     expanded = modeExpanded,
                     onExpandedChange = {
+                        if (!editable) return@ExposedDropdownMenuBox
                         if (it) focusManager.clearFocus()
                         modeExpanded = it
                     },
@@ -305,7 +351,7 @@ fun TemplateEditScreen(
                     OutlinedTextField(
                         value = state.gameplayMode, onValueChange = {}, readOnly = true,
                         label = { Text("故事模式") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modeExpanded) },
-                        modifier = Modifier.fillMaxWidth().menuAnchor()
+                         modifier = Modifier.fillMaxWidth().menuAnchor(), enabled = editable,
                     )
                     ExposedDropdownMenu(expanded = modeExpanded, onDismissRequest = { modeExpanded = false }) {
                         GAMEPLAY_MODES.forEach { mode ->
@@ -316,7 +362,8 @@ fun TemplateEditScreen(
 
                 OutlinedTextField(
                     value = state.summary, onValueChange = { viewModel.updateSummary(it) },
-                    label = { Text("世界摘要") }, placeholder = { Text("用一两句话说明这个世界的背景与核心冲突") }, modifier = Modifier.fillMaxWidth(), maxLines = 3
+                    label = { Text("世界摘要") }, placeholder = { Text("用一两句话说明这个世界的背景与核心冲突") }, modifier = Modifier.fillMaxWidth(), maxLines = 3,
+                    enabled = editable,
                 )
 
                 HorizontalDivider()
@@ -331,6 +378,7 @@ fun TemplateEditScreen(
                         label = "世界设定正文",
                         placeholder = "说明世界背景、势力、地点、规则与当前局势",
                         modifier = Modifier.fillMaxWidth(),
+                        enabled = editable,
                     )
                     MoJingLongTextField(
                         value = state.antiCheatPrompt,
@@ -338,6 +386,7 @@ fun TemplateEditScreen(
                         label = "固定规则",
                         placeholder = "写下不能被剧情临时改写的规则、代价与边界",
                         modifier = Modifier.fillMaxWidth(),
+                        enabled = editable,
                     )
                     Text("例如：身份、情报和资源不能凭一句话获得", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -502,18 +551,23 @@ fun TemplateEditScreen(
         AlertDialog(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { showDiscardDialog = false },
-            title = { Text("放弃未保存的修改？") },
-            text = { Text("返回后，本次尚未保存的模板修改不会保留。") },
+            title = { Text("离开模板编辑？") },
+            text = { Text(if (state.draftError != null) "最新修改尚未成功暂存，请重试后再离开，或明确放弃本次修改。" else "修改会保留为本地草稿，下次打开模板时可以恢复。") },
             confirmButton = {
                 TextButton(
                     onClick = {
                         showDiscardDialog = false
-                        onBack()
+                        viewModel.discardChangesAndLeave(onBack)
                     },
                 ) { Text("放弃修改", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = {
-                TextButton(onClick = { showDiscardDialog = false }) { Text("继续编辑") }
+                TextButton(
+                    onClick = {
+                        showDiscardDialog = false
+                        viewModel.saveDraftAndLeave(onBack)
+                    },
+                ) { Text("保留草稿并离开") }
             },
         )
     }

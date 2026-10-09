@@ -22,10 +22,13 @@ fun MoJingWritingField(
 ) {
     MoJingTextField(
         value = value, onValueChange = onValueChange,
-        modifier = modifier.semantics { contentDescription = label },
+        modifier = modifier,
+        inputModifier = Modifier.semantics { contentDescription = label },
         placeholder = { Text(placeholder) }, enabled = enabled,
         shape = RectangleShape, textStyle = MaterialTheme.typography.bodyLarge,
         colors = OutlinedTextFieldDefaults.colors(
+            focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+            unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
             focusedBorderColor = Color.Transparent,
             unfocusedBorderColor = Color.Transparent,
             disabledBorderColor = Color.Transparent,

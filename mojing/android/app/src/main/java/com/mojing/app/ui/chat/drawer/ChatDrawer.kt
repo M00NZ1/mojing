@@ -1,4 +1,5 @@
 package com.mojing.app.ui.chat.drawer
+import androidx.compose.ui.draw.clip
 
 import com.mojing.app.ui.common.MoJingIcon as Icon
 import com.mojing.app.ui.common.MoJingFilterChip as FilterChip
@@ -16,11 +17,13 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.AutoAwesome
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingButton as Button
 import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -29,6 +32,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -47,6 +51,7 @@ import com.mojing.app.data.local.entity.SessionMemoryCorrectionEntity
 import com.mojing.app.ui.chat.MemoryCorrectionPromptTrace
 import com.mojing.app.ui.chat.ContextMemoryStatus
 import com.google.gson.Gson
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,8 +68,10 @@ fun ChatDrawer(
     contextMemoryLoaded: Boolean = true,
     contextMemoryLoading: Boolean = false,
     contextMemoryLoadError: String? = null,
+    contextMemoryClearError: String? = null,
     onOpenContextMemory: () -> Unit = {},
     onRetryContextMemory: () -> Unit = {},
+    onRetryClearContextMemory: (String) -> Unit = {},
     contextMemoryStatus: ContextMemoryStatus = ContextMemoryStatus.IDLE,
     memoryOperationRunning: Boolean = false,
     manualCompactionRunning: Boolean = false,
@@ -87,25 +94,46 @@ fun ChatDrawer(
     eventNodesHasMore: Boolean = false,
     eventNodesLoadingMore: Boolean = false,
     eventNodesLoadError: String? = null,
+    eventQuery: String = "",
+    eventResolvedFilter: Boolean? = null,
+    onEventQueryChange: (String) -> Unit = {},
+    onEventResolvedFilterChange: (Boolean?) -> Unit = {},
+    eventNodesHasNewer: Boolean = false,
+    onResetEventWindow: () -> Unit = {},
     onLoadMoreEventNodes: () -> Unit = {},
     onOpenEvents: () -> Unit = {},
     eventBusyIds: Set<Long> = emptySet(),
     eventActionErrors: Map<Long, String> = emptyMap(),
     characterNames: Map<Long, String> = emptyMap(),
+    characterAvatars: Map<Long, String> = emptyMap(),
+    characterSummaries: Map<Long, String> = emptyMap(),
+    onOpenCharacterState: (Long) -> Unit = {},
     bookmarks: List<MessageBookmarkEntity> = emptyList(),
     bookmarksLoaded: Boolean = true,
     bookmarksHasMore: Boolean = false,
     bookmarksLoadingMore: Boolean = false,
     bookmarksLoadError: String? = null,
+    bookmarkQuery: String = "",
+    onBookmarkQueryChange: (String) -> Unit = {},
+    bookmarksHasNewer: Boolean = false,
+    onResetBookmarkWindow: () -> Unit = {},
     bookmarkBusyIds: Set<Long> = emptySet(),
     bookmarkLocatingId: Long? = null,
     bookmarkPreviews: Map<Long, String> = emptyMap(),
+    bookmarkNoteDrafts: Map<Long, String> = emptyMap(),
+    bookmarkNoteErrors: Map<Long, String> = emptyMap(),
+    bookmarkNoteSavingIds: Set<Long> = emptySet(),
     onJumpToBookmark: (Long) -> Unit,
     onRemoveBookmark: (Long) -> Unit,
+    onBookmarkNoteDraftChange: (Long, String) -> Unit = { _, _ -> },
+    onSaveBookmarkNote: (Long, String, (Boolean) -> Unit) -> Unit = { _, _, _ -> },
     onOpenBookmarks: () -> Unit = {},
     onLoadMoreBookmarks: () -> Unit,
     onToggleMute: (Long) -> Unit,
     onUpdateTalkativeness: (Long, Float, (Boolean) -> Unit) -> Unit,
+    participantTalkativenessSaving: Map<Long, Float> = emptyMap(),
+    participantMuteSaving: Set<Long> = emptySet(),
+    participantRemoving: Set<Long> = emptySet(),
     onRemoveParticipant: (Long) -> Unit,
     onAddParticipant: () -> Unit,
     speakerTurnMode: String = "auto",
@@ -115,6 +143,8 @@ fun ChatDrawer(
     onSaveSessionWorldCredentials: (SessionWorldCredentialDraft) -> Unit,
     onWorldCredentialFieldsDirty: (Boolean) -> Unit,
     worldCredentialFieldsDirty: Boolean = false,
+    worldCredentialsSaving: Boolean = false,
+    worldSettingSaving: Boolean = false,
     onToggleEventResolved: (Long) -> Unit,
     onDeleteEventNode: (Long) -> Unit,
     onJumpToMemorySource: (Long, (Boolean) -> Unit) -> Boolean,
@@ -122,11 +152,15 @@ fun ChatDrawer(
     onEditMemoryCorrection: (SessionMemoryCorrectionEntity) -> Unit,
     onDeleteMemoryCorrection: (SessionMemoryCorrectionEntity) -> Unit,
     onRebuildContextMemory: () -> Unit,
-    onClearContextMemory: () -> Unit,
+    onClearContextMemory: (String) -> Unit,
     onContinueStorySummary: () -> Unit,
     onStopStorySummary: () -> Unit,
+    onEditMemorySummary: (SessionMemorySegmentEntity, String, (Boolean) -> Unit) -> Unit = { _, _, _ -> },
+    onDeleteMemorySummary: (SessionMemorySegmentEntity) -> Unit = {},
     allowSessionThinkMax: Boolean = false,
     sessionThinkMaxEnabled: Boolean = false,
+    sessionThinkMaxSaving: Boolean = false,
+    sessionThinkMaxSaveError: String? = null,
     characterForcesThinkMax: Boolean = false,
     onSessionThinkMax: (Boolean) -> Unit,
     memorySegmentsHasMore: Boolean = false,
@@ -135,15 +169,22 @@ fun ChatDrawer(
     memorySegmentsLoadingMore: Boolean = false,
     memorySegmentsLoadError: String? = null,
     onLoadMoreMemorySummaries: () -> Unit = {},
+    memorySummariesHasNewer: Boolean = false,
+    onResetMemorySummaryWindow: () -> Unit = {},
     onOpenMemorySummaries: () -> Unit = {},
+    memorySummaryEditSavedId: Long? = null,
+    memorySummaryEditSavedText: String? = null,
+    onResolveMemorySummaryEditor: suspend (Long, String) -> SessionMemorySegmentEntity? = { _, _ -> null },
+    sessionId: Long? = null,
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) }
-    var pendingTab by remember { mutableStateOf<Int?>(null) }
-    var sourceOpeningId by remember(currentBranchId, drawerOpen) { mutableStateOf<Long?>(null) }
+    var selectedTab by androidx.compose.runtime.saveable.rememberSaveable { mutableIntStateOf(0) }
+    var pendingTab by rememberSaveable { mutableStateOf<Int?>(null) }
+    // A source request may itself switch lines; it belongs to this open drawer until completion.
+    var sourceOpeningId by remember(drawerOpen) { mutableStateOf<Long?>(null) }
     var sourceFailedId by remember(currentBranchId, drawerOpen) { mutableStateOf<Long?>(null) }
     var sourceError by remember(currentBranchId, drawerOpen) { mutableStateOf<String?>(null) }
-    var sourceActive by remember(currentBranchId, drawerOpen) { mutableStateOf(drawerOpen) }
-    DisposableEffect(currentBranchId, drawerOpen) { onDispose { sourceActive = false } }
+    var sourceActive by remember(drawerOpen) { mutableStateOf(drawerOpen) }
+    DisposableEffect(drawerOpen) { onDispose { sourceActive = false } }
     fun openSource(messageId: Long) {
         if (sourceOpeningId != null) return
         sourceOpeningId = messageId
@@ -173,16 +214,17 @@ fun ChatDrawer(
         if (selectedTab == 4 && drawerOpen && sessionReady) onOpenBookmarks()
     }
 
-    Column(modifier = Modifier.widthIn(max = 400.dp).fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("会话资料", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), modifier = Modifier.weight(1f))
+            Spacer(Modifier.width(48.dp))
+            Text("对话信息", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, "关闭") }
         }
         HorizontalDivider()
-        com.mojing.app.ui.common.MoJingSectionTabs(tabs, selectedTab, { index ->
+        com.mojing.app.ui.common.MoJingSegmentedTabs(tabs, selectedTab, { index ->
             if (index != selectedTab) {
                 if (selectedTab == 1 && worldCredentialFieldsDirty) pendingTab = index
                 else selectedTab = index
@@ -213,6 +255,13 @@ fun ChatDrawer(
                 speakerTurnMode,
                 onSpeakerTurnModeChange,
                 isGenerating,
+                characterAvatars = characterAvatars,
+                characterSummaries = characterSummaries,
+                onOpenCharacterState = onOpenCharacterState,
+                participantTalkativenessSaving = participantTalkativenessSaving,
+                participantMuteSaving = participantMuteSaving,
+                participantRemoving = participantRemoving,
+                world = world, onOpenWorld = { selectedTab = 1 },
             )
             1 -> WorldConfigTab(
                 world = world,
@@ -223,9 +272,13 @@ fun ChatDrawer(
                 onRetryFoundation = onRetryEncyclopediaFoundation,
                 onWorldSettingChanged = onWorldSettingChanged,
                 onSaveSessionWorldCredentials = onSaveSessionWorldCredentials,
+                worldCredentialsSaving = worldCredentialsSaving,
+                worldSettingSaving = worldSettingSaving,
                 onCredentialFieldsDirty = onWorldCredentialFieldsDirty,
                 allowSessionThinkMax = allowSessionThinkMax,
                 sessionThinkMaxEnabled = sessionThinkMaxEnabled,
+                sessionThinkMaxSaving = sessionThinkMaxSaving,
+                sessionThinkMaxSaveError = sessionThinkMaxSaveError,
                 characterForcesThinkMax = characterForcesThinkMax,
                 onSessionThinkMax = onSessionThinkMax,
                 isGenerating = isGenerating,
@@ -249,7 +302,14 @@ fun ChatDrawer(
                 manualCompactionChunk,
                 onContinueStorySummary,
                 onStopStorySummary,
+                onEditMemorySummary = onEditMemorySummary,
+                onResolveMemorySummaryEditor = onResolveMemorySummaryEditor,
+                memorySummaryEditSavedId = memorySummaryEditSavedId,
+                memorySummaryEditSavedText = memorySummaryEditSavedText,
+                onDeleteMemorySummary = onDeleteMemorySummary,
                 contextMemoryLoaded = contextMemoryLoaded,
+                contextMemoryClearError = contextMemoryClearError,
+                onRetryClearContextMemory = onRetryClearContextMemory,
                 contextMemoryLoading = contextMemoryLoading,
                 contextMemoryLoadError = contextMemoryLoadError,
                 onOpenContextMemory = onOpenContextMemory,
@@ -260,6 +320,8 @@ fun ChatDrawer(
                 olderSummariesLoading = memorySegmentsLoadingMore,
                 olderSummariesError = memorySegmentsLoadError,
                 onLoadOlderSummaries = onLoadMoreMemorySummaries,
+                summariesHasNewer = memorySummariesHasNewer,
+                onResetSummaryWindow = onResetMemorySummaryWindow,
                 onOpenSummaries = onOpenMemorySummaries,
                 sourceNavigationBusy = sourceOpeningId != null,
                 correctionsLoaded = memoryCorrectionsLoaded,
@@ -268,6 +330,7 @@ fun ChatDrawer(
                 correctionsLoadError = memoryCorrectionsLoadError,
                 drawerOpen = drawerOpen,
                 sessionReady = sessionReady,
+                sessionId = sessionId,
                 onOpenCorrections = onOpenMemoryCorrections,
                 onLoadMoreCorrections = onLoadMoreMemoryCorrections,
             )
@@ -280,6 +343,13 @@ fun ChatDrawer(
                 actionErrors = eventActionErrors,
                 currentBranchId = currentBranchId,
                 loaded = eventNodesLoaded,
+                sessionReady = sessionReady,
+                query = eventQuery,
+                resolvedFilter = eventResolvedFilter,
+                onQueryChange = onEventQueryChange,
+                onResolvedFilterChange = onEventResolvedFilterChange,
+                hasNewerEvents = eventNodesHasNewer,
+                onResetWindow = onResetEventWindow,
                 hasOlderEvents = eventNodesHasMore,
                 olderEventsLoading = eventNodesLoadingMore,
                 olderEventsError = eventNodesLoadError,
@@ -287,9 +357,16 @@ fun ChatDrawer(
                 sourceNavigationBusy = sourceOpeningId != null,
             )
             4 -> BookmarksTab(
-                bookmarks, bookmarkPreviews, onJumpToBookmark, onRemoveBookmark,
+                bookmarks, bookmarkPreviews, bookmarkNoteDrafts, bookmarkNoteErrors, bookmarkNoteSavingIds,
+                onJumpToBookmark, onRemoveBookmark, onBookmarkNoteDraftChange, onSaveBookmarkNote,
                 bookmarkBusyIds, bookmarkLocatingId, bookmarksLoaded, bookmarksHasMore, bookmarksLoadingMore,
                 bookmarksLoadError, onLoadMoreBookmarks,
+                query = bookmarkQuery,
+                onQueryChange = onBookmarkQueryChange,
+                hasNewer = bookmarksHasNewer,
+                onResetWindow = onResetBookmarkWindow,
+                sessionReady = sessionReady,
+                sessionId = sessionId,
             )
         }
     }
@@ -298,12 +375,12 @@ fun ChatDrawer(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { pendingTab = null },
             title = { Text("世界配置尚未保存") },
-            text = { Text("继续编辑，或放弃本次修改后切换资料。") },
+            text = { Text(if (worldCredentialsSaving) "线路正在保存，请稍候再切换资料。" else "继续编辑，或放弃本次修改后切换资料。") },
             confirmButton = {
                 TextButton(onClick = { pendingTab = null }) { Text("继续编辑") }
             },
             dismissButton = {
-                TextButton(onClick = {
+                TextButton(enabled = !worldCredentialsSaving, onClick = {
                     pendingTab = null
                     onWorldCredentialFieldsDirty(false)
                     selectedTab = target
@@ -324,9 +401,23 @@ fun ParticipantsTab(
     speakerTurnMode: String = "auto",
     onSpeakerTurnModeChange: (String) -> Unit,
     isGenerating: Boolean = false,
+    characterAvatars: Map<Long, String> = emptyMap(),
+    characterSummaries: Map<Long, String> = emptyMap(),
+    onOpenCharacterState: (Long) -> Unit = {},
+    world: SessionWorldEntity? = null,
+    onOpenWorld: () -> Unit = {},
+    participantTalkativenessSaving: Map<Long, Float> = emptyMap(),
+    participantMuteSaving: Set<Long> = emptySet(),
+    participantRemoving: Set<Long> = emptySet(),
 ) {
+    var schedulingExpanded by rememberSaveable { mutableStateOf(false) }
     LazyColumn(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(bottom = 16.dp)) {
         item(key = "controls") {
+            TextButton(onClick = { schedulingExpanded = !schedulingExpanded }, modifier = Modifier.fillMaxWidth()) {
+                Text("角色 (${participants.size})", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                Icon(Icons.Outlined.Tune, "发言设置")
+            }
+            if (schedulingExpanded) {
             Column(Modifier.fillMaxWidth()) {
                 Text("发言调度", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
                 if (isGenerating) {
@@ -373,28 +464,34 @@ fun ParticipantsTab(
                 }
                 HorizontalDivider()
             }
+            }
         }
         if (participants.isEmpty()) {
             item(key = "empty") {
                 Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("请先添加至少一个角色", color = MaterialTheme.colorScheme.error)
-                        Text("点击上方按钮选择角色加入对话", style = MaterialTheme.typography.labelSmall)
+                        TextButton(onClick = onAddParticipant, enabled = !isGenerating) { Text("添加角色到对话") }
                     }
                 }
             }
         } else {
             items(participants, key = { it.id }) { p ->
+                var expanded by rememberSaveable(p.id) { mutableStateOf(false) }
                 val name = participantDisplayName(p.characterId, characterNames)
                 val strategyLabel = participantSpeakerStrategyLabel(p.speakerStrategy)
                 var talkativenessDraft by remember(p.id) { mutableFloatStateOf(p.talkativeness) }
-                var isSavingTalkativeness by remember(p.id) { mutableStateOf(false) }
-                LaunchedEffect(p.talkativeness) {
-                    if (!isSavingTalkativeness) talkativenessDraft = p.talkativeness
+                val pendingTalkativeness = participantTalkativenessSaving[p.id]
+                val isSavingTalkativeness = pendingTalkativeness != null
+                val isSavingMute = p.id in participantMuteSaving
+                val isRemoving = p.id in participantRemoving
+                val isSavingParticipant = isSavingTalkativeness || isSavingMute || isRemoving
+                LaunchedEffect(p.talkativeness, pendingTalkativeness) {
+                    talkativenessDraft = pendingTalkativeness ?: p.talkativeness
                 }
                 Card(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                 ) {
                     Column(
                         modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -404,7 +501,8 @@ fun ParticipantsTab(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(Icons.Outlined.Person, null, modifier = Modifier.size(32.dp))
+                            com.mojing.app.ui.common.MoJingCoverImage(characterAvatars[p.characterId], Modifier.size(44.dp).clip(androidx.compose.foundation.shape.CircleShape), name,
+                                shape = androidx.compose.foundation.shape.CircleShape, person = true)
                             Spacer(Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
@@ -414,7 +512,7 @@ fun ParticipantsTab(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
-                                    buildString {
+                                    characterSummaries[p.characterId]?.takeIf { it.isNotBlank() } ?: buildString {
                                         if (speakerTurnMode == "manual") {
                                             append("等待手动选择")
                                         } else {
@@ -428,6 +526,17 @@ fun ParticipantsTab(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             }
+                            IconButton(
+                                onClick = { onOpenCharacterState(p.characterId) },
+                                modifier = Modifier.size(48.dp).semantics {
+                                    contentDescription = "查看角色状态:${p.characterId}"
+                                },
+                            ) {
+                                Icon(Icons.Outlined.AutoAwesome, "$name 角色状态", modifier = Modifier.size(21.dp))
+                            }
+                            IconButton(onClick = { expanded = !expanded }) { Icon(
+                                if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, "$name 发言设置") }
+                            if (expanded) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
                                     if (p.muted) "暂停" else "参与",
@@ -437,7 +546,7 @@ fun ParticipantsTab(
                                 Switch(
                                     checked = !p.muted,
                                     onCheckedChange = { onToggleMute(p.id) },
-                                    enabled = !isGenerating,
+                                    enabled = !isGenerating && !isSavingParticipant,
                                     modifier = Modifier.semantics {
                                         contentDescription = "$name 发言状态"
                                         stateDescription = if (p.muted) "已暂停" else "参与中"
@@ -446,7 +555,7 @@ fun ParticipantsTab(
                             }
                             IconButton(
                                 onClick = { onRemoveParticipant(p.id) },
-                                enabled = !isGenerating,
+                                enabled = !isGenerating && !isSavingParticipant,
                                 modifier = Modifier.size(48.dp),
                             ) {
                                 Icon(
@@ -456,32 +565,74 @@ fun ParticipantsTab(
                                     tint = MaterialTheme.colorScheme.error,
                                 )
                             }
+                            }
                         }
-                        if (speakerTurnMode != "manual") {
+                        if (expanded && speakerTurnMode != "manual") {
                             Slider(
                                 value = talkativenessDraft,
                                 onValueChange = { talkativenessDraft = it },
                                 onValueChangeFinished = {
                                     if (!isSavingTalkativeness) {
-                                        isSavingTalkativeness = true
                                         onUpdateTalkativeness(p.id, talkativenessDraft) { saved ->
-                                            isSavingTalkativeness = false
                                             if (!saved) talkativenessDraft = p.talkativeness
                                         }
                                     }
                                 },
                                 valueRange = 0.05f..1f,
-                                enabled = !isSavingTalkativeness && !isGenerating,
+                                enabled = !isSavingParticipant && !isGenerating,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .semantics { contentDescription = "$name 发言率" },
                             )
+                            if (isSavingTalkativeness) {
+                                Text("发言率保存中…", style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        if (isSavingMute) {
+                            Text("参与状态保存中…", style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (isRemoving) {
+                            Text("正在移除角色…", style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
             }
         }
+        world?.let { currentWorld ->
+            item(key = "world-summary") {
+                Surface(onClick = onOpenWorld, Modifier.fillMaxWidth().padding(16.dp),
+                    shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surface,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("世界设定", style = MaterialTheme.typography.titleSmall)
+                        Text(currentWorld.worldPrompt.ifBlank { "查看当前故事的世界与叙事设置" }, maxLines = 3,
+                            overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            item(key = "story-style") {
+                com.mojing.app.ui.common.MoJingOptionRow("叙事设置", currentWorld.gameplayMode,
+                    onOpenWorld, modifier = Modifier.padding(horizontal = 16.dp))
+            }
+        }
     }
+}
+
+@Composable
+internal fun rememberWorldRouteField(worldId: Long, persisted: String): MutableState<String> {
+    // Saved inputs do not validate rememberSaveable keys after recreation. Carry the
+    // persisted baseline too, so a different world or an external save resets the draft.
+    val saver = androidx.compose.runtime.saveable.listSaver<MutableState<String>, Any>(
+        save = { listOf(worldId, persisted, it.value) },
+        restore = { saved ->
+            mutableStateOf(if (saved[0] == worldId && saved[1] == persisted) saved[2] as String else persisted)
+        },
+    )
+    return rememberSaveable(worldId, persisted, saver = saver) { mutableStateOf(persisted) }
 }
 
 @Composable
@@ -495,8 +646,12 @@ fun WorldConfigTab(
     onWorldSettingChanged: (String, Boolean) -> Unit,
     onSaveSessionWorldCredentials: (SessionWorldCredentialDraft) -> Unit,
     onCredentialFieldsDirty: (Boolean) -> Unit,
+    worldCredentialsSaving: Boolean = false,
+    worldSettingSaving: Boolean = false,
     allowSessionThinkMax: Boolean = false,
     sessionThinkMaxEnabled: Boolean = false,
+    sessionThinkMaxSaving: Boolean = false,
+    sessionThinkMaxSaveError: String? = null,
     characterForcesThinkMax: Boolean = false,
     onSessionThinkMax: (Boolean) -> Unit,
     isGenerating: Boolean = false,
@@ -510,16 +665,16 @@ fun WorldConfigTab(
         return
     }
     val w = world
-    var llmKey by remember(w.id, w.sessionLlmApiKey) { mutableStateOf(w.sessionLlmApiKey) }
-    var llmBase by remember(w.id, w.sessionLlmBaseUrl) { mutableStateOf(w.sessionLlmBaseUrl) }
-    var imgKey by remember(w.id, w.sessionImageApiKey) { mutableStateOf(w.sessionImageApiKey) }
-    var imgBase by remember(w.id, w.sessionImageBaseUrl) { mutableStateOf(w.sessionImageBaseUrl) }
-    var imgModel by remember(w.id, w.sessionImageModel) { mutableStateOf(w.sessionImageModel) }
-    var voiceKey by remember(w.id, w.sessionVoiceApiKey) { mutableStateOf(w.sessionVoiceApiKey) }
-    var voiceBase by remember(w.id, w.sessionVoiceBaseUrl) { mutableStateOf(w.sessionVoiceBaseUrl) }
-    var voiceModel by remember(w.id, w.sessionVoiceModel) { mutableStateOf(w.sessionVoiceModel) }
-    var voiceSpeech by remember(w.id, w.sessionVoiceSpeechVoice) { mutableStateOf(w.sessionVoiceSpeechVoice) }
-    var voicePreset by remember(w.id, w.sessionVoicePresetPrefixModel) { mutableStateOf(w.sessionVoicePresetPrefixModel) }
+    var llmKey by rememberWorldRouteField(w.id, w.sessionLlmApiKey)
+    var llmBase by rememberWorldRouteField(w.id, w.sessionLlmBaseUrl)
+    var imgKey by rememberWorldRouteField(w.id, w.sessionImageApiKey)
+    var imgBase by rememberWorldRouteField(w.id, w.sessionImageBaseUrl)
+    var imgModel by rememberWorldRouteField(w.id, w.sessionImageModel)
+    var voiceKey by rememberWorldRouteField(w.id, w.sessionVoiceApiKey)
+    var voiceBase by rememberWorldRouteField(w.id, w.sessionVoiceBaseUrl)
+    var voiceModel by rememberWorldRouteField(w.id, w.sessionVoiceModel)
+    var voiceSpeech by rememberWorldRouteField(w.id, w.sessionVoiceSpeechVoice)
+    var voicePreset by rememberWorldRouteField(w.id, w.sessionVoicePresetPrefixModel)
 
     val credentialDirty =
         llmKey.trim() != w.sessionLlmApiKey.trim() ||
@@ -551,8 +706,28 @@ fun WorldConfigTab(
         )
     }
 
-    var routeDetailsOpen by remember(w.id) { mutableStateOf(false) }
-    var voiceDetailsOpen by remember(w.id) { mutableStateOf(false) }
+    var routeDetailsOpen by rememberSaveable(w.id) { mutableStateOf(false) }
+    var foundationExpanded by rememberSaveable(w.id, w.encyclopediaId, w.templateId) { mutableStateOf(false) }
+    val worldScrollState = key(w.id, w.encyclopediaId, w.templateId) { rememberScrollState() }
+
+    // Do not measure restored scroll against the temporary, shorter world body.
+    // Keep only the existing scroll state while the authoritative foundation is read.
+    if (w.encyclopediaId != null && !foundationLoaded) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (foundationLoadError != null) {
+                Text(foundationLoadError, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = onRetryFoundation, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("重试读取")
+                }
+            } else {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text("正在读取百科基础设定…", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        return
+    }
 
     Box(
         modifier = Modifier
@@ -562,7 +737,7 @@ fun WorldConfigTab(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(worldScrollState)
             .padding(horizontal = 16.dp)
             .padding(top = 16.dp, bottom = if (routeDetailsOpen) 92.dp else 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -578,6 +753,10 @@ fun WorldConfigTab(
             AssistChip(onClick = {}, enabled = false, label = { Text("未保存") })
         }
         Text("本场玩法", style = MaterialTheme.typography.titleMedium)
+        if (worldSettingSaving) {
+            Text("正在保存…", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Text(
             w.gameplayMode,
             style = MaterialTheme.typography.bodySmall,
@@ -601,12 +780,25 @@ fun WorldConfigTab(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("本会话思考/Max", style = MaterialTheme.typography.bodyMedium)
+                    if (sessionThinkMaxSaving) {
+                        Text("正在保存…", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
                 Switch(
                     checked = sessionThinkMaxEnabled,
+                    modifier = Modifier.semantics { contentDescription = "本会话思考/Max开关" },
                     onCheckedChange = onSessionThinkMax,
-                    enabled = !isGenerating && (allowSessionThinkMax || sessionThinkMaxEnabled),
+                    enabled = !isGenerating && !worldSettingSaving && !worldCredentialsSaving && !sessionThinkMaxSaving && (allowSessionThinkMax || sessionThinkMaxEnabled),
                 )
+            }
+            sessionThinkMaxSaveError?.let { message ->
+                Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = { onSessionThinkMax(!sessionThinkMaxEnabled) },
+                    enabled = !isGenerating && !worldSettingSaving && !worldCredentialsSaving && !sessionThinkMaxSaving,
+                    modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("重试保存")
+                }
             }
         }
         if (w.encyclopediaId != null && (!foundationLoaded || foundationLoadError != null)) {
@@ -627,13 +819,12 @@ fun WorldConfigTab(
                 .filter(String::isNotBlank).distinct().joinToString("\n\n")
         }
         if (sceneText.isNotBlank()) {
-            var expanded by remember(w.encyclopediaId, w.templateId) { mutableStateOf(false) }
             Text("本场基础设定", style = MaterialTheme.typography.titleSmall)
-            Text(sceneText, maxLines = if (expanded) Int.MAX_VALUE else 4,
+            Text(sceneText, maxLines = if (foundationExpanded) Int.MAX_VALUE else 4,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起设定" else "展开设定") }
+            TextButton(onClick = { foundationExpanded = !foundationExpanded }) { Text(if (foundationExpanded) "收起设定" else "展开设定") }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
@@ -644,8 +835,9 @@ fun WorldConfigTab(
             }
             Switch(
                 checked = w.narratorEnabled,
+                modifier = Modifier.semantics { contentDescription = "旁白解说开关" },
                 onCheckedChange = { onWorldSettingChanged("narratorEnabled", it) },
-                enabled = !isGenerating,
+                enabled = !isGenerating && !worldSettingSaving && !worldCredentialsSaving,
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -657,16 +849,18 @@ fun WorldConfigTab(
             }
             Switch(
                 checked = w.choiceGenerationEnabled,
+                modifier = Modifier.semantics { contentDescription = "每轮选项开关" },
                 onCheckedChange = { onWorldSettingChanged("choiceGenerationEnabled", it) },
-                enabled = !isGenerating,
+                enabled = !isGenerating && !worldSettingSaving && !worldCredentialsSaving,
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("反作弊", modifier = Modifier.weight(1f))
             Switch(
                 checked = w.antiCheatEnabled,
+                modifier = Modifier.semantics { contentDescription = "反作弊开关" },
                 onCheckedChange = { onWorldSettingChanged("antiCheatEnabled", it) },
-                enabled = !isGenerating,
+                enabled = !isGenerating && !worldSettingSaving && !worldCredentialsSaving,
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -678,24 +872,27 @@ fun WorldConfigTab(
             }
             Switch(
                 checked = w.autoSedimentEnabled,
+                modifier = Modifier.semantics { contentDescription = "自动沉淀百科开关" },
                 onCheckedChange = { onWorldSettingChanged("autoSedimentEnabled", it) },
-                enabled = !isGenerating,
+                enabled = !isGenerating && !worldSettingSaving && !worldCredentialsSaving,
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("回复内自动配图", modifier = Modifier.weight(1f))
             Switch(
                 checked = w.autoCharacterImageGen,
+                modifier = Modifier.semantics { contentDescription = "回复内自动配图开关" },
                 onCheckedChange = { onWorldSettingChanged("autoCharacterImageGen", it) },
-                enabled = !isGenerating,
+                enabled = !isGenerating && !worldSettingSaving && !worldCredentialsSaving,
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("回复内自动配音", modifier = Modifier.weight(1f))
             Switch(
                 checked = w.autoCharacterSpeech,
+                modifier = Modifier.semantics { contentDescription = "回复内自动配音开关" },
                 onCheckedChange = { onWorldSettingChanged("autoCharacterSpeech", it) },
-                enabled = !isGenerating,
+                enabled = !isGenerating && !worldSettingSaving && !worldCredentialsSaving,
             )
         }
 
@@ -718,6 +915,7 @@ fun WorldConfigTab(
                 label = { Text("对话 API Key 覆盖") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+                enabled = !worldCredentialsSaving,
             )
             OutlinedTextField(
                 value = llmBase,
@@ -726,6 +924,7 @@ fun WorldConfigTab(
                 placeholder = { Text("与上方 Key 配套填写；两项均空时继承") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+                enabled = !worldCredentialsSaving,
             )
             Text("生图", style = MaterialTheme.typography.labelMedium)
             OutlinedTextField(
@@ -734,6 +933,7 @@ fun WorldConfigTab(
                 label = { Text("配图 API Key 覆盖") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+                enabled = !worldCredentialsSaving,
             )
             OutlinedTextField(
                 value = imgBase,
@@ -741,6 +941,7 @@ fun WorldConfigTab(
                 label = { Text("配图 URL") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+                enabled = !worldCredentialsSaving,
             )
             OutlinedTextField(
                 value = imgModel,
@@ -748,6 +949,7 @@ fun WorldConfigTab(
                 label = { Text("生图模型 id 覆盖") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+                enabled = !worldCredentialsSaving,
             )
             Text("朗读引擎和音色请在对话输入框下方的「语音」中选择。", style = MaterialTheme.typography.bodySmall)
         }
@@ -765,14 +967,14 @@ fun WorldConfigTab(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    if (credentialDirty) "线路草稿未保存" else "线路配置已保存",
+                    if (worldCredentialsSaving) "正在保存线路…" else if (credentialDirty) "线路草稿未保存" else "线路配置已保存",
                     style = MaterialTheme.typography.labelMedium,
                     color = if (credentialDirty) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
                 Button(
                     onClick = { emitSave() },
-                    enabled = !isGenerating,
+                    enabled = !isGenerating && !worldSettingSaving && !worldCredentialsSaving,
                 ) { Text("保存线路") }
             }
         }
@@ -780,6 +982,7 @@ fun WorldConfigTab(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MemoryTab(
     segments: List<SessionMemorySegmentEntity>,
@@ -788,7 +991,7 @@ fun MemoryTab(
     currentBranchId: String,
     isGenerating: Boolean,
     onRebuildContextMemory: () -> Unit,
-    onClearContextMemory: () -> Unit,
+    onClearContextMemory: (String) -> Unit,
     onJumpToSource: (Long) -> Unit,
     onAddCorrection: (String, Long?) -> Unit,
     onEditCorrection: (SessionMemoryCorrectionEntity) -> Unit,
@@ -800,9 +1003,12 @@ fun MemoryTab(
     manualCompactionChunk: Int? = null,
     onContinueStorySummary: () -> Unit,
     onStopStorySummary: () -> Unit,
+    onEditMemorySummary: (SessionMemorySegmentEntity, String, (Boolean) -> Unit) -> Unit = { _, _, _ -> },
+    onDeleteMemorySummary: (SessionMemorySegmentEntity) -> Unit = {},
     contextMemoryLoaded: Boolean = true,
     contextMemoryLoading: Boolean = false,
     contextMemoryLoadError: String? = null,
+    contextMemoryClearError: String? = null,
     onOpenContextMemory: () -> Unit = {},
     onRetryContextMemory: () -> Unit = {},
     hasOlderSummaries: Boolean = false,
@@ -811,6 +1017,8 @@ fun MemoryTab(
     olderSummariesLoading: Boolean = false,
     olderSummariesError: String? = null,
     onLoadOlderSummaries: () -> Unit = {},
+    summariesHasNewer: Boolean = false,
+    onResetSummaryWindow: () -> Unit = {},
     onOpenSummaries: () -> Unit = {},
     sourceNavigationBusy: Boolean = false,
     correctionsLoaded: Boolean = true,
@@ -821,14 +1029,92 @@ fun MemoryTab(
     sessionReady: Boolean = true,
     onOpenCorrections: () -> Unit = {},
     onLoadMoreCorrections: () -> Unit = {},
+    onRetryClearContextMemory: (String) -> Unit = {},
+    memorySummaryEditSavedId: Long? = null,
+    memorySummaryEditSavedText: String? = null,
+    onResolveMemorySummaryEditor: suspend (Long, String) -> SessionMemorySegmentEntity? = { _, _ -> null },
+    sessionId: Long? = null,
 ) {
-    var section by remember(currentBranchId) { mutableIntStateOf(0) }
+    var memoryUiBranchId by rememberSaveable { mutableStateOf(currentBranchId) }
+    var section by rememberSaveable { mutableIntStateOf(0) }
     var showCorrectionTrace by remember(currentBranchId) { mutableStateOf(false) }
+    var clearTargetBranchId by remember(currentBranchId) { mutableStateOf<String?>(null) }
+    var editingSegmentId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var editOriginalSummary by rememberSaveable { mutableStateOf("") }
+    var editText by rememberSaveable { mutableStateOf("") }
+    var submittedSummary by rememberSaveable { mutableStateOf<String?>(null) }
+    // A recreated child chat briefly reports main before its saved branch is ready.
+    // Keep the saved scope through that phase; never edit an inherited summary.
+    LaunchedEffect(sessionReady, currentBranchId) {
+        if (sessionReady && memoryUiBranchId != currentBranchId) {
+            memoryUiBranchId = currentBranchId
+            section = 0
+            editingSegmentId = null
+            editOriginalSummary = ""
+            editText = ""
+            submittedSummary = null
+        }
+    }
+    var restoredEditSegment by remember(editingSegmentId, currentBranchId) { mutableStateOf<SessionMemorySegmentEntity?>(null) }
+    var editorRestoreError by remember(editingSegmentId, currentBranchId) { mutableStateOf<String?>(null) }
+    var editorRestoreAttempt by remember(editingSegmentId, currentBranchId) { mutableIntStateOf(0) }
+    val loadedEditTarget = segments.firstOrNull {
+        sessionReady && memoryUiBranchId == currentBranchId && summariesLoaded &&
+            it.id == editingSegmentId && it.branchId == currentBranchId
+    }
+    LaunchedEffect(editingSegmentId, currentBranchId, sessionReady, summariesLoaded, editorRestoreAttempt, loadedEditTarget != null) {
+        val id = editingSegmentId
+        if (id != null && sessionReady && summariesLoaded && memoryUiBranchId == currentBranchId && loadedEditTarget == null) {
+            editorRestoreError = null
+            try {
+                restoredEditSegment = onResolveMemorySummaryEditor(id, currentBranchId)
+                if (restoredEditSegment == null) editorRestoreError = "这段摘要已不可编辑，输入仍保留"
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { editorRestoreError = "摘要读取失败，输入仍保留，请重试" }
+        }
+    }
+    val editTarget = (loadedEditTarget ?: restoredEditSegment?.takeIf {
+        sessionReady && summariesLoaded && memoryUiBranchId == currentBranchId &&
+            it.id == editingSegmentId && it.branchId == currentBranchId
+    })?.copy(summary = editOriginalSummary)
+    LaunchedEffect(memorySummaryEditSavedId, memorySummaryEditSavedText, memoryOperationRunning, editingSegmentId) {
+        if (!memoryOperationRunning && submittedSummary != null &&
+            memorySummaryEditSavedId == editingSegmentId && memorySummaryEditSavedText == submittedSummary) {
+            editingSegmentId = null
+            submittedSummary = null
+        }
+    }
+    var deleteTarget by remember(currentBranchId) { mutableStateOf<SessionMemorySegmentEntity?>(null) }
     val currentCorrectionTrace = promptTrace?.takeIf { it.branchId == currentBranchId }
     LaunchedEffect(currentBranchId, section, drawerOpen, sessionReady) {
         if (section == 0 && drawerOpen && sessionReady) onOpenContextMemory()
         if (section == 1 && drawerOpen && sessionReady) onOpenCorrections()
         if (section == 2 && drawerOpen && sessionReady) onOpenSummaries()
+    }
+    // Keep memory reading intent untouched while the saved child scope is
+    // still being restored; loaded rows may briefly belong to the previous line.
+    if ((section == 1 || section == 2 || (section == 0 && sessionId != null && sessionId > 0L)) &&
+        (!sessionReady || memoryUiBranchId != currentBranchId)) {
+        Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+            Text(when (section) {
+                1 -> "正在读取当前故事线用户纠正…"
+                2 -> "正在读取当前故事线摘要…"
+                else -> "正在读取当前故事线长期记忆…"
+            },
+                style = MaterialTheme.typography.bodyMedium)
+        }
+        return
+    }
+    if (section == 2 && !summariesLoaded) {
+        Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (summariesLoading) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+            Text(olderSummariesError ?: "正在读取当前故事线摘要…")
+            if (!summariesLoading && olderSummariesError != null)
+                TextButton(onClick = onOpenSummaries) { Text("重试读取") }
+        }
+        return
     }
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
@@ -840,7 +1126,9 @@ fun MemoryTab(
         }
         HorizontalDivider()
         key(currentBranchId, section) {
-        LazyColumn(modifier = Modifier.fillMaxWidth()) {
+        val memoryListState = androidx.compose.foundation.lazy.rememberLazyListState()
+        val memoryListScope = rememberCoroutineScope()
+        LazyColumn(state = memoryListState, modifier = Modifier.fillMaxWidth()) {
             if (section == 0) item {
                 Column(Modifier.fillMaxWidth().padding(12.dp)) {
                     Text("长期记忆", style = MaterialTheme.typography.titleMedium)
@@ -858,7 +1146,7 @@ fun MemoryTab(
                             Text("重建记忆")
                         }
                         OutlinedButton(
-                            onClick = onClearContextMemory,
+                            onClick = { clearTargetBranchId = currentBranchId },
                             enabled = !isGenerating && !memoryOperationRunning,
                             modifier = Modifier.heightIn(min = 48.dp),
                         ) {
@@ -876,6 +1164,16 @@ fun MemoryTab(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(vertical = 8.dp),
                         )
+                    }
+                    contextMemoryClearError?.let { error ->
+                        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(error, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error)
+                            TextButton(
+                                onClick = { onRetryClearContextMemory(currentBranchId) },
+                                enabled = !isGenerating && !memoryOperationRunning,
+                            ) { Text("重试清空") }
+                        }
                     }
                     if (!contextMemoryLoaded) {
                         if (contextMemoryLoading) {
@@ -895,7 +1193,9 @@ fun MemoryTab(
                             TextButton(onClick = onRetryContextMemory, enabled = !contextMemoryLoading,
                                 modifier = Modifier.heightIn(min = 48.dp)) { Text("重试读取") }
                         }
-                        ExpandableMemoryText(contextMemoryText.ifBlank { "暂无长期记忆，可从当前故事线重建。" }, collapsedLines = 6)
+                        ExpandableMemoryText(contextMemoryText.ifBlank { "暂无长期记忆，可从当前故事线重建。" },
+                            collapsedLines = 6,
+                            restorationKey = sessionId?.takeIf { it > 0L }?.let { "context:$it:$currentBranchId" })
                     }
                 }
             }
@@ -938,13 +1238,14 @@ fun MemoryTab(
                     item { Text("暂无用户纠正", modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 } else {
                     items(corrections, key = { "correction:${it.id}" }) { correction ->
-                        Surface(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.surface) {
+                        Surface(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surface) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Text(if (correction.branchId == null) "整个对话" else "仅当前故事线",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(Modifier.height(4.dp))
-                                ExpandableMemoryText(correction.content)
+                                ExpandableMemoryText(correction.content,
+                                    restorationKey = "correction:${correction.sessionId}:$currentBranchId:${correction.id}")
                                 correction.sourceMessageId?.let { sourceId ->
                                     TextButton(
                                         enabled = !isGenerating && !sourceNavigationBusy,
@@ -1045,6 +1346,10 @@ fun MemoryTab(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 4.dp),
                         )
+                        if (summariesHasNewer) TextButton(
+                            enabled = !isGenerating && !memoryOperationRunning && !summariesLoading && !olderSummariesLoading,
+                            onClick = { memoryListScope.launch { memoryListState.scrollToItem(0); onResetSummaryWindow() } },
+                        ) { Text("回到最近摘要") }
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -1102,14 +1407,34 @@ fun MemoryTab(
                     }
                 } else {
                     items(segments, key = { "summary:${it.id}" }) { segment ->
+                        val inherited = segment.branchId != currentBranchId
                         Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                     Text("剧情摘要", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                    if (inherited) Text("继承自 ${segment.branchId}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Text(segment.emotionalTone, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 Spacer(Modifier.height(8.dp))
-                                ExpandableMemoryText(segment.summary)
+                                ExpandableMemoryText(segment.summary,
+                                    restorationKey = "summary:${segment.sessionId}:$currentBranchId:${segment.id}")
+                                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                    TextButton(
+                                        enabled = !inherited && !isGenerating && !memoryOperationRunning,
+                                        onClick = {
+                                            editingSegmentId = segment.id
+                                            editOriginalSummary = segment.summary
+                                            editText = segment.summary
+                                            submittedSummary = null
+                                        },
+                                    ) { Text("编辑") }
+                                    TextButton(
+                                        enabled = !inherited && !isGenerating && !memoryOperationRunning,
+                                        onClick = { deleteTarget = segment },
+                                    ) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                                }
+                                if (inherited) Text("继承摘要不能直接修改；可用“纠正这段记忆”建立当前线修正。",
+                                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 TextButton(
                                     enabled = !isGenerating,
                                     onClick = { onAddCorrection(segment.summary, segment.startMessageId.takeIf { it > 0L }) },
@@ -1125,18 +1450,24 @@ fun MemoryTab(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 } else {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Text(
-                                            source.label,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.weight(1f),
-                                        )
-                                        TextButton(enabled = !isGenerating && !sourceNavigationBusy, onClick = { onJumpToSource(source.messageId) }) {
-                                            Text("查看原文")
+                                    Column(Modifier.fillMaxWidth()) {
+                                        Text(source.label, style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        val endMessageId = source.endMessageId
+                                        FlowRow(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                                        ) {
+                                            if (endMessageId == null) {
+                                                TextButton(enabled = !isGenerating && !sourceNavigationBusy,
+                                                    onClick = { onJumpToSource(source.startMessageId) }) { Text("查看原文") }
+                                            } else {
+                                                TextButton(enabled = !isGenerating && !sourceNavigationBusy,
+                                                    onClick = { onJumpToSource(source.startMessageId) }) { Text("查看起始原文") }
+                                                TextButton(enabled = !isGenerating && !sourceNavigationBusy,
+                                                    onClick = { onJumpToSource(endMessageId) }) { Text("查看结束原文") }
+                                            }
                                         }
                                     }
                                 }
@@ -1158,6 +1489,67 @@ fun MemoryTab(
                 }
             }
         }
+        clearTargetBranchId?.let { targetBranchId ->
+            AlertDialog(
+                onDismissRequest = { if (!memoryOperationRunning) clearTargetBranchId = null },
+                title = { Text("清空长期记忆") },
+                text = { Text("确认清空“${if (targetBranchId == "main") "主线剧情" else "当前故事线"}”的长期记忆？此操作不会删除原始对话。") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            clearTargetBranchId = null
+                            onClearContextMemory(targetBranchId)
+                        },
+                        enabled = !isGenerating && !memoryOperationRunning,
+                    ) { Text("确认清空") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { clearTargetBranchId = null }, enabled = !memoryOperationRunning) { Text("取消") }
+                },
+            )
+        }
+        if (editingSegmentId != null && sessionReady && summariesLoaded && memoryUiBranchId == currentBranchId) {
+            ModalBottomSheet(
+                onDismissRequest = { if (!memoryOperationRunning) editingSegmentId = null },
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+                sheetMaxWidth = 720.dp,
+            ) {
+                Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f).imePadding().padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("编辑自动摘要", style = MaterialTheme.typography.titleLarge)
+                    if (editTarget == null) {
+                        Text(editorRestoreError ?: "正在恢复摘要…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (editorRestoreError != null) TextButton(onClick = { editorRestoreAttempt++ }) { Text("重试读取") }
+                    }
+                    com.mojing.app.ui.common.MoJingWritingField(
+                        value = editText, onValueChange = { editText = it }, label = "摘要内容",
+                        placeholder = "输入摘要内容", enabled = !memoryOperationRunning,
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                    )
+                    Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.End) {
+                        TextButton(enabled = !memoryOperationRunning, onClick = { editingSegmentId = null }) { Text("取消") }
+                        TextButton(enabled = editTarget != null && editText.trim().isNotEmpty() && !isGenerating && !memoryOperationRunning,
+                            onClick = { val segment = editTarget ?: return@TextButton; val text = editText.trim(); submittedSummary = text; onEditMemorySummary(segment, text) { success ->
+                                if (success && editingSegmentId == segment.id) editingSegmentId = null
+                            } }) {
+                            Text(if (memoryOperationRunning) "保存中…" else "保存")
+                        }
+                    }
+                }
+            }
+        }
+        deleteTarget?.let { segment ->
+            AlertDialog(
+                onDismissRequest = { deleteTarget = null },
+                title = { Text("删除这段自动摘要？") },
+                text = { Text("将删除这段摘要及其后续自动摘要，原始对话仍会保留，之后可以继续整理重建。") },
+                confirmButton = {
+                    TextButton(enabled = !isGenerating && !memoryOperationRunning,
+                        onClick = { deleteTarget = null; onDeleteMemorySummary(segment) }) { Text("确认删除", color = MaterialTheme.colorScheme.error) }
+                },
+                dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } },
+            )
+        }
         }
     }
 }
@@ -1177,30 +1569,40 @@ fun TimelineTab(
     olderEventsError: String? = null,
     onLoadOlderEvents: () -> Unit = {},
     sourceNavigationBusy: Boolean = false,
+    query: String = "",
+    resolvedFilter: Boolean? = null,
+    onQueryChange: (String) -> Unit = {},
+    onResolvedFilterChange: ((Boolean?) -> Unit)? = null,
+    hasNewerEvents: Boolean = false,
+    onResetWindow: () -> Unit = {},
+    sessionReady: Boolean = true,
 ) {
-    if (!loaded) {
+    // The initial branch is temporary until session restoration has completed.
+    if (!sessionReady) {
         Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (olderEventsError == null) {
-                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                Text("正在加载当前故事线事件…", style = MaterialTheme.typography.bodyMedium)
-            } else {
-                Text(olderEventsError, style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error)
-                TextButton(onClick = onLoadOlderEvents, modifier = Modifier.heightIn(min = 48.dp)) { Text("重试加载") }
-            }
+            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+            Text("正在加载当前故事线事件…", style = MaterialTheme.typography.bodyMedium)
         }
         return
     }
-    var deleteTarget by remember(currentBranchId) { mutableStateOf<Long?>(null) }
+    var deleteTarget by rememberSaveable(currentBranchId) { mutableStateOf<Long?>(null) }
     var selectedFilter by remember(currentBranchId) { mutableStateOf(0) }
-    val visibleEvents = remember(events, selectedFilter) {
-        events.filter { selectedFilter == 0 || it.resolved == (selectedFilter == 2) }
+    val effectiveFilter = if (onResolvedFilterChange == null) selectedFilter else
+        when (resolvedFilter) { null -> 0; false -> 1; true -> 2 }
+    val visibleEvents = remember(events, effectiveFilter) {
+        events.filter { effectiveFilter == 0 || it.resolved == (effectiveFilter == 2) }
             .sortedWith(compareByDescending<SessionEventNodeEntity> { it.createdAt }.thenByDescending { it.id })
     }
+    val eventListState = key(currentBranchId, effectiveFilter, query) {
+        androidx.compose.foundation.lazy.rememberLazyListState()
+    }
+    val eventListScope = rememberCoroutineScope()
     val timeFormat = remember { java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()) }
-    val pendingDelete = events.firstOrNull { it.id == deleteTarget }
-    LaunchedEffect(pendingDelete?.id) { if (pendingDelete == null) deleteTarget = null }
+    val pendingDelete = events.firstOrNull { it.id == deleteTarget && it.branchId == currentBranchId }
+    LaunchedEffect(loaded, deleteTarget, pendingDelete?.id) {
+        if (loaded && pendingDelete == null) deleteTarget = null
+    }
     pendingDelete?.let { event ->
         AlertDialog(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
@@ -1216,28 +1618,65 @@ fun TimelineTab(
             dismissButton = { TextButton(enabled = event.id !in busyIds, onClick = { deleteTarget = null }) { Text("保留事件") } },
         )
     }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
     Column(Modifier.fillMaxSize()) {
+        OutlinedTextField(value = query, onValueChange = onQueryChange,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            inputModifier = Modifier.semantics { contentDescription = "搜索故事线事件" },
+            placeholder = { Text("搜索事件标题或描述") }, singleLine = true,
+            leadingIcon = { Icon(Icons.Outlined.Search, null) },
+            trailingIcon = if (query.isNotEmpty()) {
+                { IconButton(onClick = { onQueryChange("") }) { Icon(Icons.Outlined.Close, "清除事件搜索") } }
+            } else null,
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+            keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { keyboard?.hide(); focus.clearFocus() }))
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)
             .horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val moreMark = if (hasOlderEvents) "+" else ""
-            listOf("全部 ${events.size}$moreMark", "待跟进 ${events.count { !it.resolved }}$moreMark", "已解决 ${events.count { it.resolved }}$moreMark").forEachIndexed { index, label ->
-                FilterChip(selected = selectedFilter == index, onClick = { selectedFilter = index }, label = { Text(label) })
+            listOf("全部", "待跟进", "已解决").forEachIndexed { index, label ->
+                FilterChip(selected = effectiveFilter == index, onClick = {
+                    if (onResolvedFilterChange == null) selectedFilter = index
+                    else onResolvedFilterChange(when (index) { 1 -> false; 2 -> true; else -> null })
+                }, label = { Text(label) })
             }
         }
         HorizontalDivider()
+        if (hasNewerEvents) TextButton(onClick = {
+            onResetWindow()
+            eventListScope.launch { eventListState.scrollToItem(0) }
+        }, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Outlined.Refresh, null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("回到最近事件")
+        }
+        if (!loaded) {
+
+        Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (olderEventsError == null) {
+                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                Text("正在加载当前故事线事件…", style = MaterialTheme.typography.bodyMedium)
+            } else {
+                Text(olderEventsError, style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = onLoadOlderEvents, modifier = Modifier.heightIn(min = 48.dp)) { Text("重试加载") }
+            }
+        }
+
+        } else {
     if (visibleEvents.isEmpty()) {
         Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
             Text(
-                if (events.isEmpty()) "当前故事线暂无事件。对话推进后会自动整理，可从事件返回原文。"
-                else if (hasOlderEvents) "当前已加载范围暂无此类事件，可继续加载较早事件。"
-                else "当前分类暂无事件，可切换分类查看。",
+                if (query.isNotBlank()) "没有匹配的事件，可修改搜索词或切换分类。"
+                else if (effectiveFilter != 0) "当前故事线暂无此类事件。"
+                else "当前故事线暂无事件。对话推进后会自动整理。",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         EventPaginationFooter(hasOlderEvents, olderEventsLoading, olderEventsError, onLoadOlderEvents)
     } else {
-        androidx.compose.runtime.key(currentBranchId, selectedFilter) {
-        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        androidx.compose.runtime.key(currentBranchId, effectiveFilter, query) {
+        LazyColumn(state = eventListState, modifier = Modifier.weight(1f).fillMaxWidth()) {
             items(visibleEvents, key = { it.id }) { event ->
                 val busy = event.id in busyIds
                 val inherited = event.branchId != currentBranchId
@@ -1263,7 +1702,8 @@ fun TimelineTab(
                         actionErrors[event.id]?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                         if (event.description.isNotBlank()) {
                             Spacer(Modifier.height(4.dp))
-                            ExpandableMemoryText(event.description, collapsedLines = 3)
+                            ExpandableMemoryText(event.description, collapsedLines = 3,
+                                restorationKey = "event:${event.sessionId}:$currentBranchId:${event.id}")
                         }
                         val source = event.sourceReference()
                         if (source == null) {
@@ -1273,7 +1713,7 @@ fun TimelineTab(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         } else {
-                            TextButton(enabled = !sourceNavigationBusy, onClick = { onJumpToSource(source.messageId) }) {
+                            TextButton(enabled = !sourceNavigationBusy, onClick = { onJumpToSource(source.startMessageId) }) {
                                 Text(source.label)
                             }
                         }
@@ -1300,6 +1740,7 @@ fun TimelineTab(
         }
         }
     }
+        }
     }
 }
 
@@ -1324,7 +1765,7 @@ private fun EventPaginationFooter(
             error?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
-            if (hasOlderEvents) {
+            if (hasOlderEvents || error != null) {
                 TextButton(onClick = onLoadOlderEvents, modifier = Modifier.heightIn(min = 48.dp)) {
                     Text(if (error == null) "继续加载较早事件" else "重试加载较早事件")
                 }
@@ -1334,8 +1775,9 @@ private fun EventPaginationFooter(
 }
 
 @Composable
-internal fun ExpandableMemoryText(text: String, collapsedLines: Int = 4) {
-    var expanded by remember(text) { mutableStateOf(false) }
+internal fun ExpandableMemoryText(text: String, collapsedLines: Int = 4, restorationKey: String? = null) {
+    var expanded by if (restorationKey == null) remember(text) { mutableStateOf(false) }
+        else rememberMemoryTextExpansion(restorationKey, text, collapsedLines)
     var overflowing by remember(text, collapsedLines) { mutableStateOf(false) }
     Text(text, style = MaterialTheme.typography.bodyMedium,
         maxLines = if (expanded) Int.MAX_VALUE else collapsedLines,
@@ -1345,4 +1787,21 @@ internal fun ExpandableMemoryText(text: String, collapsedLines: Int = 4) {
     if (expanded || overflowing) TextButton(onClick = { expanded = !expanded }) {
         Text(if (expanded) "收起" else "展开全文")
     }
+}
+
+@Composable
+internal fun rememberMemoryTextExpansion(scope: String, text: String, collapsedLines: Int): MutableState<Boolean> {
+    // Keep only reading intent in saved state. Inputs alone are not validated on
+    // restoration, so match the scope and content fingerprint before expanding.
+    val fingerprint = remember(text, collapsedLines) {
+        java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) } + ":$collapsedLines"
+    }
+    val saver = androidx.compose.runtime.saveable.listSaver<MutableState<Boolean>, Any>(
+        save = { listOf(scope, fingerprint, it.value) },
+        restore = { saved ->
+            mutableStateOf(saved[0] == scope && saved[1] == fingerprint && saved[2] == true)
+        },
+    )
+    return rememberSaveable(scope, fingerprint, saver = saver) { mutableStateOf(false) }
 }

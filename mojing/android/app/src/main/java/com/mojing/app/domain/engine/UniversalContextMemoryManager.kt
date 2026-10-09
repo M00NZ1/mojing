@@ -73,6 +73,7 @@ class UniversalContextMemoryManager @Inject constructor(
         model: String,
         worldText: String,
         activeCharacterNames: List<String>,
+        contextWindow: Int? = null,
     ): Boolean {
         // Rebuild is an explicit user action and must be able to recover immediately.
         clearAutomaticFailureCooldown(sessionId, branchId)
@@ -111,6 +112,7 @@ class UniversalContextMemoryManager @Inject constructor(
                     model = model,
                     worldText = worldText,
                     activeCharacterNames = activeCharacterNames,
+                    contextWindow = contextWindow,
                 ) ?: return false
                 cursor = page.last().id
                 pageCount += 1
@@ -150,6 +152,7 @@ class UniversalContextMemoryManager @Inject constructor(
         model: String,
         worldText: String,
         activeCharacterNames: List<String>,
+        contextWindow: Int? = null,
     ): UniversalContextMemoryUpdateResult {
         val storedEntity = dao.getBySessionAndBranch(sessionId, branchId)
         if ((storedEntity?.revision ?: 0L) != expectedRevision) {
@@ -203,6 +206,7 @@ class UniversalContextMemoryManager @Inject constructor(
                     model = model,
                     worldText = worldText,
                     activeCharacterNames = activeCharacterNames,
+                    contextWindow = contextWindow,
                 ) ?: return rememberAutomaticFailure(cooldownKey, expectedRevision, resetEpoch)
             }
             val memory = stagedMemory ?: return rememberAutomaticFailure(cooldownKey, expectedRevision, resetEpoch)
@@ -249,6 +253,7 @@ class UniversalContextMemoryManager @Inject constructor(
         model: String,
         worldText: String,
         activeCharacterNames: List<String>,
+        contextWindow: Int? = null,
     ): UniversalContextMemory? {
         if (messages.isEmpty()) return oldMemory
         val oldMemoryText = UniversalContextMemoryFormatter.format(oldMemory)
@@ -277,6 +282,7 @@ class UniversalContextMemoryManager @Inject constructor(
             temperature = 0.4f,
             maxTokens = 3200,
             jsonOutput = true,
+            contextWindow = contextWindow,
         )
         val parsed = UniversalContextMemoryParser.parse(raw, gson) ?: run {
             UsbSessionLog.w("UCM", "$operation parse miss sid=$sessionId branch=$branchId")

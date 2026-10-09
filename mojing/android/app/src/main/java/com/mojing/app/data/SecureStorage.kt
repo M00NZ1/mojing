@@ -22,15 +22,89 @@ class SecureStorage {
 
     fun activeModelPlatformId(): String = prefs?.getString("active_model_platform", "legacy") ?: "legacy"
 
+    @Synchronized
     fun saveModelPlatform(platform: ModelPlatform, makeDefault: Boolean = true) {
+        val storage = checkNotNull(prefs)
         val all = modelPlatforms().toMutableList()
         val index = all.indexOfFirst { it.id == platform.id }
         if (index < 0) all.add(platform) else all[index] = platform
-        val editor = checkNotNull(prefs).edit().putString("model_platforms_v1", ModelPlatformCodec.encode(all))
+        val touchedKeys = buildList {
+            add("model_platforms_v1")
+            if (makeDefault) {
+                add("active_model_platform")
+                add("public_api_key")
+                add("public_base_url")
+                add("public_model")
+            }
+        }
+        val oldValues = touchedKeys.associateWith { storage.getString(it, null) }
+        val editor = storage.edit().putString("model_platforms_v1", ModelPlatformCodec.encode(all))
         if (makeDefault) editor.putString("active_model_platform", platform.id)
             .putString("public_api_key", platform.apiKey).putString("public_base_url", platform.baseUrl)
             .putString("public_model", platform.selectedModel)
-        check(editor.commit()) { "平台保存失败，请重试" }
+        try {
+            if (editor.commit()) return
+        } catch (_: Exception) {
+            // Some SharedPreferences implementations can mutate their in-memory map before
+            // reporting an exception; the same restoration path below still applies.
+        }
+        restorePlatformValues(storage, oldValues, "平台保存失败")
+    }
+
+    @Synchronized
+    fun deleteModelPlatform(platformId: String): List<ModelPlatform> {
+        val storage = checkNotNull(prefs)
+        val all = modelPlatforms()
+        val target = all.firstOrNull { it.id == platformId }
+            ?: throw IllegalArgumentException("平台不存在")
+        val wasDefault = activeModelPlatformId() == target.id
+        val remaining = all.filterNot { it.id == target.id }
+        val touchedKeys = buildList {
+            add("model_platforms_v1")
+            if (wasDefault) {
+                add("active_model_platform")
+                add("public_api_key")
+                add("public_base_url")
+                add("public_model")
+            }
+        }
+        val oldValues = touchedKeys.associateWith { storage.getString(it, null) }
+        val editor = storage.edit().putString(
+            "model_platforms_v1", ModelPlatformCodec.encode(remaining),
+        )
+        if (wasDefault) {
+            editor.putString("active_model_platform", "")
+                .putString("public_api_key", "")
+                .putString("public_base_url", "")
+                .putString("public_model", "")
+        }
+        try {
+            if (editor.commit()) return remaining
+        } catch (_: Exception) {
+            // Some SharedPreferences implementations can mutate their in-memory map before
+            // reporting an exception; the same restoration path below still applies.
+        }
+
+        // SharedPreferences.commit(false) may still update the in-memory map. Restore only
+        // the keys touched above before surfacing the failure for an in-place retry.
+        restorePlatformValues(storage, oldValues, "平台删除失败")
+    }
+
+    private fun restorePlatformValues(
+        storage: SharedPreferences,
+        oldValues: Map<String, String?>,
+        failureMessage: String,
+    ): Nothing {
+        try {
+            val restore = storage.edit()
+            oldValues.forEach { (key, value) ->
+                if (value == null) restore.remove(key) else restore.putString(key, value)
+            }
+            check(restore.commit()) { "$failureMessage，且原配置恢复失败，请重启后核对" }
+        } catch (restoreFailure: Exception) {
+            throw IllegalStateException("$failureMessage，且原配置恢复失败，请重启后核对", restoreFailure)
+        }
+        throw IllegalStateException("$failureMessage，请重试")
     }
 
     fun sessionModelSelection(sessionId: Long): Pair<String, String>? {

@@ -20,7 +20,8 @@ class SedimentEngine @Inject constructor(
         messages: List<com.mojing.app.data.local.entity.MessageEntity>,
         apiKey: String,
         baseUrl: String,
-        model: String
+        model: String,
+        contextWindow: Int? = null,
     ) {
         if (messages.isEmpty()) return
         val snapshot = try { store.read(encyclopediaId, sessionId, branchId, messages.takeLast(10)) }
@@ -49,6 +50,7 @@ class SedimentEngine @Inject constructor(
                 apiKey, baseUrl, model, messages_llm,
                 temperature = 0.4f,
                 maxTokens = 2000,
+                contextWindow = contextWindow,
             )
             val json = extractJson(result)
             @Suppress("UNCHECKED_CAST")

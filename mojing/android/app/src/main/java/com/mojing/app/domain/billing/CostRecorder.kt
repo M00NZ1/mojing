@@ -36,6 +36,19 @@ class CostRecorder @Inject constructor(
         return BillingRequestSnapshot(id, name, runCatching { preferences.price(id, model) }.getOrNull())
     }
 
+    /** Uses the session's explicit platform owner instead of guessing by endpoint. */
+    suspend fun captureForPlatform(
+        model: String,
+        baseUrl: String,
+        apiKey: String,
+        platformId: String,
+    ): BillingRequestSnapshot {
+        if (platformId.isBlank()) return capture(model, baseUrl, apiKey)
+        val platform = runCatching { secureStorage.modelPlatforms().firstOrNull { it.id == platformId } }.getOrNull()
+        val name = platform?.name ?: "已选择平台"
+        return BillingRequestSnapshot(platformId, name, runCatching { preferences.price(platformId, model) }.getOrNull())
+    }
+
     suspend fun recordLlm(
         sessionId: Long?,
         characterId: Long?,

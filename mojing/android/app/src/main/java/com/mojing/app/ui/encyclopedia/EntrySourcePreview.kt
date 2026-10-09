@@ -25,6 +25,7 @@ internal fun EntrySourcePreview(
     error: String?,
     onClose: () -> Unit,
     onRetry: () -> Unit,
+    verification: EntrySourceVerification = EntrySourceVerification.UNKNOWN,
     sourceIndex: Int = 0,
     sourceCount: Int = 1,
     onSourceChange: (Int) -> Unit = {},
@@ -62,10 +63,31 @@ internal fun EntrySourcePreview(
                             MoJingOutlinedButton(onClick = onRetry) { Text("重新读取") }
                         }
                         else -> SelectionContainer {
-                            Text(
-                                content?.takeIf { it.isNotBlank() } ?: "这条消息没有文字内容。",
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(verification.label, style = MaterialTheme.typography.labelLarge,
+                                    color = when (verification) {
+                                        EntrySourceVerification.CHANGED,
+                                        EntrySourceVerification.NOT_IN_ORIGINAL_LINE,
+                                        EntrySourceVerification.MISSING -> MaterialTheme.colorScheme.error
+                                        EntrySourceVerification.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        EntrySourceVerification.CURRENT -> MaterialTheme.colorScheme.primary
+                                    })
+                                when (verification) {
+                                    EntrySourceVerification.NOT_IN_ORIGINAL_LINE -> Text(
+                                        "当前采用上下文未包含这条消息，可能因分支选择或排除设置。",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    EntrySourceVerification.CHANGED -> Text(
+                                        "资料生成后的原文已变更，请核对条目内容。",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    else -> Unit
+                                }
+                                Text(content?.takeIf { it.isNotBlank() } ?: "这条消息没有文字内容。",
+                                    style = MaterialTheme.typography.bodyLarge)
+                            }
                         }
                     }
                 }

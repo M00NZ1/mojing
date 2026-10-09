@@ -67,6 +67,7 @@ object MainBranchChatExportWriter {
         json.name("speakerType").value(message.speakerType)
         message.characterId?.let { json.name("characterId").value(it) }
         json.name("branchId").value(message.branchId)
+        message.parentMessageId?.let { json.name("parentMessageId").value(it) }
         json.name("content").value(message.content)
         json.name("structuredContentJson").value(message.structuredContentJson)
         json.name("includeInContext").value(message.includeInContext)

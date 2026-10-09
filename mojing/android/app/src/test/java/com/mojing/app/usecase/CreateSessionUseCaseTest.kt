@@ -132,6 +132,53 @@ class CreateSessionUseCaseTest {
     }
 
     @Test
+    fun boundCharacterShortcutSnapshotsItsWorldInsteadOfDifferentDefault() = runTest {
+        configureMappedDefault()
+        coEvery { characterDao.getById(5L) } returns CharacterEntity(id = 5L, boundEncyclopediaId = 9L)
+        coEvery { encyclopediaDao.getById(9L) } returns com.mojing.app.data.local.entity.EncyclopediaEntity(
+            id = 9L, name = "角色世界B", worldPrompt = "B背景", gameplayMode = "B玩法", antiCheatPrompt = "B规则",
+        )
+
+        useCase.createForCharacter(5L)
+
+        coVerify {
+            transaction(any(), match {
+                it.encyclopediaId == 9L && it.templateId == "custom" && it.worldPrompt == "B背景" &&
+                    it.gameplayMode == "B玩法" && it.antiCheatEnabled && it.antiCheatPrompt == "B规则" &&
+                    it.suggestedChoicesJson == "[]"
+            }, match { it.single().characterId == 5L })
+        }
+    }
+
+    @Test
+    fun unboundCharacterShortcutStillSnapshotsMappedDefaultWorld() = runTest {
+        configureMappedDefault()
+        coEvery { characterDao.getById(5L) } returns CharacterEntity(id = 5L, boundEncyclopediaId = 0L)
+
+        useCase.createForCharacter(5L)
+
+        coVerify {
+            transaction(any(), match {
+                it.encyclopediaId == 8L && it.templateId == "custom" && it.worldPrompt == "A当前背景" &&
+                    it.gameplayMode == "A当前玩法" && it.antiCheatPrompt == "A当前规则"
+            }, match { it.single().characterId == 5L })
+        }
+    }
+
+    private fun configureMappedDefault() {
+        every { secureStorage.defaultWorldTemplateId } returns "default-A"
+        every { secureStorage.defaultAntiCheatEnabled } returns true
+        coEvery { worldTemplateDao.getByTemplateId("default-A") } returns WorldTemplateEntity(
+            id = 3L, templateId = "default-A", worldPrompt = "A旧背景", gameplayMode = "A旧玩法",
+            antiCheatPrompt = "A旧规则", suggestedChoicesJson = "[\"A旧选项\"]",
+        )
+        coEvery { mappingDao.getByTemplateId(3L) } returns com.mojing.app.data.local.entity.LegacyWorldMappingEntity(3L, 8L, "source")
+        coEvery { encyclopediaDao.getById(8L) } returns com.mojing.app.data.local.entity.EncyclopediaEntity(
+            id = 8L, name = "默认世界A", worldPrompt = "A当前背景", gameplayMode = "A当前玩法", antiCheatPrompt = "A当前规则",
+        )
+    }
+
+    @Test
     fun optionsCanCreateNarrativeOnlySessionWithoutParticipants() = runTest {
         coEvery { transaction(any(), any(), any()) } returns 8L
 

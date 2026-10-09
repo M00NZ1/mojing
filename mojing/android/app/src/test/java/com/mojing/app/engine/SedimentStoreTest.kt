@@ -35,6 +35,7 @@ class SedimentStoreTest {
         assertEquals(7L, saved.captured.sourceSessionId)
         assertEquals(3L, saved.captured.sourceMessageId)
         assertTrue(saved.captured.metaJson.contains("\"source_branch_id\":\"main\""))
+        assertTrue(saved.captured.metaJson.contains("\"source_message_fingerprints\""))
         assertFalse(saved.captured.metaJson.contains("linkedCharacterId"))
     }
 
@@ -62,6 +63,16 @@ class SedimentStoreTest {
         coEvery { entries.upsert(any()) } throws IllegalStateException("write failed")
         try { SedimentStore.persistValidated(snapshot, listOf(result), messages, worlds, encyclopedias, entries); fail("must abort") }
         catch (_: IllegalStateException) { }
+    }
+
+    @Test fun legacyVersionOneDuplicateIsSkippedAfterMetadataUpgrade() = runTest {
+        prepare()
+        coEvery { entries.findSedimentDuplicate(any(), any(), any(), any(), any()) } answers {
+            if (arg<String>(4).contains("\"sediment_version\":1")) 17L else null
+        }
+        assertEquals(0, SedimentStore.persistValidated(snapshot, listOf(result), messages, worlds, encyclopedias, entries))
+        coVerify(exactly = 0) { entries.upsert(any()) }
+        coVerify(exactly = 1) { entries.findSedimentDuplicate(any(), any(), any(), any(), match { it.contains("\"sediment_version\":1") }) }
     }
 
     @Test fun branchUsesItsOwnVisibleSources() = runTest {

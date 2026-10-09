@@ -10,11 +10,12 @@ class AiCompleteUseCase @Inject constructor(
 ) {
     suspend operator fun invoke(
         apiKey: String, baseUrl: String, model: String,
-        targetType: String, entryType: String?, currentData: Map<String, Any>, extraContext: String
+        targetType: String, entryType: String?, currentData: Map<String, Any>, extraContext: String,
+        contextWindow: Int? = null,
     ): Map<String, Any> {
         return aiCompleter.complete(
             apiKey, baseUrl, model,
-            AiCompleter.CompleteRequest(targetType, entryType, currentData, extraContext)
+            AiCompleter.CompleteRequest(targetType, entryType, currentData, extraContext, contextWindow)
         )
     }
 }

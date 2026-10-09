@@ -101,6 +101,7 @@ fun CardImageCropSheet(
         },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
+        com.mojing.app.ui.theme.DialogSystemBarAppearance(MaterialTheme.colorScheme.surface)
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.surface,

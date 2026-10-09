@@ -49,7 +49,7 @@ fun ChatDensityMode.toMetrics(): ChatDensityMetrics = when (this) {
         rowVertical = 4.dp,
         bubbleInnerPadding = 12.dp,
         bubbleMaxWidth = 640.dp,
-        bodyFontSp = 16f,
+        bodyFontSp = 15f,
         bubbleCornerOuter = 12.dp,
         bubbleCornerInner = 4.dp,
         narratorHorizontal = 24.dp,
@@ -95,14 +95,14 @@ val LocalChatDensityMetrics = compositionLocalOf { ChatDensityMode.Comfortable.t
 @Composable
 @ReadOnlyComposable
 fun ChatDensityMetrics.bodyTextStyle(): TextStyle =
-    MaterialTheme.typography.bodyLarge.copy(fontSize = bodyFontSp.sp, lineHeight = (if (bodyFontSp == 17f) 29f else if (bodyFontSp >= 19f) 32f else 26f).sp, fontFamily = LocalChatReadingStyle.current.fontFamily)
+    MaterialTheme.typography.bodyLarge.copy(fontSize = bodyFontSp.sp, lineHeight = (if (bodyFontSp == 17f) 29f else if (bodyFontSp >= 19f) 32f else 24f).sp, fontFamily = LocalChatReadingStyle.current.fontFamily)
 
 @Composable
 @ReadOnlyComposable
 fun ChatDensityMetrics.narrationTextStyle(): TextStyle =
     MaterialTheme.typography.bodyMedium.copy(
-        fontSize = (if (bodyFontSp == 17f) 17f else bodyFontSp - 1f).coerceAtLeast(12f).sp,
-        lineHeight = (if (bodyFontSp == 17f) 29f else 26f).sp,
+        fontSize = bodyFontSp.sp,
+        lineHeight = (if (bodyFontSp == 17f) 29f else 24f).sp,
         fontFamily = LocalChatReadingStyle.current.fontFamily,
         fontStyle = LocalChatReadingStyle.current.narratorFontStyle,
     )

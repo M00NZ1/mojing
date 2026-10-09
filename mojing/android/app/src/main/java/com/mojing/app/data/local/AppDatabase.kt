@@ -25,7 +25,7 @@ import com.mojing.app.data.local.entity.*
         LegacyWorldMappingEntity::class, LegacyLoreMappingEntity::class,
         BranchEventStatusEntity::class,
     ],
-    version = 27,
+    version = 28,
     exportSchema = true
 )
 @TypeConverters(Converters::class)

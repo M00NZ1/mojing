@@ -6,11 +6,15 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import com.mojing.app.data.local.branch.BranchVisibilityPlanner
+import com.mojing.app.data.local.branch.BranchContextMemoryInheritance
 import com.mojing.app.data.local.entity.BranchSwipeSelectionEntity
+import com.mojing.app.data.local.entity.BranchContextExclusionEntity
 import com.mojing.app.data.local.entity.BranchVisibilitySegmentEntity
 import com.mojing.app.data.local.entity.MessageAttachmentEntity
 import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.local.entity.SessionBranchEntity
+import com.mojing.app.data.local.entity.SessionContextMemoryEntity
+import com.mojing.app.data.local.entity.contextSelectionKey
 import com.mojing.app.data.local.search.MessageSearchTokenizer
 import kotlinx.coroutines.flow.Flow
 
@@ -21,6 +25,12 @@ interface SessionBranchDao {
 
     @Query("SELECT * FROM session_branches WHERE sessionId = :sessionId")
     suspend fun getBySession(sessionId: Long): List<SessionBranchEntity>
+
+    @Query("SELECT * FROM session_branches WHERE sessionId = :sessionId AND id > :afterId ORDER BY id ASC LIMIT :limit")
+    suspend fun getPage(sessionId: Long, afterId: Long, limit: Int): List<SessionBranchEntity>
+
+    @Query("SELECT * FROM session_branches WHERE sessionId = :sessionId AND id < :beforeId ORDER BY id DESC LIMIT :limit")
+    suspend fun getPreviousPage(sessionId: Long, beforeId: Long, limit: Int): List<SessionBranchEntity>
 
     @Query("SELECT * FROM session_branches WHERE sessionId = :sessionId AND branchId = :branchId LIMIT 1")
     suspend fun getByBranch(sessionId: Long, branchId: String): SessionBranchEntity?
@@ -118,8 +128,60 @@ interface SessionBranchDao {
     @Query("SELECT sessionId FROM messages WHERE id = :sourceId LIMIT 1")
     suspend fun sourceSessionId(sourceId: Long): Long?
 
+    /** 新故事线继承可见原文的排除状态；分叉之后和其他故事线的设置不带入。 */
+    @Query(
+        """
+        INSERT OR IGNORE INTO branch_context_exclusions(sessionId, branchId, messageKey)
+        SELECT parent.sessionId, :branchId, parent.messageKey
+        FROM branch_context_exclusions AS parent
+        WHERE parent.sessionId = :sessionId AND parent.branchId = :parentBranchId
+          AND EXISTS (
+              SELECT 1 FROM messages AS message
+              JOIN branch_visibility_segments AS segment
+                ON segment.sessionId = message.sessionId
+               AND segment.targetBranchId = :branchId
+               AND segment.sourceBranchId = message.branchId
+               AND message.id <= segment.maxMessageId
+              WHERE message.sessionId = parent.sessionId
+                AND parent.messageKey = CASE
+                    WHEN message.swipeGroupId IS NULL OR trim(message.swipeGroupId) = '' THEN 'm' || message.id
+                    ELSE 'g' || message.swipeGroupId END
+                AND NOT EXISTS (
+                    SELECT 1 FROM messages AS replacement
+                    JOIN branch_visibility_segments AS replacement_segment
+                      ON replacement_segment.sessionId = replacement.sessionId
+                     AND replacement_segment.targetBranchId = :branchId
+                     AND replacement_segment.sourceBranchId = replacement.branchId
+                     AND replacement.id <= replacement_segment.maxMessageId
+                    WHERE replacement.sessionId = message.sessionId
+                      AND replacement.regeneratedFromMessageId = message.id
+                      AND replacement.branchId <> message.branchId
+                )
+          )
+        """,
+    )
+    suspend fun copyVisibleContextExclusions(sessionId: Long, parentBranchId: String, branchId: String)
+
+    @Query("SELECT * FROM messages WHERE sessionId = :sessionId AND id = :messageId LIMIT 1")
+    suspend fun getEditSourceMessage(sessionId: Long, messageId: Long): MessageEntity?
+
+    @Query("SELECT EXISTS(SELECT 1 FROM branch_context_exclusions WHERE sessionId = :sessionId AND branchId = :branchId AND messageKey = :key)")
+    suspend fun isContextExcluded(sessionId: Long, branchId: String, key: String): Boolean
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertContextExclusion(entity: BranchContextExclusionEntity): Long
+
+    @Query("DELETE FROM branch_context_exclusions WHERE sessionId = :sessionId AND branchId = :branchId AND messageKey = :key")
+    suspend fun deleteContextExclusion(sessionId: Long, branchId: String, key: String)
+
     @Transaction
     suspend fun insert(entity: SessionBranchEntity): Long {
+        val id = insertBranchState(entity)
+        inheritCompatibleContextMemory(entity)
+        return id
+    }
+
+    private suspend fun insertBranchState(entity: SessionBranchEntity): Long {
         require(sourceSessionId(entity.sourceMessageId) == entity.sessionId) { "故事线来源已不存在或不属于当前会话" }
         val id = insertRaw(entity)
         rebuildVisibilitySegments(entity.sessionId)
@@ -133,6 +195,7 @@ interface SessionBranchDao {
             parentBranchId = entity.parentBranchId,
             branchId = entity.branchId,
         )
+        copyVisibleContextExclusions(entity.sessionId, entity.parentBranchId, entity.branchId)
         return id
     }
 
@@ -155,8 +218,16 @@ interface SessionBranchDao {
         require(replacement.content.isNotBlank())
         require(replacement.branchId == branch.branchId)
         require(replacement.regeneratedFromMessageId != null)
-        insert(branch)
+        val source = requireNotNull(getEditSourceMessage(branch.sessionId, replacement.regeneratedFromMessageId))
+        val sourceKey = source.contextSelectionKey()
+        val sourceExcluded = isContextExcluded(branch.sessionId, branch.parentBranchId, sourceKey)
+        insertBranchState(branch)
         val replacementId = insertMessage(MessageSearchTokenizer.index(replacement))
+        if (sourceExcluded) {
+            val replacementKey = replacement.copy(id = replacementId).contextSelectionKey()
+            insertContextExclusion(BranchContextExclusionEntity(branch.sessionId, branch.branchId, replacementKey))
+            if (sourceKey != replacementKey) deleteContextExclusion(branch.sessionId, branch.branchId, sourceKey)
+        }
         attachments.forEach { attachment ->
             insertAttachment(attachment.copy(id = 0, messageId = replacementId))
         }
@@ -170,7 +241,36 @@ interface SessionBranchDao {
                 ),
             )
         }
+        inheritCompatibleContextMemory(branch)
         return replacementId
+    }
+
+    @Query("SELECT * FROM session_context_memories WHERE sessionId = :sessionId AND branchId = :branchId LIMIT 1")
+    suspend fun getBranchContextMemory(sessionId: Long, branchId: String): SessionContextMemoryEntity?
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertInheritedContextMemory(entity: SessionContextMemoryEntity): Long
+
+    @Query("$MAIN_CONTEXT_MESSAGES_QUERY AND message.id > :afterId AND message.id <= :endId " +
+        "AND message.speakerType IN ('user', 'character', 'narrator') ORDER BY message.id ASC LIMIT :limit")
+    suspend fun getMainMemoryPrefixPage(sessionId: Long, afterId: Long, endId: Long, limit: Int): List<MessageEntity>
+
+    @Query("$VISIBLE_CONTEXT_MESSAGES_QUERY AND message.id > :afterId AND message.id <= :endId " +
+        "AND message.speakerType IN ('user', 'character', 'narrator') ORDER BY message.id ASC LIMIT :limit")
+    suspend fun getVisibleMemoryPrefixPage(sessionId: Long, branchId: String, afterId: Long, endId: Long, limit: Int): List<MessageEntity>
+
+    private suspend fun inheritCompatibleContextMemory(branch: SessionBranchEntity) {
+        // Never resurrect an explicitly cleared/invalidated child or overwrite an in-flight revision.
+        if (getBranchContextMemory(branch.sessionId, branch.branchId) != null) return
+        val parent = getBranchContextMemory(branch.sessionId, branch.parentBranchId) ?: return
+        val compatible = BranchContextMemoryInheritance.isCompatible(branch, parent) { branchId, afterId, limit ->
+            if (branchId == "main") getMainMemoryPrefixPage(branch.sessionId, afterId, parent.sourceEndMessageId, limit)
+            else getVisibleMemoryPrefixPage(branch.sessionId, branchId, afterId, parent.sourceEndMessageId, limit)
+        }
+        if (!compatible) return
+        val now = System.currentTimeMillis()
+        insertInheritedContextMemory(parent.copy(id = 0L, branchId = branch.branchId, revision = 0L,
+            createdAt = now, updatedAt = now))
     }
 
     private suspend fun rebuildVisibilitySegments(sessionId: Long) {

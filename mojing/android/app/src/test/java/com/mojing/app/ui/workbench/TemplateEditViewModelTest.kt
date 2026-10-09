@@ -1,6 +1,8 @@
 package com.mojing.app.ui.workbench
 
 import com.mojing.app.data.SecureStorage
+import com.mojing.app.data.TemplateEditDraft
+import com.mojing.app.data.TemplateEditDraftStore
 import com.mojing.app.data.local.dao.WorldLoreEntryDao
 import com.mojing.app.data.local.dao.WorldTemplateDao
 import com.mojing.app.data.local.entity.GenerationTaskEntity
@@ -11,6 +13,7 @@ import com.mojing.app.data.remote.BackendWorldsApi
 import com.mojing.app.domain.generation.GenerationQueueProcessor
 import dagger.Lazy
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
@@ -50,6 +53,10 @@ class TemplateEditViewModelTest {
         templateDao: WorldTemplateDao,
         activeTasks: Flow<List<GenerationTaskEntity>> = flowOf(emptyList()),
         mappedTemplate: Boolean = false,
+        draftStore: TemplateEditDraftStore = mockk(relaxed = true) {
+            coEvery { load(any()) } returns null
+            coEvery { loadNew() } returns null
+        },
     ): TemplateEditViewModel {
         val queue = mockk<GenerationQueueProcessor>(relaxed = true)
         every { queue.observeActiveForTemplate(any()) } returns activeTasks
@@ -65,6 +72,7 @@ class TemplateEditViewModelTest {
             backendAssetsApi = mockk<BackendAssetsApi>(relaxed = true),
             secureStorage = mockk<SecureStorage>(relaxed = true),
             generationQueueProcessor = queue,
+            draftStore = draftStore,
         )
     }
 
@@ -114,6 +122,140 @@ class TemplateEditViewModelTest {
     }
 
     @Test
+    fun newTemplateOffersAndRestoresPersistedDraft() = runTest(dispatcher) {
+        val draft = TemplateEditDraft(templateId = "new-world", label = "夜城", summary = "未保存摘要")
+        val drafts = mockk<TemplateEditDraftStore>(relaxed = true) {
+            coEvery { loadNew() } returns draft
+        }
+        val vm = createViewModel(mockk(relaxed = true), draftStore = drafts)
+
+        vm.load(0L)
+        advanceUntilIdle()
+
+        assertEquals(draft, vm.state.value.recoverableDraft)
+        vm.restoreDraft()
+        assertEquals("夜城", vm.state.value.label)
+        assertEquals("未保存摘要", vm.state.value.summary)
+        assertTrue(vm.state.value.isDirty)
+    }
+
+    @Test
+    fun draftWriteFailureKeepsInputAndCanBeRetried() = runTest(dispatcher) {
+        val drafts = mockk<TemplateEditDraftStore>(relaxed = true) {
+            coEvery { loadNew() } returns null
+        }
+        coEvery { drafts.saveNew(any()) } throws IllegalStateException("disk full") andThen Unit
+        val vm = createViewModel(mockk(relaxed = true), draftStore = drafts)
+
+        vm.load(0L)
+        vm.updateSummary("暂存失败仍保留")
+        advanceUntilIdle()
+
+        assertEquals("暂存失败仍保留", vm.state.value.summary)
+        assertNotNull(vm.state.value.draftError)
+        vm.retryDraftSave()
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.draftError)
+    }
+
+    @Test
+    fun failedFirstSaveTransferIsClearedBeforeDiscardingAndLeaving() = runTest(dispatcher) {
+        val saved = WorldTemplateEntity(id = 42L, templateId = "new-world", label = "新世界")
+        val drafts = mockk<TemplateEditDraftStore>(relaxed = true) {
+            coEvery { loadNew() } returns null
+            coEvery { syncAfterFirstSave(42L, any()) } throws IllegalStateException("write failed") andThen Unit
+        }
+        val dao = mockk<WorldTemplateDao> {
+            coEvery { upsert(any()) } returns 42L
+            coEvery { getById(42L) } returns saved
+            coEvery { getByTemplateId(any()) } returns null
+        }
+        val vm = createViewModel(dao, draftStore = drafts)
+        vm.load(0L)
+        vm.updateTemplateId("new-world")
+        vm.updateLabel("新世界")
+        vm.save()
+        advanceUntilIdle()
+
+        assertTrue(vm.state.value.isPersisted)
+        assertNotNull(vm.state.value.draftError)
+        var left = false
+        vm.discardChangesAndLeave { left = true }
+        advanceUntilIdle()
+
+        assertTrue(left)
+        coVerify(exactly = 2) { drafts.syncAfterFirstSave(42L, null) }
+    }
+
+    @Test
+    fun unreadableDraftCanLeaveWithoutOverwritingOrClearingOriginal() = runTest(dispatcher) {
+        val drafts = mockk<TemplateEditDraftStore>(relaxed = true) {
+            coEvery { loadNew() } throws IllegalStateException("corrupt draft")
+        }
+        val vm = createViewModel(mockk(relaxed = true), draftStore = drafts)
+        vm.load(0L)
+        advanceUntilIdle()
+
+        assertTrue(vm.state.value.draftUnreadable)
+        var left = false
+        vm.saveDraftAndLeave { left = true }
+        assertTrue(left)
+        coVerify(exactly = 0) { drafts.saveNew(any()) }
+        coVerify(exactly = 0) { drafts.clearNew() }
+        coVerify(exactly = 0) { drafts.syncAfterFirstSave(any(), any()) }
+    }
+
+    @Test
+    fun staleRecoveryReadCannotRestoreAfterDiscard() = runTest(dispatcher) {
+        val gate = CompletableDeferred<TemplateEditDraft?>()
+        var reads = 0
+        val drafts = mockk<TemplateEditDraftStore>(relaxed = true) {
+            coEvery { loadNew() } coAnswers {
+                if (reads++ == 0) throw IllegalStateException("corrupt draft")
+                gate.await()
+            }
+        }
+        val vm = createViewModel(mockk(relaxed = true), draftStore = drafts)
+        vm.load(0L)
+        advanceUntilIdle()
+        vm.retryDraftLoad()
+        vm.discardStoredDraft()
+        advanceUntilIdle()
+        gate.complete(TemplateEditDraft(label = "过时草稿"))
+        advanceUntilIdle()
+
+        assertEquals(null, vm.state.value.recoverableDraft)
+        assertFalse(vm.state.value.isDiscardingDraft)
+    }
+
+    @Test
+    fun finalDraftSyncDisablesEditsUntilPersistedStateIsApplied() = runTest(dispatcher) {
+        val gate = CompletableDeferred<Unit>()
+        val entity = WorldTemplateEntity(id = 7L, templateId = "rain-city", label = "雨城")
+        val drafts = mockk<TemplateEditDraftStore>(relaxed = true) {
+            coEvery { load(7L) } returns null
+            coEvery { clear(7L) } coAnswers { gate.await() }
+        }
+        val dao = mockk<WorldTemplateDao> {
+            coEvery { getById(7L) } returnsMany listOf(entity, entity.copy(label = "新雨城"))
+            coEvery { upsert(any()) } returns 7L
+        }
+        val vm = createViewModel(dao, draftStore = drafts)
+        vm.load(7L)
+        vm.updateLabel("新雨城")
+        vm.save()
+        assertTrue(vm.state.value.isWritingDraft)
+        vm.updateLabel("同步期间字段禁用")
+        assertEquals("新雨城", vm.state.value.label)
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertFalse(vm.state.value.isWritingDraft)
+        assertEquals("新雨城", vm.state.value.label)
+        vm.updateLabel("同步后继续编辑")
+        assertTrue(vm.state.value.isDirty)
+    }
+
+    @Test
     fun missingExistingTemplateShowsLoadErrorInsteadOfOpeningANewDraft() = runTest(dispatcher) {
         val dao = mockk<WorldTemplateDao> {
             coEvery { getById(9L) } returns null
@@ -133,6 +275,9 @@ class TemplateEditViewModelTest {
         val original = WorldTemplateEntity(id = 7L, templateId = "rain-city", label = "雨城")
         val persisted = original.copy(label = "雨夜城")
         val saveRelease = CompletableDeferred<Unit>()
+        val drafts = mockk<TemplateEditDraftStore>(relaxed = true) {
+            coEvery { load(7L) } returns null
+        }
         val dao = mockk<WorldTemplateDao> {
             coEvery { getById(7L) } returnsMany listOf(original, persisted)
             coEvery { upsert(any()) } coAnswers {
@@ -140,7 +285,7 @@ class TemplateEditViewModelTest {
                 7L
             }
         }
-        val viewModel = createViewModel(dao)
+        val viewModel = createViewModel(dao, draftStore = drafts)
 
         viewModel.load(7L)
         viewModel.updateLabel("雨夜城")
@@ -154,6 +299,7 @@ class TemplateEditViewModelTest {
         assertEquals("雨夜城·续", viewModel.state.value.label)
         assertTrue(viewModel.state.value.isPersisted)
         assertTrue(viewModel.state.value.isDirty)
+        coVerify { drafts.save(7L, match { it.label == "雨夜城·续" }) }
     }
 
     @Test

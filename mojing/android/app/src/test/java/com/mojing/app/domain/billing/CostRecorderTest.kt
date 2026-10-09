@@ -67,4 +67,35 @@ class CostRecorderTest {
         io.mockk.coVerify(exactly = 0) { preferences.price("a", any()) }
     }
 
+    @Test
+    fun explicitPlatformIdWinsWhenPlatformsShareEndpointAndKey() = runTest {
+        val platformA = ModelPlatform("a", "A", "https://api.test/v1", "same-key", listOf("m"))
+        val platformB = ModelPlatform("b", "B", "https://api.test/v1", "same-key", listOf("m"))
+        every { storage.modelPlatforms() } returns listOf(platformA, platformB)
+        val price = ModelPricing("CNY", 3.0, 5.0)
+        coEvery { preferences.price("b", "m") } returns price
+
+        val snapshot = CostRecorder(dao, preferences, storage)
+            .captureForPlatform("m", "https://api.test/v1", "same-key", "b")
+
+        assertEquals("b", snapshot.platformId)
+        assertEquals("B", snapshot.platformName)
+        assertEquals(price, snapshot.price)
+    }
+
+    @Test
+    fun unknownExplicitPlatformDoesNotGuessAnotherMatchingPlatform() = runTest {
+        every { storage.modelPlatforms() } returns listOf(
+            ModelPlatform("a", "A", "https://api.test/v1", "same-key", listOf("m")),
+        )
+        coEvery { preferences.price("missing", "m") } returns null
+
+        val snapshot = CostRecorder(dao, preferences, storage)
+            .captureForPlatform("m", "https://api.test/v1", "same-key", "missing")
+
+        assertEquals("missing", snapshot.platformId)
+        assertEquals("已选择平台", snapshot.platformName)
+        assertNull(snapshot.price)
+    }
+
 }

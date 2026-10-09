@@ -151,7 +151,7 @@ class MemoryCompactionStore @Inject constructor(private val database: AppDatabas
     }
 
     suspend fun commit(snapshot: MemoryCompactionSnapshot, segment: SessionMemorySegmentEntity): Boolean = database.withTransaction {
-        val committed = commitValidated(snapshot, segment, database.messageDao(), database.sessionMemorySegmentDao())
+        val committed = commitValidated(snapshot, segment, database.messageDao(), database.sessionMemorySegmentDao(), database.configDao())
         if (committed) database.configDao().delete(checkpointKey(snapshot.sessionId, snapshot.branchId, snapshot.nextCoveredSegment != null))
         committed
     }
@@ -163,7 +163,8 @@ class MemoryCompactionStore @Inject constructor(private val database: AppDatabas
 
     internal companion object {
         // 仅供上面的事务入口调用；分离以对真实查询边界和拒绝条件做 JVM 回归。
-        suspend fun commitValidated(snapshot: MemoryCompactionSnapshot, segment: SessionMemorySegmentEntity, messages: MessageDao, segments: SessionMemorySegmentDao): Boolean {
+        suspend fun commitValidated(snapshot: MemoryCompactionSnapshot, segment: SessionMemorySegmentEntity, messages: MessageDao, segments: SessionMemorySegmentDao,
+            config: com.mojing.app.data.local.dao.ConfigDao? = null): Boolean {
             val (sessionId, branchId, previous, revision, sources, limit) = snapshot
             require(limit in 1..2000 && sources.size == limit && sources.all { it.sessionId == sessionId && it.id > snapshot.afterMessageId })
             require(segment.id == 0L && segment.sessionId == sessionId && segment.branchId == branchId && segment.summary.isNotBlank())
@@ -181,7 +182,12 @@ class MemoryCompactionStore @Inject constructor(private val database: AppDatabas
             fun versions(rows: List<MessageEntity>) = rows.map { listOf(it.id, it.content, it.structuredContentJson, it.speakerType, it.characterId, it.branchId) }
             if (versions(current) != versions(sources)) return false
             currentCoroutineContext().ensureActive()
-            segments.insertCompacted(segment.copy(segmentIndex = segments.nextSegmentIndex(sessionId, branchId)))
+            val inserted = segment.copy(segmentIndex = segments.nextSegmentIndex(sessionId, branchId))
+            val id = segments.insertCompacted(inserted)
+            if (config != null) {
+                val persisted = inserted.copy(id = id)
+                config.set(ConfigEntity(SummaryProvenance.key(persisted), SummaryProvenance.fingerprint(persisted)))
+            }
             return true
         }
     }

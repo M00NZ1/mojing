@@ -9,12 +9,12 @@ import com.mojing.app.data.WorldEditDraftStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 
 data class WorldSettingsState(
@@ -30,6 +30,7 @@ data class WorldSettingsState(
     val error: String? = null,
     val saveError: String? = null,
     val saved: Boolean = false,
+    val draftFlushing: Boolean = false,
     val recoverableDraft: WorldEditDraft? = null,
     val draftError: String? = null,
 )
@@ -44,11 +45,16 @@ class WorldSettingsViewModel @Inject constructor(
     private var worldId: Long = 0L
     private var savedSnapshot = ""
     private var loadJob: Job? = null
+    private var draftWriteJob: Job? = null
+    private var draftWriteRevision = 0L
+    private val draftWriteMutex = Mutex()
 
     fun load(id: Long) {
-        if (_state.value.saving) return
+        if (_state.value.saving || _state.value.draftFlushing) return
         if (worldId == id && (loadJob?.isActive == true || !_state.value.loading && _state.value.error == null)) return
         loadJob?.cancel()
+        draftWriteRevision++
+        draftWriteJob?.cancel()
         worldId = id
         if (id <= 0L) {
             _state.value = WorldSettingsState(loading = false, error = "世界不存在，请返回世界列表重新选择")
@@ -58,10 +64,20 @@ class WorldSettingsViewModel @Inject constructor(
         loadJob = viewModelScope.launch {
             try {
                 val world = encyclopediaDao.getById(id) ?: error("找不到这个世界")
-                val draft = withContext(Dispatchers.IO) { draftStore.load(id) }
+                val draft = draftStore.load(id)
                 if (worldId == id) {
+                    val savedDraft = WorldEditDraft(world.name, world.description, world.worldPrompt, world.gameplayMode, world.antiCheatPrompt)
+                    val identicalDraft = draft == savedDraft
+                    var cleanupError: String? = null
+                    if (identicalDraft) {
+                        try {
+                            draftWriteMutex.withLock { if (worldId == id) draftStore.clear(id) }
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { cleanupError = "已保存世界可用，但旧草稿清除失败；可重试清理" }
+                    }
+                    if (worldId != id) return@launch
                     applyLoaded(world)
-                    _state.value = _state.value.copy(recoverableDraft = draft)
+                    _state.value = _state.value.copy(recoverableDraft = draft.takeUnless { identicalDraft }, draftError = cleanupError)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (e: Exception) {
@@ -78,7 +94,7 @@ class WorldSettingsViewModel @Inject constructor(
     }
 
     private fun update(transform: (WorldSettingsState) -> WorldSettingsState) {
-        if (_state.value.loading || _state.value.saving || _state.value.recoverableDraft != null) return
+        if (_state.value.loading || _state.value.saving || _state.value.draftFlushing || _state.value.recoverableDraft != null) return
         val next = transform(_state.value).copy(saved = false, saveError = null)
         _state.value = next.copy(dirty = snapshot(next.name, next.description, next.worldPrompt, next.gameplayMode, next.antiCheatPrompt) != savedSnapshot)
         persistDraft()
@@ -86,12 +102,53 @@ class WorldSettingsViewModel @Inject constructor(
 
     private fun persistDraft() {
         val current = _state.value
-        try {
-            if (current.dirty) draftStore.save(worldId, WorldEditDraft(current.name, current.description, current.worldPrompt, current.gameplayMode, current.antiCheatPrompt))
-            else draftStore.clear(worldId)
-            _state.value = _state.value.copy(draftError = null)
-        } catch (_: Exception) {
-            _state.value = _state.value.copy(draftError = if (current.dirty) "草稿暂存失败，输入仍保留在页面中，请重试或保存世界" else "世界资料已保存，但旧草稿清除失败，请重试")
+        val id = worldId
+        if (id <= 0L) return
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        draftWriteJob = viewModelScope.launch {
+            try {
+                draftWriteMutex.withLock {
+                    if (revision != draftWriteRevision || worldId != id) return@withLock
+                    val draft = WorldEditDraft(current.name, current.description, current.worldPrompt, current.gameplayMode, current.antiCheatPrompt)
+                    if (current.dirty) draftStore.save(id, draft) else draftStore.clear(id)
+                }
+                if (revision == draftWriteRevision && worldId == id) _state.value = _state.value.copy(draftError = null)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (revision == draftWriteRevision && worldId == id) _state.value = _state.value.copy(
+                    draftError = if (current.dirty) "草稿暂存失败，输入仍保留在页面中，请重试或保存世界" else "世界资料已保存，但旧草稿清除失败，请重试",
+                )
+            }
+        }
+    }
+
+    fun flushDraft(onResult: (Boolean) -> Unit = {}) {
+        val id = worldId
+        val current = _state.value
+        if (current.saving || current.draftFlushing) { onResult(false); return }
+        if (id <= 0L || current.loading || current.error != null || current.recoverableDraft != null) { onResult(true); return }
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        _state.value = current.copy(draftFlushing = true, draftError = null)
+        draftWriteJob = viewModelScope.launch {
+            var ok = false
+            try {
+                draftWriteMutex.withLock {
+                    if (revision == draftWriteRevision && worldId == id) {
+                        val draft = WorldEditDraft(current.name, current.description, current.worldPrompt, current.gameplayMode, current.antiCheatPrompt)
+                        if (current.dirty) draftStore.save(id, draft) else draftStore.clear(id)
+                        ok = true
+                    }
+                }
+                if (ok && revision == draftWriteRevision && worldId == id) _state.value = _state.value.copy(draftError = null)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (revision == draftWriteRevision && worldId == id) _state.value = _state.value.copy(draftError = "草稿暂存失败，输入仍保留在页面中，请重试")
+            } finally {
+                if (revision == draftWriteRevision && worldId == id) _state.value = _state.value.copy(draftFlushing = false)
+                onResult(ok)
+            }
         }
     }
 
@@ -106,12 +163,18 @@ class WorldSettingsViewModel @Inject constructor(
     }
 
     fun discardDraft() {
-        if (_state.value.saving) return
-        try {
-            draftStore.clear(worldId)
-            _state.value = _state.value.copy(recoverableDraft = null, draftError = null)
-        } catch (_: Exception) {
-            _state.value = _state.value.copy(draftError = "草稿未能丢弃，请重试")
+        if (_state.value.saving || _state.value.draftFlushing) return
+        val id = worldId
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        _state.value = _state.value.copy(draftFlushing = true, draftError = null)
+        draftWriteJob = viewModelScope.launch {
+            try {
+                draftWriteMutex.withLock { if (revision == draftWriteRevision && worldId == id) draftStore.clear(id) }
+                if (revision == draftWriteRevision && worldId == id) _state.value = _state.value.copy(recoverableDraft = null, draftError = null)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { if (revision == draftWriteRevision && worldId == id) _state.value = _state.value.copy(draftError = "草稿未能丢弃，请重试") }
+            finally { if (revision == draftWriteRevision && worldId == id) _state.value = _state.value.copy(draftFlushing = false) }
         }
     }
 
@@ -124,7 +187,7 @@ class WorldSettingsViewModel @Inject constructor(
     fun save() {
         val current = _state.value
         val world = current.world ?: return
-        if (!current.dirty || current.saving || current.name.isBlank() || current.recoverableDraft != null) return
+        if (!current.dirty || current.saving || current.draftFlushing || current.name.isBlank() || current.recoverableDraft != null) return
         _state.value = current.copy(saving = true, saveError = null)
         viewModelScope.launch {
             try {
@@ -138,10 +201,23 @@ class WorldSettingsViewModel @Inject constructor(
                     saved.gameplayMode, saved.antiCheatPrompt, saved.updatedAt,
                 ) == 1) { "世界已更新或删除，请返回后重新打开；当前输入仍保留" }
                 applyLoaded(saved)
-                _state.value = _state.value.copy(saved = true)
-                persistDraft()
+                _state.value = _state.value.copy(saved = true, saving = true)
+                syncDraftAfterSave(saved.id)
+                _state.value = _state.value.copy(saving = false)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (e: Exception) { _state.value = _state.value.copy(saving = false, saveError = e.message ?: "保存失败，请重试") }
+        }
+    }
+
+    private suspend fun syncDraftAfterSave(id: Long) {
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        try {
+            draftWriteMutex.withLock { if (revision == draftWriteRevision && worldId == id) draftStore.clear(id) }
+            if (revision == draftWriteRevision && worldId == id) _state.value = _state.value.copy(draftError = null)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) {
+            if (revision == draftWriteRevision && worldId == id) _state.value = _state.value.copy(draftError = "世界已保存，但旧草稿清除失败，请重试清理后离开")
         }
     }
 

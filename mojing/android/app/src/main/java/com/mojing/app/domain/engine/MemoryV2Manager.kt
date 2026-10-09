@@ -24,7 +24,8 @@ class MemoryV2Manager @Inject constructor(
         messages: List<MessageEntity>,
         apiKey: String,
         baseUrl: String,
-        model: String
+        model: String,
+        contextWindow: Int? = null,
     ): List<SessionEventNodeEntity> {
         if (messages.isEmpty()) return emptyList()
 
@@ -53,6 +54,7 @@ class MemoryV2Manager @Inject constructor(
                 apiKey, baseUrl, model, messages_llm,
                 temperature = 0.3f,
                 maxTokens = 1000,
+                contextWindow = contextWindow,
             )
             val json = extractJson(result)
             @Suppress("UNCHECKED_CAST")

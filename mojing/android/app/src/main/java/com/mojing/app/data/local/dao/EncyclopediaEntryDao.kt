@@ -6,19 +6,55 @@ import androidx.room.Upsert
 import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
 
 data class EncyclopediaEntryOption(val id: Long, val title: String, val entryType: String)
+
+/** Current relation page endpoints only; never reads entry text or metadata. */
+data class EncyclopediaRelationEndpoint(val id: Long, val title: String, val entryType: String, val coverImagePath: String)
+
+/** List presentation only; full text and metadata are read by ID when opening an entry. */
+data class EncyclopediaEntryListItem(
+    val id: Long,
+    val encyclopediaId: Long,
+    val title: String,
+    val entryType: String,
+    val summary: String,
+    val isFeatured: Boolean,
+    val coverImagePath: String,
+    val updatedAt: Long,
+)
 data class CharacterMirrorMetadata(val id: Long, val metaJson: String)
+data class EncyclopediaEntryMergeRow(val id: Long, val title: String, val entryType: String, val updatedAt: Long)
+data class EncyclopediaTrimmedTitle(val trimmedTitle: String)
 
 @Dao
 interface EncyclopediaEntryDao {
+    @Query("SELECT entryType AS type, COUNT(*) AS count FROM encyclopedia_entries WHERE encyclopediaId=:encId GROUP BY entryType")
+    suspend fun getWorldTypeCounts(encId: Long): List<com.mojing.app.data.local.entity.WorldEntryTypeCount>
     @Query("""SELECT * FROM encyclopedia_entries WHERE encyclopediaId = :encId AND id > :afterId
         AND (:type = '' OR :type = '全部' OR entryType = :type) ORDER BY id ASC LIMIT 101""")
     suspend fun getEntryPage(encId: Long, afterId: Long, type: String): List<EncyclopediaEntryEntity>
+
+    @Query("""SELECT id, encyclopediaId, title, entryType, summary, isFeatured, coverImagePath, updatedAt
+        FROM encyclopedia_entries WHERE encyclopediaId = :encId AND id > :afterId
+        AND (:type = '' OR :type = '全部' OR entryType = :type) ORDER BY id ASC LIMIT 101""")
+    suspend fun getEntryListPage(encId: Long, afterId: Long, type: String): List<EncyclopediaEntryListItem>
+
+    @Query("SELECT id, title, entryType, updatedAt FROM encyclopedia_entries WHERE encyclopediaId = :encId AND id > :afterId ORDER BY id ASC LIMIT :limit")
+    suspend fun getMergePage(encId: Long, afterId: Long, limit: Int): List<EncyclopediaEntryMergeRow>
+
+    @Query("SELECT DISTINCT trim(title) AS trimmedTitle FROM encyclopedia_entries WHERE encyclopediaId = :encId AND trim(title) IN (:titles)")
+    suspend fun getExistingTrimmedTitles(encId: Long, titles: List<String>): List<EncyclopediaTrimmedTitle>
+
+    @Query("SELECT id FROM encyclopedia_entries WHERE encyclopediaId = :encId AND trim(title) = :title ORDER BY id ASC LIMIT 1")
+    suspend fun findFirstIdByTrimmedTitle(encId: Long, title: String): Long?
 
     @Query("SELECT COUNT(*) FROM encyclopedia_entries WHERE encyclopediaId = :encId AND (:type = '' OR :type = '全部' OR entryType = :type)")
     suspend fun countEntries(encId: Long, type: String = ""): Int
 
     @Query("SELECT id, title, entryType FROM encyclopedia_entries WHERE encyclopediaId = :encId AND id IN (:ids)")
     suspend fun getEntryOptionsByIds(encId: Long, ids: List<Long>): List<EncyclopediaEntryOption>
+
+    @Query("SELECT id, title, entryType, coverImagePath FROM encyclopedia_entries WHERE encyclopediaId = :encId AND id IN (:ids)")
+    suspend fun getRelationEndpointsByIds(encId: Long, ids: List<Long>): List<EncyclopediaRelationEndpoint>
 
     @Query("SELECT id FROM encyclopedia_entries WHERE encyclopediaId = :encId AND (:type = '' OR :type = '全部' OR entryType = :type) ORDER BY id ASC")
     suspend fun getEntryIdsForType(encId: Long, type: String): List<Long>

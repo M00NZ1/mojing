@@ -4,6 +4,8 @@ import com.mojing.app.ui.common.MoJingIcon as Icon
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material3.IconButton
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -63,12 +65,18 @@ fun SwipeRevealListRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onRename: (() -> Unit)? = null,
-    menuExtras: (@Composable () -> Unit)? = null,
+    menuExtras: (@Composable (dismissMenu: () -> Unit) -> Unit)? = null,
+    showMenuButton: Boolean = false,
+    pinEnabled: Boolean = true,
+    clickEnabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     var offsetPx by remember { mutableStateOf(0f) }
-    LaunchedEffect(swipeEnabled) { if (!swipeEnabled) offsetPx = 0f }
+    LaunchedEffect(swipeEnabled, clickEnabled) {
+        if (!swipeEnabled || !clickEnabled) offsetPx = 0f
+        if (!clickEnabled) menuExpanded = false
+    }
 
     val cardShape = MaterialTheme.shapes.small
     val pinBg = MaterialTheme.colorScheme.primary
@@ -99,7 +107,7 @@ fun SwipeRevealListRow(
                                 .width(actionW)
                                 .fillMaxHeight()
                                 .background(pinBg)
-                                .clickable(interactionSource = pinInteraction, indication = null) {
+                                .clickable(enabled = pinEnabled && clickEnabled, interactionSource = pinInteraction, indication = null) {
                                     onPinToggle()
                                     offsetPx = 0f
                                 },
@@ -123,7 +131,7 @@ fun SwipeRevealListRow(
                             .width(actionW)
                             .fillMaxHeight()
                             .background(delBg)
-                            .clickable(interactionSource = delInteraction, indication = null) {
+                            .clickable(enabled = clickEnabled, interactionSource = delInteraction, indication = null) {
                                 onDelete()
                                 offsetPx = 0f
                             },
@@ -142,7 +150,7 @@ fun SwipeRevealListRow(
                         .heightIn(min = 72.dp)
                         .draggable(
                             orientation = Orientation.Horizontal,
-                            enabled = swipeEnabled,
+                            enabled = swipeEnabled && clickEnabled,
                             state = rememberDraggableState { delta ->
                                 offsetPx = (offsetPx + delta).coerceIn(-revealWidth, 0f)
                             },
@@ -158,6 +166,7 @@ fun SwipeRevealListRow(
                         .clip(cardShape)
                         .background(MaterialTheme.colorScheme.surface, cardShape)
                         .combinedClickable(
+                            enabled = clickEnabled,
                             onClick = {
                                 if (offsetPx != 0f) {
                                     offsetPx = 0f
@@ -168,7 +177,12 @@ fun SwipeRevealListRow(
                             onLongClick = { menuExpanded = true },
                         ),
                 ) {
-                    content()
+                    Row(verticalAlignment = Alignment.Top) {
+                        Box(Modifier.weight(1f)) { content() }
+                        if (showMenuButton) IconButton(enabled = clickEnabled, onClick = { menuExpanded = true; offsetPx = 0f }) {
+                            Icon(Icons.Outlined.MoreHoriz, "更多操作")
+                        }
+                    }
                 }
         }
 
@@ -180,6 +194,7 @@ fun SwipeRevealListRow(
             if (showPinAction) {
                 DropdownMenuItem(
                     text = { Text(if (isPinned) "取消置顶" else "置顶") },
+                    enabled = pinEnabled && clickEnabled,
                     onClick = {
                         menuExpanded = false
                         offsetPx = 0f
@@ -191,6 +206,7 @@ fun SwipeRevealListRow(
                 DropdownMenuItem(
                     text = { Text("重命名") },
                     leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                    enabled = clickEnabled,
                     onClick = {
                         menuExpanded = false
                         offsetPx = 0f
@@ -198,9 +214,10 @@ fun SwipeRevealListRow(
                     },
                 )
             }
-            menuExtras?.invoke()
+            menuExtras?.invoke { menuExpanded = false; offsetPx = 0f }
             DropdownMenuItem(
                 text = { Text("删除") },
+                enabled = clickEnabled,
                 onClick = {
                     menuExpanded = false
                     onDelete()

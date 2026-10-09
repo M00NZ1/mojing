@@ -41,14 +41,26 @@ class ReplyReadingTest {
     }
     @Test fun chatRendererHighlightsAndScrollsInsideLongReply() {
         val body = (1..100).joinToString("\n") { "背景行 $it" } + "\n夜雨落在窗前"
+        var positioned by mutableStateOf(false)
         compose.setContent { MaterialTheme {
             LazyColumn(Modifier.height(400.dp).fillMaxWidth()) { item {
-                CompositionLocalProvider(LocalMessageSearchHighlight provides remember { MessageSearchHighlight("夜雨", true) }) {
+                CompositionLocalProvider(LocalMessageSearchHighlight provides remember(positioned) { MessageSearchHighlight("夜雨", positioned) }) {
                     NarratorMessageBubble(MessageEntity(sessionId = 1, speakerType = "narrator", content = body))
                 }
             } }
         } }
+        // SearchContextScreen enables first-hit focus after positioning its mounted list.
         compose.waitForIdle()
+        compose.runOnIdle { positioned = true }
+        compose.waitUntil(5_000) {
+            val node = compose.onNodeWithText("夜雨", substring = true).fetchSemanticsNode()
+            val text = node.config[SemanticsProperties.Text].single()
+            val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            compose.onNodeWithText("夜雨", substring = true).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            val layout = layouts.singleOrNull()
+            val hitY = layout?.let { node.positionInRoot.y + it.getLineTop(it.getLineForOffset(text.text.indexOf("夜雨"))) }
+            text.spanStyles.isNotEmpty() && hitY != null && hitY >= 0 && hitY < 1200
+        }
         val node = compose.onNodeWithText("夜雨", substring = true).fetchSemanticsNode()
         val annotated = node.config[SemanticsProperties.Text].single()
         assertTrue(annotated.spanStyles.isNotEmpty())

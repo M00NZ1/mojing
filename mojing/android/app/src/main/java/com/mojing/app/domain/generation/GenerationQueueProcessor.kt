@@ -1,6 +1,10 @@
 package com.mojing.app.domain.generation
 
 import com.mojing.app.data.SecureStorage
+import com.mojing.app.data.ModelPlatform
+import com.mojing.app.domain.config.ModelRequestSettingsResolver
+import com.mojing.app.domain.engine.RequestContextLimitException
+import kotlinx.coroutines.CancellationException
 import androidx.room.withTransaction
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -55,11 +59,13 @@ class GenerationQueueProcessor @Inject constructor(
     private val saveCharacterBinding: SaveCharacterBindingUseCase,
     private val saveCharacterEntry: SaveCharacterEntryUseCase,
     private val database: com.mojing.app.data.local.AppDatabase,
+    private val resultSnapshotApplier: GenerationResultSnapshotApplier,
 ) {
     private val gson = Gson()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val queuePaused = AtomicBoolean(secureStorage.generationQueuePaused)
     private val pauseMutex = Mutex()
+    private val taskRunner = SerialGenerationTaskRunner()
     private val _pausedState = kotlinx.coroutines.flow.MutableStateFlow(queuePaused.get())
     val pausedState: kotlinx.coroutines.flow.StateFlow<Boolean> = _pausedState
 
@@ -76,14 +82,38 @@ class GenerationQueueProcessor @Inject constructor(
     suspend fun getLatestPersonaTaskForCharacter(characterId: Long): GenerationTaskEntity? =
         taskDao.getLatestPersonaTaskForCharacter(characterId)
 
+    sealed interface ResultApplyOutcome {
+        data object Applied : ResultApplyOutcome
+        data object AlreadyApplied : ResultApplyOutcome
+        data object StalePreview : ResultApplyOutcome
+        data object TargetMissing : ResultApplyOutcome
+        data object InvalidResult : ResultApplyOutcome
+    }
+
+    /** Applies a persisted snapshot only after a field-level compare-and-set check. */
+    suspend fun previewResult(taskId: Long): GenerationResultApplicationPreview? = resultSnapshotApplier.preview(taskId)
+
+    suspend fun applyResult(
+        taskId: Long,
+        expectedPersonaPrompt: String? = null,
+        expectedSummary: String? = null,
+        expectedWorldPrompt: String? = null,
+    ): ResultApplyOutcome = resultSnapshotApplier.apply(
+        taskId = taskId,
+        expectedPersonaPrompt = expectedPersonaPrompt,
+        expectedSummary = expectedSummary,
+        expectedWorldPrompt = expectedWorldPrompt,
+    )
+
     fun observeActiveForTemplate(templateRowId: Long) = taskDao.observeActiveForTemplate(templateRowId)
 
     fun isQueuePaused(): Boolean = queuePaused.get()
 
     suspend fun countActiveTasks(): Int = taskDao.countActive()
 
-    suspend fun cancelTask(id: Long): Boolean =
+    suspend fun cancelTask(id: Long): Boolean = taskRunner.cancel(id) {
         taskDao.cancelTask(id, now()) > 0
+    }
 
     suspend fun hasActivePersonaForCharacter(characterId: Long): Boolean =
         characterId > 0L && taskDao.countActivePersonaForCharacter(characterId) > 0
@@ -263,34 +293,38 @@ class GenerationQueueProcessor @Inject constructor(
                     delay(450)
                     continue
                 }
-                val claimed = taskDao.claimIfQueued(next.id, now())
-                if (claimed == 0) continue
                 val tid = next.id
-                try {
-                    when (next.taskKind) {
-                        GenerationTaskKinds.ENCYCLOPEDIA_ENTRIES -> runEncyclopediaTask(tid)
-                        GenerationTaskKinds.ENCYCLOPEDIA_META_FILL -> runEncyclopediaMetaFillTask(tid)
-                        GenerationTaskKinds.CHARACTER_PERSONA_AI -> runCharacterPersonaTask(tid)
-                        GenerationTaskKinds.WORLD_TEMPLATE_PROMPT_AI -> runWorldTemplatePromptTask(tid)
-                        else -> taskDao.setTerminal(
-                            tid,
-                            GenerationTaskStatus.FAILED,
-                            "未知任务类型: ${next.taskKind}",
-                            now(),
-                        )
-                    }
-                } catch (e: Exception) {
-                    UsbSessionLog.e("GenQueue", "task $tid failed type=${e.javaClass.simpleName}")
-                    val cur = taskDao.getById(tid)
-                    if (cur?.status == GenerationTaskStatus.RUNNING) {
-                        taskDao.setTerminal(
-                            tid,
-                            GenerationTaskStatus.FAILED,
-                            (e.message ?: "任务异常中断").take(500),
-                            now(),
-                        )
+                taskRunner.run(tid, claim = { taskDao.claimIfQueued(tid, now()) > 0 }) {
+                    try {
+                        when (next.taskKind) {
+                            GenerationTaskKinds.ENCYCLOPEDIA_ENTRIES -> runEncyclopediaTask(tid)
+                            GenerationTaskKinds.ENCYCLOPEDIA_META_FILL -> runEncyclopediaMetaFillTask(tid)
+                            GenerationTaskKinds.CHARACTER_PERSONA_AI -> runCharacterPersonaTask(tid)
+                            GenerationTaskKinds.WORLD_TEMPLATE_PROMPT_AI -> runWorldTemplatePromptTask(tid)
+                            else -> taskDao.setTerminal(
+                                tid,
+                                GenerationTaskStatus.FAILED,
+                                "未知任务类型: ${next.taskKind}",
+                                now(),
+                            )
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        UsbSessionLog.e("GenQueue", "task $tid failed type=${e.javaClass.simpleName}")
+                        val cur = taskDao.getById(tid)
+                        if (cur?.status == GenerationTaskStatus.RUNNING) {
+                            taskDao.setTerminal(
+                                tid,
+                                GenerationTaskStatus.FAILED,
+                                (e.message ?: "任务异常中断").take(500),
+                                now(),
+                            )
+                        }
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 UsbSessionLog.e("GenQueue", "runLoop failed type=${e.javaClass.simpleName}")
                 delay(800)
@@ -444,7 +478,7 @@ class GenerationQueueProcessor @Inject constructor(
                             maxWords = payload.maxWords,
                             extraUserContext = combinedUserContextForBatch(payload),
                         )
-                    }.getOrElse { emptyList() }
+                    }.getOrElse { if (it is CancellationException) throw it else emptyList() }
                     if (got.isNotEmpty()) {
                         if (idx > 0) promotePublicBaseIfNeeded(base)
                         picked = got
@@ -510,6 +544,7 @@ class GenerationQueueProcessor @Inject constructor(
             taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, "任务数据损坏或条目列表为空", now())
             return
         }
+        val platforms = secureStorage.modelPlatforms().toList()
         val apiKey = secureStorage.publicApiKey.trim()
         val bases = publicChatBases()
         val model = secureStorage.publicModel.trim()
@@ -558,40 +593,19 @@ class GenerationQueueProcessor @Inject constructor(
                             extraContext = worldHint,
                         ),
                         promotePublic = true,
+                        platforms = platforms,
                     )
                 }
                 if (result.isNotEmpty()) {
-                    val metaPatch = result.filterKeys { it in allowedMetaKeys }
-                    val metaChanged = EncyclopediaEntryMetaMerge.mergeMetaPatch(metaObj, metaPatch)
-                    var next: EncyclopediaEntryEntity = latest
-                    var rowChanged = metaChanged
-                    (result["title"] as? String)?.trim()?.takeIf { it.isNotBlank() && it != latest.title }?.let {
-                        next = next.copy(title = it)
-                        rowChanged = true
-                    }
-                    (result["summary"] as? String)?.trim()?.takeIf { it.isNotBlank() && it != latest.summary }?.let {
-                        next = next.copy(summary = it)
-                        rowChanged = true
-                    }
-                    (result["tags"] as? String)?.trim()?.takeIf { it != latest.tags }?.let {
-                        next = next.copy(tags = it)
-                        rowChanged = true
-                    }
-                    (result["content"] as? String)?.trim()?.takeIf { it.isNotBlank() && it != latest.content }?.let {
-                        next = next.copy(content = it)
-                        rowChanged = true
-                    }
-                    if (rowChanged) {
-                        val nowTs = System.currentTimeMillis()
-                        if (!commitStep(taskId, done + 1, total) {
-                            saveCharacterEntry(next.copy(metaJson = metaObj.toString(), updatedAt = nowTs))
-                        }) return
-                        touchedRows++
-                    }
+                    if (!commitStep(taskId, done + 1, total) {
+                        if (saveCharacterEntry.fillMissingGeneratedFields(latest, result, allowedMetaKeys)) touchedRows++
+                    }) return
                 }
                 check(result.isNotEmpty()) { "模型没有返回可用内容" }
-            } catch (_: Exception) {
-                taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, "当前条目未完成，可从已保存进度继续尝试", now())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, (if (e is RequestContextLimitException) "${e.message} 当前条目未完成，可从已保存进度继续尝试" else "当前条目未完成，可从已保存进度继续尝试"), now())
                 return
             }
             if (!commitStep(taskId, done + 1, total) {}) return
@@ -616,6 +630,7 @@ class GenerationQueueProcessor @Inject constructor(
             taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, "任务数据损坏", now())
             return
         }
+        val platforms = secureStorage.modelPlatforms().toList()
         val apiKey = payload.apiKey.ifBlank { secureStorage.publicApiKey }.trim()
         val baseRaw = payload.baseUrl.ifBlank { secureStorage.publicBaseUrl }.trim()
         val bases = publicChatBases(baseRaw)
@@ -658,7 +673,9 @@ class GenerationQueueProcessor @Inject constructor(
                 try {
                     result = withContext(Dispatchers.IO) {
                         withTimeout(PERSONA_AI_TIMEOUT_MS) {
-                            aiCompleter.complete(apiKey, base, model, request)
+                            aiCompleter.complete(apiKey, base, model, request.copy(
+                                contextWindow = ModelRequestSettingsResolver.contextWindow(platforms, apiKey, base, model),
+                            ))
                         }
                     }
                     if (promotePublic && idx > 0) promotePublicBaseIfNeeded(base)
@@ -666,6 +683,10 @@ class GenerationQueueProcessor @Inject constructor(
                     break
                 } catch (e: TimeoutCancellationException) {
                     throw Exception("请求超时，请检查网络或稍后重试")
+                } catch (e: RequestContextLimitException) {
+                    throw e
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     lastErr = e
                 }
@@ -673,29 +694,25 @@ class GenerationQueueProcessor @Inject constructor(
             if (!completedCall) throw lastErr ?: Exception("人设生成失败")
             val newPrompt = (result["persona_prompt"] as? String)?.trim()?.takeIf { it.isNotBlank() }
                 ?: (result["personaPrompt"] as? String)?.trim().orEmpty()
-            if (newPrompt.isBlank() || newPrompt == payload.personaPrompt) {
-                taskDao.setTerminal(taskId, GenerationTaskStatus.COMPLETED, "人设未变化", now())
+            if (newPrompt.isBlank()) {
+                taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, "模型未返回可用人设，可继续尝试", now())
                 return
             }
             if (taskDao.getById(taskId)?.status == GenerationTaskStatus.CANCELLED) return
-            val entity = characterDao.getById(payload.characterId)
-            if (entity == null) {
-                taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, "角色已删除", now())
-                return
-            }
-            var applied = false
-            if (!commitStep(taskId, 1, 1) {
-                val latest = characterDao.getById(payload.characterId)
-                if (latest != null && latest.personaPrompt == payload.personaPrompt) {
-                    saveCharacterBinding(latest.copy(personaPrompt = newPrompt, updatedAt = System.currentTimeMillis()))
-                    applied = true
-                }
-            }) return
-            if (!applied) {
-                taskDao.setTerminal(taskId, GenerationTaskStatus.COMPLETED, "角色已在生成期间编辑或删除，未覆盖当前内容", now())
-                return
-            }
-            taskDao.setTerminal(taskId, GenerationTaskStatus.COMPLETED, "", now())
+            finishSnapshotTask(
+                taskId = taskId,
+                snapshot = GenerationResultSnapshot.CharacterPersona(newPrompt),
+                apply = {
+                    val latest = characterDao.getById(payload.characterId)
+                    if (latest == null || latest.personaPrompt != payload.personaPrompt) false
+                    else {
+                        saveCharacterBinding(latest.copy(personaPrompt = newPrompt, updatedAt = now()))
+                        true
+                    }
+                },
+            )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             val raw = e.message?.trim().orEmpty().ifBlank { "人设生成失败" }
             // 仅匹配常见「模型 id 不存在」英文/错误码，避免把含 "model" 与 "not exist" 的其它 400 误当成模型不匹配
@@ -720,6 +737,7 @@ class GenerationQueueProcessor @Inject constructor(
             taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, "任务数据损坏", now())
             return
         }
+        val platforms = secureStorage.modelPlatforms().toList()
         val apiKey = secureStorage.publicApiKey.trim()
         val bases = publicChatBases()
         val model = secureStorage.publicModel.trim()
@@ -764,6 +782,7 @@ class GenerationQueueProcessor @Inject constructor(
                         extraContext = extraMerged,
                     ),
                     promotePublic = true,
+                    platforms = platforms,
                 )
             }
             UsbSessionLog.i(
@@ -775,12 +794,6 @@ class GenerationQueueProcessor @Inject constructor(
                 return
             }
             if (taskDao.getById(taskId)?.status == GenerationTaskStatus.CANCELLED) return
-            val tmpl = worldTemplateDao.getById(payload.templateRowId) ?: run {
-                taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, "模板已删除", now())
-                return
-            }
-            var next = tmpl
-            var changed = false
             val newSummary = (result["summary"] as? String)?.trim()?.takeIf { it.isNotBlank() }
                 ?: (result["Summary"] as? String)?.trim()?.takeIf { it.isNotBlank() }
             val newWp = (result["worldPrompt"] as? String)?.trim()?.takeIf { it.isNotBlank() }
@@ -789,46 +802,52 @@ class GenerationQueueProcessor @Inject constructor(
                 "GenWorldTemplate",
                 "diff taskId=$taskId newSummaryLen=${newSummary?.length ?: 0} newWorldPromptLen=${newWp?.length ?: 0} changedSummary=${newSummary != null && newSummary != payload.summary} changedWorldPrompt=${newWp != null && newWp != payload.worldPrompt}",
             )
-            newSummary?.takeIf { it != payload.summary }?.let {
-                next = next.copy(summary = it)
-                changed = true
-            }
-            newWp?.takeIf { it != payload.worldPrompt }?.let {
-                next = next.copy(worldPrompt = it)
-                changed = true
-            }
-            if (!changed) {
-                taskDao.setTerminal(taskId, GenerationTaskStatus.COMPLETED, "模型未修改摘要或世界书", now())
+            if (newSummary == null && newWp == null) {
+                taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, "模型未返回摘要或世界书，可继续尝试", now())
                 return
             }
-            var updated = 0
-            if (!commitStep(taskId, 1, 1) {
-                updated = worldTemplateDao.updateGeneratedContentIfUnchanged(
-                    id = tmpl.id,
-                    expectedSummary = payload.expectedSummary ?: payload.summary,
-                    expectedWorldPrompt = payload.expectedWorldPrompt ?: payload.worldPrompt,
-                    summary = next.summary,
-                    worldPrompt = next.worldPrompt,
-                    updatedAt = System.currentTimeMillis(),
-                )
-            }) return
-            if (updated == 0) {
-                if (worldTemplateDao.getById(tmpl.id) == null) {
-                    taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, "模板已删除", now())
-                } else {
-                    taskDao.setTerminal(
-                        taskId,
-                        GenerationTaskStatus.COMPLETED,
-                        "模板已在生成期间编辑，未覆盖当前内容",
-                        now(),
-                    )
-                }
-                return
-            }
-            taskDao.setTerminal(taskId, GenerationTaskStatus.COMPLETED, "", now())
+            finishSnapshotTask(
+                taskId = taskId,
+                snapshot = GenerationResultSnapshot.WorldTemplate(newSummary, newWp),
+                apply = {
+                    val current = worldTemplateDao.getById(payload.templateRowId)
+                    if (current == null) false
+                    else worldTemplateDao.updateGeneratedContentIfUnchanged(
+                        id = current.id,
+                        expectedSummary = payload.expectedSummary ?: payload.summary,
+                        expectedWorldPrompt = payload.expectedWorldPrompt ?: payload.worldPrompt,
+                        summary = newSummary ?: current.summary,
+                        worldPrompt = newWp ?: current.worldPrompt,
+                        updatedAt = now(),
+                    ) == 1
+                },
+            )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             taskDao.setTerminal(taskId, GenerationTaskStatus.FAILED, e.message ?: "模板 AI 失败", now())
         }
+    }
+
+    private suspend fun finishSnapshotTask(
+        taskId: Long,
+        snapshot: GenerationResultSnapshot,
+        apply: suspend () -> Boolean,
+    ) = database.withTransaction {
+        val task = taskDao.getById(taskId) ?: return@withTransaction
+        if (task.status != GenerationTaskStatus.RUNNING) return@withTransaction
+        val applied = apply()
+        val message = if (applied) "" else "生成结果已保存，目标已删除或内容已变化，未自动应用"
+        check(taskDao.saveResultAndTerminal(
+            taskId,
+            GenerationResultSnapshotCodec.encode(snapshot),
+            GenerationTaskStatus.COMPLETED,
+            message,
+            now(),
+        ) == 1) { "任务结果保存失败" }
+        // A retained snapshot completes generation even when a later manual edit prevents auto-application.
+        taskDao.updateProgress(taskId, 1, 1, now())
+        if (applied) check(taskDao.markResultApplied(taskId, now(), now()) == 1) { "结果标记失败" }
     }
 
     private fun buildWorldPrompt(p: EncyclopediaBatchPayload): String = buildString {
@@ -862,16 +881,23 @@ class GenerationQueueProcessor @Inject constructor(
         bases: List<String>,
         request: AiCompleter.CompleteRequest,
         promotePublic: Boolean,
+        platforms: List<ModelPlatform>,
     ): Map<String, Any> {
         if (bases.isEmpty()) return emptyMap()
         var last = emptyMap<String, Any>()
         for ((idx, base) in bases.withIndex()) {
             try {
-                last = aiCompleter.complete(apiKey, base, model, request)
+                last = aiCompleter.complete(apiKey, base, model, request.copy(
+                    contextWindow = ModelRequestSettingsResolver.contextWindow(platforms, apiKey, base, model),
+                ))
                 if (last.isNotEmpty()) {
                     if (promotePublic && idx > 0) promotePublicBaseIfNeeded(base)
                     return last
                 }
+            } catch (e: RequestContextLimitException) {
+                throw e
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
                 // try next base
             }
@@ -903,7 +929,7 @@ class GenerationQueueProcessor @Inject constructor(
                         maxWords = payload.maxWords,
                         extraUserContext = ctx,
                     )
-                }.getOrElse { emptyList() }
+                }.getOrElse { if (it is CancellationException) throw it else emptyList() }
                 if (got.isNotEmpty()) {
                     if (idx > 0) promotePublicBaseIfNeeded(base)
                     return got

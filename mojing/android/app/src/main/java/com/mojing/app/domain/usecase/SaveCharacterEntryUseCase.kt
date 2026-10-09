@@ -7,6 +7,7 @@ import com.mojing.app.data.local.entity.EntryVersionEntity
 import com.mojing.app.data.local.entity.CharacterEntity
 import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
 import com.mojing.app.domain.encyclopedia.CharacterEncyclopediaSync
+import com.mojing.app.domain.encyclopedia.EncyclopediaEntryMetaMerge
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import javax.inject.Inject
@@ -22,6 +23,33 @@ class SaveCharacterEntryUseCase @Inject constructor(
     private val database: AppDatabase,
 ) {
     private companion object { const val CHARACTER_NAME_SCAN_PAGE_SIZE = 128 }
+
+    /** Queue results fill only fields still empty at commit time; deleted/retargeted entries stay untouched. */
+    suspend fun fillMissingGeneratedFields(
+        requested: EncyclopediaEntryEntity,
+        result: Map<String, Any>,
+        allowedMetaKeys: Set<String>,
+    ): Boolean = database.withTransaction {
+        val current = database.encyclopediaEntryDao().getById(requested.id) ?: return@withTransaction false
+        if (current.encyclopediaId != requested.encyclopediaId || current.entryType != requested.entryType) {
+            return@withTransaction false
+        }
+        val meta = EncyclopediaEntryMetaMerge.parseMetaJson(current.metaJson)
+        val metaChanged = EncyclopediaEntryMetaMerge.mergeMetaPatch(meta, result.filterKeys { it in allowedMetaKeys })
+        fun fill(value: String, key: String): String = if (value.isBlank()) {
+            (result[key] as? String)?.trim()?.takeIf { it.isNotBlank() } ?: value
+        } else value
+        val next = current.copy(
+            title = fill(current.title, "title"),
+            summary = fill(current.summary, "summary"),
+            tags = fill(current.tags, "tags"),
+            content = fill(current.content, "content"),
+            metaJson = if (metaChanged) meta.toString() else current.metaJson,
+        )
+        if (next == current) return@withTransaction false
+        invoke(next.copy(updatedAt = System.currentTimeMillis()))
+        true
+    }
 
     /** 编辑入口：旧正文快照与新条目共享一次事务。 */
     suspend fun saveEdited(entry: EncyclopediaEntryEntity): EncyclopediaEntryEntity = database.withTransaction {
@@ -77,7 +105,13 @@ class SaveCharacterEntryUseCase @Inject constructor(
             val linkedId = previousLinkedId
             val linkedCharacter = linkedId?.let { characterDao.getById(it) }
             val title = entry.title.trim().ifBlank { "未命名角色" }
-            val persona = entry.content.trim()
+            // Older mirrors persisted only the first 8000 characters. Metadata-only edits
+            // can retain the suffix only when the current internal binding proves its source.
+            val linkedPersona = linkedCharacter?.personaPrompt?.trim()
+            val restoreLegacyMirror = previous != null && linkedPersona != null &&
+                previous.content.length == 8000 && linkedPersona.length > 8000 &&
+                linkedPersona.startsWith(previous.content) && entry.content == previous.content
+            val persona = if (restoreLegacyMirror) linkedPersona!! else entry.content.trim()
             val byName = if (linkedCharacter == null) findBoundCharacterByName(entry.encyclopediaId, title) else null
             val previousCharacter = linkedCharacter ?: byName
             val now = System.currentTimeMillis()
@@ -126,6 +160,7 @@ class SaveCharacterEntryUseCase @Inject constructor(
                 entry.copy(
                     title = title,
                     summary = summary,
+                    content = if (restoreLegacyMirror) persona else entry.content,
                     metaJson = meta.toString(),
                     updatedAt = now,
                 ),

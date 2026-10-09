@@ -5,6 +5,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -17,15 +18,17 @@ import androidx.compose.ui.window.DialogProperties
 internal fun PlatformEditorDialog(onDismissRequest: () -> Unit, title: @Composable () -> Unit,
     text: @Composable () -> Unit, confirmButton: @Composable () -> Unit, dismissButton: @Composable () -> Unit,
     error: String? = null) {
+    val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.92f).dp
     Dialog(onDismissRequest, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.widthIn(max = 640.dp).fillMaxWidth().fillMaxHeight(0.96f).imePadding(),
+        Surface(Modifier.widthIn(max = 640.dp).fillMaxWidth().padding(horizontal = 12.dp)
+            .heightIn(max = maxHeight).imePadding(),
             shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
             Column {
-                Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
+                Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
                     ProvideTextStyle(MaterialTheme.typography.titleMedium) { title() }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Box(Modifier.weight(1f).padding(horizontal = 20.dp)) { text() }
+                Box(Modifier.weight(1f, fill = false).padding(horizontal = 16.dp)) { text() }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),

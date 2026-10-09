@@ -27,10 +27,11 @@ class ContextBuilderMemoryCorrectionTest {
         val builder = ContextBuilder(PromptBuilder(), searcher, mockk(relaxed = true), mockk(relaxed = true), dao)
         val world = SessionWorldEntity(sessionId = 1L, encyclopediaId = 7L)
         val shared = builder.searchWorldContext(world, "你好")
-        assertEquals(listOf("[百科基础背景] 港口城市\n\n此世界不存在魔法"), shared.encyclopediaHits)
+        assertEquals("港口城市\n\n此世界不存在魔法", shared.encyclopediaFoundation)
+        assertEquals(emptyList<String>(), shared.encyclopediaHits)
         val promptContext = PromptBuilder.PromptContext(
             character = CharacterEntity(id = 2L, name = "林汐"), world = world,
-            encyclopediaHits = shared.encyclopediaHits,
+            encyclopediaHits = shared.encyclopediaHits, encyclopediaFoundation = shared.encyclopediaFoundation,
         )
         org.junit.Assert.assertTrue(PromptBuilder().buildForCharacter(promptContext, "model").contains("此世界不存在魔法"))
         org.junit.Assert.assertTrue(PromptBuilder().buildNarratorPrompt(promptContext, "继续", "model").contains("此世界不存在魔法"))
@@ -44,7 +45,7 @@ class ContextBuilderMemoryCorrectionTest {
     fun passesCorrectionsThroughToPromptContext() = runTest {
         val promptBuilder = mockk<PromptBuilder>()
         val contextSlot = slot<PromptBuilder.PromptContext>()
-        every { promptBuilder.buildForCharacter(capture(contextSlot), any()) } returns "prompt"
+        every { promptBuilder.buildCharacterDocument(capture(contextSlot), any(), any()) } returns com.mojing.app.domain.engine.PromptDocument.protected("prompt")
         val encyclopedia = mockk<EncyclopediaSearcher>(relaxed = true)
         val lore = mockk<LoreSearcher>(relaxed = true)
         val characterBook = mockk<CharacterBookSearcher>(relaxed = true)

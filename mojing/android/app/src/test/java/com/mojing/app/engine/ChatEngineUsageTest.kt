@@ -12,7 +12,9 @@ import io.mockk.mockk
 import io.mockk.verify
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.slot
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
@@ -37,7 +39,7 @@ class ChatEngineUsageTest {
     private val snapshot = BillingRequestSnapshot("platform-1", "测试平台", null)
 
     init {
-        every { prompts.buildForCharacter(any(), any()) } returns "系统提示"
+        every { prompts.buildCharacterDocument(any(), any(), any()) } returns PromptDocument.protected("系统提示")
         coEvery { costs.capture(any(), any(), any()) } returns snapshot
     }
 
@@ -58,6 +60,21 @@ class ChatEngineUsageTest {
             costs.recordLlm(1L, 9L, "model", "llm_stream", 12, 7, any(), true, any(), "完成", snapshot, true, 3, "success")
         }
         coVerify(exactly = 1) { costs.capture("model", "https://api.test", "key") }
+    }
+
+    @Test
+    fun selectedPlatformIdIsFrozenAtStreamStart() = runTest {
+        every { api.streamChatCompletionWithUsage(any(), any(), any(), any()) } returns flow { emit("完成") }
+        coEvery { costs.captureForPlatform("model", "https://api.test", "key", "platform-1") } returns snapshot
+
+        val states = engine.streamGenerate(
+            1, character, emptyList(), "key", "https://api.test", "model", 0.7f, 100,
+            platformId = "platform-1",
+        ).toList()
+
+        assertTrue(states.last() is StreamState.Done)
+        coVerify(exactly = 1) { costs.captureForPlatform("model", "https://api.test", "key", "platform-1") }
+        coVerify(exactly = 0) { costs.capture("model", "https://api.test", "key") }
     }
 
     @Test
@@ -166,5 +183,117 @@ class ChatEngineUsageTest {
         val states = engine.streamGenerate(1, character, emptyList(), "key", "https://api.test", "model", 0.7f, 100).toList()
 
         assertEquals("正文", (states.last() as StreamState.Done).fullText)
+    }
+
+    @Test
+    fun streamGenerateSendsCharacterSamplingAndKeepsOriginalSnapshot() = runTest {
+        var currentCharacter = character.copy(
+            temperature = 0.0f,
+            maxTokens = 777,
+            topP = 0.000001f,
+            frequencyPenalty = -2.5f,
+            presencePenalty = -0.0f,
+        )
+        val request = slot<com.mojing.app.data.remote.ChatRequest>()
+        val release = CompletableDeferred<Unit>()
+        every { api.streamChatCompletionWithUsage(any(), any(), capture(request), any()) } returns flow {
+            release.await()
+            emit("完成")
+        }
+
+        val job = launch {
+            engine.streamGenerate(
+                1, currentCharacter, emptyList(), "key", "https://api.test", "model", 0.45f, 321,
+            ).toList()
+        }
+        runCurrent()
+        currentCharacter = currentCharacter.copy(
+            temperature = 1.8f,
+            maxTokens = 9999,
+            topP = 0.9f,
+            frequencyPenalty = 4.0f,
+            presencePenalty = 3.0f,
+        )
+        release.complete(Unit)
+        job.join()
+
+        assertEquals(0.45f, request.captured.temperature)
+        assertEquals(321, request.captured.max_tokens)
+        assertEquals(0.000001f, request.captured.top_p)
+        assertEquals(-2.5f, request.captured.frequency_penalty)
+        assertEquals(-0.0f, request.captured.presence_penalty)
+    }
+
+    @Test
+    fun streamGenerateWithMemorySendsZeroAndNegativeCharacterSampling() = runTest {
+        val request = slot<com.mojing.app.data.remote.ChatRequest>()
+        val release = CompletableDeferred<Unit>()
+        every { api.streamChatCompletionWithUsage(any(), any(), capture(request), any()) } returns flow {
+            release.await()
+            emit("完成")
+        }
+        var memoryCharacter = character.copy(
+            temperature = 0.2f,
+            topP = 0.0f,
+            frequencyPenalty = -1.25f,
+            presencePenalty = 0.0f,
+        )
+
+        val job = launch {
+            engine.streamGenerateWithMemory(
+                1,
+                memoryCharacter,
+                emptyList(),
+                "记忆上下文",
+                null,
+                TokenBudget(0, 0, 0, 0, 654, 2000),
+                "key",
+                "https://api.test",
+                "model",
+            ).toList()
+        }
+        runCurrent()
+        memoryCharacter = memoryCharacter.copy(topP = 0.9f, frequencyPenalty = 4.0f, presencePenalty = 3.0f)
+        release.complete(Unit)
+        job.join()
+
+        assertEquals(0.2f, request.captured.temperature)
+        assertEquals(654, request.captured.max_tokens)
+        assertEquals(0.0f, request.captured.top_p)
+        assertEquals(-1.25f, request.captured.frequency_penalty)
+        assertEquals(0.0f, request.captured.presence_penalty)
+    }
+
+    @Test
+    fun ephemeralNarratorCharacterDoesNotEmitRoleSamplingFields() = runTest {
+        val request = slot<com.mojing.app.data.remote.ChatRequest>()
+        every { api.streamChatCompletionWithUsage(any(), any(), capture(request), any()) } returns flow { emit("旁白") }
+        val narrator = CharacterEntity(
+            id = 0L,
+            name = "临时旁白",
+            temperature = 0.8f,
+            maxTokens = 900,
+            topP = 0.2f,
+            frequencyPenalty = -1.0f,
+            presencePenalty = 0.5f,
+        )
+
+        val states = engine.streamGenerate(
+            1L,
+            narrator,
+            emptyList(),
+            "key",
+            "https://api.test",
+            "model",
+            0.65f,
+            444,
+        ).toList()
+
+        assertTrue(states.last() is StreamState.Done)
+        assertEquals(0.65f, request.captured.temperature)
+        assertEquals(444, request.captured.max_tokens)
+        assertEquals(null, request.captured.top_p)
+        assertEquals(null, request.captured.frequency_penalty)
+        assertEquals(null, request.captured.presence_penalty)
     }
 }

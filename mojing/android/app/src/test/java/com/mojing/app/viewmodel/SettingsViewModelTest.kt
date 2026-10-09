@@ -12,6 +12,7 @@ import com.mojing.app.data.prefs.UiPreferencesRepository
 import com.mojing.app.data.remote.BackendSystemProbeApi
 import com.mojing.app.ui.settings.SettingsViewModel
 import com.mojing.app.ui.settings.CreationDefaultOption
+import com.google.gson.JsonObject
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -67,6 +68,23 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun failedDefaultPlatformSaveKeepsVisibleConfigurationAndAllowsRetry() = runTest(dispatcher) {
+        val old = ModelPlatform("old", "旧平台", "https://old.test", "old-key", listOf("old-model"))
+        val replacement = ModelPlatform("new", "新平台", "https://new.test", "new-key", listOf("new-model"))
+        viewModel.savePlatform(old, makeDefault = true)
+        every { secureStorage.saveModelPlatform(replacement, true) } throws IllegalStateException("save failed")
+        assertTrue(runCatching { viewModel.savePlatform(replacement, makeDefault = true) }.isFailure)
+        assertEquals(old.id, viewModel.activePlatformId.value)
+        assertEquals(old.apiKey, viewModel.apiKey.value)
+        assertEquals(old.baseUrl, viewModel.baseUrl.value)
+        assertEquals(old.selectedModel, viewModel.model.value)
+        every { secureStorage.saveModelPlatform(replacement, true) } returns Unit
+        viewModel.savePlatform(replacement, makeDefault = true)
+        assertEquals(replacement.id, viewModel.activePlatformId.value)
+        assertEquals(replacement.apiKey, viewModel.apiKey.value)
+    }
+
+    @Test
     fun initialApiKeyIsEmpty() = runTest {
         assertEquals("", viewModel.apiKey.value)
     }
@@ -102,6 +120,67 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun invalidSamplingDefaultsStayInDraftWithoutPersisting() = runTest {
+        viewModel.updateDefaultTemperature("2.1")
+        viewModel.updateDefaultMaxTokens("0")
+        viewModel.updateDefaultTopP("-0.1")
+
+        assertEquals("2.1", viewModel.defaultTemperature.value)
+        assertEquals("0", viewModel.defaultMaxTokens.value)
+        assertEquals("-0.1", viewModel.defaultTopP.value)
+        verify(exactly = 0) { secureStorage.defaultTemperature = any() }
+        verify(exactly = 0) { secureStorage.defaultMaxTokens = any() }
+        verify(exactly = 0) { secureStorage.defaultTopP = any() }
+
+        viewModel.updateDefaultTemperature(" 1.2 ")
+        viewModel.updateDefaultMaxTokens("4096")
+        viewModel.updateDefaultTopP("0.7")
+        verify { secureStorage.defaultTemperature = " 1.2 " }
+        verify { secureStorage.defaultMaxTokens = "4096" }
+        verify { secureStorage.defaultTopP = "0.7" }
+    }
+
+    @Test
+    fun imageProbeUsesPublicFallbackWhenDedicatedImageSettingsAreBlank() = runTest {
+        every { secureStorage.imageApiKey } returns ""
+        every { secureStorage.imageBaseUrl } returns ""
+        every { secureStorage.imageModel } returns ""
+        every { secureStorage.publicApiKey } returns "public-key"
+        every { secureStorage.publicBaseUrl } returns "https://public.example/v1"
+        coEvery { systemProbeApi.probePublicApiStream(any(), any(), any(), any(), any()) } returns
+            Result.success(JsonObject())
+
+        viewModel.runProbeImage {}
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            systemProbeApi.probePublicApiStream(
+                "image", "https://public.example/v1", "public-key", "dall-e-3", any(),
+            )
+        }
+    }
+
+    @Test
+    fun imageProbePrefersDedicatedImageSettings() = runTest {
+        every { secureStorage.imageApiKey } returns "image-key"
+        every { secureStorage.imageBaseUrl } returns "https://image.example/v1"
+        every { secureStorage.imageModel } returns "image-model"
+        every { secureStorage.publicApiKey } returns "public-key"
+        every { secureStorage.publicBaseUrl } returns "https://public.example/v1"
+        coEvery { systemProbeApi.probePublicApiStream(any(), any(), any(), any(), any()) } returns
+            Result.success(JsonObject())
+
+        viewModel.runProbeImage {}
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            systemProbeApi.probePublicApiStream(
+                "image", "https://image.example/v1", "image-key", "image-model", any(),
+            )
+        }
+    }
+
+    @Test
     fun savingNonDefaultPlatformDoesNotSwitchActiveCredentials() = runTest {
         val platform = ModelPlatform(
             id = "secondary",
@@ -117,6 +196,28 @@ class SettingsViewModelTest {
         assertEquals("", viewModel.activePlatformId.value)
         assertEquals("", viewModel.apiKey.value)
         verify { secureStorage.saveModelPlatform(platform, makeDefault = false) }
+    }
+
+    @Test
+    fun deletingPlatformReturnsCommittedList() = runTest {
+        val remaining = listOf(ModelPlatform("other", "其它", "https://other.test", "other-key", listOf("model")))
+        every { secureStorage.deleteModelPlatform("secondary") } returns remaining
+
+        val result = viewModel.deletePlatform("secondary")
+
+        assertEquals(remaining, result)
+        verify(exactly = 1) { secureStorage.deleteModelPlatform("secondary") }
+        assertEquals("", viewModel.activePlatformId.value)
+    }
+
+    @Test
+    fun deletingPlatformFailureLeavesViewModelStateForRetry() = runTest {
+        every { secureStorage.deleteModelPlatform("secondary") } throws IllegalStateException("删除失败")
+
+        assertTrue(runCatching { viewModel.deletePlatform("secondary") }.isFailure)
+        verify(exactly = 1) { secureStorage.deleteModelPlatform("secondary") }
+        assertEquals("", viewModel.activePlatformId.value)
+        assertEquals("", viewModel.apiKey.value)
     }
 
     @Test

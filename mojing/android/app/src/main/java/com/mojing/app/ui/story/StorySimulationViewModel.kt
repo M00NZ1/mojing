@@ -34,6 +34,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -55,10 +56,11 @@ data class StorySimulationState(
     val premise: String = "",
     val direction: String = "",
     val tone: String = StoryOpeningInputDraft.DEFAULT_TONE,
-    val chapterCount: Int = 2,
+    val chapterCount: Int = 3,
     val selectedTemplate: WorldTemplateEntity? = null,
     val selectedEncyclopedia: EncyclopediaEntity? = null,
     val selectedCharacterIdsAvailable: Set<Long> = emptySet(),
+    val selectedCharacterCards: List<com.mojing.app.data.local.dao.ChatCharacterPresentationRow> = emptyList(),
     val selectionsResolved: Boolean = false,
     val selectionsLoading: Boolean = false,
     val selectionsError: String? = null,
@@ -84,7 +86,12 @@ data class StorySimulationState(
     val generationElapsedMs: Long = 0L,
     val firstContentDelayMs: Long? = null,
     val receivedChars: Int = 0,
+    val completedChapters: Int = 0,
+    val totalChapters: Int = 0,
     val preview: String = "",
+    val completedChapterDrafts: List<com.mojing.app.domain.story.StoryChapter> = emptyList(),
+    val partialPreview: String = "",
+    val generationContentAvailable: Boolean = false,
     val hasInterruptedGeneration: Boolean = false,
     val requestToken: Long = 0L,
     val inputRevision: Long = 0L,
@@ -114,7 +121,7 @@ private data class StoryGenerationProgressSnapshot(
 )
 
 @HiltViewModel
-class StorySimulationViewModel @Inject constructor(
+class StorySimulationViewModel internal constructor(
     private val storyWriting: StoryWritingUseCase,
     private val secureStorage: SecureStorage,
     private val templateDao: WorldTemplateDao,
@@ -123,7 +130,12 @@ class StorySimulationViewModel @Inject constructor(
     private val createSession: CreateSessionUseCase,
     private val draftStore: StoryOpeningDraftStore,
     private val inputDraftStore: StoryOpeningInputDraftStore,
+    private val worker: kotlinx.coroutines.CoroutineDispatcher,
 ) : ViewModel() {
+    @Inject constructor(storyWriting: StoryWritingUseCase, secureStorage: SecureStorage, templateDao: WorldTemplateDao,
+        encyclopediaDao: EncyclopediaDao, characterDao: CharacterDao, createSession: CreateSessionUseCase,
+        draftStore: StoryOpeningDraftStore, inputDraftStore: StoryOpeningInputDraftStore)
+        : this(storyWriting, secureStorage, templateDao, encyclopediaDao, characterDao, createSession, draftStore, inputDraftStore, Dispatchers.IO)
     private val _state = MutableStateFlow(StorySimulationState())
     val state: StateFlow<StorySimulationState> = _state.asStateFlow()
     private var selectionJob: Job? = null
@@ -142,6 +154,12 @@ class StorySimulationViewModel @Inject constructor(
     private var lastPersistedPreviewElapsedMs = 0L
     private val generationPersistMutex = Mutex()
     private val latestGenerationProgress = AtomicReference<StoryGenerationProgressSnapshot?>(null)
+    private val latestCompletedChapterDrafts = AtomicReference<List<com.mojing.app.domain.story.StoryChapter>>(emptyList())
+    private val generationWriteMutex = Mutex()
+    private var generationWriteTail: Job? = null
+    private val generationWriteFailure = AtomicReference<Throwable?>(null)
+    private data class FailedGenerationDelta(val requestId: String, val batchIndex: Int, val delta: String, val offset: Int?)
+    private val failedGenerationDeltas = mutableListOf<FailedGenerationDelta>()
 
     init {
         retryRecovery()
@@ -159,6 +177,15 @@ class StorySimulationViewModel @Inject constructor(
                     null -> {
                         val generation = inputDraftStore.loadGeneration()?.takeIf { it.requestId.isNotBlank() }
                         val input = if (generation == null) inputDraftStore.load() else null
+                        val recoveredChapters = generation?.let { inputDraftStore.loadCompletedChapters(it) }.orEmpty()
+                        val recoveredRaw = generation?.let { inputDraftStore.loadGenerationContent(it) }
+                        val recoveredBatches = generation?.let { inputDraftStore.loadGenerationBatches(it) }.orEmpty()
+                        val parsedRecovery = withContext(worker) {
+                            com.mojing.app.domain.story.StoryRecoveryParser.parse(recoveredBatches, recoveredChapters.size, recoveredChapters)
+                        }
+                        val restoredChapters = recoveredChapters + parsedRecovery.chapters
+                        val restoredPartial = parsedRecovery.partialChapter?.content
+                            ?: generation?.let { if (it.contentFileName == null) it.preview else "" }.orEmpty()
                         _state.update { current ->
                             if (generation != null) current.copy(isRestoring = false, canCopyRecoveryData = false,
                                 recoveredInputDraft = true, hasInputDraft = true, hasInterruptedGeneration = true,
@@ -166,12 +193,39 @@ class StorySimulationViewModel @Inject constructor(
                                 chapterCount = generation.input.chapterCount, selectedTemplateId = generation.input.templateId,
                                 selectedEncyclopediaId = generation.input.encyclopediaId, selectedCharacterIds = generation.input.characterIds,
                                 generationModel = generation.model, generationStage = "上次生成中断", receivedChars = generation.receivedChars,
-                                generationElapsedMs = generation.elapsedMs, preview = generation.preview)
+                                generationElapsedMs = generation.elapsedMs, preview = generation.preview,
+                                completedChapterDrafts = restoredChapters,
+                                partialPreview = restoredPartial,
+                                generationContentAvailable = recoveredBatches.isNotEmpty())
                             else if (input == null) current.copy(isRestoring = false, canCopyRecoveryData = false)
                             else current.copy(isRestoring = false, canCopyRecoveryData = false, recoveredInputDraft = true,
                                 hasInputDraft = true, premise = input.premise, direction = input.direction, tone = input.tone,
                                 chapterCount = input.chapterCount, selectedTemplateId = input.templateId,
                                 selectedEncyclopediaId = input.encyclopediaId, selectedCharacterIds = input.characterIds)
+                        }
+                        if (generation != null && generation.input.chapterCount <= 3 && recoveredBatches.size == 1) {
+                            val complete = recoveredRaw?.let { raw ->
+                                withContext(worker) {
+                                    runCatching { storyWriting.parse(raw, generation.input.chapterCount, generation.input.premise) }.getOrNull()
+                                }
+                            }
+                            if (complete != null) {
+                                runCatching {
+                                    val context = creationContext(_state.value)
+                                    val world = buildString {
+                                        context.template?.let { appendLine("世界模板：${it.label}"); appendLine(it.summary); appendLine(it.worldPrompt) }
+                                        context.encyclopedia?.let { appendLine("世界百科：${it.name}"); appendLine(it.description); appendLine(it.worldPrompt) }
+                                    }.trim()
+                                    val characters = context.characters.joinToString("\n") { "${it.name}：${it.personaPrompt.take(1600)}" }
+                                    pendingStory = StoryOpeningDraft(premise = context.premise, direction = context.direction, tone = context.tone,
+                                        template = context.template, encyclopediaId = context.encyclopedia?.id, characterIds = context.characters.map { it.id },
+                                        worldPrompt = StoryCanon.persistentWorldPrompt(context.premise, listOf(world, characters).filter(String::isNotBlank).joinToString("\n")),
+                                        result = complete, model = generation.model)
+                                    _state.update { it.copy(hasPendingStory = true, hasInterruptedGeneration = false,
+                                        storyTitle = complete.title, draftPersisted = false, generationStage = "完整正文待保存",
+                                        preview = complete.chapters.joinToString("\n\n") { chapter -> "${chapter.title}\n${chapter.content}" }) }
+                                }
+                            }
                         }
                     }
                     is StoryOpeningRecord.Pending -> {
@@ -239,7 +293,7 @@ class StorySimulationViewModel @Inject constructor(
         val snapshot = _state.value
         if (snapshot.selectedTemplateId == null && snapshot.selectedEncyclopediaId == null && snapshot.selectedCharacterIds.isEmpty()) {
             _state.update { it.copy(selectedTemplate = null, selectedEncyclopedia = null,
-                selectedCharacterIdsAvailable = emptySet(), selectionsResolved = true,
+                selectedCharacterIdsAvailable = emptySet(), selectedCharacterCards = emptyList(), selectionsResolved = true,
                 selectionsLoading = false, selectionsError = null) }
             return
         }
@@ -251,6 +305,7 @@ class StorySimulationViewModel @Inject constructor(
                 val validCharacters = snapshot.selectedCharacterIds.toList().chunked(400).flatMap { ids ->
                     characterDao.existingIdsForNewSession(ids, snapshot.selectedEncyclopediaId)
                 }.toSet()
+                val characterCards = validCharacters.toList().chunked(400).flatMap { ids -> characterDao.getChatPresentationByIds(ids) }
                 if (revision != selectionRevision) return@launch
                 if (removeIncompatible && validCharacters != snapshot.selectedCharacterIds) {
                     updateInput { current ->
@@ -264,7 +319,7 @@ class StorySimulationViewModel @Inject constructor(
                     if (current.selectedTemplateId != snapshot.selectedTemplateId ||
                         current.selectedEncyclopediaId != snapshot.selectedEncyclopediaId) current
                     else current.copy(selectedTemplate = template, selectedEncyclopedia = encyclopedia,
-                        selectedCharacterIdsAvailable = validCharacters, selectionsResolved = true,
+                        selectedCharacterIdsAvailable = validCharacters, selectedCharacterCards = characterCards, selectionsResolved = true,
                         selectionsLoading = false, selectionsError = null)
                 }
             } catch (cancelled: CancellationException) {
@@ -320,7 +375,8 @@ class StorySimulationViewModel @Inject constructor(
     fun updatePremise(value: String) = updateInput { it.copy(premise = value) }
     fun updateDirection(value: String) = updateInput { it.copy(direction = value) }
     fun updateTone(value: String) = updateInput { it.copy(tone = value) }
-    fun updateChapterCount(value: Int) = updateInput { it.copy(chapterCount = value.coerceIn(1, 3)) }
+    /** UI accepts the product presets 1/3/5/10; domain generation performs its own validation. */
+    fun updateChapterCount(value: Int) = updateInput { it.copy(chapterCount = value.coerceIn(1, 10)) }
     internal fun selectWorld(selection: NewSessionWorldSelection) {
         updateInput { current -> current.copy(
             selectedTemplateId = selection.template?.id,
@@ -395,10 +451,14 @@ class StorySimulationViewModel @Inject constructor(
                 activeGenerationId = generationId
                 activeGenerationInput = generationInput
                 latestGenerationProgress.set(null)
+                latestCompletedChapterDrafts.set(emptyList())
                 lastPersistedPreviewLength = 0
                 lastPersistedPreviewElapsedMs = 0L
                 generationStartedAtNanos = System.nanoTime()
-                _state.update { it.copy(isGenerating = true, isSaving = false, error = null, generationStage = "等待模型响应", generationModel = model, generationElapsedMs = 0L, firstContentDelayMs = null, receivedChars = 0, requestToken = token) }
+                generationWriteFailure.set(null)
+                synchronized(failedGenerationDeltas) { failedGenerationDeltas.clear() }
+                generationWriteTail = null
+                _state.update { it.copy(isGenerating = true, isSaving = false, error = null, generationStage = "等待模型响应", generationModel = model, generationElapsedMs = 0L, firstContentDelayMs = null, receivedChars = 0, completedChapters = 0, totalChapters = snapshot.chapterCount.coerceIn(1, 10), requestToken = token) }
                 try { inputDraftStore.commit(generationInput) }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) {
@@ -414,7 +474,8 @@ class StorySimulationViewModel @Inject constructor(
                     _state.update { it.copy(error = "生成状态暂存失败，请重试后再生成。", generationStage = "暂存失败", isGenerating = false) }
                     return@launch
                 }
-                _state.update { it.copy(hasInterruptedGeneration = false, preview = "") }
+                _state.update { it.copy(hasInterruptedGeneration = false, preview = "",
+                    completedChapterDrafts = emptyList(), partialPreview = "", generationContentAvailable = false) }
                 launch(kotlinx.coroutines.Dispatchers.Default) {
                     while (isActive && _state.value.requestToken == token && _state.value.isGenerating) {
                         _state.update { current -> if (current.requestToken == token && current.isGenerating) current.copy(generationElapsedMs = maxOf(current.generationElapsedMs, elapsedMs())) else current }
@@ -470,6 +531,7 @@ class StorySimulationViewModel @Inject constructor(
                 }
                 if (result == null) {
                     flushGenerationPreview()
+                    _state.update { it.copy(hasInterruptedGeneration = activeGenerationId != null) }
                     return@launch
                 }
                 ensureActive()
@@ -486,10 +548,13 @@ class StorySimulationViewModel @Inject constructor(
                 savePendingStory(onCreated)
             } catch (_: CancellationException) {
                 flushGenerationPreview()
-                _state.update { it.copy(isGenerating = false, generationStage = if (it.savedSessionId != null) "已保存" else "已停止") }
+                _state.update { it.copy(isGenerating = false,
+                    hasInterruptedGeneration = activeGenerationId != null && it.savedSessionId == null && !it.hasPendingStory,
+                    generationStage = if (it.savedSessionId != null) "已保存" else "已停止") }
             } catch (_: Exception) {
                 flushGenerationPreview()
-                _state.update { it.copy(error = "创作未能完成，请重试", generationStage = "失败") }
+                _state.update { it.copy(error = it.error ?: "创作未能完成，请重试", generationStage = "失败",
+                    hasInterruptedGeneration = activeGenerationId != null && it.savedSessionId == null && !it.hasPendingStory) }
             } finally {
                 releaseCreationJob()
             }
@@ -516,7 +581,6 @@ class StorySimulationViewModel @Inject constructor(
                     draftStore.persist(pending)
                     _state.update { it.copy(draftPersisted = true) }
                 }
-                inputDraftStore.clearGeneration()
                 val now = System.currentTimeMillis()
                 val setup = buildString {
                     append("【故事背景】\n${pending.premise.trim()}")
@@ -525,10 +589,11 @@ class StorySimulationViewModel @Inject constructor(
                 }
                 val messages = listOf(MessageEntity(sessionId = 0L, speakerType = "user", content = setup, createdAt = now)) +
                     result.chapters.mapIndexed { index, chapter ->
-                        val choices = if (index == result.chapters.lastIndex) result.nextChoices else emptyList()
+                        val incomplete = chapter.number in result.incompleteChapterNumbers
+                        val choices = if (index == result.chapters.lastIndex && !incomplete) result.nextChoices else emptyList()
                         MessageEntity(sessionId = 0L, speakerType = "narrator",
                             content = storyWriting.toMessageContent(chapter, choices),
-                            structuredContentJson = storyWriting.toStructuredJson(chapter, choices), createdAt = now + index + 1)
+                            structuredContentJson = storyWriting.toStructuredJson(chapter, choices, incomplete), createdAt = now + index + 1)
                     }
                 val created = createSession.create(
                     title = "小说 · ${result.title.trim().ifBlank { pending.premise.trim().take(24) }}",
@@ -540,6 +605,8 @@ class StorySimulationViewModel @Inject constructor(
                 )
                 val id = (created as? CreateSessionUseCase.Result.Created)?.sessionId
                     ?: error("Story session could not be created")
+                val generationRequestId = withContext(worker) { inputDraftStore.loadGeneration()?.requestId }
+                inputDraftStore.clearGeneration(generationRequestId)
                 pendingStory = null
                 savedDraftId = pending.id
                 _state.update { it.copy(hasPendingStory = false, savedSessionId = id, generationStage = "已保存", isSaving = false) }
@@ -569,7 +636,91 @@ class StorySimulationViewModel @Inject constructor(
             append("\n后续走向\n")
             append(result.nextChoices.joinToString("\n"))
         }
-    }.orEmpty().ifBlank { _state.value.preview }
+    }.orEmpty().ifBlank { interruptedStoryText() }
+
+    /** Full durable response is only exposed when it was written to the request file. */
+    fun interruptedStoryText(): String = buildString {
+        val current = _state.value
+        current.completedChapterDrafts.forEach { chapter ->
+            if (isNotEmpty()) append("\n\n")
+            append(chapter.title).append("\n\n").append(chapter.content)
+        }
+        if (current.partialPreview.isNotBlank()) {
+            if (isNotEmpty()) append("\n\n")
+            append(current.partialPreview)
+        }
+    }.ifBlank { _state.value.preview }
+
+    /** Reads the durable source only when the user asks to copy it; never blocks Compose. */
+    fun loadInterruptedStoryText(onLoaded: (String) -> Unit) {
+        viewModelScope.launch(worker) {
+            val generation = inputDraftStore.loadGeneration()
+            val batches = generation?.let { inputDraftStore.loadGenerationBatches(it) }.orEmpty()
+            val raw = batches.takeIf { it.isNotEmpty() }?.joinToString("\n\n")
+                ?: generation?.let { inputDraftStore.loadGenerationContent(it) }
+            val text = if (!raw.isNullOrBlank()) raw else interruptedStoryText()
+            withContext(Dispatchers.Main.immediate) { onLoaded(text) }
+        }
+    }
+
+    /** Promote only parser-confirmed earlier chapters into the normal idempotent draft path. */
+    fun saveCompletedInterruptedChapters(onCreated: (Long) -> Unit) {
+        val snapshot = _state.value
+        if (!snapshot.hasInterruptedGeneration ||
+            (snapshot.completedChapterDrafts.isEmpty() && snapshot.partialPreview.isBlank()) ||
+            snapshot.isSaving || snapshot.isGenerating || pendingStory != null || creationJob.get() != null) return
+        var claimed = false
+        _state.update { current ->
+            if (current.hasInterruptedGeneration && !current.isSaving && !current.isGenerating && pendingStory == null) {
+                claimed = true
+                current.copy(isSaving = true)
+            } else current
+        }
+        if (!claimed) return
+        viewModelScope.launch {
+            try {
+                val context = creationContext(snapshot)
+                val supplemental = buildString {
+                    context.template?.let { appendLine("世界模板：${it.label}"); appendLine(it.summary); appendLine(it.worldPrompt) }
+                    context.encyclopedia?.let { appendLine("世界百科：${it.name}"); appendLine(it.description); appendLine(it.worldPrompt) }
+                }.trim()
+                val characters = context.characters.joinToString("\n") { "${it.name}：${it.personaPrompt.take(1600)}" }
+                val world = listOf(supplemental, characters).filter(String::isNotBlank).joinToString("\n")
+                val title = snapshot.storyTitle.ifBlank { context.premise.trim().take(24).ifBlank { "未命名小说" } }
+                val generation = inputDraftStore.loadGeneration()
+                val recovered = generation?.let { generationState ->
+                    withContext(worker) {
+                        com.mojing.app.domain.story.StoryRecoveryParser.parse(
+                            inputDraftStore.loadGenerationBatches(generationState), snapshot.completedChapterDrafts.size,
+                            snapshot.completedChapterDrafts)
+                    }
+                }
+                val chapters = snapshot.completedChapterDrafts.toMutableList().apply {
+                    recovered?.chapters.orEmpty().forEach { chapter ->
+                        if (none { it.number == chapter.number }) add(chapter.copy(number = size + 1))
+                    }
+                    val partial = recovered?.partialChapter?.content?.takeIf(String::isNotBlank)
+                        ?: if (generation?.contentFileName == null) snapshot.partialPreview.trim() else null
+                    partial?.takeIf(String::isNotBlank)?.let { add(com.mojing.app.domain.story.StoryChapter(size + 1, recovered?.partialChapter?.title ?: "中断片段", it)) }
+                }
+                val incomplete = recovered?.partialChapter?.let { partial ->
+                    chapters.lastOrNull()?.takeIf { it.content == partial.content }?.let { setOf(it.number) }
+                }.orEmpty()
+                pendingStory = StoryOpeningDraft(
+                    premise = context.premise, direction = context.direction, tone = context.tone,
+                    template = context.template, encyclopediaId = context.encyclopedia?.id,
+                    characterIds = context.characters.map { it.id },
+                    worldPrompt = StoryCanon.persistentWorldPrompt(context.premise, world),
+                    result = com.mojing.app.domain.story.StoryWritingResult(title, chapters, emptyList(), incomplete),
+                    model = snapshot.generationModel.orEmpty(),
+                )
+                _state.update { it.copy(hasInterruptedGeneration = false, hasPendingStory = true, storyTitle = title,
+                    generationStage = "已收到草稿待保存", preview = chapters.joinToString("\n\n") { "${it.title}\n${it.content}" }) }
+                createStory(onCreated)
+            } catch (_: CancellationException) { throw CancellationException() }
+            catch (_: Exception) { _state.update { it.copy(isSaving = false, error = "已完成章节未能准备保存，请重试。") } }
+        }
+    }
 
     fun retryInterruptedGeneration(onCreated: (Long) -> Unit) {
         if (!_state.value.hasInterruptedGeneration || _state.value.isSaving || _state.value.isGenerating) return
@@ -584,7 +735,8 @@ class StorySimulationViewModel @Inject constructor(
                 inputDraftStore.clearGeneration()
                 activeGenerationId = null
                 _state.update { it.copy(hasInterruptedGeneration = false, generationStage = null, generationModel = null,
-                    generationElapsedMs = 0L, receivedChars = 0, preview = "", recoveredInputDraft = false) }
+                    generationElapsedMs = 0L, receivedChars = 0, preview = "", recoveredInputDraft = false,
+                    completedChapterDrafts = emptyList(), partialPreview = "", generationContentAvailable = false) }
             } catch (_: Exception) {
                 _state.update { it.copy(error = "中断记录未能清除，请重试。") }
             } finally { _state.update { it.copy(isSaving = false) } }
@@ -706,8 +858,38 @@ class StorySimulationViewModel @Inject constructor(
                 generationElapsedMs = maxOf(it.generationElapsedMs, progress.elapsedMs),
                 firstContentDelayMs = progress.firstContentDelayMs,
                 receivedChars = progress.receivedChars,
+                completedChapters = progress.completedChapters,
+                totalChapters = progress.totalChapters,
                 preview = progress.preview.takeLast(MAX_PREVIEW_CHARS),
+                completedChapterDrafts = progress.completedChapterDrafts,
+                partialPreview = progress.partialPreview,
+                generationContentAvailable = it.generationContentAvailable || progress.rawDelta != null,
             )
+        }
+        latestCompletedChapterDrafts.set(progress.completedChapterDrafts.toList())
+        progress.rawDelta?.let { delta ->
+            if (activeGenerationId == generationId) {
+                val previous = generationWriteTail
+                generationWriteTail = viewModelScope.launch(worker) {
+                    runCatching {
+                        previous?.join()
+                        check(generationWriteMutex.withLock { inputDraftStore.appendGenerationDelta(generationId, delta, progress.batchIndex, offset = progress.rawOffset) })
+                    }.onFailure {
+                        synchronized(failedGenerationDeltas) { failedGenerationDeltas += FailedGenerationDelta(generationId, progress.batchIndex, delta, progress.rawOffset) }
+                        generationWriteFailure.compareAndSet(null, it)
+                    }
+                }
+            }
+        }
+        if (progress.completedChapterDrafts.isNotEmpty() && activeGenerationId == generationId) {
+            val chapters = progress.completedChapterDrafts.toList()
+            val previous = generationWriteTail
+            generationWriteTail = viewModelScope.launch(worker) {
+                runCatching {
+                    previous?.join()
+                    check(generationWriteMutex.withLock { inputDraftStore.persistCompletedChapters(generationId, chapters) })
+                }.onFailure { generationWriteFailure.compareAndSet(null, it) }
+            }
         }
         if (_state.value.requestToken != token || !_state.value.isGenerating) return
         latestGenerationProgress.updateAndGet { previous ->
@@ -725,7 +907,7 @@ class StorySimulationViewModel @Inject constructor(
         token: Long, generationId: String, input: StoryOpeningInputDraft,
         preview: String, progress: StoryWritingProgress,
     ) {
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        viewModelScope.launch(worker) {
             try {
                 generationPersistMutex.withLock {
                     val saved = inputDraftStore.persistGenerationPreview(StoryOpeningGenerationState(
@@ -749,6 +931,34 @@ class StorySimulationViewModel @Inject constructor(
     }
 
     private suspend fun flushGenerationPreview(): Boolean = withContext(NonCancellable) {
+        generationWriteTail?.join()
+        val failed = synchronized(failedGenerationDeltas) { failedGenerationDeltas.toList() }
+        if (failed.isNotEmpty()) {
+            val retried = failed.all { item ->
+                runCatching { inputDraftStore.appendGenerationDelta(item.requestId, item.delta, item.batchIndex, offset = item.offset) }.getOrDefault(false)
+            }
+            if (!retried) {
+                _state.update { it.copy(error = "生成正文未能完整写入本机，请留在当前页重试或复制现有内容。") }
+                return@withContext false
+            }
+            synchronized(failedGenerationDeltas) { failedGenerationDeltas.clear() }
+        }
+        // Raw deltas and parsed chapter snapshots can fail independently. Flushing
+        // one must not clear the other failure without persisting the latest snapshot.
+        val chapters = latestCompletedChapterDrafts.get()
+        if (chapters.isNotEmpty()) {
+            val generationId = activeGenerationId
+            val retried = generationId != null && runCatching {
+                check(generationWriteMutex.withLock {
+                    inputDraftStore.persistCompletedChapters(generationId, chapters)
+                })
+            }.isSuccess
+            if (!retried) {
+                _state.update { it.copy(error = "生成正文的已完成章节未能完整写入本机，请留在当前页重试或复制现有内容。") }
+                return@withContext false
+            }
+        }
+        generationWriteFailure.set(null)
         val generationId = activeGenerationId ?: return@withContext true
         val input = activeGenerationInput ?: return@withContext true
         val latest = latestGenerationProgress.get()?.takeIf {

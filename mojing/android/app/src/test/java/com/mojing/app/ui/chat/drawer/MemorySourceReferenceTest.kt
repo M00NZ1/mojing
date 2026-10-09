@@ -16,17 +16,26 @@ class MemorySourceReferenceTest {
         ).sourceReference()
 
         assertEquals("原文消息 #12–#28", reference?.label)
-        assertEquals(12L, reference?.messageId)
+        assertEquals(12L, reference?.startMessageId)
+        assertEquals(28L, reference?.endMessageId)
     }
 
     @Test
-    fun legacyRecordsWithoutPositiveSourceStayNonInteractive() {
+    fun invalidRangesFallBackToTheirLegalAnchor() {
         assertNull(SessionMemorySegmentEntity(sessionId = 1L).sourceReference())
+        val reversed = SessionMemorySegmentEntity(
+            sessionId = 1L,
+            startMessageId = 30L,
+            endMessageId = 20L,
+        ).sourceReference()
+        assertEquals("原文消息 #30", reversed?.label)
+        assertEquals(30L, reversed?.startMessageId)
+        assertNull(reversed?.endMessageId)
         assertNull(
             SessionMemorySegmentEntity(
                 sessionId = 1L,
-                startMessageId = 30L,
-                endMessageId = 20L,
+                startMessageId = 0L,
+                endMessageId = 0L,
             ).sourceReference(),
         )
         assertNull(SessionEventNodeEntity(sessionId = 1L, messageId = null).sourceReference())
@@ -37,6 +46,7 @@ class MemorySourceReferenceTest {
         val reference = SessionEventNodeEntity(sessionId = 1L, messageId = 42L).sourceReference()
 
         assertEquals("原文消息 #42", reference?.label)
-        assertEquals(42L, reference?.messageId)
+        assertEquals(42L, reference?.startMessageId)
+        assertNull(reference?.endMessageId)
     }
 }

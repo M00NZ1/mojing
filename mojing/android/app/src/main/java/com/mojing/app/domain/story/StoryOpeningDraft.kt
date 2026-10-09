@@ -64,7 +64,7 @@ object StoryOpeningDraftCodec {
                 }
                 val draft = gson.fromJson(payload, StoryOpeningDraft::class.java)
                 require(draft.id == id && draft.premise.isNotBlank())
-                require(draft.result.title.isNotBlank() && draft.result.chapters.size in 1..3)
+                require(draft.result.title.isNotBlank() && draft.result.chapters.size in 1..10)
                 require(draft.result.chapters.all { it.number > 0 && it.title.isNotBlank() && it.content.isNotBlank() })
                 require(draft.characterIds.all { it > 0 } && draft.result.nextChoices.all { it.isNotBlank() })
                 StoryOpeningRecord.Pending(draft)

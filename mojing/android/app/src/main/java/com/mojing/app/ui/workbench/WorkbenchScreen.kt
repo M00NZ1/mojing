@@ -46,6 +46,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavHostController
@@ -65,6 +67,7 @@ import com.mojing.app.ui.common.isImeKeyboardOpen
 import com.mojing.app.ui.util.UserFacingStrings
 import com.mojing.app.util.ContentDocumentReader
 import com.mojing.app.util.ContentDocumentWriter
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -102,12 +105,18 @@ fun WorkbenchScreen(
     val promotedTemplateIds by viewModel.promotedTemplateIds.collectAsStateWithLifecycle()
     val deleteTemplateState by viewModel.deleteTemplateState.collectAsStateWithLifecycle()
     var deleteTarget by remember { mutableStateOf<WorldTemplateLibraryItem?>(null) }
+    var mergeTemplateId by rememberSaveable { mutableStateOf<Long?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
     var isImportingDocument by remember { mutableStateOf(false) }
     var pendingExportPicker by rememberSaveable { mutableStateOf(false) }
     var exportWriteInterrupted by rememberSaveable { mutableStateOf(false) }
     var isExportingDocument by remember { mutableStateOf(false) }
+    var exportJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val exportBusy = pendingExportPicker || isExportingDocument
+    val requestExportNavigation = com.mojing.app.ui.common.rememberExportNavigationGuard(
+        exporting = { isExportingDocument },
+        onStopExport = { exportJob?.cancelAndJoin() },
+    )
     var isCoverTaskBusy by remember { mutableStateOf(false) }
     var mainTab by remember { mutableStateOf(WorkbenchMainTab.TEMPLATES) }
     var templateSearch by rememberSaveable { mutableStateOf(viewModel.library.value.query) }
@@ -158,8 +167,7 @@ fun WorkbenchScreen(
     }
 
     fun createTemplate() {
-        Toast.makeText(context, UserFacingStrings.templateDraftCreated(), Toast.LENGTH_SHORT).show()
-        onEditTemplate(0L)
+        requestExportNavigation { onEditTemplate(0L) }
     }
 
     fun requestNavigation(action: () -> Unit) {
@@ -193,7 +201,7 @@ fun WorkbenchScreen(
             isImeOpen -> com.mojing.app.ui.common.hideImeKeyboard(keyboardController, focusManager)
             showStopAndContinueDialog -> dismissStopDialog()
             showSavingDialog -> showSavingDialog = false
-            else -> requestNavigation { navController.returnToCreationHub() }
+            else -> requestNavigation { requestExportNavigation { navController.returnToCreationHub() } }
         }
     }
 
@@ -222,7 +230,7 @@ fun WorkbenchScreen(
         if (uri != null && requested && !isImportingDocument && !isExportingDocument) {
             isExportingDocument = true
             exportWriteInterrupted = true
-            scope.launch {
+            exportJob = scope.launch {
                 val notice = try {
                     ContentDocumentWriter.writeStream(context, uri, viewModel::exportJson)
                     UserFacingStrings.exportSuccess()
@@ -318,7 +326,7 @@ fun WorkbenchScreen(
                 navigationIcon = {
                     IconButton(onClick = {
                         com.mojing.app.ui.common.hideImeKeyboard(keyboardController, focusManager)
-                        requestNavigation { navController.returnToCreationHub() }
+                        requestNavigation { requestExportNavigation { navController.returnToCreationHub() } }
                     }) {
                         Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回创作中心")
                     }
@@ -408,14 +416,15 @@ fun WorkbenchScreen(
         bottomBar = {
             MainAppBottomNavigation(
                 navController = navController,
-                onNavigateRequest = { action -> requestNavigation(action) },
+                onNavigateRequest = { action -> requestNavigation { requestExportNavigation(action) } },
             )
         },
         floatingActionButton = {
             if (mainTab == WorkbenchMainTab.TEMPLATES && library.loaded && templates.isNotEmpty() && !isImeKeyboardOpen()) {
                 ExtendedFloatingActionButton(
                     onClick = ::createTemplate,
-                    icon = { Icon(Icons.Outlined.Add, "新建") },
+                    modifier = Modifier.semantics { contentDescription = "新建模板" },
+                    icon = { Icon(Icons.Outlined.Add, null) },
                     text = { Text("新建模板") }
                 )
             }
@@ -500,15 +509,17 @@ fun WorkbenchScreen(
                                         isPinned = template.pinnedAt > 0,
                                         onPinToggle = { viewModel.setTemplatePinned(template.id, template.pinnedAt == 0L) },
                                         onDelete = { viewModel.clearTemplateDeleteState(); deleteTarget = template },
-                                        onClick = { promotedTemplateIds[template.id]?.let(onOpenCanonical) ?: onEditTemplate(template.id) },
-                                        menuExtras = {
+                                        onClick = { requestExportNavigation { promotedTemplateIds[template.id]?.let(onOpenCanonical) ?: onEditTemplate(template.id) } },
+                                        showMenuButton = true,
+                                        menuExtras = { dismissMenu ->
                                             DropdownMenuItem(
                                                 text = { Text(if (promotedTemplateIds[template.id] != null) "已归入世界，打开百科" else "归入世界") },
                                                 onClick = {
                                                     val canonicalId = promotedTemplateIds[template.id]
-                                                    if (canonicalId != null) onOpenCanonical(canonicalId) else viewModel.promoteTemplate(template.id) { id, message ->
-                                                        scope.launch { snackbarHostState.showSnackbar(message) }
-                                                        if (id != null) onOpenCanonical(id)
+                                                    dismissMenu()
+                                                    requestExportNavigation {
+                                                        if (canonicalId != null) onOpenCanonical(canonicalId)
+                                                        else mergeTemplateId = template.id
                                                     }
                                                 },
                                             )
@@ -541,7 +552,7 @@ fun WorkbenchScreen(
                                         WorkbenchTemplateGridCard(
                                             template = template,
                                             canonical = template.id in promotedTemplateIds,
-                                            onStartChat = { onStartChat(template.id) },
+                                            onStartChat = { requestExportNavigation { onStartChat(template.id) } },
                                         )
                                     }
                                 }
@@ -559,15 +570,17 @@ fun WorkbenchScreen(
                                             isPinned = template.pinnedAt > 0,
                                             onPinToggle = { viewModel.setTemplatePinned(template.id, template.pinnedAt == 0L) },
                                             onDelete = { viewModel.clearTemplateDeleteState(); deleteTarget = template },
-                                            onClick = { promotedTemplateIds[template.id]?.let(onOpenCanonical) ?: onEditTemplate(template.id) },
-                                            menuExtras = {
+                                            onClick = { requestExportNavigation { promotedTemplateIds[template.id]?.let(onOpenCanonical) ?: onEditTemplate(template.id) } },
+                                            showMenuButton = true,
+                                            menuExtras = { dismissMenu ->
                                                 DropdownMenuItem(
                                                     text = { Text(if (promotedTemplateIds[template.id] != null) "已归入世界，打开百科" else "归入世界") },
                                                     onClick = {
                                                         val canonicalId = promotedTemplateIds[template.id]
-                                                        if (canonicalId != null) onOpenCanonical(canonicalId) else viewModel.promoteTemplate(template.id) { id, message ->
-                                                            scope.launch { snackbarHostState.showSnackbar(message) }
-                                                            if (id != null) onOpenCanonical(id)
+                                                        dismissMenu()
+                                                        requestExportNavigation {
+                                                            if (canonicalId != null) onOpenCanonical(canonicalId)
+                                                            else mergeTemplateId = template.id
                                                         }
                                                     },
                                                 )
@@ -600,7 +613,7 @@ fun WorkbenchScreen(
                                             WorkbenchTemplateListRowInner(
                                                 template = template,
                                                 canonical = template.id in promotedTemplateIds,
-                                                onStartChat = { onStartChat(template.id) },
+                                                onStartChat = { requestExportNavigation { onStartChat(template.id) } },
                                             )
                                         }
                                     }
@@ -695,7 +708,7 @@ fun WorkbenchScreen(
                                         style = MaterialTheme.typography.bodySmall,
                                         modifier = Modifier.weight(1f),
                                     )
-                                    TextButton(onClick = onSettingsClick, enabled = !generateBusy) { Text("去设置") }
+                                    TextButton(onClick = { requestExportNavigation(onSettingsClick) }, enabled = !generateBusy) { Text("去设置") }
                                 }
                             }
                         }
@@ -904,6 +917,17 @@ fun WorkbenchScreen(
         },
     )
 
+    mergeTemplateId?.let { templateId ->
+        WorldTemplateMergeSheet(
+            templateId = templateId,
+            onDismiss = { mergeTemplateId = null },
+            onMerged = { worldId ->
+                mergeTemplateId = null
+                requestExportNavigation { onOpenCanonical(worldId) }
+            },
+        )
+    }
+
     deleteTarget?.let { t ->
         val canonicalId = promotedTemplateIds[t.id]
         val currentDelete = deleteTemplateState.takeIf { it.templateId == t.id }
@@ -934,7 +958,7 @@ fun WorkbenchScreen(
             },
             confirmButton = {
                 if (canonicalId != null) {
-                    Button(onClick = { deleteTarget = null; onOpenCanonical(canonicalId) }, enabled = !deleting) { Text("打开百科") }
+                    Button(onClick = { deleteTarget = null; requestExportNavigation { onOpenCanonical(canonicalId) } }, enabled = !deleting) { Text("打开百科") }
                 } else {
                     Button(
                         onClick = { viewModel.deleteTemplate(t.id) },

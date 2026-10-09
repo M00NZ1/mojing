@@ -24,10 +24,19 @@ class PromptBuilder @Inject constructor() {
         val universalContextMemoryText: String = "",
         /** 供 {{session_id}} 等宏使用 */
         val sessionId: Long? = null,
+        /** Already formatted branch-visible summaries supplied by ContextBuilder. */
+        val memorySummary: String = "",
+        /** Explicit source field; never infer foundation from a rendered hit string. */
+        val encyclopediaFoundation: String = "",
+        /** Only the production compactor path opts into disposable derived summaries. */
+        val automaticSummary: Boolean = false,
     )
 
-    fun buildForCharacter(context: PromptContext, effectiveModelName: String = ""): String {
-        val parts = mutableListOf<String>()
+    fun buildForCharacter(context: PromptContext, effectiveModelName: String = ""): String =
+        buildCharacterDocument(context, effectiveModelName).render()
+
+    fun buildCharacterDocument(context: PromptContext, effectiveModelName: String = "", personaDocument: PromptDocument? = null): PromptDocument {
+        val parts = PromptParts()
 
         parts.add("你是一个角色扮演AI，请严格遵守以下规则进行回复。")
 
@@ -40,7 +49,9 @@ class PromptBuilder @Inject constructor() {
             modelForMacro,
         )
 
-        context.character.personaPrompt.takeIf { it.isNotBlank() }?.let { raw ->
+        if (personaDocument != null) {
+            parts.addDocument(personaDocument.mapText { MacroReplacer.replace(it, macros) })
+        } else context.character.personaPrompt.takeIf { it.isNotBlank() }?.let { raw ->
             parts.add(MacroReplacer.replace(raw, macros))
         }
 
@@ -62,17 +73,9 @@ class PromptBuilder @Inject constructor() {
 
         appendCorrections(context, parts)
 
-        if (context.recentMemorySegments.isNotEmpty()) {
-            val summary = context.recentMemorySegments.joinToString("\n") { seg ->
-                "- ${MacroReplacer.replace(seg.summary, macros)}"
-            }
-            parts.add("近期记忆摘要：\n$summary")
-        }
+        appendRecentMemory(context, parts, macros)
 
-        if (context.encyclopediaHits.isNotEmpty()) {
-            val block = context.encyclopediaHits.joinToString("\n") { MacroReplacer.replace(it, macros) }
-            parts.add("相关百科信息：\n$block")
-        }
+        appendEncyclopedia(context, parts) { MacroReplacer.replace(it, macros) }
 
         if (context.loreHits.isNotEmpty()) {
             val block = context.loreHits.joinToString("\n") { MacroReplacer.replace(it, macros) }
@@ -161,11 +164,14 @@ class PromptBuilder @Inject constructor() {
             parts.add(lines.joinToString("\n"))
         }
 
-        return parts.joinToString("\n\n")
+        return parts.document()
     }
 
-    fun buildNarratorPrompt(context: PromptContext, guidance: String = "", model: String = "", includeUserProfile: Boolean = true): String {
-        val parts = mutableListOf<String>()
+    fun buildNarratorPrompt(context: PromptContext, guidance: String = "", model: String = "", includeUserProfile: Boolean = true, allowChoices: Boolean = true): String =
+        buildNarratorDocument(context, guidance, model, includeUserProfile, allowChoices).render()
+
+    fun buildNarratorDocument(context: PromptContext, guidance: String = "", model: String = "", includeUserProfile: Boolean = true, allowChoices: Boolean = true): PromptDocument {
+        val parts = PromptParts()
         val world = context.world
         val isStoryWriting = world?.gameplayMode == "小说创作"
         if (isStoryWriting) {
@@ -184,9 +190,11 @@ class PromptBuilder @Inject constructor() {
         }
         if (includeUserProfile) appendUserProfile(context, parts)
         appendCorrections(context, parts)
-        if (context.encyclopediaHits.isNotEmpty()) {
-            parts.add("相关百科信息：\n${context.encyclopediaHits.joinToString("\n")}")
-        }
+        appendRecentMemory(context, parts, MacroBindings.forCharacterSession(
+            CharacterEntity(name = world?.narratorName ?: "旁白"),
+            context.personaName, context.userDescription, context.sessionId, model,
+        ))
+        appendEncyclopedia(context, parts) { it }
         if (context.loreHits.isNotEmpty()) {
             parts.add("相关设定信息：\n${context.loreHits.joinToString("\n")}")
         }
@@ -199,7 +207,7 @@ class PromptBuilder @Inject constructor() {
             )
         }
         parts.add("输出格式：<NARRATION>旁白内容</NARRATION>")
-        world?.takeIf { it.choiceGenerationEnabled }?.let {
+        world?.takeIf { allowChoices && it.choiceGenerationEnabled }?.let {
             val max = it.maxChoiceCount.coerceIn(1, 8)
             val min = if (max == 1) 1 else 2
             parts.add(
@@ -208,16 +216,34 @@ class PromptBuilder @Inject constructor() {
                     if (isStoryWriting) "选项不得假定其他人物已经知道尚未揭露的秘密，也不得引入核心设定之外的力量。" else "",
             )
         }
-        return parts.joinToString("\n\n")
+        return parts.document()
     }
 
-    private fun appendCorrections(context: PromptContext, parts: MutableList<String>) {
+    private fun appendEncyclopedia(context: PromptContext, parts: PromptParts, transform: (String) -> String) {
+        val entries = buildList {
+            if (context.encyclopediaFoundation.isNotBlank()) add("[百科基础背景] ${context.encyclopediaFoundation}")
+            addAll(context.encyclopediaHits)
+        }
+        if (entries.isNotEmpty()) parts.add("相关百科信息：\n" + entries.joinToString("\n", transform = transform))
+    }
+
+    private fun appendRecentMemory(context: PromptContext, parts: PromptParts, macros: Map<String, String>) {
+        val summary = if (context.recentMemorySegments.isNotEmpty()) {
+            context.recentMemorySegments.joinToString("\n") { seg -> "- ${MacroReplacer.replace(seg.summary, macros)}" }
+        } else MacroReplacer.replace(context.memorySummary, macros)
+        if (summary.isNotBlank()) {
+            val text = "近期记忆摘要：\n$summary"
+            if (context.automaticSummary) parts.addSummary(text) else parts.add(text)
+        }
+    }
+
+    private fun appendCorrections(context: PromptContext, parts: PromptParts) {
         if (context.memoryCorrections.isEmpty()) return
         val content = context.memoryCorrections.joinToString("\n") { correction -> "- ${correction.content}" }
         parts.add("用户锁定记忆（冲突时优先）：\n$content")
     }
 
-    private fun appendUserProfile(context: PromptContext, parts: MutableList<String>) {
+    private fun appendUserProfile(context: PromptContext, parts: PromptParts) {
         parts.add("当前用户名为「${context.personaName.ifBlank { "玩家" }}」。")
         context.userDescription.trim().takeIf { it.isNotBlank() }?.let {
             parts.add("用户资料（用于理解本场创作中的身份与偏好）：\n姓名：${context.personaName}\n自我描述：$it")

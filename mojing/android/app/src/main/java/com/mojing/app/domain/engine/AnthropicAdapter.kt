@@ -11,6 +11,7 @@ import com.mojing.app.data.remote.executeCancellable
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.mojing.app.domain.config.OpenAiCompatibleRouting
+import com.mojing.app.domain.config.AnthropicSamplingPolicy
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -32,6 +33,11 @@ class AnthropicAdapter @Inject constructor(
 ) {
     companion object {
         const val API_VERSION = "2023-06-01"
+        fun messagesUrl(baseUrl: String): String {
+            val b = baseUrl.trimEnd('/')
+            return if (b.endsWith("/v1/messages") || b.endsWith("/messages")) b
+            else if (b.endsWith("/v1")) "$b/messages" else "$b/v1/messages"
+        }
     }
 
     fun streamChat(
@@ -64,7 +70,7 @@ class AnthropicAdapter @Inject constructor(
         val body = JSONObject().apply {
             put("model", model)
             put("max_tokens", maxTokens)
-            put("temperature", temperature.toDouble())
+            if (AnthropicSamplingPolicy.acceptsTemperature(model)) put("temperature", temperature.toDouble())
             if (systemPrompt.isNotBlank()) put("system", systemPrompt)
             put("stream", true)
             put("messages", JSONArray().apply {
@@ -172,9 +178,10 @@ class AnthropicAdapter @Inject constructor(
     ): ChatCompletionResult {
         val gson = Gson()
         val body = linkedMapOf<String, Any>("model" to model, "max_tokens" to maxTokens,
-            "temperature" to temperature, "messages" to messages.filter { it.role != "system" }.map {
+            "messages" to messages.filter { it.role != "system" }.map {
                 mapOf("role" to if (it.role == "assistant") "assistant" else "user", "content" to it.content)
             })
+        if (AnthropicSamplingPolicy.acceptsTemperature(model)) body["temperature"] = temperature
         if (systemPrompt.isNotBlank()) body["system"] = systemPrompt
         val request = Request.Builder().url(buildMessagesUrl(baseUrl))
             .header("x-api-key", apiKey.trim().removePrefix("Bearer ").trim())
@@ -202,11 +209,5 @@ class AnthropicAdapter @Inject constructor(
                 .copy(cachedPromptTokens = cached, usageProvided = usageProvided)
         }
     }
-
-    private fun buildMessagesUrl(baseUrl: String): String {
-        val b = baseUrl.trimEnd('/')
-        return if (b.endsWith("/v1/messages") || b.endsWith("/messages")) b
-        else if (b.endsWith("/v1")) "$b/messages" else "$b/v1/messages"
-    }
-
+    private fun buildMessagesUrl(baseUrl: String): String = messagesUrl(baseUrl)
 }

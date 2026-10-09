@@ -4,11 +4,15 @@ import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
 import com.mojing.app.ui.common.MoJingIcon as Icon
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Clear
+import androidx.compose.material.icons.outlined.Search
 import com.mojing.app.ui.common.MoJingButton as Button
 import com.mojing.app.ui.common.MoJingOutlinedButton as OutlinedButton
+import com.mojing.app.ui.common.MoJingTextField as TextField
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyColumn
@@ -25,11 +29,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mojing.app.data.local.entity.GenerationTaskEntity
 import com.mojing.app.data.local.entity.GenerationTaskKinds
 import com.mojing.app.data.local.entity.GenerationTaskStatus
+import com.mojing.app.domain.generation.CharacterPersonaAiPayload
+import com.mojing.app.domain.generation.WorldTemplatePromptAiPayload
+import com.google.gson.Gson
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -55,9 +70,12 @@ fun GenerationTaskListScreen(
     val busy by viewModel.busy.collectAsStateWithLifecycle()
     val retryingIds by viewModel.retryingTaskIds.collectAsStateWithLifecycle()
     val message by viewModel.snackbar.collectAsStateWithLifecycle()
+    val application by viewModel.application.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val filter by viewModel.selectedFilter.collectAsStateWithLifecycle()
-    val listState = rememberGenerationListState(filter, historyCursors.size)
+    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val selectedTaskKind by viewModel.selectedTaskKind.collectAsStateWithLifecycle()
+    val listState = rememberGenerationListState(filter, historyCursors.size, searchQuery, selectedTaskKind)
     var cancelTargetId by remember { mutableStateOf<Long?>(null) }
     var cancelError by remember(cancelTargetId) { mutableStateOf<String?>(null) }
     var detailId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -117,13 +135,22 @@ fun GenerationTaskListScreen(
                 }
             }
             stickyHeader(key = "generation-filter") {
-                GenerationTaskFilterBar(filter, viewModel::selectHistoryFilter)
+                Column(Modifier.fillMaxWidth()) {
+                    GenerationTaskSearchBar(
+                        query = searchQuery,
+                        onQueryChange = viewModel::updateSearchQuery,
+                        onClear = { viewModel.updateSearchQuery("") },
+                    )
+                    GenerationTaskFilterBar(filter = filter, selectedTaskKind = selectedTaskKind,
+                        onSelectTaskKind = viewModel::selectTaskKind, onSelect = viewModel::selectHistoryFilter)
+                }
             }
             if (visible.isEmpty() && !loading && loadError == null) item {
                 Column(Modifier.fillMaxWidth().padding(vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(if (browsingHistory) "当前分类没有记录" else if (tasks.isEmpty()) "还没有生成记录" else "这里暂时没有任务", style = MaterialTheme.typography.titleMedium)
-                    Text(if (browsingHistory) "可切换分类或返回近期记录。" else if (tasks.isEmpty()) "从角色、百科或世界的 AI 创作开始，进度会汇集在这里。" else "可以切换分类查看其他记录。",
+                    val hasSearchFilters = searchQuery.isNotBlank() || selectedTaskKind != null
+                    Text(if (hasSearchFilters) "没有匹配的生成记录" else if (browsingHistory) "当前分类没有记录" else if (tasks.isEmpty()) "还没有生成记录" else "这里暂时没有任务", style = MaterialTheme.typography.titleMedium)
+                    Text(if (hasSearchFilters) "可修改标题关键词或类型筛选。" else if (browsingHistory) "可切换分类或返回近期记录。" else if (tasks.isEmpty()) "从角色、百科或世界的 AI 创作开始，进度会汇集在这里。" else "可以切换分类查看其他记录。",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -179,35 +206,93 @@ fun GenerationTaskListScreen(
             detailId = null
             cancelTargetId = task.id
         },
+        onApply = viewModel::previewSnapshot,
         onDismiss = { viewModel.cancelResultLookup(); detailId = null }, onOpen = { t ->
             resultError = null
             viewModel.openResult(t, onOpen = { target -> detailId = null; onOpenResult(target) },
                 onError = { resultError = it })
         })
+    GenerationResultApplySheet(application, viewModel::dismissSnapshot,
+        { application.taskId?.let(viewModel::previewSnapshot) }, viewModel::applySnapshot)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun GenerationTaskFilterBar(filter: Int, onSelect: (Int) -> Unit) {
+internal fun GenerationTaskSearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onClear: () -> Unit,
+) {
+    val keyboard = LocalSoftwareKeyboardController.current
+    TextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier = Modifier.fillMaxWidth(),
+        inputModifier = Modifier.semantics { contentDescription = "搜索生成记录" },
+        singleLine = true,
+        placeholder = { Text("搜索生成记录") },
+        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+        trailingIcon = if (query.isNotEmpty()) {
+            { IconButton(onClick = onClear) { Icon(Icons.Outlined.Clear, contentDescription = "清除生成记录搜索") } }
+        } else null,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+internal fun GenerationTaskFilterBar(
+    filter: Int,
+    selectedTaskKind: String? = null,
+    onSelectTaskKind: ((String?) -> Unit)? = null,
+    onSelect: (Int) -> Unit,
+) {
     Surface(color = MaterialTheme.colorScheme.background) {
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-            listOf("全部", "进行中", "需处理").forEachIndexed { i, label ->
-                SegmentedButton(selected = filter == i, onClick = { onSelect(i) },
-                    shape = SegmentedButtonDefaults.itemShape(i, 3)) { Text(label) }
+        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                listOf("全部", "进行中", "需处理").forEachIndexed { i, label ->
+                    SegmentedButton(selected = filter == i, onClick = { onSelect(i) },
+                        shape = SegmentedButtonDefaults.itemShape(i, 3)) { Text(label) }
+                }
+            }
+            if (onSelectTaskKind != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(selected = selectedTaskKind == null, onClick = { onSelectTaskKind(null) }, label = { Text("全部类型") })
+                    listOf(
+                        GenerationTaskKinds.ENCYCLOPEDIA_ENTRIES,
+                        GenerationTaskKinds.ENCYCLOPEDIA_META_FILL,
+                        GenerationTaskKinds.CHARACTER_PERSONA_AI,
+                        GenerationTaskKinds.WORLD_TEMPLATE_PROMPT_AI,
+                    ).forEach { kind ->
+                        FilterChip(
+                            selected = selectedTaskKind == kind,
+                            onClick = { onSelectTaskKind(if (selectedTaskKind == kind) null else kind) },
+                            label = { Text(kindLabel(kind), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        )
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-internal fun rememberGenerationListState(filter: Int, page: Int = 0): LazyListState {
+internal fun rememberGenerationListState(filter: Int, page: Int = 0, keyword: String = "", taskKind: String? = null): LazyListState {
     val state = rememberLazyListState()
     var previousFilter by rememberSaveable { mutableIntStateOf(filter) }
     var previousPage by rememberSaveable { mutableIntStateOf(page) }
-    LaunchedEffect(filter, page) {
-        if (previousFilter != filter || previousPage != page) {
+    var previousKeyword by rememberSaveable { mutableStateOf(keyword) }
+    var previousTaskKind by rememberSaveable { mutableStateOf(taskKind) }
+    LaunchedEffect(filter, page, keyword, taskKind) {
+        if (previousFilter != filter || previousPage != page || previousKeyword != keyword || previousTaskKind != taskKind) {
             previousPage = page
             previousFilter = filter
+            previousKeyword = keyword
+            previousTaskKind = taskKind
             state.scrollToItem(0)
         }
     }
@@ -223,6 +308,7 @@ internal fun GenerationTaskDetailHost(
     retryError: String? = null,
     onRetry: ((GenerationTaskEntity) -> Unit)? = null,
     onCancel: ((GenerationTaskEntity) -> Unit)? = null,
+    onApply: ((GenerationTaskEntity) -> Unit)? = null,
 ) {
     val latest = tasks.firstOrNull { it.id == selectedId }
     var lastVisible by remember(selectedId) { mutableStateOf<GenerationTaskEntity?>(null) }
@@ -233,6 +319,7 @@ internal fun GenerationTaskDetailHost(
             busy = busy, retrying = t.id in retryingIds, retryError = retryError,
             onRetry = onRetry?.let { action -> { action(t) } },
             onCancel = onCancel?.let { action -> { action(t) } },
+            onApply = onApply?.let { action -> { action(t) } },
             onOpen = { onOpen(t) })
     }
 }
@@ -279,6 +366,7 @@ internal fun GenerationTaskDetailSheet(
     retryError: String? = null,
     onRetry: (() -> Unit)? = null,
     onCancel: (() -> Unit)? = null,
+    onApply: (() -> Unit)? = null,
 ) {
     val detailScroll = rememberScrollState()
     LaunchedEffect(openError, retryError) { if (openError != null || retryError != null) detailScroll.scrollTo(0) }
@@ -329,13 +417,19 @@ internal fun GenerationTaskDetailSheet(
                     Text("已完成 ${task.progressDone} / ${task.progressTotal}")
                 }
                 if (task.errorMessage.isNotBlank()) {
-                    Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(12.dp)) {
+                    val failed = task.status == GenerationTaskStatus.FAILED
+                    Surface(
+                        color = if (failed) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = if (failed) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("生成反馈", style = MaterialTheme.typography.titleSmall)
+                            Text(if (task.status == GenerationTaskStatus.COMPLETED) "生成时反馈" else "生成反馈", style = MaterialTheme.typography.titleSmall)
                             GenerationFeedbackText(task.errorMessage)
                         }
                     }
                 }
+                GenerationResultSnapshotPreview(task, onApply)
                 Spacer(Modifier.height(8.dp))
             }
             HorizontalDivider()
@@ -369,7 +463,9 @@ internal fun GenerationTaskDetailSheet(
                 val hasResultAction = task.progressDone > 0 || task.status == GenerationTaskStatus.COMPLETED
                 val hasCancelAction = task.isActive() && onCancel != null
                 if (hasResultAction || hasCancelAction) {
-                    val label = if (opening) "正在打开…" else if (openError != null) "重试打开" else "查看已生成内容"
+                    val label = if (opening) "正在打开…" else if (openError != null) "重试打开"
+                        else if (task.snapshotApplicationLabel() != null) task.currentSnapshotTargetLabel()
+                        else "查看已生成内容"
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -430,11 +526,71 @@ internal fun GenerationFeedbackText(text: String) {
     }
 }
 
+@Composable
+private fun GenerationResultSnapshotPreview(task: GenerationTaskEntity, onApply: (() -> Unit)?) {
+    val snapshot = remember(task.resultJson) { com.mojing.app.domain.generation.GenerationResultSnapshotCodec.decode(task.resultJson) }
+        ?: return
+    val clipboard = LocalClipboardManager.current
+    val text = when (snapshot) {
+        is com.mojing.app.domain.generation.GenerationResultSnapshot.CharacterPersona -> snapshot.personaPrompt
+        is com.mojing.app.domain.generation.GenerationResultSnapshot.WorldTemplate -> buildString {
+            snapshot.summary?.let { appendLine("摘要：$it") }
+            snapshot.worldPrompt?.let { appendLine("世界书：$it") }
+        }.trim()
+    }
+    val current = remember(task.payloadJson, task.taskKind) {
+        runCatching {
+            when (task.taskKind) {
+                GenerationTaskKinds.CHARACTER_PERSONA_AI -> Gson().fromJson(task.payloadJson, CharacterPersonaAiPayload::class.java)
+                    .personaPrompt?.takeIf(String::isNotBlank)?.let { "人设：$it" }.orEmpty()
+                GenerationTaskKinds.WORLD_TEMPLATE_PROMPT_AI -> {
+                    val p = Gson().fromJson(task.payloadJson, WorldTemplatePromptAiPayload::class.java)
+                    buildString {
+                        (p.expectedSummary ?: p.summary)?.takeIf(String::isNotBlank)?.let { appendLine("摘要：$it") }
+                        (p.expectedWorldPrompt ?: p.worldPrompt)?.takeIf(String::isNotBlank)?.let { append("世界书：$it") }
+                    }.trim()
+                }
+                else -> ""
+            }
+        }.getOrDefault("")
+    }
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(14.dp)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("AI 结果快照", style = MaterialTheme.typography.titleSmall)
+            task.snapshotApplicationLabel()?.let { Text(it, style = MaterialTheme.typography.labelLarge) }
+            if (current.isNotBlank()) {
+                Text("生成时内容", style = MaterialTheme.typography.labelLarge)
+                SelectionContainer { Text(current, maxLines = 8, overflow = TextOverflow.Ellipsis) }
+            }
+            Text("生成内容", style = MaterialTheme.typography.labelLarge)
+            SelectionContainer { Text(text, maxLines = 12, overflow = TextOverflow.Ellipsis) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { clipboard.setText(AnnotatedString(text)) }) { Text("复制结果") }
+                if (task.resultAppliedAt == null && onApply != null) {
+                    Button(onClick = onApply) { Text("对比并应用") }
+                } else if (task.resultAppliedAt != null) {
+                    Text("已应用", modifier = Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
+                }
+            }
+        }
+    }
+}
+
 internal fun isRetryableKind(kind: String): Boolean =
     kind == GenerationTaskKinds.ENCYCLOPEDIA_ENTRIES ||
         kind == GenerationTaskKinds.ENCYCLOPEDIA_META_FILL ||
         kind == GenerationTaskKinds.CHARACTER_PERSONA_AI ||
         kind == GenerationTaskKinds.WORLD_TEMPLATE_PROMPT_AI
+
+internal fun GenerationTaskEntity.snapshotApplicationLabel(): String? {
+    if (status != GenerationTaskStatus.COMPLETED) return null
+    val snapshot = com.mojing.app.domain.generation.GenerationResultSnapshotCodec.decode(resultJson) ?: return null
+    if (snapshot.taskKind != taskKind) return null
+    return if (resultAppliedAt == null) "生成已完成 · 待应用" else "生成已完成 · 已应用"
+}
+
+internal fun GenerationTaskEntity.currentSnapshotTargetLabel(): String =
+    if (taskKind == GenerationTaskKinds.CHARACTER_PERSONA_AI) "查看当前角色" else "查看当前模板"
 
 internal fun kindLabel(kind: String): String = when (kind) {
     GenerationTaskKinds.ENCYCLOPEDIA_ENTRIES -> "百科条目"

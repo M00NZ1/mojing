@@ -36,27 +36,39 @@ internal fun AppUpdateTab(viewModel: AppUpdateViewModel = hiltViewModel()) {
     }
 
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("墨境", style = MaterialTheme.typography.headlineLarge.copy(fontFamily = FontFamily.Serif))
-            Text("本地角色扮演与长篇创作", style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            androidx.compose.foundation.Image(painter = androidx.compose.ui.res.painterResource(com.mojing.app.R.drawable.ic_launcher_foreground),
+                contentDescription = null, modifier = Modifier.size(56.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("墨境 MoJing", style = MaterialTheme.typography.titleMedium)
+                Text("当前版本 ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("本地角色扮演与长篇创作", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
 
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("应用版本", style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Icon(Icons.Outlined.SystemUpdate, null, tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp))
-                Text("v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.headlineSmall,
-                    modifier = Modifier.weight(1f))
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surface,
+            shape = MaterialTheme.shapes.small,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("更新通道", style = MaterialTheme.typography.titleSmall)
+                    Text("稳定版 · 由应用发布页提供更新", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("稳定版", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary)
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Text("从 GitHub 获取正式版本", style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -76,7 +88,7 @@ internal fun AppUpdateTab(viewModel: AppUpdateViewModel = hiltViewModel()) {
                         shape = MaterialTheme.shapes.medium) {
                         Column(Modifier.fillMaxWidth().padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("发现新版本 v${release.version}", style = MaterialTheme.typography.titleMedium)
+                            Text("${if (state.checking || state.error != null) "上次发现" else "发现新版本"} v${release.version}", style = MaterialTheme.typography.titleMedium)
                             Text("已找到适合此设备的安装包", style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                             MoJingOutlinedButton(onClick = viewModel::showDownload, modifier = Modifier.fillMaxWidth()) {
@@ -90,6 +102,10 @@ internal fun AppUpdateTab(viewModel: AppUpdateViewModel = hiltViewModel()) {
 
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            state.release?.notes?.takeIf { it.isNotBlank() }?.let { notes ->
+                Text("更新说明", style = MaterialTheme.typography.titleMedium)
+                Text(notes, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             TextButton(onClick = { openLink(GitHubAppUpdates.RELEASES_URL) },
                 contentPadding = PaddingValues(horizontal = 0.dp, vertical = 8.dp)) {
                 Text("查看所有发布版本")

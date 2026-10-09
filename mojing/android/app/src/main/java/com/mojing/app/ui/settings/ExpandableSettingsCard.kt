@@ -4,6 +4,8 @@ import com.mojing.app.ui.common.MoJingIcon as Icon
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -18,7 +20,7 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 internal fun ExpandableSettingsCard(title: String, expanded: Boolean, onToggle: () -> Unit, content: @Composable () -> Unit) {
-    OutlinedCard(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
+    OutlinedCard(Modifier.fillMaxWidth().animateContentSize(tween(180)), shape = MaterialTheme.shapes.medium,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest)) {
         Row(Modifier.fillMaxWidth().semantics { stateDescription = if (expanded) "已展开" else "已收起" }

@@ -1,6 +1,8 @@
 package com.mojing.app.ui.settings
 
-import androidx.compose.foundation.border
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import com.mojing.app.ui.common.MoJingIcon as Icon
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
@@ -32,9 +34,10 @@ internal fun SettingsSections(
     onModelRequestConsumed: () -> Unit,
     requestNavigation: (() -> Unit) -> Unit,
     onBack: () -> Unit,
+    sectionState: MutableIntState = rememberSaveable { mutableIntStateOf(-1) },
     content: @Composable (Int) -> Unit,
 ) {
-    var selectedTab by rememberSaveable { mutableIntStateOf(-1) }
+    var selectedTab by sectionState
     LaunchedEffect(requestModelSection) {
         if (requestModelSection) {
             onModelRequestConsumed()
@@ -50,41 +53,44 @@ internal fun SettingsSections(
         SettingsSection("创作偏好", "新故事与角色的默认设置", Icons.AutoMirrored.Outlined.MenuBook),
         SettingsSection("个性化", "我的资料、主题与阅读显示", Icons.Outlined.Tune),
         SettingsSection("用量与费用", "平台、模型与单次请求", Icons.Outlined.DataUsage),
-        SettingsSection("关于与更新", "当前版本与检查更新", Icons.Outlined.SystemUpdate),
+        SettingsSection("应用更新", "版本信息、更新与改进", Icons.Outlined.SystemUpdate),
     )
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = {
-                if (selectedTab >= 0) requestNavigation { selectedTab = -1 } else onBack()
-            }) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, if (selectedTab >= 0) "返回设置" else "返回故事库")
+            if (selectedTab >= 0) {
+                IconButton(onClick = { requestNavigation { selectedTab = -1 } }) {
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回设置")
+                }
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    Text(sections[selectedTab].title, style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1)
+                }
+                Spacer(Modifier.width(48.dp))
+            } else {
+                Text("设置", style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.padding(start = 8.dp, end = 12.dp))
             }
-            Text(sections.getOrNull(selectedTab)?.title ?: "设置",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.weight(1f).padding(start = 4.dp, end = 12.dp))
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Box(Modifier.weight(1f)) {
+        if (selectedTab >= 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        val reveal = remember(selectedTab) { Animatable(0f) }
+        LaunchedEffect(selectedTab) { reveal.animateTo(1f, tween(160)) }
+        Box(Modifier.weight(1f).graphicsLayer {
+            translationY = (1f - reveal.value) * 8.dp.toPx()
+        }) {
             if (selectedTab < 0) {
                 LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     sections.forEachIndexed { index, section ->
-                        if (index == 0 || index == 2 || index == 4) item(key = "section-$index") {
-                            Text(when (index) { 0 -> "连接与创作"; 2 -> "个人与记录"; else -> "应用" },
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = if (index == 0) 8.dp else 24.dp, bottom = 8.dp))
-                        }
                         item(key = section.title) {
-                            Row(Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small).clip(MaterialTheme.shapes.small)
+                            Row(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small)
                                 .background(MaterialTheme.colorScheme.surfaceContainerLowest).clickable(role = Role.Button) {
                                 requestNavigation { selectedTab = index }
-                            }.padding(horizontal = 14.dp, vertical = 16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            }.heightIn(min = 72.dp).padding(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
-                                Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.primaryContainer) {
-                                    Icon(section.icon, null, Modifier.padding(10.dp).size(22.dp), tint = MaterialTheme.colorScheme.primary)
+                                Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                                    Icon(section.icon, null, Modifier.padding(6.dp).size(20.dp), tint = MaterialTheme.colorScheme.primary)
                                 }
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text(section.title, style = MaterialTheme.typography.titleMedium)

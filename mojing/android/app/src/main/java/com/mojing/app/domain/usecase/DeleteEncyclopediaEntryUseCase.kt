@@ -11,10 +11,11 @@ import javax.inject.Singleton
 class DeleteEncyclopediaEntryUseCase @Inject constructor(
     private val database: AppDatabase,
 ) {
-    suspend operator fun invoke(id: Long) = database.withTransaction {
+    suspend operator fun invoke(id: Long, encyclopediaId: Long): Boolean = database.withTransaction {
         val entryDao = database.encyclopediaEntryDao()
         val characterDao = database.characterDao()
-        val entry = entryDao.getById(id) ?: return@withTransaction
+        val entry = entryDao.getById(id) ?: return@withTransaction false
+        if (entry.encyclopediaId != encyclopediaId) return@withTransaction false
         val linkedCharacterId = entry
             .takeIf { it.entryType == "character" }
             ?.let { CharacterEncyclopediaSync.readLinkedCharacterId(it.metaJson) }
@@ -31,5 +32,6 @@ class DeleteEncyclopediaEntryUseCase @Inject constructor(
         } else {
             entryDao.delete(id)
         }
+        true
     }
 }

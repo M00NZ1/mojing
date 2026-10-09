@@ -547,4 +547,11 @@ object Migrations {
         }
     }
 
+    val MIGRATION_27_28 = object : Migration(27, 28) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE generation_tasks ADD COLUMN resultJson TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE generation_tasks ADD COLUMN resultAppliedAt INTEGER DEFAULT NULL")
+        }
+    }
+
 }

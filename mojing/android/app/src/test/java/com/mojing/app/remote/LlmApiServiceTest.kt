@@ -5,6 +5,7 @@ import com.mojing.app.data.remote.ChatRequest
 import com.mojing.app.data.remote.LlmApiService
 import com.mojing.app.data.remote.LlmHttpException
 import com.mojing.app.data.remote.LlmProtocolException
+import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collect
@@ -47,6 +48,10 @@ class LlmApiServiceTest {
             val payload = api.chatPayload(url, req)
             assertTrue(!payload.has("thinking") && !payload.has("enable_thinking") && !payload.has("response_format"))
         }
+        val auxiliaryPayload = api.chatPayload("https://custom.test", testRequest())
+        assertTrue(!auxiliaryPayload.has("top_p"))
+        assertTrue(!auxiliaryPayload.has("frequency_penalty"))
+        assertTrue(!auxiliaryPayload.has("presence_penalty"))
     }
 
     @Test
@@ -115,6 +120,43 @@ class LlmApiServiceTest {
 
             assertEquals(listOf("Hello", " world"), chunks)
             assertTrue(requestBody.contains("\"stream\":true"))
+            server.awaitFinished()
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test
+    fun streamChatCompletionWritesAllRoleSamplingFieldsToWireBody() = runBlocking {
+        var requestBody = ""
+        val server = RawHttpServer { socket ->
+            requestBody = readRequest(socket)
+            socket.getOutputStream().use { output ->
+                output.write(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
+                        .toByteArray(StandardCharsets.US_ASCII),
+                )
+                output.write("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n".toByteArray())
+                output.write("data: [DONE]\n\n".toByteArray())
+                output.flush()
+            }
+        }
+        server.start()
+        try {
+            val request = testRequest().copy(
+                temperature = 0.0f,
+                max_tokens = 1,
+                top_p = 0.000001f,
+                frequency_penalty = -2.5f,
+                presence_penalty = 0.0f,
+            )
+            assertEquals(listOf("ok"), api.streamChatCompletion("test-key", server.baseUrl, request).toList())
+            val body = JsonParser.parseString(requestBody).asJsonObject
+            assertEquals(0.0f, body.get("temperature").asFloat)
+            assertEquals(1, body.get("max_tokens").asInt)
+            assertEquals(0.000001f, body.get("top_p").asFloat)
+            assertEquals(-2.5f, body.get("frequency_penalty").asFloat)
+            assertEquals(0.0f, body.get("presence_penalty").asFloat)
             server.awaitFinished()
         } finally {
             server.close()

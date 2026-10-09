@@ -13,6 +13,8 @@ data class StoryContentsEntry(
     val preview: String,
     val chapterNumber: Int?,
     val incomplete: Boolean = false,
+    val canForkChapter: Boolean = false,
+    val sourceBranchId: String = "main",
 )
 
 /** DAO 按 id 倒序返回；目录保持同一顺序，加载更早页面时可直接追加。 */
@@ -22,22 +24,31 @@ internal fun StoryContentsMessageProjection.toContentsEntry(): StoryContentsEntr
     val root = runCatching { JsonParser.parseString(structuredContentJson).asJsonObject }.getOrNull()
     val number = com.mojing.app.domain.story.NovelChapter.number(structuredContentJson)
     val metadataTitle = root?.get("chapter_title")?.takeIf { it.isJsonPrimitive }?.let { runCatching { it.asString.trim() }.getOrNull() }
-    val heading = Regex("(?im)^\\s*(?:[#>]+\\s*)?(?:旁白\\s*[:：]\\s*)?(第\\s*([0-9零〇一二两三四五六七八九十百千]+)\\s*章[^\\n]*)").find(contentPreview)
-    val textTitle = heading?.groupValues?.getOrNull(1)?.trim()
-    val textNumber = heading?.groupValues?.getOrNull(2)?.let(::parseChineseChapterNumber)
+    val leadingTitle = com.mojing.app.domain.story.NovelChapter.leadingTitleFromText(contentPreview)
+    val textTitle = leadingTitle?.title
+    val textNumber = leadingTitle?.chapterNumberText?.let(::parseChineseChapterNumber)
     val dateLabel = SimpleDateFormat("yyyy年M月d日 HH:mm", Locale.CHINA).format(Date(createdAt))
-    val markdownTitle = Regex("(?im)^\\s*#{1,6}\\s*(.{1,80})$").find(contentPreview)?.groupValues?.getOrNull(1)?.trim()
     val title = metadataTitle.orEmpty().ifBlank { textTitle.orEmpty() }.ifBlank {
-        markdownTitle.orEmpty().ifBlank { "片段 · $dateLabel" }
+        "片段 · $dateLabel"
     }
     return StoryContentsEntry(
         incomplete = com.mojing.app.domain.story.NovelChapter.incomplete(structuredContentJson),
+        canForkChapter = speakerType == "narrator" && number != null && com.mojing.app.domain.story.NovelChapter.incomplete(structuredContentJson),
         messageId = id,
         title = title,
         dateLabel = dateLabel,
-        preview = contentPreview.replace(Regex("\\s+"), " ").trim(),
+        preview = com.mojing.app.ui.chat.ChatMessageTextFormat
+            .sessionListPreview(contentPreview, speakerType, contentPreview.length),
         chapterNumber = number ?: textNumber,
+        sourceBranchId = branchId,
     )
+}
+
+/** Accept a recorded chapter number as 12, 十二 or 第十二章. Other input remains literal text. */
+internal fun contentsQueryChapterNumber(query: String): Int? {
+    val number = Regex("^(?:第\\s*)?([0-9零〇一二两三四五六七八九十百千]+)\\s*(?:章)?$")
+        .matchEntire(query.trim())?.groupValues?.get(1) ?: return null
+    return parseChineseChapterNumber(number)
 }
 
 private fun parseChineseChapterNumber(value: String): Int? {

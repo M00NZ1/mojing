@@ -36,6 +36,14 @@ class NovelDraftInstrumentedTest {
             val fragmentId = dao.insert(MessageEntity(sessionId = session, speakerType = "narrator", content = "<NARRATION>船靠岸了</NARRATION>"))
             dao.renameNovelChapter(fragmentId, session, "新标题")
             assertEquals("船靠岸了", NovelChapter.body(dao.getById(fragmentId)!!))
+            val legacyId = dao.insert(MessageEntity(sessionId = session, speakerType = "narrator",
+                content = "# 第十二章 夜雨\n\n夜雨中的船。"))
+            dao.renameNovelChapter(legacyId, session, "归航")
+            val legacy = dao.getById(legacyId)!!
+            assertEquals("归航\n\n夜雨中的船。", legacy.content)
+            assertEquals("归航", NovelChapter.title(legacy.structuredContentJson))
+            assertEquals("夜雨中的船。", NovelChapter.body(legacy))
+            assertEquals(1, dao.countMainMessages(session, "归航", 0))
         } finally { db.close() }
     }
 }

@@ -84,7 +84,8 @@ class VisualRefreshTest {
             rule.runOnIdle {
                 val c = checkNotNull(palette)
                 for ((fg, bg) in listOf(c.onPrimary to c.primary, c.onPrimaryContainer to c.primaryContainer,
-                    c.onSurfaceVariant to c.surfaceContainerLow, c.onErrorContainer to c.errorContainer)) {
+                    c.onSurfaceVariant to c.surfaceContainerLow, c.onErrorContainer to c.errorContainer,
+                    c.inverseOnSurface to c.inverseSurface, c.inversePrimary to c.inverseSurface)) {
                     assertTrue("Insufficient text contrast: $theme", ColorUtils.calculateContrast(fg.toArgb(), bg.toArgb()) >= 4.5)
                 }
             }

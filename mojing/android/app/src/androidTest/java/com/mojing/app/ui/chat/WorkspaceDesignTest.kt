@@ -40,7 +40,7 @@ class WorkspaceDesignTest {
             MoJingTheme(themeMode = theme.value) {
                 Surface(Modifier.fillMaxSize().testTag("workspace"), color = MaterialTheme.colorScheme.background) {
                     CreationWorkspaceContent({ opened.add(it) },
-                        Modifier.verticalScroll(rememberScrollState()).padding(20.dp))
+                        Modifier.width(320.dp).verticalScroll(rememberScrollState()).padding(16.dp))
                 }
             }
         }
@@ -57,7 +57,7 @@ class WorkspaceDesignTest {
             rule.onNodeWithText(label).performScrollTo().assertIsDisplayed().performClick()
         }
         rule.runOnIdle { assertEquals(listOf(Routes.STORY_SIMULATION, Routes.CHARACTER_LIST,
-            Routes.ENCYCLOPEDIA_LIST, Routes.WORKBENCH), opened) }
+            Routes.ENCYCLOPEDIA_LIST), opened) }
     }
 
     @Test fun longModelNamesKeepOneReachableSwitchAction() {
@@ -91,11 +91,13 @@ class WorkspaceDesignTest {
                 }
             }
         }
-        rule.onNodeWithTag("name").performTextInput("夜话")
+        fun field(tag: String) = rule.onNode(hasAnyAncestor(hasTestTag(tag)) and
+            SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsProperties.EditableText), useUnmergedTree = true)
+        field("name").performTextInput("夜话")
         rule.runOnIdle { assertEquals("雾港夜话", text.text) }
-        rule.onNodeWithTag("secret").assert(SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsProperties.Password))
+        field("secret").assert(SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsProperties.Password))
         rule.onNodeWithText("请输入名称").assertIsDisplayed()
-        rule.onNodeWithTag("disabled").assertIsNotEnabled()
-        rule.onNodeWithTag("readonly").assertTextEquals("只读资料")
+        field("disabled").assertIsNotEnabled()
+        field("readonly").assertTextEquals("只读资料")
     }
 }

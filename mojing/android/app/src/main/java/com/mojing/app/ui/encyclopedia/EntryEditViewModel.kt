@@ -11,14 +11,18 @@ import com.mojing.app.data.local.dao.EncyclopediaEntryDao
 import com.mojing.app.domain.usecase.SaveCharacterEntryUseCase
 import com.mojing.app.domain.encyclopedia.CharacterEncyclopediaSync
 import com.mojing.app.domain.encyclopedia.sourceReferences
+import com.mojing.app.domain.encyclopedia.messageSourceFingerprint
 import com.mojing.app.data.local.entity.EntryVersionEntity
 import com.mojing.app.data.local.entity.EncyclopediaEntryEntity
 import com.mojing.app.data.repository.ImageRepository
 import com.mojing.app.domain.engine.AiCompleter
+import com.mojing.app.domain.engine.RequestContextLimitException
+import com.mojing.app.domain.config.ModelRequestSettingsResolver
 import com.mojing.app.ui.util.UserFacingStrings
 import com.google.gson.JsonParser
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,7 +37,24 @@ import javax.inject.Inject
 
 data class EntrySourceTarget(val sessionId: Long, val messageId: Long, val branchId: String)
 
+enum class EntrySourceVerification(val label: String) {
+    CURRENT("来源内容未变更"),
+    CHANGED("来源内容已变更"),
+    NOT_IN_ORIGINAL_LINE("来源已退出采用上下文"),
+    MISSING("原始消息已不存在"),
+    UNKNOWN("旧来源，无法核验"),
+}
+
 data class EntryEditState(
+    val relatedEntries: List<com.mojing.app.data.local.dao.EntryRelatedItem> = emptyList(),
+    val relatedCursors: List<Long> = listOf(Long.MAX_VALUE),
+    val relatedPageIndex: Int = 0,
+    val relatedHasNext: Boolean = false,
+    val relatedLoading: Boolean = false,
+    val relatedLoaded: Boolean = false,
+    val relatedError: String? = null,
+    val relatedRetryIndex: Int? = null,
+    val relatedRetryCursor: Long = Long.MAX_VALUE,
     val sourceMessageIds: List<Long> = emptyList(),
     val sourceIndex: Int = 0,
     val sourceTarget: EntrySourceTarget? = null,
@@ -42,6 +63,7 @@ data class EntryEditState(
     val sourceLoading: Boolean = false,
     val sourceContent: String? = null,
     val sourceError: String? = null,
+    val sourceVerification: EntrySourceVerification = EntrySourceVerification.UNKNOWN,
     val isConversationNote: Boolean = false,
     val title: String = "",
     val entryType: String = "character",
@@ -90,6 +112,7 @@ private fun EntryEditState.toDraftSnapshot() = EntryDraftSnapshot(
     metaJson = metaJson,
     isFeatured = isFeatured,
     coverImagePath = coverImagePath,
+    coverPromptHint = coverPromptHint,
 )
 
 private fun EntryEditState.withPersistedEntry(entry: EncyclopediaEntryEntity) = copy(
@@ -120,6 +143,7 @@ private fun EntryEditState.withRecoveredDraft(draft: EntryDraftSnapshot) = copy(
     metaJson = draft.metaJson,
     isFeatured = draft.isFeatured,
     coverImagePath = draft.coverImagePath,
+    coverPromptHint = draft.coverPromptHint,
 )
 
 @HiltViewModel
@@ -133,14 +157,19 @@ class EntryEditViewModel @Inject constructor(
     private val imageRepository: ImageRepository,
     private val messageDao: com.mojing.app.data.local.dao.MessageDao,
     private val draftStore: EntryEditDraftStore,
+    private val relationDao: com.mojing.app.data.local.dao.EntryRelationDao,
 ) : ViewModel() {
     private val _state = MutableStateFlow(EntryEditState())
     val state: StateFlow<EntryEditState> = _state.asStateFlow()
 
+    private var relatedRevision = 0L
+    private var relatedJob: Job? = null
     private var encId: Long = 0
     private var currentEntry: EncyclopediaEntryEntity? = null
     private var loadRevision = 0L
     private var loadJob: Job? = null
+    private var aiCompletionJob: Job? = null
+    private var aiCompletionRevision = 0L
     private var savedDraft = _state.value.toDraftSnapshot()
     private var draftEntryId = 0L
     private val draftWriteMutex = Mutex()
@@ -149,12 +178,14 @@ class EntryEditViewModel @Inject constructor(
     private var pendingNewDraftTransfer = false
     private var sourceJob: kotlinx.coroutines.Job? = null
     private var sourceRevision = 0L
+    internal var preparationDispatcher: CoroutineDispatcher = Dispatchers.Default
 
     fun closeSourcePreview() {
         sourceRevision++
         sourceJob?.cancel()
         sourceJob = null
-        _state.value = _state.value.copy(sourcePreviewOpen = false, sourceLoading = false, sourceContent = null, sourceError = null, sourceTarget = null)
+        _state.value = _state.value.copy(sourcePreviewOpen = false, sourceLoading = false, sourceContent = null, sourceError = null, sourceTarget = null,
+            sourceVerification = EntrySourceVerification.UNKNOWN)
     }
 
     fun openSourcePreview() = loadSourcePreview(null)
@@ -175,14 +206,32 @@ class EntryEditViewModel @Inject constructor(
         if (_state.value.sourceLoading) return
         val revision = ++sourceRevision
         _state.value = _state.value.copy(sourcePreviewOpen = true, sourceLoading = true, sourceContent = null, sourceError = null, sourceTarget = null,
+            sourceVerification = EntrySourceVerification.UNKNOWN,
             sourceMessageIds = references.messageIds, sourceIndex = index)
         sourceJob = viewModelScope.launch {
             try {
-                val message = messageDao.getByIdInSession(messageId, sessionId)
+                val expectedFingerprint = references.fingerprints[messageId]
+                val sourceBranch = references.branchId ?: "main"
+                val visible = if (expectedFingerprint == null) null else if (sourceBranch == "main") {
+                    messageDao.getMainEventSources(sessionId, listOf(messageId)).firstOrNull()
+                } else {
+                    messageDao.getVisibleEventSources(sessionId, sourceBranch, listOf(messageId)).firstOrNull()
+                }
+                val message = if (expectedFingerprint == null || visible == null) {
+                    messageDao.getByIdInSession(messageId, sessionId)
+                } else visible
+                val verification = when {
+                    expectedFingerprint == null -> EntrySourceVerification.UNKNOWN
+                    visible == null && message == null -> EntrySourceVerification.MISSING
+                    visible == null -> EntrySourceVerification.NOT_IN_ORIGINAL_LINE
+                    expectedFingerprint == withContext(preparationDispatcher) { messageSourceFingerprint(visible) } -> EntrySourceVerification.CURRENT
+                    else -> EntrySourceVerification.CHANGED
+                }
                 if (sourceRevision != revision || currentEntry?.id != entry.id) return@launch
                 val branchId = references.branchId ?: message?.branchId ?: "main"
                 _state.value = _state.value.copy(sourceLoading = false, sourceContent = message?.content,
                     sourceTarget = message?.let { EntrySourceTarget(sessionId, messageId, branchId) },
+                    sourceVerification = verification,
                     sourceError = if (message == null) "原始对话已不存在，百科内容仍保留。" else null)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
@@ -319,6 +368,7 @@ class EntryEditViewModel @Inject constructor(
     }
 
     fun discardChangesAndLeave(onDiscarded: () -> Unit) {
+        cancelAiComplete()
         val id = draftEntryId.takeIf { it >= 0L }
         if (id == null) { onDiscarded(); return }
         if (_state.value.isDiscardingDraft) return
@@ -334,11 +384,53 @@ class EntryEditViewModel @Inject constructor(
                         pendingNewDraftTransfer = false
                     } else draftStore.clear(encyclopediaId, id)
                 }
-                if (revision == draftWriteRevision && encId == encyclopediaId && draftEntryId == id) onDiscarded()
+                if (revision == draftWriteRevision && encId == encyclopediaId && draftEntryId == id) {
+                    // Relation management can return to this retained editor.
+                    _state.update { it.withRecoveredDraft(savedDraft).copy(isDirty = false, isDiscardingDraft = false, draftError = null) }
+                    onDiscarded()
+                }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
                 if (revision == draftWriteRevision && encId == encyclopediaId && draftEntryId == id)
                     _state.update { it.copy(draftError = "草稿清除失败，已留在编辑页；可重试后离开", isDiscardingDraft = false) }
+            }
+        }
+    }
+
+    /** Persist the current editor snapshot before leaving, and leave only after the write succeeds. */
+    fun saveDraftAndLeave(onSaved: () -> Unit) {
+        cancelAiComplete()
+        val id = draftEntryId.takeIf { it >= 0L } ?: return
+        if (_state.value.isDiscardingDraft) return
+        val encyclopediaId = encId
+        val revision = ++draftWriteRevision
+        draftWriteJob?.cancel()
+        _state.update { it.copy(isDiscardingDraft = true, draftError = null) }
+        draftWriteJob = viewModelScope.launch {
+            try {
+                draftWriteMutex.withLock {
+                    if (revision != draftWriteRevision || encId != encyclopediaId || draftEntryId != id) return@withLock
+                    val current = _state.value
+                    if (pendingNewDraftTransfer && id > 0L) {
+                        draftStore.syncAfterFirstSave(encyclopediaId, id, current.toDraftSnapshot())
+                        pendingNewDraftTransfer = false
+                    } else {
+                        draftStore.save(encyclopediaId, id, current.toDraftSnapshot())
+                    }
+                }
+                if (revision == draftWriteRevision && encId == encyclopediaId && draftEntryId == id) {
+                    _state.update { it.copy(isDiscardingDraft = false, draftError = null) }
+                    onSaved()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (revision == draftWriteRevision && encId == encyclopediaId && draftEntryId == id) {
+                    _state.update { it.copy(
+                        isDiscardingDraft = false,
+                        draftError = "词条草稿暂存失败，已留在编辑页；请重试后再离开",
+                    ) }
+                }
             }
         }
     }
@@ -352,8 +444,14 @@ class EntryEditViewModel @Inject constructor(
     }
 
     fun load(encyclopediaId: Long, entryId: Long) {
+        cancelAiComplete()
         closeSourcePreview()
         loadJob?.cancel()
+        relatedRevision++
+        relatedJob?.cancel()
+        _state.update { it.copy(relatedEntries = emptyList(), relatedLoaded = false, relatedLoading = false,
+            relatedError = null, relatedCursors = listOf(Long.MAX_VALUE), relatedPageIndex = 0,
+            relatedHasNext = false, relatedRetryIndex = null) }
         val revision = ++loadRevision
         draftWriteRevision++
         draftWriteJob?.cancel()
@@ -427,6 +525,56 @@ class EntryEditViewModel @Inject constructor(
         }
     }
 
+    /** Only a current page of lightweight relations is retained. Returning from management refreshes it. */
+    fun refreshRelatedEntries() = loadRelatedPage(0, Long.MAX_VALUE)
+
+    fun nextRelatedPage() {
+        val s = _state.value
+        if (s.relatedLoading || !s.relatedHasNext) return
+        loadRelatedPage(s.relatedPageIndex + 1, s.relatedEntries.lastOrNull()?.id ?: return)
+    }
+
+    fun previousRelatedPage() {
+        val s = _state.value
+        if (s.relatedLoading || s.relatedPageIndex == 0) return
+        loadRelatedPage(s.relatedPageIndex - 1, s.relatedCursors[s.relatedPageIndex - 1])
+    }
+
+    fun retryRelatedPage() {
+        val s = _state.value
+        if (s.relatedLoading) return
+        val index = s.relatedRetryIndex ?: s.relatedPageIndex
+        loadRelatedPage(index, if (s.relatedRetryIndex != null) s.relatedRetryCursor else s.relatedCursors[index])
+    }
+
+    private fun loadRelatedPage(index: Int, cursor: Long) {
+        val s = _state.value
+        val entry = currentEntry ?: return
+        if (!s.isLoaded || s.loadError != null || !s.isPersisted) return
+        val owner = encId
+        val revision = ++relatedRevision
+        relatedJob?.cancel()
+        _state.update { it.copy(relatedLoading = true, relatedError = null) }
+        relatedJob = viewModelScope.launch {
+            try {
+                val rows = relationDao.getEntryPage(owner, entry.id, cursor, 25)
+                if (revision != relatedRevision || owner != encId || currentEntry?.id != entry.id) return@launch
+                if (rows.isEmpty() && index > 0) {
+                    loadRelatedPage(index - 1, _state.value.relatedCursors[index - 1])
+                    return@launch
+                }
+                _state.update { it.copy(relatedEntries = rows.take(24), relatedCursors = it.relatedCursors.take(index) + cursor,
+                    relatedPageIndex = index, relatedHasNext = rows.size > 24, relatedLoading = false,
+                    relatedLoaded = true, relatedError = null, relatedRetryIndex = null) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (revision == relatedRevision && owner == encId && currentEntry?.id == entry.id)
+                    _state.update { it.copy(relatedLoading = false, relatedError = "关联内容读取失败，当前页已保留",
+                        relatedRetryIndex = index, relatedRetryCursor = cursor) }
+            }
+        }
+    }
+
     fun updateTitle(v: String) = updateDraft { it.copy(title = v) }
     fun updateEntryType(v: String) = updateDraft { it.copy(entryType = v) }
     fun updateSummary(v: String) = updateDraft { it.copy(summary = v) }
@@ -436,10 +584,18 @@ class EntryEditViewModel @Inject constructor(
     fun updateMetaJson(v: String) = updateDraft { it.copy(metaJson = v) }
     fun updateFeatured(v: Boolean) = updateDraft { it.copy(isFeatured = v) }
     fun updateCoverImagePath(v: String) = updateDraft { it.copy(coverImagePath = v) }
-    fun updateCoverPromptHint(v: String) { _state.value = _state.value.copy(coverPromptHint = v) }
+    fun updateCoverPromptHint(v: String) = updateDraft { it.copy(coverPromptHint = v) }
+
+    fun cancelAiComplete() {
+        aiCompletionRevision++
+        aiCompletionJob?.cancel()
+        aiCompletionJob = null
+        _state.update { it.copy(isAiCompleting = false) }
+    }
 
     fun aiComplete() {
         val s = _state.value
+        if (s.isAiCompleting || !s.isLoaded || s.recoverableDraft != null || s.draftUnreadable) return
         if (s.title.isBlank()) {
             showSnackbar(UserFacingStrings.entryTitleRequiredForAi())
             return
@@ -449,13 +605,24 @@ class EntryEditViewModel @Inject constructor(
             return
         }
 
+        val apiKey = secureStorage.publicApiKey
+        val baseUrl = secureStorage.publicBaseUrl
+        val model = secureStorage.publicModel
+        val contextWindow = try {
+            ModelRequestSettingsResolver.contextWindow(secureStorage.modelPlatforms().toList(), apiKey, baseUrl, model)
+        } catch (_: Exception) {
+            showSnackbar("平台配置未能读取，请检查设置后重试")
+            return
+        }
+        val revision = ++aiCompletionRevision
+        val editorRevision = loadRevision
         _state.value = _state.value.copy(isAiCompleting = true)
-        viewModelScope.launch {
+        aiCompletionJob = viewModelScope.launch {
             try {
                 val result = aiCompleter.complete(
-                    apiKey = secureStorage.publicApiKey,
-                    baseUrl = secureStorage.publicBaseUrl,
-                    model = secureStorage.publicModel,
+                    apiKey = apiKey,
+                    baseUrl = baseUrl,
+                    model = model,
                     request = AiCompleter.CompleteRequest(
                         targetType = "encyclopedia_entry",
                         entryType = s.entryType,
@@ -465,9 +632,11 @@ class EntryEditViewModel @Inject constructor(
                             "content" to s.content,
                             "tags" to s.tags
                         ),
-                        extraContext = s.title
+                        extraContext = s.title,
+                        contextWindow = contextWindow,
                     )
                 )
+                if (revision != aiCompletionRevision || editorRevision != loadRevision) return@launch
                 var changed = false
                 val promptFields = aiCompleter.fieldKeysFor("encyclopedia_entry", s.entryType)
                 var next = _state.value
@@ -495,10 +664,16 @@ class EntryEditViewModel @Inject constructor(
                 if (changed) updateDraft { next }
                 if (changed) showSnackbar(UserFacingStrings.entryAiApplied())
                 else showSnackbar(UserFacingStrings.entryAiNoNewFields())
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                showSnackbar(UserFacingStrings.remoteRequestFailed(e))
+                if (revision == aiCompletionRevision && editorRevision == loadRevision) {
+                    showSnackbar(if (e is RequestContextLimitException) e.message.orEmpty() else UserFacingStrings.remoteRequestFailed(e))
+                }
+            } finally {
+                if (revision == aiCompletionRevision && editorRevision == loadRevision)
+                    _state.update { it.copy(isAiCompleting = false) }
             }
-            _state.value = _state.value.copy(isAiCompleting = false)
         }
     }
 
@@ -604,6 +779,8 @@ class EntryEditViewModel @Inject constructor(
                 draftEntryId = saved.id
                 val latest = _state.value
                 val persisted = latest.withPersistedEntry(saved).copy(
+                    // The submitted snapshot is the committed baseline; edits made while Room was busy remain dirty.
+                    coverPromptHint = submittedState.coverPromptHint,
                     isDirty = false,
                     saveError = null,
                 )

@@ -7,12 +7,14 @@ import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.PersonAdd
+import androidx.compose.material.icons.outlined.FileOpen
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Public
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
@@ -20,6 +22,7 @@ import com.mojing.app.ui.common.MoJingTonalButton as FilledTonalButton
 
 import android.graphics.Color as AndroidColor
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -47,6 +50,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -55,7 +60,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.mojing.app.data.local.dao.CharacterListItem
 import com.mojing.app.ui.common.EmptyState
-import com.mojing.app.ui.navigation.MainAppBottomNavigation
+import com.mojing.app.ui.common.hideImeKeyboard
+import com.mojing.app.ui.common.isImeKeyboardOpen
+import com.mojing.app.ui.common.rememberExportNavigationGuard
 import com.mojing.app.ui.navigation.returnToCreationHub
 import com.mojing.app.ui.common.MoJingListTokens
 import com.mojing.app.ui.common.SwipeRevealListRow
@@ -63,7 +70,10 @@ import com.mojing.app.ui.common.avatarImageModel
 import com.mojing.app.ui.util.UserFacingStrings
 import com.mojing.app.util.ContentDocumentReader
 import com.mojing.app.util.ContentDocumentWriter
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -73,10 +83,12 @@ fun CharacterListScreen(
     onEdit: (Long) -> Unit,
     onChat: (Long) -> Unit,
     onSettingsClick: () -> Unit,
+    onDetail: (Long) -> Unit = onEdit,
     viewModel: CharacterListViewModel = hiltViewModel()
 ) {
     val page by viewModel.page.collectAsStateWithLifecycle()
-    val characters = page.items
+    val pageCharacters = page.items
+    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val listLayout by viewModel.characterListLayout.collectAsStateWithLifecycle()
     val filterEnc by viewModel.filterEncyclopediaId.collectAsStateWithLifecycle()
     val selectedFilterName by viewModel.selectedFilterName.collectAsStateWithLifecycle()
@@ -89,14 +101,33 @@ fun CharacterListScreen(
     var showMoreMenu by remember { mutableStateOf(false) }
     var filterPickerOpen by remember { mutableStateOf(false) }
     var isImportingDocument by remember { mutableStateOf(false) }
+    var pendingImportPicker by rememberSaveable { mutableStateOf(false) }
+    var importJob by remember { mutableStateOf<Job?>(null) }
+    var importStopping by remember { mutableStateOf(false) }
+    var importStage by remember { mutableStateOf("") }
     var importResult by remember { mutableStateOf<CharacterImportResult?>(null) }
     var pendingExportPicker by rememberSaveable { mutableStateOf(false) }
     var exportWriteInterrupted by rememberSaveable { mutableStateOf(false) }
     var isExportingDocument by remember { mutableStateOf(false) }
+    val characters = pageCharacters
+    var exportJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val exportBusy = pendingExportPicker || isExportingDocument
+    val requestExportNavigation = rememberExportNavigationGuard(
+        exporting = { isExportingDocument },
+        onStopExport = { exportJob?.cancelAndJoin() },
+    )
+    val importBusy = pendingImportPicker || isImportingDocument
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val isImeOpen = isImeKeyboardOpen()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    BackHandler {
+        if (isImeOpen) hideImeKeyboard(keyboardController, focusManager)
+        else requestExportNavigation { navController.returnToCreationHub() }
+    }
 
     LaunchedEffect(exportWriteInterrupted, isExportingDocument) {
         if (exportWriteInterrupted && !isExportingDocument) {
@@ -112,14 +143,14 @@ fun CharacterListScreen(
     }
 
     fun launchCreateCharacter() {
-        if (creatingCharacter) return
+        if (creatingCharacter || importBusy) return
         viewModel.createNew(
             encyclopediaId = filterEnc ?: 0L,
-            onCreated = onEdit,
+            onCreated = { id -> requestExportNavigation { onEdit(id) } },
             onFailed = { message ->
                 scope.launch {
                     if (snackbarHostState.showSnackbar(message, actionLabel = "重试") == SnackbarResult.ActionPerformed) {
-                        launchCreateCharacter()
+                        requestExportNavigation { launchCreateCharacter() }
                     }
                 }
             },
@@ -129,12 +160,12 @@ fun CharacterListScreen(
     fun startChat(character: CharacterListItem) {
         viewModel.startChat(
             characterId = character.id,
-            onCreated = onChat,
+            onCreated = { id -> requestExportNavigation { onChat(id) } },
             onNeedsEncyclopedia = {
                 // Keep this callback for older/migrated implementations of the use case.
                 // The current session creator accepts a character without a world binding.
                 Toast.makeText(context, "当前角色需要先选择一个百科", Toast.LENGTH_SHORT).show()
-                onEdit(character.id)
+                requestExportNavigation { onEdit(character.id) }
             },
             onFailed = { message -> Toast.makeText(context, message, Toast.LENGTH_SHORT).show() },
         )
@@ -143,10 +174,10 @@ fun CharacterListScreen(
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         val requested = pendingExportPicker
         pendingExportPicker = false
-        if (uri != null && requested && !isImportingDocument && !isExportingDocument) {
+        if (uri != null && requested && !importBusy && !isExportingDocument) {
             isExportingDocument = true
             exportWriteInterrupted = true
-            scope.launch {
+            exportJob = scope.launch {
                 val notice = try {
                     ContentDocumentWriter.writeStream(context, uri, viewModel::exportJson)
                     UserFacingStrings.exportSuccess()
@@ -163,9 +194,14 @@ fun CharacterListScreen(
         }
     }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null && !isImportingDocument && !exportBusy) {
+        val requested = pendingImportPicker
+        pendingImportPicker = false
+        if (uri != null && requested && !isImportingDocument && !exportBusy) {
             isImportingDocument = true
-            scope.launch {
+            importStopping = false
+            importResult = null
+            importStage = "正在读取角色文件…"
+            val job = scope.launch(start = CoroutineStart.LAZY) {
                 try {
                     val bytes = ContentDocumentReader.readBytes(
                         context,
@@ -176,6 +212,7 @@ fun CharacterListScreen(
                         importResult = CharacterImportResult(UserFacingStrings.importReadFailed(), hasFailure = true)
                         return@launch
                     }
+                    importStage = "正在导入角色…"
                     val result = viewModel.importFromDocument(bytes, uri.lastPathSegment)
                     importResult = result
                     if (result.importedIds.isNotEmpty()) {
@@ -185,13 +222,35 @@ fun CharacterListScreen(
                         viewModel.refreshList(keepVisible = false)
                     }
                 } catch (cancelled: CancellationException) {
+                    if (importStopping) {
+                        // Cancellation can race with a completed transaction; show the real library
+                        // rather than promise that no data was committed.
+                        importResult = CharacterImportResult("已停止导入")
+                        viewModel.refreshList(keepVisible = false)
+                    }
                     throw cancelled
                 } catch (_: Exception) {
                     importResult = CharacterImportResult(UserFacingStrings.importReadFailed(), hasFailure = true)
                 } finally {
                     isImportingDocument = false
+                    importStopping = false
+                    importJob = null
                 }
             }
+            importJob = job
+            job.start()
+        }
+    }
+
+    fun launchImportCharacter() {
+        if (importBusy || exportBusy || creatingCharacter) return
+        showMoreMenu = false
+        pendingImportPicker = true
+        try {
+            importLauncher.launch(arrayOf("application/json", "text/plain", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "image/png", "*/*"))
+        } catch (_: Exception) {
+            pendingImportPicker = false
+            importResult = CharacterImportResult("无法打开文件选择器，请重试", hasFailure = true)
         }
     }
 
@@ -205,7 +264,7 @@ fun CharacterListScreen(
                     containerColor = MaterialTheme.colorScheme.surface,
                 ),
                 navigationIcon = {
-                    IconButton(onClick = { navController.returnToCreationHub() }) {
+                    IconButton(onClick = { requestExportNavigation { navController.returnToCreationHub() } }) {
                         Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回创作中心")
                     }
                 },
@@ -213,28 +272,27 @@ fun CharacterListScreen(
                     Box {
                         IconButton(
                             onClick = { showMoreMenu = true },
-                            enabled = !isImportingDocument && !exportBusy,
+                            enabled = !importBusy && !exportBusy,
                         ) {
-                            if (isImportingDocument || exportBusy) {
+                            if (importBusy || exportBusy) {
                                 CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                             } else {
                                 Icon(Icons.Outlined.MoreVert, "更多")
                             }
                         }
                         DropdownMenu(expanded = showMoreMenu, onDismissRequest = { showMoreMenu = false }) {
+                            DropdownMenuItem(text = { Text(if (listLayout == "grid") "切换为列表" else "切换为网格") },
+                                onClick = { showMoreMenu = false; viewModel.toggleCharacterListLayout() })
                             DropdownMenuItem(
                                 text = {
                                     Text(if (isImportingDocument) "正在导入…" else "导入（便携包 / JSON / TXT / Word / PNG）")
                                 },
-                                enabled = !isImportingDocument && !exportBusy,
-                                onClick = {
-                                    showMoreMenu = false
-                                    importLauncher.launch(arrayOf("application/json", "text/plain", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "image/png", "*/*"))
-                                },
+                                enabled = !importBusy && !exportBusy && !creatingCharacter,
+                                onClick = ::launchImportCharacter,
                             )
                             DropdownMenuItem(
                                 text = { Text(if (exportBusy) "正在导出…" else "导出角色") },
-                                enabled = !isImportingDocument && !exportBusy,
+                                enabled = !importBusy && !exportBusy,
                                 onClick = {
                                     showMoreMenu = false
                                     pendingExportPicker = true
@@ -247,29 +305,54 @@ fun CharacterListScreen(
                             )
                         }
                     }
-                    IconButton(
-                        onClick = { viewModel.toggleCharacterListLayout() }
-                    ) {
-                        if (listLayout == "grid") {
-                            Icon(Icons.AutoMirrored.Outlined.ViewList, "切换为列表")
-                        } else {
-                            Icon(Icons.Outlined.GridView, "切换为网格")
-                        }
+                    IconButton(onClick = { requestExportNavigation { launchCreateCharacter() } }, enabled = !creatingCharacter && !importBusy) {
+                        if (creatingCharacter) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Outlined.Add, "新建角色")
                     }
                 },
             )
         },
         bottomBar = {
-            MainAppBottomNavigation(navController)
-        },
-        floatingActionButton = {
-            if (characters.isNotEmpty() || filterEnc != null || page.loading || page.error != null) {
-                FloatingActionButton(onClick = { launchCreateCharacter() }) {
-                    if (creatingCharacter) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    else Icon(Icons.Outlined.Add, "新建角色")
+            if (!isImeOpen) {
+                Surface(color = MaterialTheme.colorScheme.surface) {
+                    Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        val compactActions = maxWidth < 360.dp
+                        val actionPadding = PaddingValues(horizontal = if (compactActions) 12.dp else 20.dp, vertical = 12.dp)
+                        val actionStyle = if (compactActions) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge
+                        Row(
+                            Modifier.widthIn(max = 600.dp).fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            FilledTonalButton(
+                                onClick = { requestExportNavigation { launchCreateCharacter() } },
+                                enabled = !creatingCharacter && !importBusy,
+                                modifier = Modifier.weight(1f),
+                                contentPadding = actionPadding,
+                            ) {
+                                if (creatingCharacter) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                else Icon(Icons.Outlined.PersonAdd, null, Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(if (creatingCharacter) "创建中…" else "新建角色", style = actionStyle)
+                            }
+                            FilledTonalButton(
+                                onClick = ::launchImportCharacter,
+                                enabled = !importBusy && !exportBusy && !creatingCharacter,
+                                modifier = Modifier.weight(1f),
+                                contentPadding = actionPadding,
+                            ) {
+                                Icon(Icons.Outlined.FileOpen, null, Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(if (importBusy) "导入中…" else "导入", style = actionStyle)
+                            }
+                        }
+                        }
+                    }
                 }
             }
-        }
+        },
     ) { padding ->
         Column(
             modifier = Modifier
@@ -300,6 +383,17 @@ fun CharacterListScreen(
                     }
                 }
             }
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = viewModel::updateSearch,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                trailingIcon = if (searchQuery.isNotEmpty()) {
+                    { IconButton(onClick = { viewModel.updateSearch("") }) { Icon(Icons.Outlined.Close, "清除搜索") } }
+                } else null,
+                placeholder = { Text("搜索角色名或人物设定") },
+            )
             LazyRow(
                 modifier = Modifier.fillMaxWidth(),
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
@@ -311,6 +405,27 @@ fun CharacterListScreen(
                 item { FilterChip(sortOrder == CharacterLibrarySort.RECENT, { sortOrder = CharacterLibrarySort.RECENT; viewModel.setSortOrder(sortOrder) }, label = { Text("最近添加") }) }
                 item { FilterChip(sortOrder == CharacterLibrarySort.NAME, { sortOrder = CharacterLibrarySort.NAME; viewModel.setSortOrder(sortOrder) }, label = { Text("名称") }) }
                 item { Text("本页 ${characters.size} 条${if (page.hasNext) " · 后面还有" else ""}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+            if (isImportingDocument) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Text(if (importStopping) "正在停止…" else importStage,
+                            Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                        IconButton(enabled = !importStopping, onClick = {
+                            importStopping = true
+                            importJob?.cancel()
+                        }) { Icon(Icons.Outlined.Close, "停止导入") }
+                    }
+                }
             }
             importResult?.let { result ->
                 Surface(
@@ -336,7 +451,7 @@ fun CharacterListScreen(
                         }
                         result.importedIds.lastOrNull()?.let { importedId ->
                             TextButton(
-                                onClick = { importResult = null; onEdit(importedId) },
+                                onClick = { importResult = null; requestExportNavigation { onEdit(importedId) } },
                                 modifier = Modifier.align(Alignment.End),
                             ) {
                                 Text(if (result.importedIds.size == 1) "编辑角色" else "编辑最近角色")
@@ -367,7 +482,7 @@ fun CharacterListScreen(
                         },
                         actionLabel = if (filterEnc == null) "新建角色" else "查看全部角色",
                         onAction = if (filterEnc == null) {
-                            ::launchCreateCharacter
+                            { requestExportNavigation { launchCreateCharacter() } }
                         } else {
                             { viewModel.setEncyclopediaFilter(null) }
                         },
@@ -387,8 +502,9 @@ fun CharacterListScreen(
                                 isPinned = character.pinnedAt > 0,
                                 onPinToggle = { viewModel.setCharacterPinned(character.id, character.pinnedAt == 0L) { message -> scope.launch { snackbarHostState.showSnackbar(message) } } },
                                 onDelete = { deleteError = null; deleteTarget = character },
-                                onClick = { onEdit(character.id) },
+                                onClick = { requestExportNavigation { onDetail(character.id) } },
                                 menuExtras = {
+                                    DropdownMenuItem(text = { Text("编辑角色") }, onClick = { requestExportNavigation { onEdit(character.id) } })
                                     DropdownMenuItem(
                                         text = { Text(if (character.favorite) "取消收藏" else "收藏") },
                                         onClick = { viewModel.toggleFavorite(character.id) { message -> scope.launch { snackbarHostState.showSnackbar(message) } } },
@@ -400,7 +516,7 @@ fun CharacterListScreen(
                                     encyclopediaLabel = character.encyclopediaName,
                                     startEnabled = startingCharacterId == null,
                                     isStarting = startingCharacterId == character.id,
-                                    onStartChat = { startChat(character) },
+                                    onStartChat = { requestExportNavigation { startChat(character) } },
                                 )
                             }
                         }
@@ -415,11 +531,13 @@ fun CharacterListScreen(
                             Column(Modifier.fillMaxWidth()) {
                                 SwipeRevealListRow(
                                     swipeEnabled = true,
+                                    showMenuButton = true,
                                     isPinned = character.pinnedAt > 0,
                                     onPinToggle = { viewModel.setCharacterPinned(character.id, character.pinnedAt == 0L) { message -> scope.launch { snackbarHostState.showSnackbar(message) } } },
                                     onDelete = { deleteError = null; deleteTarget = character },
-                                    onClick = { onEdit(character.id) },
+                                    onClick = { requestExportNavigation { onDetail(character.id) } },
                                     menuExtras = {
+                                        DropdownMenuItem(text = { Text("编辑角色") }, onClick = { requestExportNavigation { onEdit(character.id) } })
                                         DropdownMenuItem(
                                             text = { Text(if (character.favorite) "取消收藏" else "收藏") },
                                             onClick = { viewModel.toggleFavorite(character.id) { message -> scope.launch { snackbarHostState.showSnackbar(message) } } },
@@ -431,7 +549,7 @@ fun CharacterListScreen(
                                         encyclopediaLabel = character.encyclopediaName,
                                         startEnabled = startingCharacterId == null,
                                         isStarting = startingCharacterId == character.id,
-                                        onStartChat = { startChat(character) },
+                                        onStartChat = { requestExportNavigation { startChat(character) } },
                                     )
                                 }
                             }
@@ -475,7 +593,7 @@ fun CharacterListScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         "确定要删除「${c.name.ifBlank { "未命名角色" }}」吗？\n\n" +
-                            "该角色的本地配置和角色档案会一并删除；已产生的聊天记录不会自动删除。此操作不可撤销。",
+                            "该角色的本地配置和角色档案会一并删除；已产生的聊天正文会保留，但该角色会从所有已有会话的参与者列表移除。此操作不可撤销。",
                     )
                     deleteError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 }
@@ -521,7 +639,7 @@ private fun CharacterListRowInner(
                     contentDescription = "头像",
                     modifier = Modifier
                         .size(MoJingListTokens.avatar)
-                        .clip(CircleShape),
+                        .clip(androidx.compose.foundation.shape.CircleShape),
                     contentScale = ContentScale.Crop,
                 )
             } else {
@@ -532,7 +650,7 @@ private fun CharacterListRowInner(
                 }
                 Surface(
                     modifier = Modifier.size(MoJingListTokens.avatar),
-                    shape = CircleShape,
+                    shape = androidx.compose.foundation.shape.CircleShape,
                     color = circleBg,
                 ) {
                     Box(contentAlignment = Alignment.Center) {
@@ -583,17 +701,11 @@ private fun CharacterListRowInner(
                     overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            }
-        },
-        trailingContent = {
-            IconButton(onClick = onStartChat, enabled = startEnabled) {
-                if (isStarting) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                } else {
-                    Icon(
-                        Icons.AutoMirrored.Outlined.Chat,
-                        contentDescription = "开始对话",
-                    )
+                TextButton(onClick = onStartChat, enabled = startEnabled, contentPadding = PaddingValues(horizontal = 0.dp)) {
+                    if (isStarting) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.AutoMirrored.Outlined.Chat, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(if (isStarting) "正在开始" else "开始对话", style = MaterialTheme.typography.labelMedium)
                 }
             }
         },

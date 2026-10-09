@@ -10,4 +10,5 @@ data class SessionWithListMeta(
     @ColumnInfo(name = "last_msg_speaker_type") val lastMessageSpeakerType: String?,
     @ColumnInfo(name = "msg_count") val messageCount: Int,
     @ColumnInfo(name = "participant_count") val participantCount: Int,
+    @ColumnInfo(name = "cover_image_path") val coverImagePath: String? = null,
 )

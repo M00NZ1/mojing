@@ -36,10 +36,13 @@ internal fun StoryRecoveryCard(
     onDiscardUnreadable: () -> Unit,
     onRetryInterrupted: () -> Unit,
     onDiscardInterrupted: () -> Unit,
+    onSaveCompleted: () -> Unit = {},
 ) {
     if (!state.isRestoring && !state.isGenerating && state.recoveryError == null && !state.hasPendingStory && state.savedSessionId == null && !state.hasInterruptedGeneration) return
     if (state.isGenerating && !state.hasPendingStory && state.savedSessionId == null && state.recoveryError == null) return
-    var expanded by remember(state.storyTitle) { mutableStateOf(false) }
+    var expanded by remember(state.storyTitle, state.hasInterruptedGeneration) {
+        mutableStateOf(state.hasInterruptedGeneration && state.generationStage == "已停止")
+    }
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             when {
@@ -72,16 +75,30 @@ internal fun StoryRecoveryCard(
                     TextButton(onClick = onDiscard, enabled = !state.isSaving) { Text("放弃本次正文") }
                 }
                 state.hasInterruptedGeneration -> {
-                    Text("上次生成中断", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    Text("已保留本机收到的预览，不能代表小说已经生成完成。", style = MaterialTheme.typography.bodyMedium)
+                    Text(if (state.generationStage == "已停止") "已停止" else "上次生成中断",
+                        style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Text("已完成 ${state.completedChapterDrafts.size}/${state.chapterCount} 章",
+                        style = MaterialTheme.typography.bodyMedium)
+                    StoryCompletedChapters(state.completedChapterDrafts)
+                    Text(if (state.generationContentAvailable)
+                        "已保留收到的正文，未完成章节会标为草稿。"
+                    else "旧记录只保留了预览，可复制后继续创作。", style = MaterialTheme.typography.bodyMedium)
                     if (state.preview.isNotBlank()) {
                         TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起预览" else "展开已收到的预览") }
                         if (expanded) Text(state.preview, Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()))
                     } else Text("中断前还没有收到可显示的正文。", style = MaterialTheme.typography.bodySmall)
-                    Button(onClick = onRetryInterrupted, enabled = !state.isSaving, modifier = Modifier.fillMaxWidth()) {
+                    state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                    if (state.completedChapterDrafts.isNotEmpty() || state.partialPreview.isNotBlank()) {
+                        Button(onClick = onSaveCompleted, enabled = !state.isSaving, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (state.completedChapterDrafts.isNotEmpty()) "保存已收到草稿" else "保存中断片段草稿")
+                        }
+                    }
+                    OutlinedButton(onClick = onRetryInterrupted, enabled = !state.isSaving, modifier = Modifier.fillMaxWidth()) {
                         Text("按当前设定重新生成")
                     }
-                    OutlinedButton(onClick = onCopy, enabled = state.preview.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("复制已收到的预览") }
+                    OutlinedButton(onClick = onCopy, enabled = state.preview.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+                        Text(if (state.generationContentAvailable) "复制已收到正文" else "复制已收到预览（仅预览）")
+                    }
                     TextButton(onClick = onDiscardInterrupted, enabled = !state.isSaving) { Text("放弃这次中断记录") }
                 }
                 else -> {

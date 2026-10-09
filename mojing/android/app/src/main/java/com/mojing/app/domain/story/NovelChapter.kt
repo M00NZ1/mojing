@@ -8,22 +8,69 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
 object NovelChapter {
-    private val chapterHeading = Regex("^第[\\s0-9零〇一二两三四五六七八九十百千]+章.*")
+    class EmptyBodyException : IllegalArgumentException("章节正文为空，请重试")
+    private val chapterHeading = Regex("^第([\\s0-9零〇一二两三四五六七八九十百千]+)章.*")
+    private val markdownHeading = Regex("^#{1,6}\\s*(.{1,80})$")
+    data class LeadingTitle(val title: String, val chapterNumberText: String? = null)
     /** Rename only the leading heading; matching words in the story remain untouched. */
     fun renameContent(content: String, oldTitle: String, newTitle: String): String {
         val title = newTitle.trim()
         require(title.isNotEmpty() && '\n' !in title && '\r' !in title)
         val prefix = Regex("^\\s*(?:<NARRATION>\\s*)?").find(content)!!.value
         val remainder = content.substring(prefix.length)
-        val firstLine = remainder.substringBefore('\n').trim()
-        return if (oldTitle.isNotBlank() && firstLine == oldTitle.trim()) {
-            prefix + title + remainder.substringAfter('\n', "").let {
-                if ('\n' in remainder) "\n$it" else ""
-            }
+        val rawFirstLine = remainder.substringBefore('\n')
+        val closingTag = rawFirstLine.takeIf { it.trimEnd().endsWith("</NARRATION>") }?.let { "</NARRATION>" }.orEmpty()
+        val firstLine = rawFirstLine.trimEnd().removeSuffix(closingTag).trim()
+        val normalizedFirstLine = leadingTitleFromFirstLine(firstLine)?.title
+        val replacesHeading = oldTitle.isNotBlank() && (firstLine == oldTitle.trim() || normalizedFirstLine == oldTitle.trim()) ||
+            oldTitle.isBlank() && normalizedFirstLine != null
+        val lineBreak = when {
+            "\r\n" in remainder -> "\r\n"
+            '\n' in remainder -> "\n"
+            else -> ""
+        }
+        val remainderAfterHeading = closingTag + if (lineBreak.isNotEmpty()) "$lineBreak${remainder.substringAfter('\n', "")}" else ""
+        return if (replacesHeading) {
+            prefix + title + remainderAfterHeading
         } else prefix + title + "\n\n" + remainder
     }
 
+    /** The same first-line title grammar used by the story directory, including Markdown headings. */
+    fun leadingTitleFromFirstLine(firstLine: String): LeadingTitle? = parseLeadingLine(firstLine)
+
+    /** Search the whole preview to preserve directory support for older multiline content. */
+    fun leadingTitleFromText(text: String): LeadingTitle? {
+        val lines = text.lineSequence().toList()
+        return lines.firstNotNullOfOrNull(::parseChapterLine)
+            ?: lines.firstNotNullOfOrNull(::parseMarkdownLine)
+    }
+
+    private fun parseLeadingLine(line: String): LeadingTitle? = parseChapterLine(line) ?: parseMarkdownLine(line)
+
+    private fun parseChapterLine(line: String): LeadingTitle? {
+        val normalized = normalizeLeadingLine(line)
+        val match = chapterHeading.matchEntire(normalized) ?: return null
+        return LeadingTitle(normalized, match.groupValues[1].trim())
+    }
+
+    private fun parseMarkdownLine(line: String): LeadingTitle? {
+        val trimmed = line.trim()
+        if (!trimmed.startsWith('#')) return null
+        val match = markdownHeading.matchEntire(trimmed) ?: return null
+        return match.groupValues[1].trim().takeIf { it.isNotEmpty() }?.let { LeadingTitle(it) }
+    }
+
+    private fun normalizeLeadingLine(line: String): String {
+        var normalized = line.trim().removeSuffix("</NARRATION>").trim()
+        while (normalized.startsWith('#') || normalized.startsWith('>')) normalized = normalized.drop(1).trimStart()
+        normalized = normalized.replaceFirst(Regex("^旁白\\s*[:：]\\s*"), "")
+        return normalized
+    }
+
     fun incomplete(json: String): Boolean = runCatching { JsonParser.parseString(json).asJsonObject.get("chapter_incomplete")?.asBoolean == true }.getOrDefault(false)
+    /** Only the current line's own tail can be completed without rewriting inherited or earlier prose. */
+    fun canResumeTail(branchId: String, sourceBranchId: String, json: String): Boolean =
+        branchId == sourceBranchId && incomplete(json) && number(json) != null
     fun draftMetadata(json: String, number: Int, title: String): String = JsonParser.parseString(metadata(json, number, title)).asJsonObject.apply { addProperty("chapter_incomplete", true) }.toString()
     fun number(json: String): Int? = runCatching {
         JsonParser.parseString(json).asJsonObject.get("chapter_number")?.asInt?.takeIf { it > 0 }
@@ -52,7 +99,7 @@ object NovelChapter {
             if (chapterHeading.matches(first)) first else "第 $number 章"
         }
         val body = if (first == heading || chapterHeading.matches(first)) cleaned.substringAfter('\n', "").trim() else cleaned
-        require(body.isNotBlank()) { "章节正文为空，请重试" }
+        if (body.isBlank()) throw EmptyBodyException()
         return heading to "<NARRATION>$heading\n\n$body</NARRATION>"
     }
     suspend fun export(output: OutputStream, title: String, maxId: Long,

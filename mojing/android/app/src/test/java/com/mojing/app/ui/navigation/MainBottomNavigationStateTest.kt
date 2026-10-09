@@ -11,15 +11,15 @@ class MainBottomNavigationStateTest {
     fun rootRoutesKeepBottomNavigationVisible() {
         assertTrue(shouldShowMainBottomNavigation(Routes.SESSION_LIST))
         assertTrue(shouldShowMainBottomNavigation(Routes.CREATION_HUB))
-        assertTrue(shouldShowMainBottomNavigation(Routes.CHARACTER_LIST))
         assertTrue(shouldShowMainBottomNavigation(Routes.ENCYCLOPEDIA_LIST))
         assertTrue(shouldShowMainBottomNavigation(Routes.WORKBENCH))
-        assertTrue(shouldShowMainBottomNavigation(Routes.STORY_SIMULATION))
+        assertFalse(shouldShowMainBottomNavigation(Routes.STORY_SIMULATION))
         assertTrue(shouldShowMainBottomNavigation(Routes.SETTINGS))
     }
 
     @Test
     fun detailAndEditRoutesHideBottomNavigation() {
+        assertFalse(shouldShowMainBottomNavigation(Routes.CHARACTER_LIST))
         assertFalse(shouldShowMainBottomNavigation(Routes.chat(1L)))
         assertFalse(shouldShowMainBottomNavigation(Routes.characterEdit(1L)))
         assertFalse(shouldShowMainBottomNavigation(Routes.encyclopediaDetail(1L)))

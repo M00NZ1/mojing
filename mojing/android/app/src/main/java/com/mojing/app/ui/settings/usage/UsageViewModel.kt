@@ -5,6 +5,8 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.local.dao.CostRecordDao
 import com.mojing.app.data.local.dao.UsageCurrencySummary
+import com.mojing.app.data.local.dao.DailyUsageSummary
+import com.mojing.app.data.local.dao.MonthlyPlatformUsage
 import com.mojing.app.domain.billing.BillingCurrencyRepository
 import com.mojing.app.domain.billing.CurrencyDisplayState
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -16,12 +18,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import java.time.LocalDate
+import java.time.YearMonth
+import java.time.ZoneId
 
 data class UsageUiState(
     val level: Int = 0,
     val loading: Boolean = true,
     val error: String? = null,
     val currencies: List<UsageCurrencyUi> = emptyList(),
+    val selectedMonth: YearMonth = YearMonth.now(),
+    val loadedMonth: YearMonth? = null,
+    val daily: List<UsageDayUi> = emptyList(),
     val platforms: List<UsagePlatformUi> = emptyList(),
     val selectedPlatform: UsagePlatformUi? = null,
     val models: List<UsageModelUi> = emptyList(),
@@ -49,9 +56,13 @@ private fun List<UsageCurrencySummary>.toDisplayRows(): List<UsageCurrencyUi> = 
 class UsageViewModel @Inject constructor(
     private val dao: CostRecordDao,
     private val billingCurrency: BillingCurrencyRepository,
-    savedStateHandle: SavedStateHandle = SavedStateHandle(),
+    private val savedStateHandle: SavedStateHandle = SavedStateHandle(),
 ) : ViewModel() {
-    private val _state = MutableStateFlow(UsageUiState())
+    private val initialMonth = (savedStateHandle.get<Any>(MONTH_KEY) as? String)
+        ?.let { runCatching { YearMonth.parse(it) }.getOrNull() }
+        ?.takeIf { it.year in 1..9999 && !it.isAfter(YearMonth.now()) }
+        ?: YearMonth.now()
+    private val _state = MutableStateFlow(UsageUiState(selectedMonth = initialMonth))
     val state: StateFlow<UsageUiState> = _state.asStateFlow()
     val currencyState: StateFlow<CurrencyDisplayState> = billingCurrency.state
     private var loadJob: Job? = null
@@ -83,20 +94,51 @@ class UsageViewModel @Inject constructor(
     fun refreshCurrency() { viewModelScope.launch { billingCurrency.refreshRate() } }
     fun setManualRate(rate: Double) = billingCurrency.setManualRate(rate)
 
+    fun setMonth(month: YearMonth) {
+        if (month == _state.value.selectedMonth || month.year !in 1..9999 || month.isAfter(YearMonth.now())) return
+        savedStateHandle[MONTH_KEY] = month.toString()
+        _state.value = _state.value.copy(selectedMonth = month)
+        refresh()
+    }
+
+    private fun monthBounds(month: YearMonth): Pair<Long, Long> {
+        val zone = ZoneId.systemDefault()
+        return month.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli() to
+            month.plusMonths(1).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
+    }
+
+    private fun List<DailyUsageSummary>.toDailyRows(): List<UsageDayUi> = map {
+        UsageDayUi(it.day, it.currency, it.costKnownAmount, it.unknownCalls, it.tokens, it.totalCalls)
+    }
+
+    private fun List<MonthlyPlatformUsage>.toMonthlyPlatforms(): List<UsagePlatformUi> =
+        groupBy { it.platformId }.map { (_, rows) ->
+            UsagePlatformUi(
+                id = rows.first().platformId,
+                name = rows.first().platformName,
+                tokens = rows.sumOf { it.tokens },
+                calls = rows.sumOf { it.totalCalls }.toInt(),
+                failed = rows.sumOf { it.failedCalls }.toInt(),
+                unknownPrice = rows.sumOf { it.unknownCalls }.toInt(),
+                currencies = rows.map {
+                    UsageCurrencyUi(it.currency, it.costKnownAmount, it.tokens, it.totalCalls.toInt(), it.failedCalls.toInt(), it.unknownCalls.toInt())
+                },
+            )
+        }.sortedByDescending { it.tokens }
+
     fun refresh() {
         loadJob?.cancel()
         val token = ++generation
+        val month = _state.value.selectedMonth
         loadJob = viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, error = null)
             runCatching {
+                val bounds = monthBounds(month)
+                val daily = dao.dailyUsage(bounds.first, bounds.second).toDailyRows()
                 val currencies = dao.usageSummary().toDisplayRows()
-                val platforms = dao.platformUsage().map { platform ->
-                    val rows = dao.usageSummary(platform.platformId)
-                    UsagePlatformUi(platform.platformId, platform.platformName, platform.totalTokens, platform.totalCalls.toInt(), platform.failedCalls.toInt(), rows.sumOf { it.unknownCostCalls }.toInt(),
-                        rows.toDisplayRows())
-                }
-                currencies to platforms
-            }.onSuccess { (currencies, platforms) -> if (token == generation) _state.value = UsageUiState(loading = false, currencies = currencies, platforms = platforms) }
+                val monthlyPlatforms = dao.monthlyPlatformUsage(bounds.first, bounds.second).toMonthlyPlatforms()
+                Triple(daily, currencies, monthlyPlatforms)
+            }.onSuccess { (daily, currencies, platforms) -> if (token == generation) _state.value = UsageUiState(loading = false, selectedMonth = month, loadedMonth = month, daily = daily, currencies = currencies, platforms = platforms) }
                 .onFailure { error -> if (error is CancellationException) throw error; if (token == generation) _state.value = _state.value.copy(loading = false, error = "用量记录读取失败，请重试") }
         }
     }
@@ -189,5 +231,9 @@ class UsageViewModel @Inject constructor(
                 }
                 .onFailure { error -> if (error is CancellationException) throw error; if (token == generation) _state.value = _state.value.copy(loading = false, error = "请求记录读取失败，请重试") }
         }
+    }
+
+    private companion object {
+        const val MONTH_KEY = "usage_selected_month"
     }
 }

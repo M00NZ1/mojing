@@ -2,6 +2,7 @@ package com.mojing.app.ui.chat.drawer
 
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.test.*
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.assertIsDisplayed
@@ -22,6 +23,8 @@ import org.junit.Test
 class ChatDrawerNavigationTest {
     @get:Rule val composeRule = createComposeRule()
 
+    private fun routeKeyField() = composeRule.onNodeWithText("对话 API Key 覆盖").onChildren().filter(hasSetTextAction()).onFirst()
+
     @Test
     fun tabSwitchKeepsWorldDraftUntilExplicitDiscard() {
         val world = SessionWorldEntity(id = 1L, sessionId = 7L)
@@ -41,7 +44,7 @@ class ChatDrawerNavigationTest {
                     onToggleEventResolved = {}, onDeleteEventNode = {},
                     onJumpToMemorySource = { _, _ -> false }, onAddMemoryCorrection = { _, _ -> },
                     onEditMemoryCorrection = {}, onDeleteMemoryCorrection = {},
-                    onRebuildContextMemory = {}, onClearContextMemory = {},
+                    onRebuildContextMemory = {}, onClearContextMemory = { _ -> },
                     onContinueStorySummary = {}, onStopStorySummary = {},
                     onSessionThinkMax = {},
                 )
@@ -49,12 +52,12 @@ class ChatDrawerNavigationTest {
         }
         composeRule.onNodeWithText("世界").performClick()
         composeRule.onNodeWithText("专用线路").performScrollTo().performClick()
-        composeRule.onNodeWithText("对话 API Key 覆盖").performScrollTo().performTextInput("draft-test-key")
+        routeKeyField().performScrollTo().performTextInput("draft-test-key")
         composeRule.waitForIdle()
         composeRule.onNodeWithText("角色").performClick()
         composeRule.onNodeWithText("世界配置尚未保存").assertIsDisplayed()
         composeRule.onNodeWithText("继续编辑").performClick()
-        composeRule.onNodeWithText("对话 API Key 覆盖").assertTextContains("draft-test-key")
+        routeKeyField().assertTextContains("draft-test-key")
         composeRule.onNodeWithText("角色").performClick()
         composeRule.onNodeWithText("放弃修改并切换").performClick()
         composeRule.onNodeWithText("添加角色到对话").assertIsDisplayed()
@@ -88,7 +91,7 @@ class ChatDrawerNavigationTest {
                         true
                     },
                     onAddMemoryCorrection = { _, _ -> }, onEditMemoryCorrection = {}, onDeleteMemoryCorrection = {},
-                    onRebuildContextMemory = {}, onClearContextMemory = {},
+                    onRebuildContextMemory = {}, onClearContextMemory = { _ -> },
                     onContinueStorySummary = {}, onStopStorySummary = {}, onSessionThinkMax = {},
                 )
             }
@@ -120,16 +123,16 @@ class ChatDrawerNavigationTest {
         composeRule.onNodeWithText("本场玩法").assertIsDisplayed()
         composeRule.onNodeWithText("对话 API Key 覆盖").assertDoesNotExist()
         composeRule.onNodeWithText("专用线路").performScrollTo().performClick()
-        composeRule.onNodeWithText("对话 API Key 覆盖").performScrollTo().performTextInput("draft-route")
+        routeKeyField().performScrollTo().performTextInput("draft-route")
         composeRule.runOnIdle {
             world.value = world.value.copy(narratorEnabled = true, updatedAt = 11L)
         }
-        composeRule.onNodeWithText("对话 API Key 覆盖").assertTextContains("draft-route")
+        routeKeyField().assertTextContains("draft-route")
         composeRule.onNodeWithText("专用线路").performScrollTo().performClick()
         composeRule.onNodeWithText("对话 API Key 覆盖").assertDoesNotExist()
         composeRule.onNodeWithText("专用线路").performClick()
-        composeRule.onNodeWithText("对话 API Key 覆盖").assertTextContains("draft-route")
-        composeRule.onNodeWithText("保存本场线路").performScrollTo().performClick()
+        routeKeyField().assertTextContains("draft-route")
+        composeRule.onNodeWithText("保存线路").assertIsDisplayed().performClick()
         composeRule.runOnIdle { assertEquals("draft-route", saved?.sessionLlmApiKey) }
     }
 

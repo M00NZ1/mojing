@@ -14,6 +14,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.unit.Density
 
 private val DarkColorScheme = darkColorScheme(
@@ -47,10 +48,16 @@ private val LightColorScheme = lightColorScheme(
 internal fun ColorScheme.withMoJingSurfaces(isLight: Boolean): ColorScheme {
     val ink = onSurface
     val base = background
+    val inverseAccent = lerp(base, primary, if (isLight) 0.35f else 0.45f)
+    val inverseAccentContrast = (maxOf(inverseAccent.luminance(), ink.luminance()) + 0.05f) /
+        (minOf(inverseAccent.luminance(), ink.luminance()) + 0.05f)
     return copy(
         onPrimary = if (primary.luminance() > 0.179f) Color.Black else Color.White,
         onSecondary = if (secondary.luminance() > 0.179f) Color.Black else Color.White,
         surfaceTint = primary,
+        inverseSurface = ink,
+        inverseOnSurface = base,
+        inversePrimary = if (inverseAccentContrast >= 4.5f) inverseAccent else base,
         surfaceDim = lerp(base, ink, if (isLight) 0.07f else 0.01f),
         surfaceBright = lerp(base, ink, if (isLight) 0f else 0.12f),
         surfaceContainerLowest = if (isLight) Color.White else lerp(base, Color.Black, 0.16f),
@@ -171,7 +178,11 @@ fun MoJingTheme(
     content: @Composable () -> Unit,
 ) {
     val safeMode = AppThemes.normalize(themeMode)
-    val palette = when (safeMode) {
+    val systemDark = isSystemInDarkTheme()
+    val resolvedMode = if (safeMode == "system") {
+        if (systemDark) "dark" else "light"
+    } else safeMode
+    val palette = when (resolvedMode) {
         "light" -> LightColorScheme
         "midnight" -> MidnightColorScheme
         "rose" -> RoseDarkScheme
@@ -181,9 +192,9 @@ fun MoJingTheme(
         "sky" -> SkyLightScheme
         else -> DarkColorScheme
     }
-    val colorScheme = remember(palette, safeMode) {
-        val semantic = palette.withMoJingSurfaces(safeMode in setOf("light", "blush", "sky"))
-        if (safeMode == "light") semantic.copy(
+    val colorScheme = remember(palette, resolvedMode) {
+        val semantic = palette.withMoJingSurfaces(resolvedMode in setOf("light", "blush", "sky"))
+        if (resolvedMode == "light") semantic.copy(
             primary = MoJingDesignTokens.primary, onPrimary = Color.White,
             background = MoJingDesignTokens.background, surface = MoJingDesignTokens.surface,
             onBackground = MoJingDesignTokens.textPrimary, onSurface = MoJingDesignTokens.textPrimary,

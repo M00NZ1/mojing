@@ -104,6 +104,25 @@ class GenerationTaskDaoTest {
     }
 
     @Test
+    fun filteredHistoryMatchesLiteralSymbolsCaseInsensitivelyAndAcrossOldRows() = runBlocking {
+        for (id in 1L..205L) taskDao.insert(GenerationTaskEntity(
+            id = id,
+            taskKind = if (id == 1L) GenerationTaskKinds.CHARACTER_PERSONA_AI else GenerationTaskKinds.ENCYCLOPEDIA_ENTRIES,
+            title = if (id == 1L) "Alpha[符号]" else "普通记录 $id",
+            payloadJson = "{}",
+            status = if (id == 1L) GenerationTaskStatus.FAILED else GenerationTaskStatus.COMPLETED,
+        ))
+
+        val rows = taskDao.observeHistoryPageFiltered(
+            beforeId = Long.MAX_VALUE,
+            filter = 2,
+            keyword = "alpha[符号]",
+            taskKind = GenerationTaskKinds.CHARACTER_PERSONA_AI,
+        ).first()
+        assertEquals(listOf(1L), rows.map { it.id })
+    }
+
+    @Test
     fun claimIfQueuedOnlyClaimsQueuedRow() = runBlocking {
         val t = System.currentTimeMillis()
         val id = taskDao.insert(
@@ -122,5 +141,35 @@ class GenerationTaskDaoTest {
         val running = taskDao.getById(id)
         assertEquals(GenerationTaskStatus.RUNNING, running?.status)
         assertEquals(0, taskDao.claimIfQueued(id, t + 200))
+    }
+
+    @Test
+    fun resultSnapshotIsSavedOnceAndAppliedMarkIsIdempotent() = runBlocking {
+        val id = taskDao.insert(GenerationTaskEntity(
+            taskKind = GenerationTaskKinds.CHARACTER_PERSONA_AI,
+            title = "快照",
+            status = GenerationTaskStatus.RUNNING,
+            payloadJson = "{}",
+            targetCharacterId = 7L,
+        ))
+        assertEquals(1, taskDao.saveResultAndTerminal(id, "{\"schemaVersion\":1}", GenerationTaskStatus.COMPLETED, "", 10L))
+        assertEquals(0, taskDao.saveResultAndTerminal(id, "replacement", GenerationTaskStatus.COMPLETED, "", 10L))
+        assertEquals("{\"schemaVersion\":1}", taskDao.getById(id)?.resultJson)
+        assertEquals(1, taskDao.markResultApplied(id, 11L, 11L))
+        assertEquals(0, taskDao.markResultApplied(id, 12L, 12L))
+        assertEquals(11L, taskDao.getById(id)?.resultAppliedAt)
+    }
+
+    @Test
+    fun lateResultCannotTurnCancelledTaskCompleted() = runBlocking {
+        val id = taskDao.insert(GenerationTaskEntity(
+            taskKind = GenerationTaskKinds.CHARACTER_PERSONA_AI,
+            title = "取消后迟到结果",
+            status = GenerationTaskStatus.CANCELLED,
+            payloadJson = "{}",
+        ))
+        assertEquals(0, taskDao.saveResultAndTerminal(id, "snapshot", GenerationTaskStatus.COMPLETED, "", 20L))
+        assertEquals(GenerationTaskStatus.CANCELLED, taskDao.getById(id)?.status)
+        assertEquals("", taskDao.getById(id)?.resultJson)
     }
 }

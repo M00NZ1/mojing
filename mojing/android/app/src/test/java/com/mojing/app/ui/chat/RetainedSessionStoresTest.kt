@@ -118,4 +118,36 @@ class RetainedSessionStoresTest {
         next.complete(); runCurrent()
         assertTrue(model.cleared)
     }
+
+    @Test fun localWriteRetainsOwnerAcrossRecreationWithoutReportingGeneration() = runTest {
+        val registry = RetainedSessionStores(backgroundScope)
+        val model = registry.acquire(1) { store -> Model().also { store.put("model", it) } }
+        val write = Job()
+        registry.retainJob(1, write, reportRunning = false)
+        registry.release(1)
+        assertFalse(model.cleared)
+        assertTrue(registry.running.value.isEmpty())
+        val reopened = registry.acquire<Model>(1) { error("Must reuse pending write owner") }
+        assertSame(model, reopened)
+        write.complete(); runCurrent()
+        assertFalse(model.cleared)
+        registry.release(1)
+        assertTrue(model.cleared)
+    }
+
+    @Test fun localWriteAndGenerationCompletionKeepIndependentLifetimes() = runTest {
+        val registry = RetainedSessionStores(backgroundScope)
+        val model = registry.acquire(1) { store -> Model().also { store.put("model", it) } }
+        val write = Job(); val generation = Job()
+        registry.retainJob(1, write, reportRunning = false)
+        registry.retainJob(1, generation)
+        registry.release(1)
+        assertEquals(setOf(1L), registry.running.value)
+        generation.complete(); runCurrent()
+        assertTrue(registry.running.value.isEmpty())
+        assertFalse(model.cleared)
+        registry.stop(1); runCurrent()
+        assertTrue(write.isCancelled)
+        assertTrue(model.cleared)
+    }
 }

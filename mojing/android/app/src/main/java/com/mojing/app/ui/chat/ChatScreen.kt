@@ -1,6 +1,14 @@
 package com.mojing.app.ui.chat
 
-import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.MoreHoriz
+
+import com.mojing.app.ui.common.MoJingCenterAlignedTopAppBar as TopAppBar
 import com.mojing.app.ui.common.MoJingIcon as Icon
 import com.mojing.app.ui.common.MoJingFilterChip as FilterChip
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -40,6 +48,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -78,17 +89,21 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.first
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -129,6 +144,7 @@ import com.mojing.app.util.ContentDocumentWriter
 import com.mojing.app.util.UsbSessionLog
 import com.mojing.app.ui.util.UserFacingStrings
 import kotlin.text.Charsets
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -149,7 +165,10 @@ fun ChatScreen(
     viewModel: ChatViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val messageEditDraftController: MessageEditDraftController = hiltViewModel()
+    val messageEditDraftState by messageEditDraftController.state.collectAsStateWithLifecycle()
     val speechActive by viewModel.speechActive.collectAsStateWithLifecycle()
+    val speechPlayback by viewModel.speechPlayback.collectAsStateWithLifecycle()
     var voiceChoice by remember(sessionId) { mutableStateOf(viewModel.currentVoiceChoice()) }
     var showVoicePicker by remember { mutableStateOf(false) }
     if (showVoicePicker) com.mojing.app.ui.common.VoiceChoicePicker(
@@ -184,10 +203,22 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     var stickToBottom by remember { mutableStateOf(true) }
     var followGeneration by remember(sessionId, state.currentBranchId) { mutableStateOf(false) }
+    var hasManualReadingPosition by remember(sessionId, state.currentBranchId) { mutableStateOf(false) }
+    val messageViewport by remember(listState) { androidx.compose.runtime.derivedStateOf { listState.layoutInfo.viewportSize } }
+    val readingState by rememberUpdatedState(state)
     val manualScrollConnection = remember(sessionId, state.currentBranchId) {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (source == NestedScrollSource.UserInput && available.y != 0f) followGeneration = false
+                if (source == NestedScrollSource.UserInput && available.y != 0f) {
+                    followGeneration = false
+                    hasManualReadingPosition = true
+                    val current = readingState
+                    val visibleKeys = listState.layoutInfo.visibleItemsInfo.map { it.key }.toSet()
+                    current.displayLines.firstOrNull { it.stableKey in visibleKeys }?.selectedMessage()?.id?.let { anchor ->
+                        viewModel.rememberMessageReadingPosition(current.currentBranchId,
+                            current.messages.lastOrNull()?.id, current.messages.size, anchor)
+                    }
+                }
                 return Offset.Zero
             }
         }
@@ -203,16 +234,25 @@ fun ChatScreen(
             duration = androidx.compose.material3.SnackbarDuration.Indefinite)
         RetainedChatSessions.stores.dismissFailure(sessionId, notice.token)
     }
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val drawerState = rememberWidthAwareDrawerState(LocalConfiguration.current.screenWidthDp)
     val scope = rememberCoroutineScope()
-    var showAddParticipant by remember { mutableStateOf(false) }
-    var isAddingParticipant by remember(sessionId) { mutableStateOf(false) }
-    var participantSubmitError by remember(sessionId) { mutableStateOf<String?>(null) }
+    var showAddParticipant by rememberSaveable(sessionId) { mutableStateOf(false) }
+    val isAddingParticipant = state.participantAdding
+    val participantSubmitError = state.participantAddError
+    LaunchedEffect(state.participantAddedId, state.participantAdding) {
+        if (state.participantAddedId != null && !state.participantAdding &&
+            viewModel.state.value.participantAddedId == state.participantAddedId) {
+            showAddParticipant = false
+            viewModel.clearParticipantAddFeedback()
+        }
+    }
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     var editingMessage by remember { mutableStateOf<com.mojing.app.data.local.entity.MessageEntity?>(null) }
+    var editRecoveryMessageId by rememberSaveable(sessionId) { mutableStateOf<Long?>(null) }
+    var editRecoveryBranchId by rememberSaveable(sessionId) { mutableStateOf<String?>(null) }
     var editContent by remember { mutableStateOf("") }
     var editOriginalBody by remember { mutableStateOf("") }
     var editPreparingMessage by remember(sessionId, state.currentBranchId) {
@@ -224,17 +264,73 @@ fun ChatScreen(
     }
     var editSaving by remember { mutableStateOf(false) }
     var editFailure by remember { mutableStateOf<String?>(null) }
-    var editCommitted by remember { mutableStateOf(false) }
+    var editCommitted by rememberSaveable(sessionId) { mutableStateOf(false) }
+    LaunchedEffect(sessionId, state.currentBranchId, state.messages, editRecoveryMessageId, editRecoveryBranchId) {
+        val recoveryId = editRecoveryMessageId ?: return@LaunchedEffect
+        val recoveryBranch = editRecoveryBranchId ?: return@LaunchedEffect
+        if (editingMessage == null && recoveryBranch == state.currentBranchId) {
+            state.messages.firstOrNull { it.id == recoveryId }?.let { target ->
+                editingMessage = target
+                messageEditDraftController.open(sessionId, recoveryBranch, recoveryId)
+            }
+        }
+    }
+    LaunchedEffect(sessionId, state.currentBranchId) {
+        if (editSaving || editCommitted) return@LaunchedEffect
+        val target = editingMessage ?: return@LaunchedEffect
+        if (target.sessionId == sessionId && messageEditDraftState.scope?.branchId == state.currentBranchId) return@LaunchedEffect
+        // A branch/session change invalidates the visible editor target. Keep
+        // its latest durable draft, then close the editor before the new scope
+        // can submit the old message against the new branch.
+        if (messageEditDraftController.dismissRetaining()) {
+            editingMessage = null
+            editRecoveryMessageId = null
+            editRecoveryBranchId = null
+            editContent = ""
+            editOriginalBody = ""
+            editSaving = false
+            editFailure = null
+            editCommitted = false
+        }
+    }
     var recallMessage by remember(sessionId, state.currentBranchId) { mutableStateOf<com.mojing.app.data.local.entity.MessageEntity?>(null) }
     var showImageGenDialog by remember { mutableStateOf(false) }
     var showEmojiPicker by remember { mutableStateOf(false) }
     var readingMode by rememberSaveable(sessionId) { mutableStateOf(false) }
     var latestRequested by remember(sessionId) { mutableStateOf(false) }
     var latestLoadAttempted by remember(sessionId) { mutableStateOf(false) }
-    var showContents by remember { mutableStateOf(false) }
+    // Prepare only the loaded window before measuring reader rows: tiny async placeholders
+    // would otherwise clamp a saved paragraph offset or move an explicit tail jump.
+    val preparedReaderWindow by produceState<Pair<List<ChatDisplayLine>, Map<Long, List<String>>>?>(
+        null, readingMode, visibleDisplayLines,
+    ) {
+        value = null
+        if (readingMode) {
+            val paragraphs = withContext(Dispatchers.Default) {
+                visibleDisplayLines.associate { line ->
+                    val message = line.selectedMessage()
+                    message.id to try { prepareReaderParagraphs(message) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { emptyList() }
+                }
+            }
+            value = visibleDisplayLines to paragraphs
+        }
+    }
+    val readerParagraphs = preparedReaderWindow?.takeIf { it.first == visibleDisplayLines }?.second
+
+    var showContents by rememberSaveable(sessionId) { mutableStateOf(false) }
     var showRenameSession by rememberSaveable(sessionId) { mutableStateOf(false) }
-    var showSearchDialog by remember { mutableStateOf(false) }
-    var isImportingChat by remember(sessionId) { mutableStateOf(false) }
+    var showSearchDialog by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var isImportingTextChat by remember(sessionId) { mutableStateOf(false) }
+    val bundleProgress by viewModel.mediaBundleProgress.collectAsStateWithLifecycle()
+    val bundleNotice by viewModel.mediaBundleNotice.collectAsStateWithLifecycle()
+    val isImportingChat = isImportingTextChat || bundleProgress?.kind == "import"
+    var showBundleImportInfo by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var pendingBundleImportBranch by rememberSaveable(sessionId) { mutableStateOf<String?>(null) }
+    var mediaBundleImportInterrupted by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var pendingBundleExportBranch by rememberSaveable(sessionId) { mutableStateOf<String?>(null) }
+    var mediaBundleExportInterrupted by rememberSaveable(sessionId) { mutableStateOf(false) }
     var importStage by remember(sessionId) { mutableStateOf("") }
     var importCount by remember(sessionId) { mutableIntStateOf(0) }
     var importStopping by remember(sessionId) { mutableStateOf(false) }
@@ -245,22 +341,26 @@ fun ChatScreen(
     var pendingNovelExportPicker by rememberSaveable(sessionId) { mutableStateOf(false) }
     var exportWriteInterrupted by rememberSaveable(sessionId) { mutableStateOf(false) }
     var isExportingFile by remember(sessionId) { mutableStateOf(false) }
-    val exportBusy = pendingChatExportPicker || pendingNovelExportPicker || isExportingFile
+    var exportJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val exportBusy = pendingChatExportPicker || pendingNovelExportPicker || pendingBundleExportBranch != null ||
+        isExportingFile || bundleProgress?.kind == "export"
+    val requestExportNavigation = com.mojing.app.ui.common.rememberExportNavigationGuard(
+        exporting = { isExportingFile || bundleProgress?.kind == "export" },
+        onStopExport = { exportJob?.cancelAndJoin(); viewModel.stopMediaBundleAndJoin() },
+    )
     var savingGalleryMessageId by remember(sessionId) { mutableStateOf<Long?>(null) }
-    var pendingGalleryPermissionMessageId by remember(sessionId) { mutableStateOf<Long?>(null) }
-    var showBranchOverview by remember { mutableStateOf(false) }
-    var branchMenuExpanded by remember { mutableStateOf(false) }
+    var showBranchOverview by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var branchMenuExpanded by rememberSaveable(sessionId) { mutableStateOf(false) }
     var topActionsMenuExpanded by remember { mutableStateOf(false) }
-    var speechListening by remember { mutableStateOf(false) }
     var worldCredentialFieldsDirty by remember { mutableStateOf(false) }
-    var showUnsavedWorldDialog by remember { mutableStateOf(false) }
-    var correctionDialogOpen by remember { mutableStateOf(false) }
-    var correctionEditing by remember { mutableStateOf<SessionMemoryCorrectionEntity?>(null) }
-    var correctionDraft by remember { mutableStateOf("") }
-    var correctionSourceMessageId by remember { mutableStateOf<Long?>(null) }
-    var correctionScopeBranchId by remember { mutableStateOf<String?>(null) }
+    var showUnsavedWorldDialog by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var correctionDialogOpen by rememberSaveable(sessionId) { mutableStateOf(false) }
+    var correctionEditingId by rememberSaveable(sessionId) { mutableStateOf<Long?>(null) }
+    var correctionDraft by rememberSaveable(sessionId) { mutableStateOf("") }
+    var correctionSourceMessageId by rememberSaveable(sessionId) { mutableStateOf<Long?>(null) }
+    var correctionScopeBranchId by rememberSaveable(sessionId) { mutableStateOf<String?>(null) }
     var correctionPendingDelete by remember { mutableStateOf<SessionMemoryCorrectionEntity?>(null) }
-    var inputFieldValue by remember(sessionId) {
+    var inputFieldValue by rememberSaveable(sessionId, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(
             TextFieldValue(
                 text = state.inputText,
@@ -270,7 +370,8 @@ fun ChatScreen(
     }
     var pendingInputText by remember(sessionId) { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(sessionId, state.inputText) {
+    LaunchedEffect(sessionId, state.inputText, state.isReady) {
+        if (!state.isReady) return@LaunchedEffect
         when {
             inputFieldValue.text == state.inputText -> pendingInputText = null
             pendingInputText == inputFieldValue.text -> Unit
@@ -291,17 +392,61 @@ fun ChatScreen(
         }
     }
 
-    LaunchedEffect(sessionId, exportWriteInterrupted, isExportingFile) {
+    // Consume only the restored marker. Clearing it must not cancel this suspended Snackbar.
+    LaunchedEffect(sessionId) {
         if (exportWriteInterrupted && !isExportingFile) {
             exportWriteInterrupted = false
             snackbarHostState.showSnackbar("上次导出已中断，文件可能不完整，请重新导出")
         }
     }
 
-    LaunchedEffect(state.currentBranchId) {
-        if (correctionDialogOpen && correctionScopeBranchId != null) {
-            correctionEditing = null
+    // The screen cancels media work on disposal; a recreated session can have a new VM.
+    // Consume the restored marker without using it as this suspended Snackbar's effect key.
+    LaunchedEffect(sessionId) {
+        if (mediaBundleImportInterrupted && bundleProgress == null) {
+            mediaBundleImportInterrupted = false
+            snackbarHostState.showSnackbar("上次媒体包导入已中断，请重新选择文件核对；已保存记录不会重复写入")
+        }
+    }
+
+    LaunchedEffect(sessionId) {
+        if (mediaBundleExportInterrupted && bundleProgress == null) {
+            mediaBundleExportInterrupted = false
+            snackbarHostState.showSnackbar("上次媒体包导出已中断，目标文件可能不完整，请重新导出")
+        }
+    }
+
+    var correctionEditorBranchId by rememberSaveable(sessionId) { mutableStateOf<String?>(null) }
+    var correctionSaveRequestId by rememberSaveable(sessionId) { mutableStateOf<String?>(null) }
+    var correctionSaveError by rememberSaveable(sessionId) { mutableStateOf<String?>(null) }
+    val correctionReceipt by viewModel.correctionSaveReceipt.collectAsStateWithLifecycle()
+    val correctionSaving = correctionSaveRequestId != null
+
+    LaunchedEffect(state.currentBranchId, state.isReady) {
+        if (!state.isReady) return@LaunchedEffect
+        if (correctionDialogOpen && correctionScopeBranchId != null &&
+            correctionEditorBranchId != null && correctionEditorBranchId != state.currentBranchId) {
+            correctionEditingId = null
             correctionScopeBranchId = state.currentBranchId
+        }
+        correctionEditorBranchId = state.currentBranchId
+    }
+    LaunchedEffect(correctionSaveRequestId, correctionReceipt, state.isReady) {
+        val requestId = correctionSaveRequestId ?: return@LaunchedEffect
+        if (!state.isReady) return@LaunchedEffect
+        val receipt = correctionReceipt?.takeIf { it.requestId == requestId }
+        if (receipt != null) {
+            correctionSaveRequestId = null
+            if (receipt.saved) {
+                correctionDialogOpen = false
+                correctionEditingId = null
+                correctionDraft = ""
+                correctionSourceMessageId = null
+                correctionSaveError = null
+            } else correctionSaveError = "保存未完成，填写的内容已保留，请重试。"
+        } else if (!viewModel.knowsCorrectionEditorRequest(requestId)) {
+            correctionSaveRequestId = null
+            correctionSaveError = "上次保存已中断，请先核对用户纠正列表；填写内容已保留。"
         }
     }
 
@@ -313,14 +458,14 @@ fun ChatScreen(
         hideImeKeyboard(keyboardController, focusManager)
     }
 
-    suspend fun saveMessageImagesToGallery(messageId: Long) {
+    suspend fun saveMessageImagesToGallery(messageId: Long, expectedBranchId: String? = null) {
         if (savingGalleryMessageId != null) {
             snackbarHostState.showSnackbar("图片正在保存，请稍候")
             return
         }
         savingGalleryMessageId = messageId
         try {
-            val result = viewModel.saveMessageImagesToGallery(messageId)
+            val result = viewModel.saveMessageImagesToGallery(messageId, expectedBranchId)
             val message = when {
                 result.requestedCount == 0 -> "这条消息没有可保存的图片"
                 result.failedCount == 0 -> "已保存到系统相册${if (result.savedCount > 1) "（${result.savedCount} 张）" else ""}"
@@ -339,8 +484,13 @@ fun ChatScreen(
 
     fun requestLeave() {
         when {
+            state.worldCredentialsSaving -> scope.launch { snackbarHostState.showSnackbar("正在保存线路，请稍候") }
             worldCredentialFieldsDirty -> showUnsavedWorldDialog = true
-            else -> onBack()
+            bundleProgress?.kind == "import" -> scope.launch {
+                viewModel.stopMediaBundleAndJoin()
+                onBack()
+            }
+            else -> requestExportNavigation(onBack)
         }
     }
 
@@ -359,68 +509,63 @@ fun ChatScreen(
         }
     }
 
-    val speechLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        speechListening = false
-        if (result.resultCode == android.app.Activity.RESULT_OK) {
-            val spoken = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim().orEmpty()
-            if (spoken.isNotEmpty()) viewModel.appendVoiceText(spoken)
-        }
-    }
-    val micPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) {
-            val started = tryLaunchSpeechRecognition(context, speechLauncher) {
-                scope.launch { snackbarHostState.showSnackbar(UserFacingStrings.speechRecognitionUnavailable()) }
-            }
-            if (started) speechListening = true
-        } else {
-            scope.launch { snackbarHostState.showSnackbar(UserFacingStrings.micPermissionRequired()) }
-        }
-    }
-    val imagePickLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        if (isAddingAttachment) return@rememberLauncherForActivityResult
-        isAddingAttachment = true
-        scope.launch {
-            var copiedPath: String? = null
-            try {
-                withContext(Dispatchers.IO) {
-                    copiedPath = ChatAttachmentFiles.copyUriToSessionFile(
-                        context,
-                        uri,
-                        sessionId,
-                        viewModel.maxAttachmentBytes(),
-                    )
+    val mediaLaunchers = rememberChatInputMediaLaunchers(
+        sessionId = sessionId,
+        currentBranchId = { viewModel.state.value.currentBranchId },
+        isCurrentBranch = viewModel::isCurrentChatBranch,
+        onSpeechText = { text, branchId ->
+            if (viewModel.isCurrentChatBranch(branchId)) {
+                val updated = insertTextAtSelection(
+                    text = inputFieldValue.text,
+                    selection = inputFieldValue.selection,
+                    insertion = text,
+                )
+                if (viewModel.updateInput(updated.text, expectedBranchId = branchId)) {
+                    inputFieldValue = updated
+                    pendingInputText = updated.text
                 }
-                currentCoroutineContext().ensureActive()
-                copiedPath?.let(viewModel::queueLocalImageAttachment)
-                copiedPath = null
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (e: Exception) {
-                snackbarHostState.showSnackbar(e.message ?: UserFacingStrings.imageSaveFailed())
-            } finally {
-                copiedPath?.let { abandonedPath ->
-                    withContext(NonCancellable + Dispatchers.IO) {
-                        ChatAttachmentFiles.deleteOwnedPendingFile(context, sessionId, abandonedPath)
+            }
+        },
+        onSpeechUnavailable = { scope.launch { snackbarHostState.showSnackbar(UserFacingStrings.speechRecognitionUnavailable()) } },
+        onMicPermissionDenied = { scope.launch { snackbarHostState.showSnackbar(UserFacingStrings.micPermissionRequired()) } },
+        onLaunchFailure = { message -> scope.launch { snackbarHostState.showSnackbar(message) } },
+        onImagePicked = { uri, request ->
+            if (isAddingAttachment) return@rememberChatInputMediaLaunchers
+            isAddingAttachment = true
+            scope.launch {
+                var copiedPath: String? = null
+                try {
+                    withContext(Dispatchers.IO) {
+                        copiedPath = ChatAttachmentFiles.copyUriToSessionFile(
+                            context, uri, request.sessionId, viewModel.maxAttachmentBytes(),
+                        )
                     }
+                    currentCoroutineContext().ensureActive()
+                    val queued = copiedPath?.let { viewModel.queueLocalImageAttachment(it, request.branchId) } == true
+                    if (queued) copiedPath = null
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (e: Exception) {
+                    snackbarHostState.showSnackbar(e.message ?: UserFacingStrings.imageSaveFailed())
+                } finally {
+                    copiedPath?.let { abandonedPath ->
+                        withContext(NonCancellable + Dispatchers.IO) {
+                            ChatAttachmentFiles.deleteOwnedPendingFile(context, request.sessionId, abandonedPath)
+                        }
+                    }
+                    isAddingAttachment = false
                 }
-                isAddingAttachment = false
             }
-        }
-    }
-    val galleryPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        val messageId = pendingGalleryPermissionMessageId
-        pendingGalleryPermissionMessageId = null
-        if (granted && messageId != null) {
-            scope.launch { saveMessageImagesToGallery(messageId) }
-        } else if (messageId != null) {
-            scope.launch { snackbarHostState.showSnackbar("需要存储权限才能保存到系统相册") }
-        }
-    }
+        },
+        onGalleryPermissionResult = { messageId, branchId, granted ->
+            if (granted) scope.launch { saveMessageImagesToGallery(messageId, branchId) }
+            else scope.launch { snackbarHostState.showSnackbar("需要存储权限才能保存到系统相册") }
+        },
+    )
     val tavernImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         if (isImportingChat) return@rememberLauncherForActivityResult
-        isImportingChat = true
+        isImportingTextChat = true
         importStage = "正在检查文件"
         importCount = 0
         importStopping = false
@@ -441,7 +586,7 @@ fun ChatScreen(
             } catch (e: Exception) {
                 e.message ?: "导入失败"
             } finally {
-                isImportingChat = false
+                isImportingTextChat = false
                 importStage = ""
                 importJob = null
             }
@@ -456,7 +601,7 @@ fun ChatScreen(
         if (requested && uri != null && !isExportingFile && !isImportingChat) {
             isExportingFile = true
             exportWriteInterrupted = true
-            scope.launch {
+            exportJob = scope.launch {
                 val notice = try {
                     ContentDocumentWriter.writeStream(context, uri) { viewModel.exportNovel(it) }
                     "小说已导出"
@@ -478,7 +623,7 @@ fun ChatScreen(
         if (uri == null || !requested || isExportingFile || isImportingChat) return@rememberLauncherForActivityResult
         isExportingFile = true
         exportWriteInterrupted = true
-        scope.launch {
+        exportJob = scope.launch {
             val notice = try {
                 ContentDocumentWriter.writeStream(context, uri) { os ->
                     viewModel.exportMainBranchJson(os)
@@ -493,6 +638,50 @@ fun ChatScreen(
                 isExportingFile = false
             }
             snackbarHostState.showSnackbar(notice)
+        }
+    }
+
+    val bundleImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val branchId = pendingBundleImportBranch
+        pendingBundleImportBranch = null
+        if (uri != null && branchId != null && !isImportingChat && !exportBusy) {
+            if (viewModel.importMainBranchMediaBundle(uri, branchId)) mediaBundleImportInterrupted = true
+        }
+    }
+    val bundleExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri ->
+        val branchId = pendingBundleExportBranch
+        pendingBundleExportBranch = null
+        if (uri != null && branchId != null && !isImportingChat && !isExportingFile && bundleProgress == null) {
+            if (viewModel.exportMainBranchMediaBundle(uri, branchId)) mediaBundleExportInterrupted = true
+        }
+    }
+    if (showBundleImportInfo) {
+        AlertDialog(
+            shape = RoundedCornerShape(16.dp),
+            onDismissRequest = { showBundleImportInfo = false },
+            title = { Text("导入主线记录与媒体") },
+            text = { Text("记录将追加到当前故事线。请先添加与来源同名的参与角色；同名角色需唯一。媒体包不包含世界、其它故事线、记忆或角色卡，仅供墨境 Android 使用。") },
+            confirmButton = { TextButton(onClick = {
+                showBundleImportInfo = false
+                pendingBundleImportBranch = state.currentBranchId.ifBlank { "main" }
+                try { bundleImportLauncher.launch(arrayOf("application/zip", "application/octet-stream")) }
+                catch (_: Exception) {
+                    pendingBundleImportBranch = null
+                    scope.launch { snackbarHostState.showSnackbar("无法打开文件选择器，请重试") }
+                }
+            }) { Text("选择媒体包") } },
+            dismissButton = { TextButton(onClick = { showBundleImportInfo = false }) { Text("取消") } },
+        )
+    }
+
+    LaunchedEffect(bundleNotice) {
+        bundleNotice?.let { notice ->
+            mediaBundleImportInterrupted = false
+            mediaBundleExportInterrupted = false
+            snackbarHostState.showSnackbar(notice)
+            viewModel.clearMediaBundleNotice(notice)
         }
     }
 
@@ -531,25 +720,35 @@ fun ChatScreen(
     }
 
     LaunchedEffect(visibleDisplayLines.size, state.streamingText.length, stickToBottom) {
-        if (!stickToBottom || state.streamingText.isNotEmpty()) return@LaunchedEffect
+        if (!state.isReady || !hasAutoPositionedInitially || state.focusedMessageId != null ||
+            !stickToBottom || state.streamingText.isNotEmpty() || state.hasNewerMessages ||
+            (state.historyWindowRestored && !hasAutoPositionedInitially)) return@LaunchedEffect
         val total = listState.layoutInfo.totalItemsCount
         if (visibleDisplayLines.isNotEmpty() && total > 0) {
             listState.animateScrollToItem(total - 1)
         }
     }
 
-    LaunchedEffect(sessionId, state.currentBranchId, state.isReady, state.focusedMessageId, visibleDisplayLines.size) {
-        if (!state.isReady || hasAutoPositionedInitially || visibleDisplayLines.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(sessionId, state.currentBranchId, state.isReady, state.focusedMessageId, visibleDisplayLines.size, messageViewport, readerParagraphs) {
+        if (!state.isReady || (readingMode && readerParagraphs == null) ||
+            (hasAutoPositionedInitially && hasManualReadingPosition) || visibleDisplayLines.isEmpty()) return@LaunchedEffect
+        if (state.historyWindowRestored && state.focusedMessageId == null) {
+            hasManualReadingPosition = true
+            // LazyListState restores the reader's position once the same bounded rows arrive.
+            hasAutoPositionedInitially = true
+            return@LaunchedEffect
+        }
         if (state.focusedMessageId != null) {
+            hasManualReadingPosition = true
             // Cross-branch bookmark or search navigation owns the scroll position.
             hasAutoPositionedInitially = true
             return@LaunchedEffect
         }
-        val total = listState.layoutInfo.totalItemsCount
-        if (total > 0) {
-            hasAutoPositionedInitially = true
-            listState.scrollToItem(total - 1)
-        }
+        // Ready rows can precede the first LazyColumn measurement after recreation.
+        // Wait for that measurement instead of consuming initial positioning on an empty layout.
+        val total = snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > 0 }
+        listState.scrollToItem(total - 1)
+        hasAutoPositionedInitially = true
     }
 
     LaunchedEffect(isImeOpen, visibleDisplayLines.size, stickToBottom) {
@@ -559,33 +758,32 @@ fun ChatScreen(
         if (total > 0) listState.animateScrollToItem(total - 1)
     }
 
-    LaunchedEffect(state.isReady, state.focusedMessageId, visibleDisplayLines) {
-        if (!state.isReady) return@LaunchedEffect
+    LaunchedEffect(state.isReady, state.focusedMessageId, visibleDisplayLines, readerParagraphs) {
+        if (!state.isReady || (readingMode && readerParagraphs == null)) return@LaunchedEffect
         val messageId = state.focusedMessageId ?: return@LaunchedEffect
         val index = visibleDisplayLines.indexOfFirst { line ->
             line.variants.any { it.id == messageId }
         }
         if (index >= 0) {
             val listIndex = index + if (state.hasOlderMessages) 1 else 0
+            snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > listIndex }
             listState.scrollToItem(listIndex)
             viewModel.clearFocusedMessage()
         }
     }
 
-    LaunchedEffect(latestRequested, state.hasNewerMessages, state.isLoadingHistory, state.isGenerating, visibleDisplayLines) {
-        if (!latestRequested || state.isLoadingHistory) return@LaunchedEffect
+    LaunchedEffect(latestRequested, readingMode, state.currentBranchId, state.hasNewerMessages, state.isLoadingHistory, state.isGenerating, visibleDisplayLines, readerParagraphs) {
+        if (!latestRequested || state.isLoadingHistory || (readingMode && readerParagraphs == null)) return@LaunchedEffect
+        if (!state.isGenerating && !latestLoadAttempted) {
+            latestLoadAttempted = true
+            if (!viewModel.returnToLatestMessages()) latestRequested = false
+            return@LaunchedEffect
+        }
         if (state.hasNewerMessages) {
-            if (!state.isGenerating) {
-                if (latestLoadAttempted) {
-                    latestRequested = false
-                } else {
-                    latestLoadAttempted = true
-                    if (!viewModel.returnToLatestMessages()) latestRequested = false
-                }
-            }
+            if (!state.isGenerating) latestRequested = false
         } else {
-            val last = listState.layoutInfo.totalItemsCount - 1
-            if (last >= 0) listState.animateScrollToItem(last)
+            val total = snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > 0 }
+            listState.scrollToItem(total - 1)
             latestRequested = false
         }
     }
@@ -598,11 +796,16 @@ fun ChatScreen(
         onEditStart = viewModel::clearNovelMetadataError,
         onRenameNovel = viewModel::renameNovel,
         onNextChapter = viewModel::requestNextChapter,
+        onForkChapter = viewModel::requestChapterFork,
+        onLoadForkInput = viewModel::loadChapterForkInput,
+        onSaveForkInput = viewModel::saveChapterForkInput,
         onLoadChapterInput = { viewModel.loadChapterInput(state.currentBranchId) },
         onSaveChapterInput = { title, direction, synchronous ->
             viewModel.saveChapterInput(state.currentBranchId, title, direction, synchronous)
         },
-        onRenameChapter = viewModel::renameChapter,
+        onRenameChapter = { messageId, branchId, sourceBranchId, title, onSuccess ->
+            viewModel.renameChapter(messageId, title, branchId, sourceBranchId, onSuccess)
+        },
         onExport = {
             pendingNovelExportPicker = true
             try { exportNovelLauncher.launch("novel_${sessionId}.txt") }
@@ -611,7 +814,7 @@ fun ChatScreen(
                 scope.launch { snackbarHostState.showSnackbar(UserFacingStrings.documentWriteFailed(e.message)) }
             }
         },
-        visible = showContents,
+        visible = showContents && state.isReady,
         sessionId = sessionId,
         branchId = state.currentBranchId,
         onOpenMessage = viewModel::openMessageInHistoryWithResult,
@@ -638,13 +841,55 @@ fun ChatScreen(
 
 
 
-    DisposableEffect(viewModel) { onDispose { viewModel.stopSpeaking() } }
+    DisposableEffect(viewModel) {
+        viewModel.attachSpeechScreen()
+        onDispose {
+            viewModel.detachSpeechScreen()
+            viewModel.cancelMediaBundle()
+            viewModel.cancelPendingAutoNarrator()
+        }
+    }
+
+    LaunchedEffect(state.contextBudgetError) {
+        val message = state.contextBudgetError ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(message, withDismissAction = true,
+            duration = androidx.compose.material3.SnackbarDuration.Indefinite)
+        viewModel.clearContextBudgetError(message)
+    }
 
     LaunchedEffect(state.error) {
         val e = state.error ?: return@LaunchedEffect
         UsbSessionLog.e("StateError", e)
         snackbarHostState.showSnackbar(e)
         viewModel.clearError()
+    }
+
+    LaunchedEffect(state.speechRetryNotice?.token) {
+        val notice = state.speechRetryNotice ?: return@LaunchedEffect
+        val result = snackbarHostState.showSnackbar(
+            message = notice.message,
+            actionLabel = "重试",
+            withDismissAction = true,
+            duration = androidx.compose.material3.SnackbarDuration.Indefinite,
+        )
+        when (result) {
+            androidx.compose.material3.SnackbarResult.ActionPerformed -> viewModel.retryFailedSpeech(notice.token)
+            androidx.compose.material3.SnackbarResult.Dismissed -> viewModel.dismissSpeechRetry(notice.token)
+        }
+    }
+
+    LaunchedEffect(state.imageRetryNotice?.token) {
+        val notice = state.imageRetryNotice ?: return@LaunchedEffect
+        val result = snackbarHostState.showSnackbar(
+            message = notice.message,
+            actionLabel = "重试配图",
+            withDismissAction = true,
+            duration = androidx.compose.material3.SnackbarDuration.Indefinite,
+        )
+        when (result) {
+            androidx.compose.material3.SnackbarResult.ActionPerformed -> viewModel.retryFailedImage(notice.token)
+            androidx.compose.material3.SnackbarResult.Dismissed -> viewModel.dismissImageRetry(notice.token)
+        }
     }
 
     LifecycleResumeEffect(sessionId) {
@@ -664,11 +909,20 @@ fun ChatScreen(
         }
     }
 
-    if (!showSearchDialog) {
+    LaunchedEffect(state.currentBranchId, state.characterStatePanel?.branchId) {
+        if (state.characterStatePanel?.branchId != null &&
+            state.characterStatePanel?.branchId != state.currentBranchId) {
+            viewModel.closeCharacterState()
+        }
+    }
+
+    if (!showSearchDialog || !state.isReady) {
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet {
+            ModalDrawerSheet(modifier = Modifier.requiredWidth(LocalConfiguration.current.screenWidthDp.dp),
+                drawerShape = androidx.compose.ui.graphics.RectangleShape,
+                drawerContainerColor = MaterialTheme.colorScheme.background) {
                 Box(Modifier.fillMaxSize()) {
                     Column {
                         if (state.isLoadingHistory) {
@@ -677,6 +931,7 @@ fun ChatScreen(
                                 style = MaterialTheme.typography.bodySmall)
                         }
                         ChatDrawer(
+                            sessionId = sessionId,
                             participants = state.participants,
                             world = state.world,
                             memorySegments = state.memorySegments,
@@ -686,6 +941,8 @@ fun ChatScreen(
                             memorySegmentsLoadingMore = state.memorySegmentsLoadingMore,
                             memorySegmentsLoadError = state.memorySegmentsLoadError,
                             onLoadMoreMemorySummaries = viewModel::loadMoreMemorySummaries,
+                            memorySummariesHasNewer = state.memorySegmentsBeforeId != null || state.memorySegmentsWindowSize > 16,
+                            onResetMemorySummaryWindow = viewModel::resetMemorySummaryWindow,
                             onOpenMemorySummaries = viewModel::loadMemorySummariesIfNeeded,
                             contextMemoryText = state.contextMemoryText,
                             contextMemoryLoaded = state.contextMemoryLoaded,
@@ -701,6 +958,9 @@ fun ChatScreen(
                             onOpenEncyclopediaFoundation = { viewModel.loadEncyclopediaFoundationIfNeeded() },
                             onRetryEncyclopediaFoundation = { viewModel.loadEncyclopediaFoundationIfNeeded(force = true) },
                             memoryOperationRunning = state.memoryOperationRunning,
+                            memorySummaryEditSavedId = state.memorySummaryEditSavedId,
+                            memorySummaryEditSavedText = state.memorySummaryEditSavedText,
+                            onResolveMemorySummaryEditor = viewModel::resolveMemorySummaryEditor,
                             manualCompactionRunning = state.manualCompactionRunning,
                             manualCompactionChunk = state.manualCompactionChunk,
                             memoryCorrections = state.memoryCorrections,
@@ -720,17 +980,35 @@ fun ChatScreen(
                             eventNodesHasMore = state.eventNodesHasMore,
                             eventNodesLoadingMore = state.eventNodesLoadingMore,
                             eventNodesLoadError = state.eventNodesLoadError,
+                            eventQuery = state.eventQuery,
+                            eventResolvedFilter = state.eventResolvedFilter,
+                            onEventQueryChange = viewModel::updateEventQuery,
+                            onEventResolvedFilterChange = viewModel::updateEventResolvedFilter,
+                            eventNodesHasNewer = state.eventNodesBeforeId != null,
+                            onResetEventWindow = viewModel::resetEventWindow,
                             onLoadMoreEventNodes = viewModel::loadMoreEventNodes,
                             onOpenEvents = viewModel::loadEventNodesIfNeeded,
                             characterNames = state.characterNames,
+                            characterAvatars = state.characterAvatars,
+                            characterSummaries = state.characterSummaries,
+                            onOpenCharacterState = { characterId ->
+                                viewModel.openCharacterState(characterId, state.currentBranchId)
+                            },
                             bookmarks = state.bookmarks,
                             bookmarksLoaded = state.bookmarksLoaded,
                             bookmarksHasMore = state.bookmarksHasMore,
                             bookmarksLoadingMore = state.bookmarksLoadingMore,
                             bookmarksLoadError = state.bookmarksLoadError,
+                            bookmarkQuery = state.bookmarkQuery,
+                            onBookmarkQueryChange = viewModel::updateBookmarkQuery,
+                            bookmarksHasNewer = state.bookmarksBeforeId != null,
+                            onResetBookmarkWindow = viewModel::resetBookmarkWindow,
                             bookmarkBusyIds = state.bookmarkBusyIds,
                             bookmarkLocatingId = state.bookmarkLocatingId,
                             bookmarkPreviews = state.bookmarkPreviews,
+                            bookmarkNoteDrafts = state.bookmarkNoteDrafts,
+                            bookmarkNoteErrors = state.bookmarkNoteErrors,
+                            bookmarkNoteSavingIds = state.bookmarkNoteSavingIds,
                             onJumpToBookmark = { mid ->
                                 if (state.isGenerating) {
                                     showGenerationLockedMessage()
@@ -741,12 +1019,19 @@ fun ChatScreen(
                                 }
                             },
                             onRemoveBookmark = { mid -> viewModel.removeBookmark(mid) },
+                            onBookmarkNoteDraftChange = viewModel::updateBookmarkNoteDraft,
+                            onSaveBookmarkNote = { bookmarkId, note, onResult ->
+                                viewModel.saveBookmarkNote(bookmarkId, note, onResult)
+                            },
                             onOpenBookmarks = viewModel::loadBookmarksIfNeeded,
                             onLoadMoreBookmarks = viewModel::loadMoreBookmarks,
                             onToggleMute = { viewModel.toggleMute(it) },
                             onUpdateTalkativeness = { id, value, onResult ->
                                 viewModel.updateParticipantTalkativeness(id, value, onResult)
                             },
+                            participantTalkativenessSaving = state.participantTalkativenessSaving,
+                            participantMuteSaving = state.participantMuteSaving,
+                            participantRemoving = state.participantRemoving,
                             speakerTurnMode = speakerTurnMode,
                             onSpeakerTurnModeChange = { mode ->
                                 if (viewModel.updateSpeakerTurnMode(mode)) {
@@ -755,7 +1040,7 @@ fun ChatScreen(
                             },
                             onRemoveParticipant = { viewModel.removeParticipant(it) },
                             onAddParticipant = {
-                                participantSubmitError = null
+                                viewModel.clearParticipantAddFeedback()
                                 showAddParticipant = true
                             },
                             onClose = { scope.launch { drawerState.close() } },
@@ -770,6 +1055,8 @@ fun ChatScreen(
                             },
                             onWorldCredentialFieldsDirty = { worldCredentialFieldsDirty = it },
                             worldCredentialFieldsDirty = worldCredentialFieldsDirty,
+                            worldCredentialsSaving = state.worldCredentialsSaving,
+                            worldSettingSaving = state.worldSettingSaving,
                             onToggleEventResolved = { viewModel.toggleEventNodeResolved(it) },
                             eventBusyIds = state.eventBusyIds,
                             eventActionErrors = state.eventActionErrors,
@@ -778,20 +1065,24 @@ fun ChatScreen(
                                 if (state.isGenerating) {
                                     showGenerationLockedMessage()
                                     false
-                                } else viewModel.openMessageInHistoryWithResult(messageId, onResult)
+                                } else viewModel.openMemorySourceInHistory(messageId, onResult)
                             },
                             onAddMemoryCorrection = { content, sourceId ->
-                                correctionEditing = null
+                                correctionEditingId = null
                                 correctionDraft = content
                                 correctionSourceMessageId = sourceId
                                 correctionScopeBranchId = state.currentBranchId
+                                correctionEditorBranchId = state.currentBranchId
+                                correctionSaveError = null
                                 correctionDialogOpen = true
                             },
                             onEditMemoryCorrection = { correction ->
-                                correctionEditing = correction
+                                correctionEditingId = correction.id
                                 correctionDraft = correction.content
                                 correctionSourceMessageId = correction.sourceMessageId
                                 correctionScopeBranchId = correction.branchId
+                                correctionEditorBranchId = state.currentBranchId
+                                correctionSaveError = null
                                 correctionDialogOpen = true
                             },
                             onDeleteMemoryCorrection = { correction ->
@@ -816,17 +1107,40 @@ fun ChatScreen(
                                 viewModel.stopCurrentStorySummary()
                                 scope.launch { snackbarHostState.showSnackbar("已停止整理，稍后可继续") }
                             },
-                            onClearContextMemory = {
+                            onEditMemorySummary = { segment, summary, onResult ->
+                                viewModel.editMemorySummary(segment, summary) { success, message ->
+                                    onResult(success)
+                                    scope.launch { snackbarHostState.showSnackbar(message) }
+                                }
+                            },
+                            onDeleteMemorySummary = { segment ->
+                                viewModel.deleteMemorySummary(segment) { message ->
+                                    scope.launch { snackbarHostState.showSnackbar(message) }
+                                }
+                            },
+                            onClearContextMemory = { branchId ->
                                 if (state.isGenerating) {
                                     showGenerationLockedMessage()
                                 } else {
-                                    viewModel.clearCurrentContextMemory { msg ->
+                                    viewModel.clearCurrentContextMemory(branchId) { msg ->
+                                        scope.launch { snackbarHostState.showSnackbar(msg) }
+                                    }
+                                }
+                            },
+                            contextMemoryClearError = state.contextMemoryClearError,
+                            onRetryClearContextMemory = { branchId ->
+                                if (state.isGenerating) {
+                                    showGenerationLockedMessage()
+                                } else {
+                                    viewModel.clearCurrentContextMemory(branchId) { msg ->
                                         scope.launch { snackbarHostState.showSnackbar(msg) }
                                     }
                                 }
                             },
                             allowSessionThinkMax = state.allowSessionThinkMax,
                             sessionThinkMaxEnabled = state.sessionThinkMaxEnabled,
+                            sessionThinkMaxSaving = state.sessionThinkMaxSaving,
+                            sessionThinkMaxSaveError = state.sessionThinkMaxSaveError,
                             characterForcesThinkMax = state.characterForcesThinkMax,
                             onSessionThinkMax = { enabled ->
                                 viewModel.setSessionThinkMax(enabled) { msg ->
@@ -835,7 +1149,9 @@ fun ChatScreen(
                             }
                         )
                     }
-                    SnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter).padding(12.dp))
+                    if (drawerState.isOpen) {
+                        SnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter).padding(12.dp))
+                    }
                 }
             }
         }
@@ -848,16 +1164,8 @@ fun ChatScreen(
                     TopAppBar(
                         expandedHeight = 52.dp,
                         title = {
-                            Column {
-                                Text(stableSessionTitle.ifBlank { "对话" }, maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
-                                val windowStatus = state.conversationTokenEstimate?.let {
-                                    "当前窗口约 $it Token"
-                                } ?: "当前窗口 ${visibleDisplayLines.size} 条消息"
-                                Text(state.branchNavigationLabel ?: windowStatus,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                            }
+                            Text(stableSessionTitle.ifBlank { "对话" }, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleLarge)
                         },
                         navigationIcon = {
                             IconButton(onClick = {
@@ -868,18 +1176,36 @@ fun ChatScreen(
                             }
                         },
                         actions = {
-                            IconButton(onClick = { dismissKeyboard(); readingMode = !readingMode }) {
-                                Icon(if (readingMode) Icons.Outlined.Edit else Icons.Outlined.MenuBook,
-                                    if (readingMode) "退出阅读模式" else "阅读模式")
-                            }
-                            if (!compactHeader && state.world?.gameplayMode == "小说创作") {
+                            if (readingMode && state.world?.gameplayMode == "小说创作") {
                                 IconButton(onClick = { dismissKeyboard(); showContents = true }) {
                                     Icon(Icons.Outlined.FormatListBulleted, "小说目录")
                                 }
                             }
+                            if (readingMode) IconButton(onClick = { readingMode = false }) {
+                                Icon(Icons.Outlined.Edit, "退出阅读模式")
+                            }
+                        },
+                    )
+                    androidx.compose.animation.AnimatedVisibility(visible = !readingMode,
+                        enter = androidx.compose.animation.fadeIn(), exit = androidx.compose.animation.fadeOut()) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Spacer(Modifier.weight(1f))
+                            TextButton(onClick = { dismissKeyboard(); readingMode = !readingMode },
+                                contentPadding = PaddingValues(horizontal = 6.dp)) {
+                                Icon(if (readingMode) Icons.Outlined.Edit else Icons.Outlined.MenuBook,
+                                    if (readingMode) "退出阅读模式" else "阅读模式")
+                                Spacer(Modifier.width(4.dp))
+                                Text(if (readingMode) "对话" else "阅读模式", style = MaterialTheme.typography.labelSmall)
+                            }
+                            if (!compactHeader && state.world?.gameplayMode == "小说创作") {
+                                TextButton(onClick = { dismissKeyboard(); showContents = true }, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                                    Icon(Icons.Outlined.FormatListBulleted, "小说目录")
+                                    Spacer(Modifier.width(4.dp)); Text("目录", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
                             Box {
                                 BranchSelector(
-                                    expanded = branchMenuExpanded,
+                                    expanded = branchMenuExpanded && state.isReady,
                                     onDismiss = { branchMenuExpanded = false },
                                     branches = listOf("main" to "主线") +
                                         state.branches.map { it.branchId to (it.label.ifEmpty { it.branchId }) },
@@ -902,11 +1228,12 @@ fun ChatScreen(
                                         else showBranchOverview = true
                                     },
                                 )
-                                IconButton(onClick = {
+                                TextButton(onClick = {
                                     dismissKeyboard()
                                     topActionsMenuExpanded = true
-                                }) {
-                                    Icon(Icons.Outlined.MoreVert, contentDescription = "会话菜单")
+                                }, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                                    Icon(Icons.Outlined.MoreHoriz, contentDescription = "会话菜单")
+                                    Spacer(Modifier.width(4.dp)); Text("更多", style = MaterialTheme.typography.labelSmall)
                                 }
                                 DropdownMenu(
                                     expanded = topActionsMenuExpanded,
@@ -993,40 +1320,49 @@ fun ChatScreen(
                                             }
                                         },
                                     )
+                                    DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.Outlined.FileUpload, null) },
+                                        text = { Text("导出主线记录与媒体…") },
+                                        enabled = !exportBusy && !isImportingChat && !state.isGenerating,
+                                        onClick = {
+                                            topActionsMenuExpanded = false
+                                            pendingBundleExportBranch = state.currentBranchId.ifBlank { "main" }
+                                            try { bundleExportLauncher.launch("chat_media_${sessionId}_${System.currentTimeMillis()}.zip") }
+                                            catch (_: Exception) {
+                                                pendingBundleExportBranch = null
+                                                scope.launch { snackbarHostState.showSnackbar("无法打开文件选择器，请重试") }
+                                            }
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        leadingIcon = { Icon(Icons.Outlined.FileDownload, null) },
+                                        text = { Text("导入主线记录与媒体…") },
+                                        enabled = !exportBusy && !isImportingChat && !state.isGenerating,
+                                        onClick = { topActionsMenuExpanded = false; showBundleImportInfo = true },
+                                    )
                                 }
                             }
-                            IconButton(onClick = {
+                            TextButton(onClick = {
                                 dismissKeyboard()
                                 scope.launch {
                                     if (drawerState.isClosed) drawerState.open() else drawerState.close()
                                 }
-                            }) {
-                                Icon(Icons.Outlined.Tune, "会话设置与资料")
+                            }, contentPadding = PaddingValues(horizontal = 6.dp)) {
+                                Icon(Icons.Outlined.Info, "会话设置与资料")
+                                Spacer(Modifier.width(4.dp)); Text("信息", style = MaterialTheme.typography.labelSmall)
                             }
-                        }
-                    )
-                    if (speechActive) {
-                        Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                                    .padding(start = 16.dp, end = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(Icons.Outlined.VolumeUp, contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                                Text(
-                                    state.speechVoiceRequestLabel.ifBlank { "正在准备或播放朗读" },
-                                    modifier = Modifier.weight(1f).padding(start = 10.dp),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                TextButton(onClick = viewModel::stopSpeaking) { Text("停止") }
-                            }
-                        }
                     }
-                    if (isImportingChat) {
+                    }
+                    if (speechActive) {
+                        SpeechPlaybackBar(
+                            snapshot = speechPlayback,
+                            voiceRequestLabel = state.speechVoiceRequestLabel,
+                            onPause = viewModel::pauseSpeaking,
+                            onResume = viewModel::resumeSpeaking,
+                            onStop = viewModel::stopSpeaking,
+                        )
+                    }
+                    if (isImportingChat || bundleProgress != null) {
                         Surface(color = MaterialTheme.colorScheme.tertiaryContainer) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
@@ -1034,15 +1370,20 @@ fun ChatScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    if (importStopping) "正在停止导入…" else "$importStage · $importCount 条",
+                                    bundleProgress?.let {
+                                        if (it.stopping) "正在停止…" else "${it.stage} · ${it.count} 项"
+                                    } ?: if (importStopping) "正在停止导入…" else "$importStage · $importCount 条",
                                     modifier = Modifier.weight(1f),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onTertiaryContainer,
                                 )
-                                TextButton(enabled = !importStopping, onClick = {
-                                    importStopping = true
-                                    importJob?.cancel()
-                                    scope.launch { snackbarHostState.showSnackbar("导入已停止；如恰好完成提交，请在当前故事线核对结果") }
+                                TextButton(enabled = if (bundleProgress != null) bundleProgress?.stopping != true else !importStopping, onClick = {
+                                    if (bundleProgress != null) viewModel.cancelMediaBundle()
+                                    else {
+                                        importStopping = true
+                                        importJob?.cancel()
+                                        scope.launch { snackbarHostState.showSnackbar("导入已停止；如恰好完成提交，请在当前故事线核对结果") }
+                                    }
                                 }) { Text("停止") }
                             }
                         }
@@ -1064,7 +1405,9 @@ fun ChatScreen(
 
                 }
             },
-            snackbarHost = { SnackbarHost(snackbarHostState) },
+            snackbarHost = {
+                if (!drawerState.isOpen) SnackbarHost(snackbarHostState)
+            },
             bottomBar = {
                 if (state.isReady && !state.sessionNotFound && !readingMode) {
                 Surface(
@@ -1072,7 +1415,7 @@ fun ChatScreen(
                         .fillMaxWidth()
                         .navigationBarsPadding()
                         .imePadding(),
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    color = MaterialTheme.colorScheme.surface,
                 ) {
                     Column(Modifier.fillMaxWidth()) {
                         if (!isImeOpen && speakerTurnMode == "manual" && state.participants.isNotEmpty()) {
@@ -1095,19 +1438,6 @@ fun ChatScreen(
                                     )
                                 }
                             }
-                        }
-                        if (shouldShowRoundChoices(isImeOpen, state.roundChoiceOptions, state.isGenerating)) {
-                            val sourceMessageId = state.roundChoiceMessageId
-                            RoundChoicesRow(
-                                choices = state.roundChoiceOptions,
-                                onSelect = { choice ->
-                                    if (sourceMessageId != null) {
-                                        viewModel.handleMessageAction(
-                                            MessageAction.SelectChoice(choice, sourceMessageId),
-                                        )
-                                    }
-                                },
-                            )
                         }
                         state.savedImageNotice?.takeIf { it.branchId == state.currentBranchId }?.let {
                             SavedImageNoticeCard(
@@ -1154,9 +1484,8 @@ fun ChatScreen(
                                     TextButton(
                                         enabled = !state.isLoadingHistory && !state.isGenerating,
                                         onClick = {
-                                            if (!viewModel.returnToLatestMessages()) {
-                                                scope.launch { snackbarHostState.showSnackbar("当前无法加载最新消息，请稍后重试") }
-                                            }
+                                            latestLoadAttempted = false
+                                            latestRequested = true
                                         },
                                     ) { Text(if (state.isLoadingHistory) "加载中…" else "回到最新") }
                                 }
@@ -1170,7 +1499,17 @@ fun ChatScreen(
                                             dismissKeyboard(); showModelPicker = true
                                         }
                                     }
-                                    TextButton(onClick = { dismissKeyboard(); showVoicePicker = true }) { Text("语音") }
+                                    Spacer(Modifier.width(6.dp))
+                                    Surface(onClick = { dismissKeyboard(); showVoicePicker = true },
+                                        shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+                                        color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                                        Row(Modifier.padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Outlined.Mic, "选择语音", Modifier.size(16.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("语音", style = MaterialTheme.typography.labelMedium)
+                                            Icon(Icons.Outlined.KeyboardArrowDown, null, Modifier.size(16.dp))
+                                        }
+                                    }
                                 }
                             },
                             narratorGuidance = state.narratorGuidance,
@@ -1211,20 +1550,13 @@ fun ChatScreen(
                             },
                             pendingAttachmentCount = state.pendingLocalImagePaths.size,
                             onClearPendingAttachments = { viewModel.clearPendingAttachments() },
-                            isListening = speechListening,
+                            isListening = mediaLaunchers.speechListening,
                             isImeOpen = isImeOpen,
                             onVoiceClick = {
                                 if (state.isGenerating) {
                                     showGenerationLockedMessage()
-                                } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                                    PackageManager.PERMISSION_GRANTED
-                                ) {
-                                    val started = tryLaunchSpeechRecognition(context, speechLauncher) {
-                                        scope.launch { snackbarHostState.showSnackbar(UserFacingStrings.speechRecognitionUnavailable()) }
-                                    }
-                                    if (started) speechListening = true
                                 } else {
-                                    micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    mediaLaunchers.launchSpeech()
                                 }
                             },
                             onImageGenClick = {
@@ -1237,7 +1569,7 @@ fun ChatScreen(
                                 else if (isAddingAttachment) {
                                     scope.launch { snackbarHostState.showSnackbar("正在添加图片，请稍候") }
                                 }
-                                else imagePickLauncher.launch("image/*")
+                                else mediaLaunchers.launchImage()
                             },
                             onOpenEmoji = {
                                 dismissKeyboard()
@@ -1290,18 +1622,29 @@ fun ChatScreen(
                         Text("正在加载对话…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
+            } else if (readingMode && readerParagraphs == null) {
+                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        CircularProgressIndicator()
+                        Text("正在准备阅读正文…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
             } else if (state.displayLines.isEmpty() && !state.hasOlderMessages &&
                 !state.hasNewerMessages && state.streamingText.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize().padding(padding),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
                         Text("开始新对话", style = MaterialTheme.typography.titleMedium)
                         Text(
                             "在下方输入消息，开始与角色对话",
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                            style = MaterialTheme.typography.bodyMedium
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                         )
                     }
                 }
@@ -1323,10 +1666,34 @@ fun ChatScreen(
                         dismissKeyboard()
                     }
                 }
-                Box(Modifier.fillMaxSize().padding(padding)) {
+                BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
+                    val showSidebar = maxWidth > 840.dp
+                    if (showSidebar) {
+                        Surface(Modifier.width(300.dp).fillMaxHeight(), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                            LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                item { Text("故事线", style = MaterialTheme.typography.titleSmall) }
+                                items((listOf("main" to "主线") + state.branches.map { it.branchId to it.label.ifBlank { it.branchId } }).distinctBy { it.first }, key = { it.first }) { (id, label) ->
+                                    TextButton(onClick = { viewModel.switchBranch(id) }, enabled = !state.isGenerating && !isImportingChat) {
+                                        Text(label, color = if (id == state.currentBranchId) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                item { HorizontalDivider(); Text("当前窗口", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.titleSmall) }
+                                items(visibleDisplayLines, key = { it.selectedMessage().id }) { line ->
+                                    val message = line.selectedMessage()
+                                    TextButton(onClick = {
+                                        viewModel.openMessageInHistoryWithResult(message.id) { success ->
+                                            if (!success) scope.launch { snackbarHostState.showSnackbar("消息暂时无法定位，请重试") }
+                                        }
+                                    }, enabled = !state.isGenerating && !isImportingChat) {
+                                        Text(ChatMessageTextFormat.visibleBody(message.content.take(256), message.speakerType).take(64), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                            }
+                        }
+                    }
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.align(Alignment.TopCenter).widthIn(max = if (readingMode) 680.dp else androidx.compose.ui.unit.Dp.Infinity).fillMaxSize().nestedScroll(manualScrollConnection),
+                        modifier = Modifier.padding(start = if (showSidebar) 316.dp else 0.dp).align(Alignment.TopCenter).widthIn(max = if (readingMode) 680.dp else androidx.compose.ui.unit.Dp.Infinity).fillMaxSize().nestedScroll(manualScrollConnection).semantics { contentDescription = "对话正文" },
                         contentPadding = PaddingValues(vertical = densityMetrics.listContentVertical)
                     ) {
                     if (state.hasOlderMessages) {
@@ -1366,6 +1733,8 @@ fun ChatScreen(
                                 it.branchId == state.currentBranchId && it.sourceMessageId == msg.id
                             }
                         MessageLineBlock(
+                            readingMode = readingMode,
+                            preparedReaderParagraphs = readerParagraphs?.get(msg.id),
                             line = line,
                             messageAttachments = state.messageAttachments,
                             avatarPath = state.characterAvatars[charId] ?: "",
@@ -1380,7 +1749,7 @@ fun ChatScreen(
                             canContinueReply = canContinueReply,
                             canRegenerate = canRegenerate,
                             isGenerating = state.isGenerating,
-                            isSavingImages = savingGalleryMessageId != null || pendingGalleryPermissionMessageId != null,
+                            isSavingImages = savingGalleryMessageId != null || mediaLaunchers.galleryPermissionPending,
                             senderLabel = meta.senderLabel,
                             showSenderHeader = meta.showSenderHeader,
                             timeText = meta.timeText,
@@ -1388,6 +1757,7 @@ fun ChatScreen(
                                 if (state.isGenerating && action !is MessageAction.Copy &&
                                     action !is MessageAction.ToggleBookmark &&
                                     action !is MessageAction.Speak &&
+                                    action !is MessageAction.PlayVoiceAttachments &&
                                     action !is MessageAction.SaveImages
                                 ) {
                                     showGenerationLockedMessage()
@@ -1401,13 +1771,16 @@ fun ChatScreen(
                                         editFailure = null
                                         editCommitted = false
                                         val target = action.message
+                                            val branchAtStart = state.currentBranchId
                                         if (target.content.length <= ChatMessageTextFormat.ASYNC_BODY_CHAR_THRESHOLD) {
                                             val body = ChatMessageTextFormat.visibleBody(target.content, target.speakerType)
                                             editOriginalBody = body
                                             editContent = body
                                             editingMessage = target
+                                                editRecoveryMessageId = target.id
+                                                editRecoveryBranchId = branchAtStart
+                                                messageEditDraftController.open(sessionId, branchAtStart, target.id)
                                         } else {
-                                            val branchAtStart = state.currentBranchId
                                             editPreparingMessage = target
                                             editPreparationJob = scope.launch {
                                                 try {
@@ -1419,6 +1792,9 @@ fun ChatScreen(
                                                         editOriginalBody = body
                                                         editContent = body
                                                         editingMessage = target
+                                                        editRecoveryMessageId = target.id
+                                                        editRecoveryBranchId = branchAtStart
+                                                        messageEditDraftController.open(sessionId, branchAtStart, target.id)
                                                         editPreparingMessage = null
                                                     }
                                                 } catch (cancelled: CancellationException) {
@@ -1452,7 +1828,7 @@ fun ChatScreen(
                                     }
                                     is MessageAction.SaveImages -> {
                                         when {
-                                            savingGalleryMessageId != null || pendingGalleryPermissionMessageId != null -> {
+                                            savingGalleryMessageId != null || mediaLaunchers.galleryPermissionPending -> {
                                                 scope.launch { snackbarHostState.showSnackbar("图片正在保存，请稍候") }
                                             }
                                             Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
@@ -1460,10 +1836,19 @@ fun ChatScreen(
                                                     context,
                                                     Manifest.permission.WRITE_EXTERNAL_STORAGE,
                                                 ) != PackageManager.PERMISSION_GRANTED -> {
-                                                pendingGalleryPermissionMessageId = action.message.id
-                                                galleryPermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                                                mediaLaunchers.requestGalleryPermission(action.message.id)
                                             }
                                             else -> scope.launch { saveMessageImagesToGallery(action.message.id) }
+                                        }
+                                    }
+                                    is MessageAction.RetryAutoImage -> {
+                                        if (!viewModel.retryAutoCharacterImage(action.message.id)) {
+                                            scope.launch { snackbarHostState.showSnackbar("配图当前无法重试，请稍后再试") }
+                                        }
+                                    }
+                                    is MessageAction.RetryAutoVoice -> {
+                                        if (!viewModel.retryAutoCharacterVoice(action.message.id)) {
+                                            scope.launch { snackbarHostState.showSnackbar("配音当前无法重试，请稍后再试") }
                                         }
                                     }
                                     is MessageAction.ToggleBookmark -> {
@@ -1529,6 +1914,21 @@ fun ChatScreen(
                             StreamingText(text = state.streamingText)
                         }
                     }
+                    if (!readingMode && shouldShowRoundChoices(isImeOpen, state.roundChoiceOptions, state.isGenerating)) {
+                        item(key = "round-choices") {
+                            val sourceMessageId = state.roundChoiceMessageId
+                            RoundChoicesRow(
+                                choices = state.roundChoiceOptions,
+                                onSelect = { choice ->
+                                    if (sourceMessageId != null) {
+                                        viewModel.handleMessageAction(
+                                            MessageAction.SelectChoice(choice, sourceMessageId),
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                    }
                     item(key = "chat-end") { Spacer(Modifier.height(1.dp)) }
                     }
                     if ((!stickToBottom && !followGeneration) || state.hasNewerMessages) {
@@ -1538,16 +1938,13 @@ fun ChatScreen(
                                 latestLoadAttempted = false
                                 latestRequested = true
                             },
-                            modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp).semantics {
+                                // Material3 clears the extended FAB text subtree's semantics.
+                                contentDescription = if (state.isLoadingHistory) "加载中" else "回到最新"
+                            },
                             icon = { Icon(Icons.Outlined.KeyboardArrowDown, null) },
                             text = { Text(if (state.isLoadingHistory) "加载中" else "回到最新") },
                         )
-                    }
-                    if (readingMode) {
-                        FilledTonalIconButton(onClick = { readingMode = false },
-                            modifier = Modifier.align(Alignment.BottomStart).padding(12.dp)) {
-                            Icon(Icons.Outlined.Edit, "继续对话")
-                        }
                     }
 
                 }
@@ -1560,7 +1957,7 @@ fun ChatScreen(
         com.mojing.app.ui.chat.search.SearchScreen(
             sessionId = sessionId, branchId = state.currentBranchId,
             onBack = { showSearchDialog = false },
-            onOpenInChat = viewModel::openMessageInHistoryWithResult,
+            onOpenInChat = viewModel::openMessageInHistoryInBranch,
         )
     }
 
@@ -1574,7 +1971,7 @@ fun ChatScreen(
         )
     }
 
-    if (showAddParticipant) {
+    if (showAddParticipant && state.isReady) {
         AddParticipantDialog(
             loadPage = viewModel::loadAddParticipantPage,
             isSubmitting = isAddingParticipant,
@@ -1584,31 +1981,27 @@ fun ChatScreen(
             },
             onSelect = { characterId ->
                 if (!isAddingParticipant) {
-                    participantSubmitError = null
-                    isAddingParticipant = true
-                    viewModel.addParticipant(characterId) { added ->
-                        isAddingParticipant = false
-                        if (added) showAddParticipant = false
-                        else participantSubmitError = viewModel.state.value.error ?: "添加角色失败，请重试"
-                    }
+                    viewModel.addParticipant(characterId)
                 }
             }
         )
     }
 
-    if (showUnsavedWorldDialog) {
+    if (showUnsavedWorldDialog && state.isReady) {
         AlertDialog(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             onDismissRequest = { showUnsavedWorldDialog = false },
             title = { Text("本场线路未保存") },
             text = {
-                Text("本场线路未保存。你可以回到侧栏保存，也可以放弃本次修改后退出。")
+                Text(if (state.worldCredentialsSaving) "线路正在保存，请稍候再退出。" else "本场线路未保存。你可以回到侧栏保存，也可以放弃本次修改后退出。")
             },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(enabled = !state.worldCredentialsSaving, onClick = {
                     showUnsavedWorldDialog = false
-                    worldCredentialFieldsDirty = false
-                    onBack()
+                    requestExportNavigation {
+                        worldCredentialFieldsDirty = false
+                        onBack()
+                    }
                 }) { Text("退出并放弃") }
             },
             dismissButton = {
@@ -1637,50 +2030,31 @@ fun ChatScreen(
         )
     }
 
-    state.bookmarkReadOnlyMessage?.let { message ->
-        val body = ChatMessageTextFormat.visibleBody(message.content, message.speakerType)
-            .ifBlank { "（这条消息没有文字正文）" }
+    state.bookmarkReadOnlyId?.let { messageId ->
+        val message = state.bookmarkReadOnlyMessage
+        val body = message?.let { ChatMessageTextFormat.visibleBody(it.content, it.speakerType)
+            .ifBlank { "（这条消息没有文字正文）" } }
         val sourceLabel = when {
+            message == null -> null
             message.branchId == state.currentBranchId -> "当前故事线"
             message.branchId == "main" -> "主线"
             else -> state.branches.firstOrNull { it.branchId == message.branchId }?.label ?: "原故事线"
         }
-        AlertDialog(
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-            onDismissRequest = viewModel::closeBookmarkedReadOnlyMessage,
-            title = { Text("收藏原文 · 只读") },
-            text = {
-                Column {
-                    Text(
-                        "来自$sourceLabel。阅读不会切换故事线或采用版本。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        body,
-                        modifier = Modifier.padding(top = 12.dp)
-                            .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.55f).dp)
-                            .verticalScroll(rememberScrollState()),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = viewModel::closeBookmarkedReadOnlyMessage) { Text("关闭") }
-            },
-            dismissButton = {
-                TextButton(onClick = { clipboardManager.setText(AnnotatedString(body)) }) { Text("复制全文") }
-            },
+        BookmarkReadOnlyDialog(
+            sessionId = state.sessionId, readingBranchId = state.bookmarkReadOnlyBranchId.orEmpty(),
+            messageId = messageId, body = body, sourceLabel = sourceLabel,
+            loading = !state.isReady || state.bookmarkReadOnlyLoading, error = state.bookmarkReadOnlyError,
+            onDismiss = viewModel::closeBookmarkedReadOnlyMessage,
+            onRetry = viewModel::retryBookmarkedReadOnlyMessage,
+            onCopy = { body?.let { clipboardManager.setText(AnnotatedString(it)) } },
         )
     }
 
-    if (correctionDialogOpen) {
-        var correctionSaving by remember { mutableStateOf(false) }
-        var correctionSaveError by remember { mutableStateOf<String?>(null) }
+    if (correctionDialogOpen && state.isReady) {
         ChatPromptSheet(
             onDismiss = { correctionDialogOpen = false },
             dismissEnabled = !correctionSaving,
-            title = if (correctionEditing == null) "新增用户纠正" else "编辑用户纠正",
+            title = if (correctionEditingId == null) "新增用户纠正" else "编辑用户纠正",
             editor = {
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(enabled = !correctionSaving,
@@ -1712,22 +2086,16 @@ fun ChatScreen(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = {
                         if (!correctionSaving) {
-                            correctionSaving = true
+                            val requestId = java.util.UUID.randomUUID().toString()
+                            correctionSaveRequestId = requestId
                             correctionSaveError = null
-                            viewModel.saveMemoryCorrection(
-                                correctionId = correctionEditing?.id,
+                            viewModel.saveMemoryCorrectionFromEditor(
+                                requestId = requestId,
+                                correctionId = correctionEditingId,
                                 content = correctionDraft,
                                 branchId = correctionScopeBranchId,
                                 sourceMessageId = correctionSourceMessageId,
-                            ) { success ->
-                                correctionSaving = false
-                                if (success) {
-                                    correctionDialogOpen = false
-                                    correctionEditing = null
-                                    correctionDraft = ""
-                                    correctionSourceMessageId = null
-                                } else correctionSaveError = "保存未完成，填写的内容已保留，请重试。"
-                            }
+                            )
                         }
                     },
                 ) { Text(if (correctionSaving) "正在保存…" else "保存纠正") }
@@ -1771,41 +2139,114 @@ fun ChatScreen(
 
     val messageBeingEdited = editingMessage
     if (messageBeingEdited != null) {
-        val closeEditor = {
+        val editScope = messageEditDraftState.scope
+        val editScopeMatchesVisibleTarget = editScope != null && editScope.sessionId == sessionId &&
+            editScope.branchId == state.currentBranchId &&
+            editScope.messageId == messageBeingEdited.id &&
+            messageBeingEdited.sessionId == sessionId
+        val closeEditor: () -> Unit = {
             editingMessage = null
+            editRecoveryMessageId = null
+            editRecoveryBranchId = null
             editContent = ""
             editOriginalBody = ""
         }
+        val discardEditor: () -> Unit = {
+            if (!messageEditDraftState.dirty && !messageEditDraftState.hasRecoverableDraft) {
+                closeEditor()
+            } else {
+                scope.launch {
+                    if (messageEditDraftController.discard(messageEditDraftState.revision)) {
+                        closeEditor()
+                    }
+                }
+            }
+        }
+        val retainEditor: () -> Unit = {
+            scope.launch {
+                if (messageEditDraftController.dismissRetaining()) closeEditor()
+            }
+        }
         MessageEditDialog(
-            content = editContent,
-            onContentChange = { editContent = it },
+            content = messageEditDraftState.content,
+            onContentChange = messageEditDraftController::update,
             isUser = messageBeingEdited.speakerType == "user",
-            hasChanges = editContent != editOriginalBody,
-            canSave = !state.isGenerating && editContent.trim().let { candidate ->
-                candidate.isNotEmpty() && candidate != editOriginalBody.trim()
-            },
+            hasChanges = messageEditDraftState.dirty,
+            canSave = editScopeMatchesVisibleTarget && !state.isGenerating && !messageEditDraftState.isLoading &&
+                messageEditDraftState.target != null && messageEditDraftState.content.trim().let { candidate ->
+                    candidate.isNotEmpty() && candidate != messageEditDraftState.originalBody.trim()
+                },
             saving = editSaving,
-            failure = editFailure,
+            failure = editFailure ?: messageEditDraftState.error,
             committed = editCommitted,
+            loading = messageEditDraftState.isLoading,
+            sourceMissing = messageEditDraftState.sourceMissing,
+            recoverableDraft = messageEditDraftState.recoverableContent != null,
+            onRetainDraft = retainEditor,
+            onRestoreDraft = messageEditDraftController::restoreRecoveredDraft,
+            canRetryLoad = messageEditDraftState.target == null && !messageEditDraftState.sourceMissing &&
+                (messageEditDraftState.error != null),
+            onRetryLoad = {
+                val scope = messageEditDraftState.scope
+                messageEditDraftController.open(
+                    sessionId = scope?.sessionId ?: sessionId,
+                    branchId = scope?.branchId ?: state.currentBranchId,
+                    messageId = scope?.messageId ?: messageBeingEdited.id,
+                )
+            },
+            onRetryCleanup = {
+                scope.launch {
+                    val cleared = messageEditDraftController.markSaved(messageEditDraftState.revision)
+                    if (cleared) {
+                        editCommitted = false
+                        editFailure = null
+                        closeEditor()
+                    } else {
+                        editFailure = "消息已编辑，但草稿清理失败；请重试。"
+                    }
+                }
+            },
+            onCopyDraft = {
+                clipboardManager.setText(AnnotatedString(messageEditDraftState.content))
+                scope.launch { snackbarHostState.showSnackbar("草稿已复制") }
+            },
             onSave = {
-                if (!editSaving && !editCommitted) {
+                if (!editSaving && !editCommitted && editScopeMatchesVisibleTarget) {
                     editSaving = true
                     editFailure = null
-                    viewModel.editMessage(messageBeingEdited.id, editContent, onFailure = { message, committed ->
-                        if (editingMessage?.id == messageBeingEdited.id) {
+                    scope.launch {
+                        if (!messageEditDraftController.flush()) {
                             editSaving = false
-                            editFailure = message
-                            editCommitted = committed
+                            editFailure = messageEditDraftController.state.value.error
+                                ?: "编辑草稿尚未写入磁盘，请重试"
+                            return@launch
                         }
-                    }) {
-                        if (editingMessage?.id == messageBeingEdited.id) {
-                            editSaving = false
-                            closeEditor()
+                        val expectedRevision = messageEditDraftController.state.value.revision
+                        val content = messageEditDraftController.state.value.content
+                        viewModel.editMessage(messageBeingEdited.id, content, onFailure = { message, committed ->
+                            if (editingMessage?.id == messageBeingEdited.id) {
+                                editSaving = false
+                                editFailure = message
+                                editCommitted = committed
+                            }
+                        }) {
+                            if (editingMessage?.id == messageBeingEdited.id) {
+                                scope.launch {
+                                    val cleared = messageEditDraftController.markSaved(expectedRevision)
+                                    editSaving = false
+                                    if (cleared) {
+                                        closeEditor()
+                                    } else {
+                                        editCommitted = true
+                                        editFailure = "消息已编辑，但草稿清理失败；当前编辑已锁定。"
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             },
-            onDismiss = closeEditor,
+            onDismiss = discardEditor,
         )
     }
 
@@ -1824,15 +2265,15 @@ fun ChatScreen(
         },
     )
 
-    LaunchedEffect(showBranchOverview) {
-        if (showBranchOverview) {
+    LaunchedEffect(showBranchOverview, state.isReady) {
+        if (showBranchOverview && state.isReady) {
             viewModel.loadBranchSourcePreviews()
             try { kotlinx.coroutines.awaitCancellation() }
             finally { viewModel.cancelBranchSourcePreviews() }
         }
     }
     BranchOverviewBottomSheet(
-        visible = showBranchOverview,
+        visible = showBranchOverview && state.isReady,
         branches = state.branches,
         sourcePreviews = state.branchSourcePreviews,
         sourcePreviewsLoading = state.branchSourcePreviewsLoading,
@@ -1848,6 +2289,16 @@ fun ChatScreen(
         },
         onDismiss = { showBranchOverview = false },
     )
+
+    state.characterStatePanel?.let { panel ->
+        CharacterStateSheet(
+            panel = panel,
+            characterName = state.characterNames[panel.characterId].orEmpty(),
+            onDismiss = viewModel::closeCharacterState,
+            onRetry = { viewModel.openCharacterState(panel.characterId, panel.branchId) },
+            onClear = viewModel::clearCharacterState,
+        )
+    }
 
 
 }
@@ -1987,27 +2438,162 @@ internal fun shouldShowCharacterBubbleLine(m: MessageEntity, attachments: List<M
     return ChatMessageTextFormat.forBubbleDisplay(StructuredParser.stripTags(m.content)).isNotBlank()
 }
 
-/** 当前回合选项是输入动作，即使输入法仍打开也必须保持可见。 */
-@Suppress("UNUSED_PARAMETER")
+/** Suggestions are optional transcript content; typing leaves the reading viewport available. */
 internal fun shouldShowRoundChoices(
     isImeOpen: Boolean,
     choices: List<String>,
     isGenerating: Boolean,
-): Boolean = choices.isNotEmpty() && !isGenerating
+): Boolean = choices.isNotEmpty() && !isGenerating && !isImeOpen
+
+internal data class ChatMediaRequest(
+    val sessionId: Long,
+    val branchId: String,
+)
+
+internal data class ChatInputMediaLaunchers(
+    val speechListening: Boolean,
+    val galleryPermissionPending: Boolean,
+    val launchSpeech: () -> Unit,
+    val launchImage: () -> Unit,
+    val requestGalleryPermission: (Long) -> Unit,
+)
+
+@Composable
+internal fun rememberChatInputMediaLaunchers(
+    sessionId: Long,
+    currentBranchId: () -> String,
+    isCurrentBranch: (String) -> Boolean,
+    hasMicrophonePermission: (() -> Boolean)? = null,
+    isSpeechRecognitionAvailable: (() -> Boolean)? = null,
+    onLaunchFailure: (String) -> Unit = {},
+    onSpeechText: (String, String) -> Unit,
+    onSpeechUnavailable: () -> Unit,
+    onMicPermissionDenied: () -> Unit,
+    onImagePicked: (android.net.Uri, ChatMediaRequest) -> Unit,
+    onGalleryPermissionResult: (Long, String, Boolean) -> Unit,
+): ChatInputMediaLaunchers {
+    val context = LocalContext.current
+    val microphonePermissionGranted = hasMicrophonePermission ?: {
+        ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+    }
+    val speechAvailable = isSpeechRecognitionAvailable ?: { NativeSpeechRecognizer.isSpeechRecognitionResolvable(context) }
+    var speechSessionId by rememberSaveable(sessionId) { mutableStateOf(sessionId) }
+    var imageSessionId by rememberSaveable(sessionId) { mutableStateOf(sessionId) }
+    var gallerySessionId by rememberSaveable(sessionId) { mutableStateOf(sessionId) }
+    var speechBranchId by rememberSaveable(sessionId) { mutableStateOf<String?>(null) }
+    var imageBranchId by rememberSaveable(sessionId) { mutableStateOf<String?>(null) }
+    var galleryMessageId by rememberSaveable(sessionId) { mutableStateOf<Long?>(null) }
+    var galleryBranchId by rememberSaveable(sessionId) { mutableStateOf<String?>(null) }
+    var speechListening by rememberSaveable(sessionId) { mutableStateOf(false) }
+
+    lateinit var speechLauncher: ActivityResultLauncher<Intent>
+    val micPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val branchId = speechBranchId
+        if (speechSessionId != sessionId || branchId == null || !isCurrentBranch(branchId)) {
+            speechBranchId = null
+            speechListening = false
+        } else if (granted) {
+            val started = tryLaunchSpeechRecognition(context, speechLauncher, onSpeechUnavailable, speechAvailable)
+            if (started) speechListening = true else speechBranchId = null
+        } else {
+            speechBranchId = null
+            speechListening = false
+            onMicPermissionDenied()
+        }
+    }
+    speechLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val branchId = speechBranchId
+        val accepted = speechSessionId == sessionId && branchId != null && isCurrentBranch(branchId)
+        speechBranchId = null
+        speechListening = false
+        if (accepted && result.resultCode == android.app.Activity.RESULT_OK) {
+            result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+                ?.let { onSpeechText(it, branchId!!) }
+        }
+    }
+    val imageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        val branchId = imageBranchId
+        val accepted = imageSessionId == sessionId && branchId != null && isCurrentBranch(branchId)
+        imageBranchId = null
+        if (accepted && uri != null) onImagePicked(uri, ChatMediaRequest(sessionId, branchId!!))
+    }
+    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val messageId = galleryMessageId
+        val branchId = galleryBranchId
+        val accepted = gallerySessionId == sessionId && messageId != null && branchId != null && isCurrentBranch(branchId)
+        galleryMessageId = null
+        galleryBranchId = null
+        if (accepted) onGalleryPermissionResult(messageId!!, branchId!!, granted)
+    }
+
+    return ChatInputMediaLaunchers(
+        speechListening = speechListening,
+        galleryPermissionPending = galleryMessageId != null,
+        launchSpeech = {
+            if (speechBranchId == null) {
+                val branchId = currentBranchId()
+                speechSessionId = sessionId
+                speechBranchId = branchId
+                if (!speechAvailable()) {
+                    speechBranchId = null
+                    onSpeechUnavailable()
+                } else if (microphonePermissionGranted()) {
+                    val started = tryLaunchSpeechRecognition(context, speechLauncher, onSpeechUnavailable, speechAvailable)
+                    if (started) speechListening = true else speechBranchId = null
+                } else {
+                    try {
+                        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    } catch (_: Exception) {
+                        speechBranchId = null
+                        onLaunchFailure("无法请求麦克风权限，请重试")
+                    }
+                }
+            }
+        },
+        launchImage = {
+            if (imageBranchId == null) {
+                imageSessionId = sessionId
+                imageBranchId = currentBranchId()
+                try {
+                    imageLauncher.launch("image/*")
+                } catch (_: Exception) {
+                    imageBranchId = null
+                    onLaunchFailure("无法打开图片选择器，请重试")
+                }
+            }
+        },
+        requestGalleryPermission = { messageId ->
+            if (galleryMessageId == null) {
+                gallerySessionId = sessionId
+                galleryMessageId = messageId
+                galleryBranchId = currentBranchId()
+                try {
+                    galleryLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                } catch (_: Exception) {
+                    galleryMessageId = null
+                    galleryBranchId = null
+                    onLaunchFailure("无法请求存储权限，请重试")
+                }
+            }
+        },
+    )
+}
 
 private fun tryLaunchSpeechRecognition(
     context: android.content.Context,
     speechLauncher: ActivityResultLauncher<Intent>,
     onUnavailable: () -> Unit,
+    isAvailable: () -> Boolean = { NativeSpeechRecognizer.isSpeechRecognitionResolvable(context) },
 ): Boolean {
-    if (!NativeSpeechRecognizer.isSpeechRecognitionResolvable(context)) {
+    if (!isAvailable()) {
         onUnavailable()
         return false
     }
     return try {
         speechLauncher.launch(NativeSpeechRecognizer.createIntent())
         true
-    } catch (_: ActivityNotFoundException) {
+    } catch (_: Exception) {
         onUnavailable()
         false
     }

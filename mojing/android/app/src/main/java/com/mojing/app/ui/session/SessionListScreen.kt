@@ -3,6 +3,7 @@ package com.mojing.app.ui.session
 import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
 import com.mojing.app.ui.common.MoJingIcon as Icon
 import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Clear
@@ -81,6 +82,8 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import com.mojing.app.data.SessionSetupDraft
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -104,6 +107,18 @@ fun SessionListScreen(
     val branchCardPreviews by viewModel.branchCardPreviews.collectAsStateWithLifecycle()
     val branchPreviewEpoch by viewModel.branchPreviewEpoch.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val pinnedOnly by viewModel.pinnedOnly.collectAsStateWithLifecycle()
+    val recentFirst by viewModel.recentFirst.collectAsStateWithLifecycle()
+    val pinningSessionIds by viewModel.pinningSessionIds.collectAsStateWithLifecycle()
+    val pinFailure by viewModel.pinFailure.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(pinFailure) {
+        val failure = pinFailure ?: return@LaunchedEffect
+        val result = snackbarHostState.showSnackbar(failure.message, actionLabel = "重试", withDismissAction = true)
+        viewModel.clearPinFailure(failure)
+        if (result == SnackbarResult.ActionPerformed) viewModel.setSessionPinned(failure.sessionId, failure.pinned)
+    }
+    var sortMenuOpen by remember { mutableStateOf(false) }
     val generatingSessions by com.mojing.app.ui.chat.RetainedChatSessions.running.collectAsStateWithLifecycle()
     val backgroundFailures by com.mojing.app.ui.chat.RetainedChatSessions.stores.failures.collectAsStateWithLifecycle()
     val pendingGenTasks by viewModel.pendingGenerationTaskCount.collectAsStateWithLifecycle()
@@ -142,6 +157,13 @@ fun SessionListScreen(
             viewModel.clearRenameResult()
         }
     }
+    val setupScope = rememberCoroutineScope()
+    var setupLoadRetry by remember { mutableIntStateOf(0) }
+    var setupDraftLoaded by remember { mutableStateOf(false) }
+    var setupSaveRunning by remember { mutableStateOf(false) }
+    var setupDraftError by remember { mutableStateOf<String?>(null) }
+    var setupWasPersisted by rememberSaveable { mutableStateOf(false) }
+    var alreadyCreatedSetupId by remember { mutableStateOf<Long?>(null) }
     var showCreateDialog by rememberSaveable { mutableStateOf(false) }
     var creationRequestId by rememberSaveable { mutableStateOf("") }
     var newSessionFormEdited by rememberSaveable { mutableStateOf(false) }
@@ -185,7 +207,55 @@ fun SessionListScreen(
     val isSessionHomeContentReady = sessionLibraryState is SessionLibraryUiState.Loaded &&
         (sessions.isNotEmpty() || guideDismissed != null)
 
+    fun setupSnapshot() = SessionSetupDraft(
+        creationRequestId, newSessionTitle, selectedTemplateId, selectedEncId, selectedCharacterIds.toList(),
+        narratorOn, narratorName, choiceOn, maxChoicesStr, antiCheatOn, displayContextLimitStr,
+        maxCharacterIdBeforeCreation, selectNewCharacterOnNextLoad, newSessionFormEdited, initializeCharacterSelection,
+    )
+    LaunchedEffect(setupLoadRetry) {
+        setupDraftError = null
+        try {
+            val draft = viewModel.loadSessionSetupDraft()
+            if (draft != null) {
+                alreadyCreatedSetupId = viewModel.createdSessionForSetup(draft.requestId)
+                creationRequestId = draft.requestId
+                newSessionTitle = draft.title
+                selectedTemplateId = draft.templateId
+                selectedEncId = draft.encyclopediaId
+                selectedCharacterIds = draft.characterIds.toSet()
+                narratorOn = draft.narratorEnabled
+                narratorName = draft.narratorName
+                choiceOn = draft.choiceEnabled
+                maxChoicesStr = draft.maxChoices
+                antiCheatOn = draft.antiCheatEnabled
+                displayContextLimitStr = draft.displayLimit
+                maxCharacterIdBeforeCreation = draft.maxCharacterIdBeforeCreation
+                selectNewCharacterOnNextLoad = draft.selectNewCharacter
+                newSessionFormEdited = draft.formEdited
+                initializeCharacterSelection = draft.initializeCharacterSelection
+                worldSelectionInitialized = true
+                resetDialogFormOnNextLoad = false
+                suspendedNewSessionDraft = true
+                setupWasPersisted = true
+            }
+            setupDraftLoaded = true
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { setupDraftError = "保留的对话设定读取失败，原设定仍保留，请重试" }
+    }
+
     fun openNewSessionDialog(templateId: Long? = null) {
+        if (!setupDraftLoaded || setupSaveRunning) {
+            Toast.makeText(context, setupDraftError ?: "正在读取保留设定，请稍候", Toast.LENGTH_LONG).show()
+            return
+        }
+        alreadyCreatedSetupId?.let { id ->
+            viewModel.clearSessionSetupDraft(creationRequestId) {
+                Toast.makeText(context, "对话已创建，暂存设定清理失败，可重新进入重试", Toast.LENGTH_LONG).show()
+            }
+            suspendedNewSessionDraft = false
+            onSessionClick(id)
+            return
+        }
         if (suspendedNewSessionDraft && templateId == null) {
             suspendedNewSessionDraft = false
             dialogDataReady = false
@@ -210,6 +280,11 @@ fun SessionListScreen(
     }
 
     fun closeNewSessionDialog() {
+        if (setupWasPersisted) viewModel.clearSessionSetupDraft(creationRequestId) {
+            Toast.makeText(context, "暂存设定清理失败，请重新进入故事库重试", Toast.LENGTH_LONG).show()
+        }
+        setupWasPersisted = false
+        alreadyCreatedSetupId = null
         pendingTemplateId = null
         creationRequestId = ""
         newSessionFormEdited = false
@@ -229,6 +304,7 @@ fun SessionListScreen(
 
     fun requestCloseNewSessionDialog() {
         when {
+            setupSaveRunning -> Toast.makeText(context, "正在暂存设定，请稍候", Toast.LENGTH_SHORT).show()
             isCreatingSession -> Toast.makeText(context, "正在创建对话，请稍候", Toast.LENGTH_SHORT).show()
             newSessionFormEdited -> confirmDiscardNewSession = true
             else -> closeNewSessionDialog()
@@ -236,24 +312,36 @@ fun SessionListScreen(
     }
 
     fun suspendNewSessionForCharacters() {
-        if (isCreatingSession) return
-        maxCharacterIdBeforeCreation = latestCharacterId
-        selectNewCharacterOnNextLoad = true
-        suspendedNewSessionDraft = true
-        dialogDataReady = false
-        focusManager.clearFocus()
-        showCreateDialog = false
-        onCharactersClick()
+        if (isCreatingSession || setupSaveRunning || !setupDraftLoaded) return
+        val checkpoint = setupSnapshot().copy(maxCharacterIdBeforeCreation = latestCharacterId, selectNewCharacter = true)
+        setupSaveRunning = true
+        setupScope.launch(kotlinx.coroutines.Dispatchers.Main.immediate) {
+            try {
+                viewModel.saveSessionSetupDraft(checkpoint)
+                setupWasPersisted = true
+                maxCharacterIdBeforeCreation = checkpoint.maxCharacterIdBeforeCreation
+                selectNewCharacterOnNextLoad = true
+                suspendedNewSessionDraft = true
+                dialogDataReady = false
+                focusManager.clearFocus()
+                showCreateDialog = false
+                onCharactersClick()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { Toast.makeText(context, "设定暂存失败，请重试", Toast.LENGTH_LONG).show() }
+            finally { setupSaveRunning = false }
+        }
     }
 
-    LaunchedEffect(newSessionRequestId) {
+    LaunchedEffect(newSessionRequestId, setupDraftLoaded) {
+        if (!setupDraftLoaded) return@LaunchedEffect
         newSessionRequestId?.let { requestId ->
             openNewSessionDialog()
             onNewSessionRequestConsumed(requestId)
         }
     }
 
-    LaunchedEffect(newSessionTemplateId) {
+    LaunchedEffect(newSessionTemplateId, setupDraftLoaded) {
+        if (!setupDraftLoaded) return@LaunchedEffect
         newSessionTemplateId?.let { templateId ->
             if (suspendedNewSessionDraft) replacementTemplateId = templateId
             else openNewSessionDialog(templateId)
@@ -261,8 +349,8 @@ fun SessionListScreen(
         }
     }
 
-    LaunchedEffect(showCreateDialog, dialogLoadRequestVersion) {
-        if (showCreateDialog) {
+    LaunchedEffect(showCreateDialog, dialogLoadRequestVersion, setupDraftLoaded) {
+        if (showCreateDialog && setupDraftLoaded) {
             val requestedTemplateId = pendingTemplateId
             val d = viewModel.newSessionDialogDefaults()
             if (resetDialogFormOnNextLoad) {
@@ -357,7 +445,17 @@ fun SessionListScreen(
         }
     }
 
+    val retainedSetupSnapshot = if (setupWasPersisted && showCreateDialog && dialogDataReady) setupSnapshot() else null
+    LaunchedEffect(retainedSetupSnapshot) {
+        if (retainedSetupSnapshot != null && setupWasPersisted && showCreateDialog && !setupSaveRunning && retainedSetupSnapshot == setupSnapshot()) {
+            try { viewModel.saveSessionSetupDraft(retainedSetupSnapshot) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { Toast.makeText(context, "设定暂存失败，请重试", Toast.LENGTH_LONG).show() }
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                         expandedHeight = 52.dp,
@@ -378,19 +476,19 @@ fun SessionListScreen(
                             }
                         },
                     ) {
-                        TextButton(onClick = onGenerationTasksClick) {
-                            Text("记录", style = MaterialTheme.typography.labelLarge)
+                        IconButton(onClick = onGenerationTasksClick) {
+                            Icon(Icons.Outlined.AutoStories, "生成记录")
                         }
                     }
                     if (isSessionHomeContentReady && sessions.isNotEmpty() && !isImeKeyboardOpen()) {
-                        FilledTonalButton(
+                        Button(
                             onClick = { openNewSessionDialog() },
                             modifier = Modifier.padding(end = 12.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                         ) {
                             Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("新建", style = MaterialTheme.typography.labelLarge)
+                            Text("新建对话", style = MaterialTheme.typography.labelLarge)
                         }
                     }
                 },
@@ -411,13 +509,14 @@ fun SessionListScreen(
                 .fillMaxSize()
                 .imePadding()
         ) {
-            if ((isSessionHomeContentReady && sessions.isNotEmpty()) || searchQuery.isNotBlank()) {
+            if (isSessionHomeContentReady || searchQuery.isNotBlank() || pinnedOnly) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { viewModel.updateSearch(it) },
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 4.dp),
+                        .weight(1f),
                     textStyle = MaterialTheme.typography.bodyMedium,
                     shape = MaterialTheme.shapes.medium,
                     placeholder = { Text("搜索故事标题", style = MaterialTheme.typography.bodyMedium) },
@@ -435,12 +534,25 @@ fun SessionListScreen(
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
                 )
+                TextButton(onClick = onGenerationTasksClick, contentPadding = PaddingValues(horizontal = 4.dp)) {
+                    Text("生成记录", style = MaterialTheme.typography.labelMedium)
+                }
+                }
             }
             if (isSessionHomeContentReady && !hasPublicLlmKey) {
                 StoryLibraryModelHint(
                     onOpenSettings = onSettingsClick,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
+            }
+            setupDraftError?.let { message ->
+                Surface(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                    color = MaterialTheme.colorScheme.errorContainer, shape = MaterialTheme.shapes.medium) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text(message, color = MaterialTheme.colorScheme.onErrorContainer)
+                        TextButton(onClick = { setupLoadRetry += 1 }) { Text("重试读取") }
+                    }
+                }
             }
             if (suspendedNewSessionDraft) {
                 Surface(
@@ -452,7 +564,7 @@ fun SessionListScreen(
                     Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                         Text("新对话设定已保留", style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onSecondaryContainer)
-                        Text("角色准备好后，继续完成这次开局。",
+                        Text(if (alreadyCreatedSetupId != null) "对话已创建，继续进入同一个故事。" else "角色准备好后，继续完成这次开局。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSecondaryContainer)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -460,7 +572,25 @@ fun SessionListScreen(
                                 if (newSessionFormEdited) confirmDiscardNewSession = true
                                 else closeNewSessionDialog()
                             }) { Text("放弃设定") }
-                            TextButton(onClick = { openNewSessionDialog() }) { Text("继续设定") }
+                            TextButton(onClick = { openNewSessionDialog() }) { Text(if (alreadyCreatedSetupId != null) "打开对话" else "继续设定") }
+                        }
+                    }
+                }
+            }
+            if (isSessionHomeContentReady || searchQuery.isNotBlank()) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    com.mojing.app.ui.common.MoJingFilterChip(!pinnedOnly, { viewModel.setLibraryOptions(pinnedOnly = false) }, { Text("全部") })
+                    com.mojing.app.ui.common.MoJingFilterChip(pinnedOnly, { viewModel.setLibraryOptions(pinnedOnly = true) }, { Text("已置顶") })
+                    Spacer(Modifier.weight(1f))
+                    Box {
+                        TextButton(onClick = { sortMenuOpen = true }, contentPadding = PaddingValues(horizontal = 4.dp)) {
+                            Text(if (recentFirst) "最近更新" else "置顶优先", style = MaterialTheme.typography.labelMedium)
+                            Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp))
+                        }
+                        DropdownMenu(expanded = sortMenuOpen, onDismissRequest = { sortMenuOpen = false }) {
+                            DropdownMenuItem(text = { Text("最近更新") }, onClick = { sortMenuOpen = false; viewModel.setLibraryOptions(recentFirst = true) })
+                            DropdownMenuItem(text = { Text("置顶优先") }, onClick = { sortMenuOpen = false; viewModel.setLibraryOptions(recentFirst = false) })
                         }
                     }
                 }
@@ -541,9 +671,13 @@ fun SessionListScreen(
                         Text("重试")
                     }
                 }
-            } else if (sessions.isEmpty() && searchQuery.isNotBlank()) {
+            } else if (sessions.isEmpty() && (searchQuery.isNotBlank() || pinnedOnly)) {
                 Box(Modifier.weight(1f).fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                    Text(UserFacingStrings.sessionSearchNoMatch(), style = MaterialTheme.typography.bodyLarge,
+                    Text(when {
+                        pinnedOnly && searchQuery.isBlank() -> "还没有置顶故事"
+                        pinnedOnly -> "没有符合搜索的置顶故事"
+                        else -> UserFacingStrings.sessionSearchNoMatch()
+                    }, style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else if (sessions.isEmpty() && loadedLibrary?.pageIndex == 0) {
@@ -612,16 +746,9 @@ fun SessionListScreen(
                         .weight(1f)
                         .fillMaxWidth(),
                     state = listState,
-                    contentPadding = PaddingValues(bottom = 96.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    item(key = "story-library-heading") {
-                        StoryLibrarySectionHeading(
-                            title = if (searchQuery.isBlank()) "最近阅读" else "搜索结果",
-                            count = sessions.size,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                        )
-                    }
                     itemsIndexed(sessions, key = { _, r -> r.session.id }) { _, row ->
                         val rememberedBranchId = lastChatBranches?.get(row.session.id) ?: if (lastChatBranches == null) null else "main"
                         val branchPreview = branchCardPreviews[row.session.id]?.takeIf {
@@ -646,10 +773,12 @@ fun SessionListScreen(
                             SwipeRevealListRow(
                                 swipeEnabled = true,
                                 isPinned = row.session.pinnedAt > 0,
+                                pinEnabled = row.session.id !in pinningSessionIds,
                                 onPinToggle = { viewModel.setSessionPinned(row.session.id, row.session.pinnedAt == 0L) },
                                 onDelete = { viewModel.clearDeletionResult(); deleteTargetId = row.session.id; deleteTargetTitle = row.session.title },
                                 onClick = { onSessionClick(row.session.id) },
                                 onRename = openRename,
+                                showMenuButton = true,
                             ) {
                                 SessionListRowInner(row = row, isGenerating = isGenerating,
                                     rememberedBranchId = rememberedBranchId, branchPreview = branchPreview,
@@ -714,10 +843,11 @@ fun SessionListScreen(
             selectedTemplateId != null && selectedTemplate?.id != selectedTemplateId ||
                 selectedEncId != null && selectedEncyclopedia?.id != selectedEncId
             )
-        val currentCreating by rememberUpdatedState(isCreatingSession)
+        val currentCreating by rememberUpdatedState(isCreatingSession || setupSaveRunning)
         val currentFormEdited by rememberUpdatedState(newSessionFormEdited)
         ModalBottomSheet(
         scrimColor = androidx.compose.material3.MaterialTheme.colorScheme.scrim.copy(alpha = 0.42f),
+            containerColor = MaterialTheme.colorScheme.surface,
             sheetState = rememberModalBottomSheetState(
                 skipPartiallyExpanded = true,
                 confirmValueChange = { next ->
@@ -732,10 +862,12 @@ fun SessionListScreen(
         ) {
             val newSessionScroll = rememberScrollState()
             val newSessionImeOpen = isImeKeyboardOpen()
+            val compactNewSession = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 360 ||
+                androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.2f
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 640.dp)
+                    .heightIn(max = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.9f).dp - 64.dp)
                     .imePadding(),
             ) {
                 Row(
@@ -743,22 +875,10 @@ fun SessionListScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    if (!newSessionImeOpen) Surface(
-                        modifier = Modifier.size(42.dp),
-                        shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Outlined.AutoStories, contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer)
-                        }
-                    }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text("新建对话", style = MaterialTheme.typography.titleLarge)
-                        if (!newSessionImeOpen) Text("设定这一幕，然后开始书写", style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    IconButton(onClick = { requestCloseNewSessionDialog() }, enabled = !isCreatingSession) {
+                    IconButton(onClick = { requestCloseNewSessionDialog() }, enabled = !setupSaveRunning && !isCreatingSession) {
                         Icon(Icons.Outlined.Close, contentDescription = "关闭新建对话")
                     }
                 }
@@ -770,8 +890,6 @@ fun SessionListScreen(
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                Text("故事信息", style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary)
                 if (isCreatingSession) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     Text(
@@ -804,7 +922,7 @@ fun SessionListScreen(
                                 resetDialogFormOnNextLoad = false
                                 dialogLoadRequestVersion += 1
                             },
-                            enabled = !isCreatingSession,
+                            enabled = !setupSaveRunning && !isCreatingSession,
                         ) { Text("重试") }
                     }
                 }
@@ -813,28 +931,18 @@ fun SessionListScreen(
                     onValueChange = { newSessionTitle = it; newSessionFormEdited = true },
                     label = { Text("标题") },
                     singleLine = true,
-                    enabled = !isCreatingSession,
+                    enabled = !setupSaveRunning && !isCreatingSession,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                OutlinedButton(onClick = { worldPickerOpen = true },
-                    enabled = !isCreatingSession && dialogDataReady,
-                    modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text("世界", style = MaterialTheme.typography.labelSmall)
-                        Text(selectedEncyclopedia?.name
-                            ?: selectedTemplate?.label ?: if (selectedWorldMissing) "原选世界已不存在" else "不绑定世界",
-                            maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    }
-                    Icon(Icons.Outlined.ExpandMore, contentDescription = "选择世界")
-                }
+                com.mojing.app.ui.common.MoJingOptionRow("选择世界（可选）",
+                    selectedEncyclopedia?.name ?: selectedTemplate?.label ?: if (selectedWorldMissing) "原选世界已不存在" else "选择世界",
+                    { worldPickerOpen = true }, enabled = !setupSaveRunning && !isCreatingSession && dialogDataReady)
                 if (selectedWorldMissing) Text(
                     "原选世界已不存在，请重新选择后创建",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
 
-                Text("参与角色", style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary)
                 if (characterSummaryLoading) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     Text("正在读取可用角色…", style = MaterialTheme.typography.bodySmall,
@@ -855,26 +963,16 @@ fun SessionListScreen(
                     )
                     TextButton(
                         onClick = { suspendNewSessionForCharacters() },
-                        enabled = !isCreatingSession && !isLoadingDialogData,
+                        enabled = !setupSaveRunning && !isCreatingSession && !isLoadingDialogData && !setupSaveRunning,
                     ) {
                         Icon(Icons.Outlined.PersonAdd, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
                         Text("去创建角色")
                     }
                 } else if (characterSummaryReady) {
-                    Text(
-                        "百科提供世界设定；未绑定百科的角色也可参与。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    OutlinedButton(onClick = { characterPickerOpen = true },
-                        enabled = !isCreatingSession && !isLoadingDialogData,
-                        modifier = Modifier.fillMaxWidth()) {
-                        Text(if (selectedCharacterIds.isEmpty()) "选择参与角色"
-                            else "${selectedCharacterIds.size}/$compatibleCharacterCount 人参与",
-                            Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Icon(Icons.Outlined.ExpandMore, contentDescription = "选择参与角色")
-                    }
+                    com.mojing.app.ui.common.MoJingOptionRow("参与角色（可选）",
+                        if (selectedCharacterIds.isEmpty()) "选择角色" else "${selectedCharacterIds.size} 人参与",
+                        { characterPickerOpen = true }, enabled = !setupSaveRunning && !isCreatingSession && !isLoadingDialogData)
                 }
                 HorizontalDivider(Modifier.padding(top = 2.dp))
                 TextButton(
@@ -897,25 +995,25 @@ fun SessionListScreen(
                 }
                 if (showConversationOptions) {
                     Surface(Modifier.fillMaxWidth(),
-                        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
                         color = MaterialTheme.colorScheme.surfaceContainerLow) {
                     Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         MoJingToggleRow("启用旁白", "回复中加入场景叙述", narratorOn,
-                            { narratorOn = it; newSessionFormEdited = true }, enabled = !isCreatingSession)
+                            { narratorOn = it; newSessionFormEdited = true }, enabled = !setupSaveRunning && !isCreatingSession)
                         if (narratorOn) {
                             OutlinedTextField(
                                 value = narratorName,
                                 onValueChange = { narratorName = it; newSessionFormEdited = true },
                                 label = { Text("旁白名称") },
                                 singleLine = true,
-                                enabled = !isCreatingSession,
+                                enabled = !setupSaveRunning && !isCreatingSession,
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         MoJingToggleRow("生成剧情选项", "回复后给出可选行动", choiceOn,
-                            { choiceOn = it; newSessionFormEdited = true }, enabled = !isCreatingSession)
+                            { choiceOn = it; newSessionFormEdited = true }, enabled = !setupSaveRunning && !isCreatingSession)
                         if (choiceOn) {
                             OutlinedTextField(
                                 value = maxChoicesStr,
@@ -928,14 +1026,14 @@ fun SessionListScreen(
                                 },
                                 label = { Text("每轮最多选项") },
                                 singleLine = true,
-                                enabled = !isCreatingSession,
+                                enabled = !setupSaveRunning && !isCreatingSession,
                                 keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         MoJingToggleRow("保持世界规则", "提醒角色遵守当前世界的限制与设定",
-                            antiCheatOn, { antiCheatOn = it; newSessionFormEdited = true }, enabled = !isCreatingSession)
+                            antiCheatOn, { antiCheatOn = it; newSessionFormEdited = true }, enabled = !setupSaveRunning && !isCreatingSession)
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         OutlinedTextField(
                             value = displayContextLimitStr,
@@ -951,7 +1049,7 @@ fun SessionListScreen(
                             },
                             suffix = { Text("tokens") },
                             singleLine = true,
-                            enabled = !isCreatingSession,
+                            enabled = !setupSaveRunning && !isCreatingSession,
                             keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -988,6 +1086,7 @@ fun SessionListScreen(
                             displayContextTokenLimit = displayCap,
                             participantCharacterIds = selectedCharacterIds.toList(),
                             creationRequestId = creationRequestId.ifBlank { UUID.randomUUID().toString().also { creationRequestId = it } },
+                            setupDraft = if (setupWasPersisted) setupSnapshot() else null,
                             onCreated = { id ->
                                 Toast.makeText(context, UserFacingStrings.sessionCreated(), Toast.LENGTH_SHORT).show()
                                 closeNewSessionDialog()
@@ -1003,13 +1102,14 @@ fun SessionListScreen(
                         )
                     },
                     modifier = Modifier.weight(1f),
-                    enabled = !isCreatingSession && dialogDataReady && characterSummaryReady && !selectedWorldMissing &&
+                    enabled = !setupSaveRunning && !isCreatingSession && dialogDataReady && characterSummaryReady && !selectedWorldMissing &&
                         compatibleCharacterCount > 0 && selectedCharacterIds.isNotEmpty(),
-                ) { Text(if (isCreatingSession) "创建中…" else if (newSessionImeOpen) "开始对话" else "创建并开始") }
+                ) { Text(if (isCreatingSession) "创建中…" else if (newSessionImeOpen || compactNewSession) "开始对话" else "创建并开始") }
                 OutlinedButton(
                     onClick = {
                         viewModel.createNewSession(
                             creationRequestId = creationRequestId.ifBlank { UUID.randomUUID().toString().also { creationRequestId = it } },
+                            setupDraft = if (setupWasPersisted) setupSnapshot() else null,
                             onCreated = { id ->
                                 Toast.makeText(context, UserFacingStrings.blankSessionCreated(), Toast.LENGTH_SHORT).show()
                                 closeNewSessionDialog()
@@ -1025,7 +1125,7 @@ fun SessionListScreen(
                         )
                     },
                     modifier = Modifier.weight(1f),
-                    enabled = !isCreatingSession && !isLoadingDialogData,
+                    enabled = !setupSaveRunning && !isCreatingSession && !isLoadingDialogData,
                 ) { Text("空白对话") }
                 }
             }
@@ -1156,10 +1256,9 @@ fun SessionListRowInner(
     val previewLabel = if (showingMain) "主线" else branchPreview?.label?.takeIf(String::isNotBlank) ?: "上次故事线"
     val meta = "主线 ${row.messageCount} 条 · ${row.participantCount} 角色"
     val colors = MaterialTheme.colorScheme
-    Column(
-        Modifier.fillMaxWidth().padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        com.mojing.app.ui.common.MoJingCoverImage(row.coverImagePath, Modifier.size(56.dp, 72.dp), "故事关联封面")
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(session.title.ifBlank { "未命名对话" },
             style = MaterialTheme.typography.titleMedium,
             color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1197,10 +1296,7 @@ fun SessionListRowInner(
             Text("$meta · ${dateTimeFormat.format(Date(session.updatedAt))}",
                 Modifier.weight(1f), style = MaterialTheme.typography.labelSmall,
                 color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (onRename != null) TextButton(onClick = onRename,
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
-                Text("重命名", style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
-            }
+        }
         }
     }
 }

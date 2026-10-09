@@ -40,7 +40,16 @@ class LlmRetry @Inject constructor(
         maxTokens: Int = 4000,
         maxRetries: Int = 3,
         jsonOutput: Boolean = false,
+        contextWindow: Int? = null,
     ): String {
+        // Independent maintenance calls protect their entire final input, with no history pruning.
+        if (contextWindow != null) {
+            require(contextWindow > 0 && maxTokens > 0)
+            val estimate = withContext(kotlinx.coroutines.Dispatchers.Default) { RequestContextBudget.estimateInput(messages) }
+            if (estimate + maxTokens > contextWindow) {
+                throw RequestContextLimitException(RequestContextBudget.Result.TooLarge(estimate, maxTokens, contextWindow))
+            }
+        }
         val prompt = messages.joinToString("\n") { it.content }
         var last: Exception? = null
         repeat(maxRetries.coerceAtLeast(1)) { attempt ->
@@ -211,3 +220,6 @@ class LlmRetry @Inject constructor(
         private const val CANCEL_RECORD_TIMEOUT_MS = 2_000L
     }
 }
+
+/** Rejected before network/billing/retries; existing maintenance owners retain their prior state. */
+class RequestContextLimitException(val limit: RequestContextBudget.Result.TooLarge) : IllegalStateException(limit.message())
