@@ -1,6 +1,8 @@
 # 原标准修正批次文件清单
 
-本批仅源码/文档；多数页面文件只迁移Outlined图标和共享控件导入，业务回调未重写。以下文件数量不证明视觉完成；检查状态见 ANDROID_VISUAL_STANDARD_MAPPING.md。
+2026-10-02：当前本轮的整页修正与证据见 [验收计划](ANDROID_PROTOTYPE_REBUILD_PLAN.md)。本轮重点涉及ChatScreen/InputBar/MessageBubble/ReaderMessage/ChatDrawer、角色编辑/列表、WorldOverviewHeader/条目编辑、StorySimulation、SettingsSections/ModelPlatformsPanel、MoJingOptionRow/SegmentedTabs/LongTextField、导航动效及MainActivity；CharacterDao只增加有界人设摘要投影，未改schema。完整App采图与JVM验证、本地Release已完成；尚未提交或公开发布。下方是更早共享控件批次文件清单，不能用文件数量证明视觉接受。
+
+历史清单：早期多数文件只迁移Outlined图标和共享控件导入；当前页面重排及运行结果以上方验收计划为准。
 
 - `docs/PROJECT_STATE.md`
 - `docs/UI_COVERAGE.md`

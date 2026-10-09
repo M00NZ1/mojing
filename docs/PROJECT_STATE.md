@@ -1,4 +1,677 @@
-## 1.2.2 发布验证（2026-10-01）
+> 2026-10-09 最终当前APK整体页面复核完成：批准24屏及相关动作在API35深浅常规/深浅320dp150%四配置、20流程/180系统图通过并人工复核；加C1五流程95图，共25个fresh UUID各自独立回滚精确。生产APK全程同一SHA256 `26698b4e`。1522 JVM、90 Python、Debug/Test构建、真实C1 Room与既有27→28独立数据库迁移验证通过。实现与此模拟器矩阵完成，不扩展为全设备终验；D01继续延后，真机/旧API/供应商/有图裁切/IME全矩阵/SIGKILL/百万历史仍未覆盖。证据 `outputs/android-current-apk-final-20261009/REVIEW.md`；更新日志 `docs/CHANGELOG.md` 记录本轮用户可见变化，版本不改。
+
+> 2026-10-09 C1世界库筛选、排序与实际统计已完成：全部/置顶与三种稳定排序在SQL游标LIMIT前作用于全集合；仅当前页聚合条目/人物/地点/组织，不读正文，不使用旧缓存总数。原owner有界保存查询与成对游标，重建/编辑返回保留页，置顶变化后空深页回退。1522 JVM、90 Python、真实Room查询及既有27→28隔离迁移验证通过；最终同一生产APK的浅常规、深浅320dp150%、深浅480×320dp五流程与95系统图已审，五UUID独立回滚精确。小屏统计按标准单行省略，空态动作可滚动触达。见 `outputs/android-world-library-filter-20261009/REVIEW.md`。当前APK整套页面复核继续；D01延后，极速同帧Back/真机/供应商/SIGKILL/百万历史不外推。
+
+> 2026-10-09 当前 APK 24 屏整体复核已完成四组 API35 模拟器截图矩阵：深浅常规与深浅320dp/150%，20组流程/180系统整图，20个 fresh UUID 独立回滚通过；生产 APK 未变。新增四个 native 验收类，Debug/Test 构建通过。系统 screencap 为视觉依据，UIAutomation 原图也保留。C1 缺可见筛选/排序和真实条目统计，下一批沿原24+1/keyset查询补齐；尚未宣布24屏整体终验。见 `outputs/android-full-audit-20261009/REVIEW.md`。D01延后；真机、供应商、有图裁切、SIGKILL与百万历史未外推。
+
+> 2026-10-09 D5月份语义已闭环：费用/Token/占比按loadedMonth标实际年月，空月与首次读取失败分离；原SavedStateHandle只保存月份身份，新VM重查原SQL。平台/模型明确全部历史，币种/40条成对分页不改。20定向JVM、最终Debug/Test、6隔离组件及同APK浅常规/深浅320dp150%三组30整图通过；8UUID各自回滚全Secure/billing/UI/34表等精确。见 `outputs/android-usage-month-20261009/REVIEW.md`。继续当前APK24屏整体复核；D01延后，Activity重建/新Handle不外推SIGKILL、真机或百万历史。
+
+> 2026-10-09 C4真实来源筛选已闭环：全部/独立/关联按entryId在SQL游标LIMIT25前筛选，24+1、独立读取取消/revision和原SavedState有界pair恢复；Back/tab/重建、失败同pair retry、受控来源变化后空深页回退。72定向JVM/1隔离Room、最终Debug/Test、同APK深浅320dp150%与深浅480×320dp四组82整图；10UUID独立rollback全Secure/UI/34表等精确。见 `outputs/android-timeline-source-20261009/REVIEW.md`。继续D5所选月份语义和24屏整体，D01延后；真机/极速同帧Back/SIGKILL/百万历史/pin重建未外推。
+
+> 2026-10-09 C4极短窗口已由480×320dp完整App复现并修复：实际剩余高度低于320dp时标题/添加/错误/分页随原有界LazyColumn滚动，正常高度保持固定；事件/48dp更多/详情/第2页重建/确认取消/新增放弃可达。68定向JVM、最终Debug/Test、三组API35各11步/33整图及4UUID独立rollback全Secure/UI/34表精确，APK一致。见 `outputs/android-timeline-short-20261009/REVIEW.md`。继续真实来源SQL筛选与24屏整体；D01延后，真机/横屏150%/SIGKILL/百万历史未外推。
+
+> 2026-10-09 C4每事件显式更多已接既有共享菜单：48dp、查看事件/关联条目编辑、原详情/草稿/删除确认owner。68定向JVM、Debug/Test、相同APK三组API35各25步/75整图及7UUID独立rollback全Secure/UI/34表精确。见 `outputs/android-timeline-more-20261009/REVIEW.md`。继续真实来源SQL筛选/极短横屏与24屏整体；D01延后，不外推真机/SIGKILL/百万历史/pin重建。
+
+> 2026-10-09 C4时间线第2页详情重建丢弹层/回首页已由完整App确认并修复：saveable仅事件ID，既有草稿与最多128页pair游标恢复；关闭/保存/删除确认/linked Back/新增放弃保持真实页，加载失败禁旧写入，长标题保留置顶星宽度。68定向JVM、Debug/Test与三组API35各20步/60整图通过，7UUID独立rollback全Secure/UI/34表精确/APK一致。见 `outputs/android-timeline-recreate-20261009/REVIEW.md`。继续C4显式更多/真实筛选与24屏整体；D01延后，真机/SIGKILL/百万历史/置顶重建未外推。
+
+> 2026-10-09 C5世界范围实体类型筛选已闭环：任一端人物/组织/地点匹配的SQL条件先于ID游标LIMIT25，保持24+1/48轻projection、独立type/revision与失败同cursor重试；Back/tab/重建和编辑类型后空深页回退。63定向JVM/1实际Room SQL、最终Debug/Test、API35浅常规与深浅320dp150%三组各18步/54整图审查、全Secure/UI/34表独立UUIDrollback与APK一致。见 `outputs/android-relation-type-filter-20261009/REVIEW.md`。继续C4/24屏整体，D01延后；真机/百万历史/进程SIGKILL未外推。
+
+> 2026-10-09 C5下方关系卡两端直接打开已闭环：沿48轻projection/stableID/原路由，真实封面/长名/类型/起终点48dp动作；缺投影不可用，保留12图节点与24关系页。56定向JVM/Debug/Test、18页外端点三组API35浅常规及深浅320dp150%各13步/39整图通过，3freshUUID独立rollback全Secure/UI/34表等精确、APK一致。见 `outputs/android-relation-endpoint-actions-20261009/REVIEW.md`。继续实体类型全世界有界筛选，不能本页filter；C4/24屏整体仍开放，D01延后。
+
+> 2026-10-09 C6沉积显式来源与单项确认已完成：沿原来源预览/确认owner，草稿决策后一次打开、关闭/Back/重建不重开；确认刷新保留当前列表，读取期间和失败时禁用旧状态写入。选中末端tab在320dp大字完整露出。90定向JVM、Debug/Test、API35浅色常规/深浅320dp150%三组各27步与81整图通过；12UUID独立回滚，最终完整Secure/UI偏好与34表/草稿/媒体精确，APK一致。证据 `outputs/android-sediment-source-actions-20261009/REVIEW.md`。继续C5超过12端点直接打开；现无类型筛选owner，另审有界查询。D01延后，不外推真机/百万历史/24屏终验。
+
+> 2026-10-09 Activity重建系统栏灰底/暗图标已由真实窗口复现：API35 framework root重复消费Insets；原SystemBarAppearance关闭直属平台root消费并清系统padding。Debug/Test、浅色密/疏与深色320dp150%、两次重建/正文Back/正式浅深主题切换通过，39整图已审、9UUID独立回滚/APK一致。证据 `outputs/android-system-bars-recreate-20261009/REVIEW.md`。继续C6显式来源/单项确认；D01延后，真机/旧API/全部主题/24屏终验未覆盖。
+
+> 2026-10-09 C5关系端点当前页轻量封面projection、同源选中卡/完整名称与48dp动作、小屏12节点去重叠已完成；真实Back丢选择改saveable ID。54定向VM/1隔离SQLite、最终Debug/Test、API35浅色密图/320dp150%深色密图/5节点各7步通过、21整图已审（重建系统栏待修），全部UUID独立rollback/APK一致。证据 `outputs/android-relation-covers-20261009/REVIEW.md`。下一优先复核浅色重建系统栏，再审C6显式来源/确认；C5超12节点/类型筛选仍待审，D01延后，真机/供应商/百万历史/24屏终验未覆盖。
+
+> 2026-10-09 C3条目真实关联闭环已完成：正文后24条有界关系、既有图管理当前端点预选、真实对端及Back、dirty取消/保留/放弃；alias沿用同一metaJson基本资料。34JVM/7SQL、Debug/Test、API35浅色与320dp150%各13步及26整图通过，全部UUID独立rollback与APK host/device一致。证据 `outputs/android-entry-relations-20261009/REVIEW.md`。下一C5关系图页外端点封面与动作语义；D01延后，真机/供应商/百万历史/24屏终验未覆盖。
+
+> 2026-10-09 世界库短横屏可达性已修复：实际短内容视口把搜索/可恢复错误/模型及任务提示/分页随原有界列表或网格滚动，48dp与主导航保留。Debug/Test成功；480×320dp浅色列表/网格及320dp150%深色各11步、33最终整图通过；12UUID独立rollback，34表/配置/草稿/媒体/偏好精确，APK host/device相同。证据 `outputs/android-world-library-short-20261009/REVIEW.md`。下一C3真实关联浏览/既有管理入口；alias已存在metaJson，不新增schema/假别名。D01延后，真机/供应商/百万历史/24屏终验未覆盖。
+
+> 2026-10-09 C2世界详情直接世界设置已接现有正式路由，48dp、短屏与大字可达；保存后详情新值，新增保存成功导航结果刷新既有库24条第一页，保留搜索。Debug/Test通过；浅色/320dp150%各12步与短横屏详情4步、28整图已看；7UUID独立rollback和34表/配置/草稿/媒体/偏好精确。证据 `outputs/android-world-detail-settings-20261009/REVIEW.md`。主动发现480x320dp世界库header占满列表，下一批优先修复；短详情通过不代表库通过。D01延后，不外推真机/供应商/百万历史/24屏終验。
+
+> 2026-10-09 C1当前增量：世界库显式本地导入/导出入口，复用已有文件launcher/导航guard及创建/导入/导出busy。最终Debug/Test、API35浅色常规与深色320dp/150%完整App通过；真实选择器取消保持搜索/世界、操作恢复，18完整系统图已看。四UUID独立回滚，34表/配置/草稿/媒体/偏好精确。见 `outputs/android-world-library-actions-20261009/REVIEW.md`。真机/供应商/实际格式/24屏终验未覆盖，D01延后；下一批C2详情世界设置入口。
+
+> 2026-10-09 B6当前增量：角色详情固定编辑/开始对话/收藏，复用现有动作owner并裁剪正文视口；9项VM测试、最终Debug/Test、API35浅色常规及深色320dp/150%原生流程通过，20张最终系统图核对。新会话消息0，全部UUID夹具独立回滚且34表/配置/草稿/媒体/偏好恢复。仅模拟器证据，真机/供应商/24屏终验未覆盖；D01延后。详见 `outputs/android-character-detail-actions-20261009/REVIEW.md`。下一批C1世界库显式导入/导出入口。
+
+> 2026-10-09 B4角色库固定新建/导入已补齐，沿原创建与文件选择owner，忙碌互斥、取消保留搜索、编辑返回与IME收起通过。4定向JVM、Debug/Test、4新UUID完整App及独立rollback通过；28全图复核并修正320dp/150%按钮换行，34表等精确恢复。见 `outputs/android-character-library-actions-20261009/REVIEW.md`；D01暂缓，不外推真机/全部格式导入/百万历史/完整视觉接受。
+
+> 2026-10-09 当前确认：A4阅读旧章时，主线/真正继承子线从无搜索目录修改窗口外最新源章通过；40条目录entry/latest投影更新，旧章72条窗口和段内位置保持，改名后/Activity新VM两次正文像素精确，明确latest显示新名称。生产未改，测试包构建、2UUID独立回滚、24全图复核；见 `outputs/android-reader-outside-rename-20261009/REVIEW.md`。D01暂缓；不外推真机/SIGKILL/百万历史/整体视觉验收。
+
+> 2026-10-09 当前确认：A4章节正式UI改名在主线及真正父继承子线通过，main源章首段/metadata/索引更新、正文保持、目录旧词移除/新词命中，有界72条阅读窗口和Activity新VM重建像素精确。生产未改，4定向JVM、测试包构建、3UUID独立回滚及39全图复核；见 `outputs/android-reader-rename-20261009/REVIEW.md`。D01暂缓；不外推真机/SIGKILL/百万历史/整体视觉验收。
+
+> 2026-10-09 当前确认：A4命名小说标题复用22/30/SemiBold，首段与章节metadata匹配且只用于已知小说旁白；真正父继承220章在子线目录搜索、原文定位、段内重建、最新与系统Back通过。6定向JVM、1隔离样式组件、Debug/Test通过；6UUID独立回滚、36全图已看、两组正文像素精确。见 `outputs/android-reader-named-inheritance-20261009/REVIEW.md`。D01暂缓；真机/SIGKILL/百万历史/完整视觉未验收。
+
+> 2026-10-09 当前确认：小说阅读顶栏复用原目录入口；正式小说旁白章节阅读去聊天徽标、目录180字投影去协议标签。主/子第30章未加载原文定位、段内Activity重建、最新与关闭重建通过；23定向JVM、3隔离目录状态组件、Debug/Test通过，32全图已查看。4UUID独立回滚、两组正文像素精确；见 `outputs/android-reader-contents-20261009/REVIEW.md`。D01仍暂缓；命名标题与继承章节接续审计，真机/SIGKILL/百万历史/完整视觉未验收。
+
+> 2026-10-09 当前确认：Android阅读模式当前有界窗口后台准备正文后再测量，主/子近期80与近尾书签51长原文段内位置在Activity重建后精确保留，明确最新及再次重建均贴底。Debug/Test、四长文流程与两普通聊天回归通过；72完整图已看、六最终正文区域像素精确，12UUID独立回滚通过；production7adad9b8。见 `outputs/android-reading-mode-window-20261009/REVIEW.md`。A4小说目录入口/章节定位待下一批真实验证；D01、SIGKILL、真机、百万历史、完整视觉未验收。
+
+> 2026-10-09 当前确认：Android最近80条手动阅读和近尾有效书签51条窗口在Activity重建后保留原文位置，显式最新后重建仍tail。33定向JVM、Debug/Test、主子4流程及双向深历史2回归和独立回滚通过，49完整图已看，六组正文区域像素精确；production a12d8bed。见 `outputs/android-recent-reading-recreate-20261009/REVIEW.md`。D01、真机、SIGKILL、百万历史及完整视觉继续未验收。
+
+> 2026-10-09 当前确认：普通有效书签双向跨故事线正式定位后，Activity重建保持实际来源线、有界原文窗口和手动阅读位置；回到最新后重建仍显示最新。新UUID双向模拟器流程及独立回滚通过，14图已查看，production保持55332d7a；本批仅新增验收，未重跑上批29JVM。见 `outputs/android-history-window-crossline-20261009/REVIEW.md`。D01、真机、SIGKILL、百万历史与完整视觉继续未验收。
+
+> 2026-10-09 当前确认：Android普通有效书签定位旧原文后，Activity重建保持有界历史窗口及手动阅读位置；回到最新后重建不回旧书签。29定向JVM、Debug/Test与新UUID主/子线模拟器流程及独立回滚通过，14图已查看，host/device APK一致；来源导航一次消费后沿实际线恢复。证据见 `outputs/android-history-window-recreate-20261009/REVIEW.md`。真机、SIGKILL、百万历史与完整视觉未验证，D01继续暂缓。
+
+## Android 收藏旧版本跨线原文阅读（2026-10-09）
+
+生产保持。主线来源在子线阅读、子线来源在主线阅读，各新UUID正式书签长原文中段Activity重建，实际阅读线/来源线隔离，中段像素精确；关闭后不重开、新目标和重新打开从首段。两完整App/独立rollback通过、12图已看，原行/采用/草稿/线与34表等精确。Test构建通过，上一15JVM/4组件不计作本批重复；证据 outputs/android-bookmark-readonly-crossline-20261009。D01暂缓，不外推强杀/真机/百万历史，整体继续。
+
+## Android 收藏旧版本原文只读阅读重建（2026-10-09）
+
+主子线完整App确认旧版本长原文中段重建使阅读器消失；现原ChatVM/SavedStateHandle仅保存会话/实际阅读线/消息ID，ready后沿原定位任务定向重读，不切线或采用版本，不存正文。加载失败可重试，关闭/消失/切线与晚到隔离；正文就绪前不截掉原ScrollState。15定向JVM（9新+6原）、4恢复组件、Debug/Test及主子新UUID完整App/独立rollback通过，12验收图和6复现图已看，中段正文像素精确、关闭后不重开、新目标/重新打开从开头。原行/采用/草稿/线与34表等精确，原备注提交/窗口/定位后续代码保持。证据 outputs/android-bookmark-readonly-recreate-20261009；不外推强杀/真机/百万历史，D01暂缓，整体继续。
+
+## Android 全会话深收藏窗口跨线阅读（2026-10-09）
+
+沿上一生产，主子起步220真实原文收藏，正式菜单切另一故事线保留同一120窗口和pairedcursor，另一线第30条重建位置≤2px，返回同窗口、回最近40再重建保持。两完整App/独立rollback各通过，16图已看；Session/参与者/原行草稿线及34表等精确。Test构建通过，生产字节保持，证据 outputs/android-bookmark-crossline-window-20261009；上一24JVM/4组件不重复计作本批。D01暂缓，不外推强杀/真机/百万历史，整体继续。
+
+## Android 深收藏页阅读重建（2026-10-09）
+
+220真实原文收藏完整App确认深页重建换回40首批；现原ChatVM保存会话/query、有限40/80/120容量和成对前cursor，原DAO最多121重读/120字预览，ready/loaded后恢复列表位置。失败同cursor重试/晚到隔离、搜索与回最近重置、备注刷新和删除后窗口保持。24定向JVM、4恢复组件、Debug/Test及主子新UUID完整App/独立rollback通过，10图已看；原行草稿线及34表等精确。证据 outputs/android-bookmark-window-recreate-20261009；不外推跨线深窗完整App/强杀/真机/百万历史，D01暂缓，整体继续。
+
+## Android 真实继承长期记忆跨线阅读（2026-10-09）
+
+父UCM来源截止分叉锚点，原故事线事务实际继承子自然唯一行；父子同正文/source，身份/时间独立，按当前故事线隔离阅读意图。主子起步完整App/独立回滚各通过，展开收起重建、另一线默认折叠/展开重建、返回原线隔离，16图已看；UCM整行/Session/原文/草稿/线与34表等精确。Test构建通过，生产保持，证据 outputs/android-inherited-context-reader-20261009；不外推强杀/真机/任意并发/百万历史，D01暂缓。
+
+## Android 自动摘要深页阅读重建（2026-10-09）
+
+100真实原文摘要完整App确认深页重建回16首批；现沿原ChatVM保存有限16–80容量/前cursor/branch，原DAO最多81重读，真实loaded后恢复原LazyListState，同线刷新/编辑删除后刷新与失败重试保持窗口，切线/回最近重置。12定向JVM、28恢复组件、Debug/Test与主子线完整App/独立回滚通过，10图已看，原文/source/草稿/线及34表等精确。证据 outputs/android-summary-window-recreate-20261009；不外推强杀/真机/百万历史，D01暂缓，整体继续。
+
+## Android 长期记忆正文阅读重建（2026-10-09）
+
+完整App确认同一长期记忆展开重建回六行；现沿真实会话ID/当前故事线唯一作用域、正文指纹与展开布尔，ready/原记忆UI作用域就绪后消费，不存正文。6长期记忆组件加原20摘要/纠正/事件组件、Debug/Test通过；主子线自有记忆各新UUID完整App/独立rollbackOK1，12图已看，真实source范围与原行草稿线/34表等精确。见[验收](../outputs/android-context-reader-recreate-20261009/REVIEW.md)。不外推继承同正文跨线/强杀/真机/百万历史，D01暂缓，整体继续。
+
+## Android 继承摘要跨线阅读（2026-10-09）
+
+沿上一批生产，新UUID同一主线摘要来源截止真实分叉锚点，主线自有/子线继承共享同ID整行。展开收起重建保持，切另一线默认折叠、该线展开重建保持、返回原线阅读意图隔离。两完整App/独立rollbackOK1，16图已看；原行草稿线/六配置四draft/34表/media/searchdigest精确。Test构建通过，生产ChatDrawer/VM精确保持。见[验收](../outputs/android-inherited-summary-reader-20261009/REVIEW.md)。不外推深页/强杀/真机/任意并发/百万历史，D01暂缓，整体继续。
+
+## Android 自动摘要长正文阅读重建（2026-10-09）
+
+完整App确认同ID长摘要展开重建回四行；现复用有限会话/当前故事线/摘要ID、正文指纹与展开布尔，ready/记忆UI作用域就绪后消费，不存正文。6摘要组件加原14纠正/事件组件、Debug/Test通过；主子线自有摘要各新UUID完整App/独立rollbackOK1，12图已看，来源范围匹配真实原文，原行草稿线/34表等精确。见[验收](../outputs/android-summary-reader-recreate-20261009/REVIEW.md)。不外推继承摘要跨线/深页/强杀/真机/百万历史，D01暂缓，整体继续。
+
+## Android 全会话长纠正跨线阅读（2026-10-09）
+
+沿上一批生产代码，新UUID单一branchId=null全会话纠正，在主/子线展开与收起重建保持，切另一线同ID默认折叠，另一线展开重建保持，返回原线仍隔离。两完整App/独立rollbackOK1，16图已看；原行草稿线、六配置四draft/34表/media/searchdigest精确。Test构建通过，ChatDrawer/VM/DAO不改。见[验收](../outputs/android-global-correction-reader-20261009/REVIEW.md)。不外推深页/强杀/真机/任意并发/百万历史，D01暂缓，整体继续。
+
+## Android 长用户纠正阅读重建（2026-10-09）
+
+完整App确认同ID长纠正展开后重建折叠；现复用有限会话/当前故事线/纠正ID、正文指纹与展开布尔，不存正文，ready/原记忆UI作用域就绪后才消费。5纠正组件与原9事件组件、Debug/Test通过；主子线各新UUID完整App/独立rollbackOK1，12图已看，原行/草稿/线与34表等精确。见[验收](../outputs/android-correction-reader-recreate-20261009/REVIEW.md)。不外推全会话跨线纠正/强杀/真机/深页/百万历史，D01暂缓，整体继续。
+
+## Android 深事件页阅读重建（2026-10-09）
+
+新UUID100事件正式3次加载、72窗口淘汰首批后重建回24且目标消失已实证。现沿原ChatVM/SavedStateHandle保存有限窗口容量/前游标，与原criteria/故事线作用域同步，原DAO最多73条重读；原LazyListState恢复位置。新条件/实际切线/回最近重置，同线刷新保持，失败可重试/晚到不发布旧描述。16定向JVM、9恢复组件、Debug/Test与主子线两新UUID完整App/独立rollbackOK1，10图已看，原行草稿线及34表等精确。见[验收](../outputs/android-event-window-recreate-20261009/REVIEW.md)。不外推强杀/真机/任意外部并发/百万历史，D01暂缓，整体继续。
+
+## Android 事件长描述阅读重建（2026-10-09）
+
+新UUID完整App确认同事件展开描述重建后折叠；现事件显式保存有限作用域/正文SHA指纹/展开布尔，正文仍原数据读取，ready前不消费临时main。文本/稳定ID/会话/故事线隔离，其他共享调用方行为保持。6组件、Debug/Test与主子线两新UUID完整App/独立rollbackOK1，12图已看，原行草稿线与34表等回滚精确。见[验收](../outputs/android-event-reader-recreate-20261009/REVIEW.md)。不外推强杀/真机/深页阅读位置/百万历史，D01暂缓，整体继续。
+
+## Android 事件提交中重建（2026-10-09）
+
+事件状态切换已实证Room提交而重建UI旧状态。现原本地job沿retainJob保留owner至实际事件页读回，busy禁止重复并在失败释放。20定向JVM及Debug/Test通过；主子线自有状态/删除与子线继承override共5个新UUID完整App/独立rollbackOK1，25图已看，源线原事件、原world/角色/百科/原文/草稿/线保持，34表等回滚精确。见[验收](../outputs/android-event-write-recreate-20261009/REVIEW.md)。不外推强杀/真机/任意并发/百万历史，D01暂缓；整体继续。
+
+> 2026-10-09 事件搜索分类重建：沿ChatVM/SavedStateHandle保存200字符内搜索与分类，在正式故事线就绪后恢复；切线仍清空条件。模拟器主子线完整App/独立回滚及定向JVM、Debug/Test通过，原行/草稿/线与34表等回滚精确。证据 outputs/android-event-criteria-recreate-20261009；不外推强杀/真机/深分页/百万历史，D01暂缓。
+
+> 2026-10-09 事件删除确认重建：按故事线保存有限目标ID，等待会话/事件页ready后恢复同一自有事件，取消不写，目标消失或切线关闭。模拟器主子线完整App/独立回滚、4组件与Debug/Test通过，原world/角色/百科/原文/草稿/线及34表等回滚精确。证据 outputs/android-event-confirm-recreate-20261009；不外推提交中owner/强杀/真机/百万历史，D01暂缓。
+
+> 2026-10-09 世界基础设定阅读重建：按世界保存展开/折叠意图，百科就绪前保留原滚动状态，避免短内容截掉阅读位置；加载失败可重试。模拟器主子线完整App/独立回滚与3组件、Debug/Test通过，尾部按钮位置差≤2px，原world/角色/百科/原文/草稿/线及34表等回滚精确。证据 outputs/android-world-foundation-recreate-20261009；不外推强杀/真机/百万历史，D01暂缓。
+
+> 2026-10-09 本场玩法保存重建：原本地写入保留owner，六开关统一保存中/禁用/完成与失败释放；与线路整行写入双向互斥，并在发送前保护草稿。模拟器主子线完整App及独立回滚通过，20定向JVM、5组件、Debug/Test通过；原world其余字段/角色/原文/草稿/线及34表等回滚精确。证据 outputs/android-world-setting-recreate-20261009；不外推强杀/真机/跨owner任意并发/百万历史，D01暂缓。
+
+> 2026-10-09 本会话思考Max保存重建：原本地任务保留owner，现有保存中/禁用/失败重试状态沿重建保持；完成、重进与再次关闭的Room/UI一致。模拟器主子线完整App及独立回滚通过，13定向JVM、4恢复组件和Debug/Test构建通过。原角色/世界/原文/草稿/线及allow布尔presence-value精确；证据 outputs/android-think-max-recreate-20261009。不外推强杀/真机/任意并发/百万历史，D01暂缓。
+
+> 2026-10-09 角色自动状态清除重建：正式确认后等待Room期间保留原本地owner，并持有清除后的实际读回任务；重建等待、清除空态、关闭重开与故事库重进一致。模拟器主子线完整App及独立回滚通过，16定向JVM、2恢复组件和Debug/Test构建通过；另一角色/他线状态、手动记忆/纠正、原文与草稿精确保持。证据 outputs/android-character-state-recreate-20261009；不外推强杀/真机/任意并发/百万历史，D01暂缓。
+
+> 2026-10-09 移除参与角色提交重建：原本地任务 retainJob 保留同一 owner，按参与者 ID 显示移除中并拦截该角色冲突操作；完成后当前与重进参与者一致，角色资料、历史消息与聊天草稿保持。模拟器主子线完整 App / 独立回滚各通过，21 定向 JVM、6 恢复组件及 Debug/Test 构建通过。证据 outputs/android-participant-remove-recreate-20261009；不外推强杀/真机/任意并发/百万历史，D01 暂缓。
+
+> 2026-10-09 参与状态保存重建：正式暂停开关写入期间保留原本地 owner，按参与者 ID 显示忙碌并阻止该角色的重复开关、发言率与移除冲突；完成或失败释放 busy。模拟器主子线完整 App / 独立回滚各通过，暂停重进及恢复参与整行精确；17 定向 JVM、4 恢复组件和 Debug/Test 构建通过。证据 outputs/android-participant-mute-recreate-20261009；不外推强杀/真机/磁盘失败/任意并发，D01 暂缓。
+
+> 2026-10-09 参与角色发言率保存重建：正式 Slider 提交中保留既有本地写入 owner，按参与者 ID 展示等待值与保存状态，恢复展开意图；完成后 Room、界面与重进值一致。模拟器主子线完整 App / 独立回滚各通过，13 定向 JVM、2 恢复组件及 Debug/Test 构建通过；不外推强杀、真机、磁盘故障或任意并发。证据 outputs/android-talkativeness-recreate-20261009；D01 暂缓。
+
+## Android 添加参与角色提交中重建（2026-10-09）
+
+完整MainActivity确认Room等待添加重建换owner，释放后Room已加入而新UI仍旧。现复用原本地write保留owner，busy/失败/稳定ID完成回执在ChatVM，恢复页准确关闭弹窗且防重复。Debug/AndroidTest、15定向JVM及6组件通过；最终主/子线各flow/独立rollbackOK1、各5图，同owner等待/不标生成/正确角色加入/原角色世界百科原文草稿线重进精确。六配置/四draft/34表/媒体/searchdigest恢复，见[验收](../outputs/android-participant-write-recreate-20261009/REVIEW.md)。无schema/版本/Release/发布/重启/用户数据清理；D01暂缓，整体继续。
+
+## Android 添加参与角色分页重建（2026-10-09）
+
+完整MainActivity42真实绑定候选确认第二页重建回第一页，搜索词保持。现保存页码和轻量排序锚点，候选结果仍Room定向重读。Debug/AndroidTest与6定向组件通过；主/子线各flow/独立rollbackOK1、各6图，前后页/取消不增/第二页稳定ID选择/原角色世界百科原文草稿线重进精确。六配置/四draft/34表/媒体/searchdigest恢复，见[验收](../outputs/android-participant-page-recreate-20261009/REVIEW.md)。无schema/版本/Release/发布/重启/用户数据清理；提交中owner与极深页容量另验证，D01暂缓，整体继续。
+
+## Android 添加参与角色搜索重建（2026-10-09）
+
+完整MainActivity确认搜索后重建关闭添加弹窗，原参与者/原文/草稿不改。现保存弹窗显示与搜索词、ready后重新读资格候选。Debug/AndroidTest及3组件通过；主/子线各flow/独立rollbackOK1、各5图，取消不增/稳定ID选择/原角色世界百科原文草稿线重进精确。六配置/四draft/34表/媒体/searchdigest恢复，见[验收](../outputs/android-participant-recreate-20261009/REVIEW.md)。无schema/版本/Release/发布/重启/用户数据清理；分页位置及提交中owner另审查，D01暂缓，整体继续。
+
+## Android 本场线路退出确认重建（2026-10-09）
+
+完整MainActivity确认关闭侧栏后未保存确认框重建消失，线路草稿仍在且返回会话主页再次阻止退出。现按sessionId保存确认显示、ready后恢复，原草稿/save owner/退出语义保持。Debug/AndroidTest通过；最终主/子线各flow/独立rollbackOK1、各9图，回去保存/继续编辑不写、重建确认退出仅释放线路草稿、重新编辑保存同worldId/其他设置/原文/聊天草稿/线重进精确。六配置/四draft/34表/媒体/searchdigest恢复，见[验收](../outputs/android-route-exit-recreate-20261009/REVIEW.md)。原AVD/display保护，无schema/版本/Release/发布/重启/用户数据清理；D01暂缓，整体继续。
+
+## Android 本场专用线路草稿与保存中重建（2026-10-09）
+
+完整MainActivity确认线路折叠草稿重建丢失，以及保存等待重建后Room提交但新owner仍旧world/未保存提示。现有限字段Saver携带worldId/持久基线、保存展开/确认目标，原本地write保留owner与busy防重复；放弃/退出保存中保护。Debug/AndroidTest、12定向JVM及6组件通过；最终主/子线各flow/独立rollbackOK1、各12图，取消不写/重建保存同worldId与其他设置/原文/草稿故事线重进精确。六配置/四draft/34表/媒体/searchdigest恢复，见[验收](../outputs/android-route-recreate-20261009/REVIEW.md)。原AVD/display保护，无schema/版本/Release/发布/重启/用户数据清理；D01暂缓，整体继续。
+
+## Android 自动摘要编辑与保存中重建（2026-10-09）
+
+完整MainActivity确认自动摘要子标签/输入重建丢失、第二页目标未解析、保存任务重建取消。现保存有限ID/字段并等待ready/branch/加载，原ChatVM按ID定向解析较早目标、保留原冲突校验；原本地写入owner与匹配回执完成保存中重建，刷新失败不冒充写失败。Debug/AndroidTest、13定向JVM和5组件通过；最终主/子线22摘要夹具各flow/独立rollbackOK1、18图，取消不写/重建保存同ID和元数据/其他摘要/正式原文/草稿故事线重进精确。六配置/四draft/34表/媒体/searchdigest恢复，见[验收](../outputs/android-summary-recreate-20261009/REVIEW.md)。原AVD/display保护，无schema/版本/Release/发布/重启/用户数据清理；D01暂缓，整体继续。
+
+## Android 书签备注与抽屉标签重建（2026-10-09）
+
+完整MainActivity确认重建回角色标签导致书签备注编辑UI消失，正常新ChatVM已恢复备注草稿；现只保存抽屉selectedTab，复用既有编辑ID Saver/SavedStateHandle。Debug/AndroidTest与3抽屉组件通过；主线/子线最终各flow/独立rollbackOK1、14图，重建取消不写/再次编辑草稿/重建保存同ID和createdAt/正式原文与备注线草稿重进保持。六配置/四draft/34表/媒体/搜索digest精确恢复，见[验收](../outputs/android-bookmark-recreate-20261009/REVIEW.md)。原AVD/display保持，无schema/版本/Release/发布/重启/用户数据清理；D01暂缓，整体继续。
+
+## Android 搜索长原文阅读锚点重建（2026-10-09）
+
+完整MainActivity确认手动读到第40–45段后重建重新定位第20段；现按当前命中保存有限初次定位标记，沿原LazyListState恢复。Debug/AndroidTest及5高亮JVM通过，阅读组件按正式positioned时序3项通过；首帧直接focus失败已冻结不外推。主线ALL/子线CURRENT最终各flow/独立rollbackOK1，18图复核；抽样正文重建差0、新query第70段/新命中第80段初次定位、结果返回/正式原文/草稿偏好重进保持。六配置/四draft/34表/媒体/搜索digest精确恢复，见[验收](../outputs/android-search-reader-20261009/REVIEW.md)。原AVD/display保持，无schema/版本/Release/发布/重启/用户数据清理；D01暂缓，整体继续。
+
+## Android 消息搜索深结果滚动重建（2026-10-09）
+
+完整MainActivity确认搜索页重建保留结果却无条件回顶部；现原LazyListState随搜索revision保存，新查询仍回顶部。Debug/AndroidTest通过；最终UUID95ed3ae4 flow/独立rollbackOK1、10图，40条最旧目标重建/原文返回同锚点（2px差、1dp内，非像素完全一致）、新查询重置、取消不切线、正式异线原文/草稿偏好重进尾部再正式定位保持。六配置/四draft/34表/媒体/搜索digest精确恢复，见[验收](../outputs/android-search-scroll-20261009/REVIEW.md)。原AVD/display保持，无schema/版本/Release/发布/重启/用户数据清理；D01暂缓，整体继续。
+
+## Android 消息搜索页与原文重建（2026-10-09）
+
+完整MainActivity确认搜索页面重建关闭但原Hilt搜索状态保持；现按会话保存显示状态并等ready恢复。Debug/AndroidTest通过；主线ALL跨线打开与子线CURRENT两最终UUID各flow/独立rollbackOK1、各6图，query/scope/exact/结果与详情原owner保持、取消不切线/原文整行/草稿偏好重进。六配置/四draft/34表/媒体/搜索digest精确恢复，见[验收](../outputs/android-search-recreate-20261009/REVIEW.md)。原AVD/display保持，无schema/版本/Release/发布/重启/用户数据清理；D01暂缓，整体继续。
+
+## Android 故事线深候选滚动重建（2026-10-09）
+
+完整MainActivity确认弹层恢复后无query深候选滚动位置重建丢失；现原LazyListState使用Compose Saver保存位置。Debug/AndroidTest及3组件通过；最终UUIDc5f8d5d0 flow/独立rollbackOK1、4图，48子线深候选重建屏幕Rect精确/不自动切线/稳定ID选择/原文与故事线整行/草稿偏好重进保持。六配置/四draft/34表/媒体/搜索digest精确恢复，见[验收](../outputs/android-branch-scroll-20261009/REVIEW.md)。原只读AVD/display保持，无schema/版本/Release/发布/重启/用户数据清理；D01暂缓，整体继续。
+
+## Android 故事线筛选与重建（2026-10-09）
+
+完整MainActivity确认选择器/总览重建弹层关闭、选择器名称query丢失；现按会话保存显示状态/名称query，会话就绪后恢复来源片段加载。Debug/AndroidTest及3选择器组件通过；48子线名称/总览来源片段两最终UUID各flow/独立rollbackOK1、各7图，筛选取消不切线/稳定ID切线/原文与草稿/偏好重进/主线无泄漏保持。六配置/四draft/34表/媒体/搜索digest精确恢复，见[验收](../outputs/android-branch-recreate-20261009/REVIEW.md)。原进程已退出，已有AVD按原只读参数新启动，display/font/主题回读保持；无schema/版本/Release/发布/用户数据清理，D01暂缓，整体继续。
+
+## Android 用户纠正编辑及保存中重建（2026-10-09）
+
+完整MainActivity确认纠正编辑重建丢输入，及受控写入等待时旧ChatVM被释放；现有限UI字段恢复、原写入owner匹配回执，stores复用本地写入保留且不标后台生成。262相关JVM及Debug/AndroidTest通过；最终当前线7图/子线全会话5图，各flow/独立rollbackOK1，编辑/新增取消不写、同ID与来源/scope/createdAt、保存中重建同owner/回执、原文/线/草稿重进保持。六配置/四draft/偏好/34表/媒体/搜索digest精确恢复。见[验收](../outputs/android-correction-recreate-20261008/REVIEW.md)。原AVD/display保持，无schema/版本/Release/发布/重启/用户数据清理；真机/强杀/任意并发不外推，D01暂缓，整产品继续。
+
+## Android 故事库与聊天标题重命名重建（2026-10-08）
+
+正式MainActivity故事库搜索重命名及聊天菜单改标题，输入重建取消不写/重建保存、旧筛选移除/新搜索命中、两入口标题一致和原消息/线/草稿重进通过。最终UUID3832cc3d flow/独立rollback各OK1，8图复核；仅新增opt-in驱动，无生产缺陷/修改，AndroidTest构建及host/device包SHA一致。六配置/四draft/偏好/34表/媒体/搜索digest精确恢复。见[验收](../outputs/android-session-rename-20261008/REVIEW.md)。原AVD/display保持，无schema/版本/Release/发布/重启/用户数据清理；真机/强杀不外推，D01暂缓，整产品继续。
+
+## Android 目录旧章搜索与改名重建（2026-10-08）
+
+完整MainActivity确认重建取消改名后搜索清空/深章消失；现原目录owner保留同会话/线检索意图，保存后重新应用SQL筛选。20目录JVM与Debug/AndroidTest通过，before及最终自有/继承各flow/独立rollbackOK1，最终14图复核；旧词0/新词1、原章正式定位、正文/JSON/分支/草稿重进保持。六配置/四draft/偏好/34表/媒体/搜索digest精确恢复。见[验收](../outputs/android-contents-filter-20261008/REVIEW.md)。原AVD/display保持，无schema/版本/Release/发布/重启/用户数据清理；真机/强杀/全部并发不外推，D01暂缓，整产品继续。
+
+## Android 小说目录改名输入重建（2026-10-08）
+
+完整MainActivity确认Activity重建丢失未保存章节名称；现目录/改名UI使用Compose保存状态，会话就绪后恢复，提交仍由原owner验证目录线与源线。18项目录JVM及Debug/AndroidTest通过；before与最终自有/继承UUID各flow/独立rollbackOK1，最终14图复核。章节和小说标题重建后取消/保存、原正文及其他JSON保持、分支数/线/聊天草稿重进通过，六配置/四draft/偏好/34表/媒体/搜索历史digest精确恢复。见[验收](../outputs/android-contents-recreate-20261008/REVIEW.md)。原AVD/display保持，无schema/版本/Release/发布/重启/用户数据清理；真机/强杀/全部并发不外推，D01暂缓，整产品继续。
+
+## Android 阅读模式采用回复与草稿（2026-10-08）
+
+正式 MainActivity 滑动采用新版→引用→阅读12764字符首尾→Activity重建→退出阅读→系统返回故事库重进通过，采用ID/两原文整行/引用与未发送草稿保持。最终UUID f0c9f840 flow/独立rollback各OK1，8图复核；仅新增opt-in设备驱动，无生产缺陷/修复。AndroidTest构建通过，六配置/四draft/偏好/34普通业务表/原媒体/搜索偏好digest精确恢复。见[验收](../outputs/android-reading-adoption-20261008/REVIEW.md)。原AVD/display/生产Debug保持，无schema/版本/Release/发布/重启/用户数据清理；真机/强杀/大历史性能不外推，D01暂缓，整产品继续。
+
+## Android 撤回引用来源与输入草稿（2026-10-08）
+
+正式MainActivity确认撤回原文后引用预览仍残留、重进才清；现事务成功后按实际删除ID集合复用取消引用owner，即时清空引用并保存文字草稿。3新增JVM（删除附属引用/晚到新引用/拒绝保持）及同ChatVM完整250项零失败，Debug/AndroidTest通过；修改前缺陷UUID及最终修复UUID各flow/独立rollbackOK1，最终4图复核。六配置/四draft/偏好/34普通业务表/原媒体/搜索历史digestexact。见[验收](../outputs/android-quote-recall-20261008/REVIEW.md)。原AVD/display、schema/版本/Release/Git发布保持，D01暂缓；无供应商/真机/全部并发外推，整产品继续。
+
+## Android 长消息选择与引用草稿（2026-10-08）
+
+正式MainActivity独立UUID的12385字符长消息：长按全文选择、原生选区、滚动末尾、系统返回/关闭、引用后草稿退出重进、取消引用重进通过；最终flow/独立rollback各OK1，8终态图复核。仅新增opt-in设备驱动，无生产修复；AndroidTest构建通过，六配置/四draft/偏好/34普通业务表/原媒体/搜索历史digestexact，剪贴板未操作。见[验收](../outputs/android-text-quote-20261008/REVIEW.md)。原AVD/display、生产Debug、schema/版本/Release/Git发布保持，D01暂缓；复制写入、拖动手柄范围、进程回收与真机不外推，整产品继续。
+
+## Android 移除参与角色后的历史作者（2026-10-08）
+
+完整App确认移除参与角色后旧作者退回角色且重进保持缺陷；现ChatVM轻量投影读取参与者+当前分页窗口作者，初始化/刷新/分页/定位与元信息刷新保持有界，不恢复发言资格。4新增JVM及同VM247项通过（先12/246为子集；元信息晚到由原窗口revision拒绝）、Debug/AndroidTest通过；修改前缺陷UUID及修复后107条历史UUID各flow/独立rollbackOK1，最终7图复核，旧发言/最新/重进/草稿与原消息角色整行保持。六配置/四draft/偏好/34普通业务表/原媒体/搜索历史digestexact。见[验收](../outputs/android-participant-history-20261008/REVIEW.md)。原AVD/display、schema/版本/Release/Git发布保持，D01暂缓；头像媒体为JVM投影证据，真机/全部并发不外推，整产品继续。
+
+## Android 继承事件独立状态与来源（2026-10-08）
+
+正式MainActivity子线改状态、父线原行保持、来源定位保持子线、父future可见性、退出重进状态及草稿通过。最终UUID flow/独立rollback各OK1、10终态图复核；仅新增opt-in驱动，无生产修复。六配置/四draft/偏好/34普通业务表/原媒体/搜索历史digestexact。原AVD/display、schema/版本/Release/Git发布保持，D01暂缓，整产品继续。见[验收](../outputs/android-event-inheritance-20261008/REVIEW.md)。两次驱动准备失败均独立回滚，不计通过。
+
+## Android 采用回复撤回与来源保护（2026-10-08）
+
+正式MainActivity原生时钟两UUID各flow/独立rollback OK1，18终态图复核：取消34业务表不变；撤回新版后旧版采用/收藏正常定位/旧新搜索/草稿重进保持。自动摘要与来源事件移除、当前记忆/角色状态失效，手动纠正保留；故事线源正式说明原因并禁用确认，保留返回不改行。未确认新产品缺陷，仅新增opt-in驱动，不改生产逻辑。配置/四draft/偏好/34普通业务表/原媒体/搜索历史digestexact；原AVD/display、schema/版本/Release/Git发布保持。见[验收](../outputs/android-recall-adoption-20261008/REVIEW.md)。Compose时钟失败与native准备失败冻结并回滚，最终流程无DAO预读/直接VM动作；检查点/编辑来源、本批无附件/真机/D01不外推。整产品继续。
+
+## Android 回复采用与旧收藏搜索上下文（2026-10-08）
+
+完整App确认并修复：搜索原文前后文把未采用回复当连续剧情。四个DAO搜索keyset查询复用既有分支采用范围，SearchVM改调用；聊天版本分页/普通排除原文/旧收藏只读保留。28项JVM、2项真实Room、主/子线CURRENT/ALL四UUID各flow/独立rollbackOK1、36图复核；子线采用新版不改主线旧版，旧收藏复制/关闭/草稿重进保持。书签空页引导另改为点击收藏，一追加UUID/独立rollbackOK1、十图复核。十三表/配置/草稿/偏好/原媒体/搜索历史digestexact。见[验收](../outputs/android-bookmark-adoption-20261008/REVIEW.md)。无schema/版本/Release/发布/用户数据清理，D01继续暂缓。
+
+## Android 搜索末页与完整遍历（2026-10-08）
+
+正式MainActivity CURRENT203/ALL368，两个UUID各flow/独立rollback OK1、各七图复核。5/9次更早、3/7次较新，逐窗口有序branch/message精确一致、缓存≤120，累计全部命中无遗漏；末页3/8条、较新偏移归零、首尾控件禁用、完整上下文、系统返回及草稿/重进通过。仅新增驱动，无生产修复；AndroidTest构建通过，六配置/四草稿/偏好/十一表/原媒体与搜索历史digestexact。见[验收](../outputs/android-search-tail-20261008/REVIEW.md)。原设备/显示、schema/版本/Release/Git发布与用户数据保护，真机/性能/D01未外推，整体继续。
+
+## Android 连续搜索跨页与120缓存（2026-10-08）
+
+正式MainActivity CURRENT240/ALL400命中，两最终UUID各flow/独立rollback OK1、各八图复核。4/7次更早、各2次较新，真实SearchScreen Hilt owner有序branch/message对照与缓存≤120；上下命中跨页、完整原文、明确深目标打开、focusedID正常消费与草稿/重进通过。早期ALL采样落尾截图冻结，补终态驱动后通过，没有生产补丁。AndroidTest构建通过，六配置/四草稿/偏好/十一表/原媒体与搜索历史digestexact。见[验收](../outputs/android-search-window-20261008/REVIEW.md)。原设备/显示、schema/版本/Release/Git发布与用户数据保护；不外推真机/性能/D01，整体继续。
+
+## Android 图片加载中的预览与离页（2026-10-08）
+
+本轮媒体失败修复后的完整App受控未完成图片响应：加载中系统返回关闭预览、离开故事、重进/草稿保持通过；释放后Coil实际解码，正文top352→352px，正常预览/关闭通过。flow/独立rollback OK1、七图复核，六config/四draft/偏好/十一表及原媒体文件digestexact。仅新增驱动，无进一步生产修复；原AVD/Java/display、schema/版本/Release/Git发布及用户数据保护。见[验收](../outputs/android-media-loading-20261008/REVIEW.md)。不外推真机/FPS/任意图片/D01，整体任务继续。
+
+## Android 聊天图片读取失败与恢复（2026-10-08）
+
+完整App先复现用户404与角色无效PNG均440px空白无反馈；现复用Coil显示owner增加加载/错误/手动重新加载，预览增加重试。HTTP与本地缺失/损坏文件两UUID各flow/独立rollback OK1、各八图复核；同URL/路径恢复均等实际解码，正文/草稿/返回/重进保持。Debug/AndroidTest通过，六配置/四draft/偏好/十一表及原附件文件digestexact；只删本UUID两张私有合成PNG。原AVD/Java/display保持，无schema/版本/Release/Git发布或用户媒体清理。见[验收](../outputs/android-media-failure-20261008/REVIEW.md)。真机/URI权限恢复/D01未外推，整体产品继续。
+
+## Android 普通旧编辑后实际Prompt与预算（2026-10-08）
+
+实际完整App发现跟随角色/模型设置未消费已保存平台容量；现冻结本轮平台配置，角色/旁白复用已有resolver匹配实际凭据/地址/model。18定向JVM、Debug/AndroidTest及4000条/估算2569293Token正式3500编辑→3501生成→重进通过；实际请求改稿/方向保留，父future/UCM/摘要/旧源/第一条历史排除，6消息输入3951+协议352+输出12000=16303≤16384。flow/独立rollback OK1、六图复核，父原文/JSON/source/草稿保持。原配置/四draft/偏好/十一表digest及AVD/Java/display保护，无schema/版本/Release/Git发布/用户数据清理。见[验收](../outputs/android-edit-prompt-20261008/REVIEW.md)。角色容量有JVM证据，本批App实测为小说下一章，不外推供应商tokenizer/真机/D01；整产品继续。
+
+## Android 媒体异步加载与历史阅读（2026-10-08）
+
+4000条/1753219字符/估算2549228Token、102张合成图片，完整MainActivity受控延迟解码前后正文锚点1141→1141px、5older/1newer、旧章配图定位/最新、重进/草稿保持通过。flow/独立rollback OK1，七图复核；六配置/四草稿/偏好/十一表及原附件本地文件digest一致。仅新增设备驱动，无生产修复；原AVD/Java/display及用户数据保护，无schema/版本/Release/Git发布/模型供应商。见[验收](../outputs/android-media-history-20261008/REVIEW.md)。普通旧编辑实际Prompt、真机/D01及整产品继续开放。
+
+## Android 分支大历史全文搜索到原文（2026-10-08）
+
+4000条/1568688字符/估算2321701Token父线及第20章编辑child，完整MainActivity双向当前0/全部线1、结果上下文保持原线、明确打开对话才切线定位通过，草稿/source保持。flow/独立rollback OK1，九图复核；另核对恢复原message_search历史digest。仅新增设备驱动，无生产修复；原配置/四草稿/偏好/十表digest及AVD/Java/display保持，无schema/版本/Release/Git发布/模型调用/用户数据清理。见[验收](../outputs/android-branch-history-search-20261008/REVIEW.md)。搜索多页缓存、媒体异步高度/锚点、普通编辑后的实际Prompt、真机及D01继续开放。
+## Android 混合高度大历史与旧章编辑（2026-10-08）
+
+独立UUID完整MainActivity通过4000条/1754679字符/估算2551505Token的七页更早、三页较新、长旧章定位、回到最新、正式编辑分支、child重进及父线/child切换。窗口最大200，原行/额外JSON及未发送草稿保持，child不含父future；flow/独立rollback OK1，十图复核。仅新增设备驱动，无生产修改；原六配置/四草稿/偏好/十表digest及AVD/Java/display保持，无schema/版本/Release/Git发布/模型调用/用户数据清理。见[验收](../outputs/android-mixed-history-20261008/REVIEW.md)。分支全文搜索/Prompt实际请求、媒体、真机与D01仍开放，继续完整产品任务。
+## Android 目录键盘归属与大历史基线（2026-10-08）
+
+完整App正式IME搜索实际未收起目录键盘，现两控制器从Sheet自身CompositionLocal读取；最小A/B及最终80/4000条两UUID打开→目录中文编号→旧章跳转→回到最新通过，各flow/独立rollback OK1。大会话1568679字符/应用估算2321687Token，最近80/旧章附近60条窗口，十图复核；设备单次流程计时见[验收](../outputs/android-large-history-20261008/REVIEW.md)，不外推帧率/内存/真机或D01修复。Debug/AndroidTest通过，原配置/草稿/偏好/十表digest及AVD/Java/display保持，无schema/版本/Release/Git发布/供应商调用/用户数据清理。动态高度、连续翻页、编辑锚点和分支全文搜索仍待独立验收，D01继续暂缓。
+## Android 章节名称的来源与共享修改（2026-10-08）
+
+完整App先复现继承线改名同步更新父线；现目录标注继承，弹窗明确原章及所有引用更新，按钮明确修改原章名称。提交校验目录线/可见源/源线，写入复用branchTransition owner防切线与生成重叠，提交后原刷新修订保护保持；DAO/JSON/索引与记忆失效链保持。29定向JVM、Debug/AndroidTest及自有/继承两UUID完整MainActivity通过，各flow/独立rollback OK1；继承下一章本机SSE HTTP3消费新标题，无旧记忆/future，十张最终图复核。原配置/草稿/偏好/十表digest及AVD/Java/display保持，无schema/版本/Release/Git发布或用户数据清理。见[验收](../outputs/android-chapter-rename-20261008/REVIEW.md)。D01暂缓，整产品继续。
+## Android 开篇编号与空正文反馈（2026-10-08）
+
+完整App先复现空故事/用户前缀目录开篇实际编号2；现max0→1，已有章递增与未完成尾章原编号保留。模型仅标题/空白用特定异常反馈模型未返回正文，真实DAO失败保持本地保存提示。16定向JVM、Debug/AndroidTest及三UUID完整MainActivity本机SSE请求/保存/错误重进重试通过，各flow/独立rollback OK1，HTTP10/13图及3联系表复核。原章/父UCM/配置/四草稿/偏好/十表digest与原AVD/Java/display保持，无schema/版本/Release/Git发布/用户数据清理。见[验收](../outputs/android-chapter-generation-20261008/REVIEW.md)。普通消息编辑已确认整份原JSON保留；下一仅静态候选是继承章节重命名未说明源章共享作用域，尚未实际复现/实施，见 .codex-work/android-chapter-generation-20261008/NEXT_AUDIT.md。D01暂缓，整体产品继续。
+
+## Android 未完成章节另线续写（2026-10-08）
+
+目录条目明确另线续写，原事务克隆正文/整份元数据/附件，复用visibility/replacement/采用/排除与条件记忆继承；current branch/visible target/child草稿/偏好/own tail确认后生成，取消与停止/错误重进续写不重复fork，CAS独立输入owner不清原线草稿。36定向JVM、内存Room1、Debug/AndroidTest及七UUID完整MainActivity本机SSE通过，各flow/独立rollback OK1，HTTP23/30图及7联系表复核；整个prompt无future raw/UCM/segment，旧整行/父UCM/原配置/四草稿/偏好/十表digest保持。原AVD/Java/display保持，无schema/版本/Release/Git发布/用户数据清理。见[验收](../outputs/android-chapter-fork-20261008/REVIEW.md)。下一候选：无章节开篇编号静态可能跳到2，尚待实际复现；heading-only响应被误报本地保存失败已由本批错误截图确认、尚未修复。D01暂缓，整体产品开放。
+
+## Android 章节生成入口与实际尾章（2026-10-08）
+
+完整App复现目录与请求tail/source不同；现共用本线未完成编号尾章判断，目录LIMIT1只读元数据、搜索保持动作，按钮/弹窗标题与实际继续本章或生成新章一致。29定向JVM、隔离Room1、Debug/AndroidTest与四UUID完整MainActivity本机SSE请求/保存/重进通过，最终HTTP12/16图逐张复核，各flow/独立rollback OK1。原六配置键/四草稿/分支偏好/十表digest及AVD/Java/display保持；无schema/版本/Release/发布/用户数据清理。见[验收](../outputs/android-chapter-entry-20261008/REVIEW.md)。较早或继承未完成章另线补完仍开放，继续审查已有replacement/context机制；D01暂缓，整体原型/core RP开放。
+
+## Android 旁白长名称与时间（2026-10-08）
+
+旁白消息头名称单行省略、时间完整单行；生产仅两个Text。最新Debug/AndroidTest、32组合组件OK1、旁白/续章两完整MainActivity本机HTTP6通过，各flow/独立UUID rollback OK1，六图逐张复核。原六配置键/四草稿/分支/十表digest及AVD/Java/display保持；失败轮均保留诊断且独立回滚，无schema/版本/Release/发布/用户数据清理。见[验收](../outputs/android-narrator-header-20261008/REVIEW.md)。D01暂缓，整体产品开放。下一章节续写入口与实际tail/source owner存在静态语义差异，仅审查，须先真实复现及安全设计，不能直接覆盖旧章或父线。
+
+## Android 子线首轮结构化记忆（2026-10-08）
+
+新建/编辑子线在原事务最终状态中逐页核对父子有效前缀；仅兼容valid快照克隆独立child UCM，拒绝future、覆盖源编辑、采用/排除差异，已有child行不覆盖。28定向JVM、9隔离Room、Debug/AndroidTest及七完整MainActivity本机SSE首轮通过，共HTTP21；各flow/独立UUID rollback均OK1，21图复核。child后续更新/父整行、六配置键/四草稿/分支/十表digest保持；无schema/版本/Release/发布/用户数据清理，原AVD/Java/display保持。见[验收](../outputs/android-branch-memory-20261008/REVIEW.md)。不回填旧fork或默认付费重建，不外推供应商/真机/大库性能；D01暂缓，整体产品开放。旁白消息头后续已修复并验证，见本文顶部。
+## Android 待应用结果入口（2026-10-08）
+
+待应用COMPLETED快照卡片现查看结果快照→原详情，已应用/详情目标入口明确查看当前角色或模板；非快照与FAILED续跑保持。14定向JVM（与上一批同组）、Debug/AndroidTest、两浅色组件回归和完整MainActivity本机HTTP8通过：角色/模板改稿后卡片到对比应用、CAS拒绝/刷新确认、重进，模板生成期间UUID目标删除后快照可达/应用禁用/取消返回。最终flow/独立rollback各OK1，13图复核；首轮同名节点驱动失败亦独立rollback，只修驱动。原配置/四草稿/分支/其他数据及AVD/Java/display保持，无schema/版本/Release/发布/用户数据清理。见[验收](../outputs/android-snapshot-entry-20261008/REVIEW.md)。D01暂缓，整体原型/core RP开放，下一源码确认候选：新子线首轮尚无结构化长期记忆；不能直接复制父最新快照，须完整来源兼容与失效链设计审查。仅只读，尚未实施，见 `.codex-work/android-branch-memory-audit-20261008/AUDIT.md`。
+## Android 生成反馈与快照应用（2026-10-08）
+
+FAILED反馈保留错误色，COMPLETED提示改现有信息表面并标注生成时反馈；卡片/快照明确生成完成与待应用/已应用，不改任务字段或owner。14定向JVM、Debug/AndroidTest及完整MainActivity本机HTTP7通过：失败retry、角色/模板待应用、预览后改稿CAS拒绝→刷新确认、应用后重进、普通完成提示保留目标；最终flow/独立UUID rollback各OK1，九图逐张复核。首轮APK文件名误用导致旧包运行断言失败，独立rollback通过后正确universal包重跑。原配置/四草稿/分支/六表digest保持，原AVD/Java/display保持，无schema/版本/Release/发布/用户数据清理。见[验收](../outputs/android-generation-feedback-20261008/REVIEW.md)。D01暂缓，整体原型/core RP仍开放；下一审查待应用任务卡主入口仍打开原目标的语义与实际流程。
+## Android 单项生成进度与空结果续跑（2026-10-08）
+
+修改前完整App复现空人设被写COMPLETED/0/1；角色空人设、模板无可用字段现FAILED可续跑，原目标保留；可用snapshot成功保存时原事务写1/1，包括改稿后未自动应用。23定向JVM、隔离Room12、Debug/AndroidTest及完整MainActivity本机HTTP6/角色模板各空结果→用户retry成功/各改稿保留待应用快照/重进通过，最终flow/独立UUID rollback各OK1，四图复核。驱动同名任务标题失败轮亦独立rollback，生产仅三处。不回填旧任务，不改schema/版本/Release/发布/原AVD，原配置/四草稿/分支/其他数据保持。见[验收](../outputs/android-snapshot-progress-20261008/REVIEW.md)。D01暂缓，整体原型/core RP仍开放；下一独立候选：COMPLETED待应用快照反馈仍统一错误色，当前截图/源码确认、尚未修复。
+
+## Android 队列请求真实取消（2026-10-08）
+
+所有producer共用串行当前任务Job；claim/发布与DBcancel/对应撤销同mutex、先持久化后取消并等待清理，补齐百科/时间线取消传播。34定向JVM、Debug/AndroidTest及完整MainActivity本机HTTP10/五类型socket关闭5/取消无fallback或重试/下一项完成/FAILED只续剩余/取消离页重进通过，flow/独立UUID rollback各OK1、四图复核；首轮仅retry驱动同名节点失败亦独立rollback。原配置/四草稿/分支/其他资料保持，无schema/版本/Release/发布/原AVD重启，取消终态规则保持。见[验收](../outputs/android-queue-cancel-20261008/REVIEW.md)。未外推供应商/真机/性能/整体完成，D01暂缓；单项snapshot进度后续已完成，见本文顶部。
+
+## Android 角色卡已知文本null兼容（2026-10-08）
+
+修改前3项隔离复现asString异常；八个已知文本null按空文本消费、原profile整根保留，未改人设导出保持显式null。18项JVM/Debug与完整MainActivity带四个已知文本null的backend PNG真实SAF取消重选→profile/详情→PNG再导出整根相等，flow/独立UUID rollback各OK1、四图复核；原其他角色/四草稿/分支保持。见[验收](../outputs/android-card-null-20261008/REVIEW.md)。不放宽其他结构或Portable、不改schema/版本/Release/发布/原AVD，无供应商/真机/性能外推，D01暂缓，整体原型/core RP开放。下一候选队列HTTP取消owner待设计审查，当前cancelTask仅改数据库状态，编辑补全Job证据不证明队列已修复。
+
+## Android 独立补全容量与编辑取消（2026-10-08）
+
+四类补全及UseCase复用LlmRetry最终容量护栏；执行前冻结平台/实际endpoint/Key/model，unknown保持，固定输出与完整原输入不裁剪。超限零HTTP/计费/重试/备用地址，队列保留已保存进度；编辑单一Job/修订与停止入口，失败保留草稿、取消可保存重进。60项定向JVM覆盖通过、最新Debug/AndroidTest及完整MainActivity本机HTTP4请求/队列progress1→重试只续第二条→2通过，最终flow/独立UUID rollback各OK1，三图复核；原配置五键/四草稿/分支/其他数据保持。见[验收](../outputs/android-completion-budget-20261008/REVIEW.md)。未外推供应商/真机/性能/整体验收；既有队列网络取消owner另列边界。无schema/版本/Release/发布/原AVD重启，D01暂缓。继续已知文本null角色卡兼容候选的隔离复现与契约审查。
+
+## Android 原生 Anthropic 采样兼容（2026-10-08）
+
+依据官方协议，native stream/nonstream共用模型判定，对可识别Claude4.7+/Mythos Preview省略temperature，旧模型/未知alias保持；Top P/penalties仍仅OpenAI兼容消费，角色编辑新增线路说明，保存/迁移五值不改。38定向JVM、Debug/AndroidTest及完整MainActivity两轮native SSE发送→编辑保存→再发通过，host仅max4097/4098，无不支持sampling；flow/独立UUID rollback各OK1，四图复核，原配置/四草稿/分支/其他角色保持，reverse空/host退出。见[验收](../outputs/android-native-sampling-20261008/REVIEW.md)。当前两owner对native第三方URL判定存在边界，本批不改路由，不外推供应商/真机/性能或整体完成。继续检索分类容量审查，D01暂缓。
+## 后端 PNG 完整人物卡跨端交换（2026-10-08）
+
+backend export-card现读取profile，按Android当前人设overlay契约保留未改原结构，改稿清空重复正文段落；notes/book/unknown/null保持、源整行只读。42定向Python及新增文件补验15项通过，AndroidTest构建与完整MainActivity真实SAF取消/重选→profile/详情→PNG再导出通过，根对象完全相等；flow/独立UUID rollback各OK1、四图复核，四草稿/分支/其他角色保持。见[验收](../outputs/backend-png-profile-20261008/REVIEW.md)。原AVD/Java保护，无schema/版本/Release/发布，D01暂缓，整体原型/core RP开放。下一采样原生线路参数说明/兼容审查。
+## Android 角色采样实际请求闭环（2026-10-08）
+
+ChatRequest nullable字段与ChatEngine共用角色请求现消费Top P/两个penalty；普通和带记忆角色同轮快照，id0旁白与辅助调用保持原参数。32 JVM、Debug/AndroidTest与完整MainActivity发送→编辑五项采样→保存→同会话再发通过；host实际2角色请求精确前后值、3辅助请求字段省略，两回复持久化，flow/独立UUID rollback各OK1、三图复核。原配置/四草稿/分支/其他角色保持，reverse空。首轮故事定位驱动失败已回滚，改真实搜索后通过。见[验收](../outputs/android-chat-sampling-20261008/REVIEW.md)。原生Anthropic参数映射仍有限，不外推供应商/真机/性能或整体视觉接受。
+
+继续已确认backend PNG已导入profile结构导出缺口，先设计/遗漏审查后做最小跨端契约。整体原型/core RP未完成，D01暂缓；无schema/版本/Release/发布/原AVD重启。
+
+## Android 便携采样参数与三格式完整往返（2026-10-08）
+
+Android/backend portable v1保留五项采样，摘要以源快照覆盖模型采样，旧缺失/null/空字符串默认、0/负惩罚与有限数校验一致。审查同时修复Android DOCX段落/实体丢失与backend中文文件名header失败。39 JVM、隔离Room11、定向Python、Debug/AndroidTest及完整MainActivity三格式SAF取消重试→回导→详情通过，flow/独立UUID rollback各OK1、五图复核；源整行/其他角色digest/四组草稿/分支保持。见[验收](../outputs/android-portable-sampling-20261008/REVIEW.md)。无schema/版本/Release/发布/原AVD重启，D01暂缓。
+
+后续Android普通聊天采样请求已完成本批验证，见本文顶部；此处便携批次证据仍只证明文件迁移值保持。整体原型/core RP仍开放，未外推供应商/真机/性能。
+
+## Android 直接角色卡JSON完整结构导入（2026-10-08）
+
+直接Tavern JSON复用PNG完整converter，传递document basename；portable仍保留包内来源。开场/场景/示例/系统/后置、人设与profile元资料/角色书/未知字段/null完整保存，notes不注入persona。19定向JVM、Debug/AndroidTest及最终MainActivity SAF取消/重选→新角色/profile→详情→PNG SAF往返通过，flow/独立UUID rollback各OK1，四图复核，其他角色/四组草稿/分支偏好保持。两App驱动权限/窗口时序失败冻结，首轮独立repaired rollback通过；未为驱动问题改生产。见[验收](../outputs/android-character-json-card-20261008/REVIEW.md)。无schema/版本/Release/发布/原AVD重启，未外推供应商/真机/性能；D01暂缓。下一候选为便携采样参数完整往返及Web PNG原结构保留，尚未实施。
+
+## Android 高级角色卡JSON草稿统一导出（2026-10-08）
+
+portable JSON/TXT/DOCX、PNG和摘要输入统一冻结当前编辑快照，仅临时profile替换raw JSON，不写源；JSON对象校验、未载入保护、空白{}与显式null保留。30定向JVM、Debug/AndroidTest及最终完整App高级编辑→错误修正→SAF取消/重试→JSON/PNG→放弃→回导/详情通过，flow/独立UUID rollback各OK1，五图复核。源entity/profile整行、其他角色digest、四组草稿和分支偏好保持。两App驱动失败记录保留；第二轮归属识别错误导致临时合成导入行未被原rollback识别，修正后独立rollback通过再跑最终run。见[验收](../outputs/android-character-export-draft-20261008/REVIEW.md)。无schema/版本/Release/发布/原AVD重启，未外推供应商/真机/性能；D01暂缓。后续直接Tavern JSON完整结构导入已完成，见本文顶部。
+
+## Android 当前人设与 PNG 角色卡完整往返（2026-10-08）
+
+绑定角色镜像不再截断8000字；旧镜像只在内部绑定角色全文仍在、严格前缀匹配且正文未改时补全，旧历史与明确短稿保留。6 JVM、15隔离Room及16000字完整App保存/详情/开局/重进通过，5图复核，独立UUID回滚通过。见[镜像验收](../outputs/android-character-long-mirror-20261008/REVIEW.md)。
+
+PNG导出使用完整当前人设，包括未保存编辑；未改人设保留原卡结构，改稿清除会重复拼接的旧正文。creator_notes保留为元资料，不再写入本机ID；Android/Web新导入不注入人设，原数据库不迁移。未知字段与显式null保留。11 JVM、28 Python、Debug/AndroidTest及真实SAF导出/导入16000字→详情全文→空开局通过，4图复核，源角色/profile不改写，独立UUID回滚通过。见[PNG验收](../outputs/android-character-png-persona-20261008/REVIEW.md)。
+
+后续高级原始卡JSON草稿统一导出已完成本批验收，见本文顶部；下列PNG证据仍仅对应当时人设往返。整体原型/core RP仍开放，D01暂缓；无schema/版本/Release/发布，未外推供应商、真机或性能。
+## Android 百科列表轻量投影与按需预览（2026-10-08）
+
+主列表不再携带正文/meta，保留100+1分页/分类/精选/封面/编辑ID；宽屏按选中ID独立读取，加载/失效/失败重试与旧请求隔离，删除确认仅存ID摘要。真实逐图发现低高度重复快捷按钮挤压正文/重试，现不足600dp由原Tab/FAB保留动作。51定向VM、Debug/AndroidTest、1隔离Room及最终完整App窄屏→宽屏长预览/全文编辑→UUID目标失效/恢复重试→竖屏重进通过，flow/独立rollback各OK1，6图逐张复核，四组其他草稿不变、方向/原显示恢复。前两App轮分别驱动重复标题失败/逻辑通过但视觉失败，不替代最终验收；无性能数值/供应商/真机/并发外推，无schema/版本/Release/发布，D01暂缓。见[验收](../outputs/android-entry-list-projection-20261008/REVIEW.md)。长人设镜像与PNG后续修复见本文顶部当前状态。
+
+## Android 百科角色资料、历史载入与快捷开局（2026-10-08）
+
+生产未改；完整MainActivity百科改名/摘要/正文保存生成v1、同角色和唯一镜像同步，角色库详情显示新全文；历史先取消保持草稿和Room，再确认仅UI恢复/保存生成v2，初稿角色与条目恢复、旧v1整行不变。真实详情开局恰好一session/同characterId唯一participant/当前绑定世界快照/主线消息0，重进条目两版和角色全文一致。AndroidTest构建、最终flow/独立UUID rollback各OK1，8图逐张复核；其他角色私有digest、四组草稿和故事线偏好不变。首轮仅驱动占位选择器失败且回滚通过。无全库/供应商/真机/并发/强杀外推，无schema/版本/Release/发布，D01暂缓。见[验收](../outputs/android-entry-character-flow-20261008/REVIEW.md)。继续百科列表轻量投影。
+
+## Android 百科长正文保存失败与草稿重进（2026-10-08）
+
+生产未改；完整MainActivity全屏编辑16987字正文和长摘要，受控删除仅UUID合成条目后UI保存失败仍保留全文；恢复同一合成条目后真实重试只写一次/产生v1。第二稿返回先继续编辑保持，再保留离开→重进恢复全文与摘要→UI保存新增恰好v2；第三稿保留离开后重进丢弃，保存行/两版不变，再重进无恢复窗。AndroidTest构建、最终flow/独立UUID rollback各OK1，5图逐张复核，四组其他草稿精确不变。两初轮仅驱动问题，不算产品失败；失败类型是目标已删除，不是磁盘故障，标签/角色联动/真机/任意并发/供应商未扩大。无schema/版本/Release/发布，D01暂缓。见[验收](../outputs/android-entry-draft-flow-20261008/REVIEW.md)。继续下一核心RP结果。
+
+## Android 百科历史文本资料载入与保存（2026-10-08）
+
+版本页/载入/脏草稿确认/反馈明确只恢复标题、摘要、正文、标签和扩展资料，类型/确认/精选/封面保持当前值；无schema/逻辑改写。1定向JVM、Debug/AndroidTest及最终完整MainActivity两次UI保存生成快照→草稿取消保持→确认只恢复文本→保存新增恰好v3/旧快照整行不变→重进同当前行/三版通过，6图逐张复核、流程与独立UUID rollback各OK1。四组其他草稿精确不变，前三轮只驱动失败；封面仅UUID纯色夹具。未独立HTTP计数/供应商/真机/任意并发/磁盘失败。无版本/Release/发布，D01暂缓。见[验收](../outputs/android-entry-version-flow-20261008/REVIEW.md)。继续百科长正文保存/返回/重进。
+
+## Android 长编辑草稿真实进程恢复到独立分支（2026-10-08）
+
+## Android 全会话纠正跨故事线查看来源（2026-10-08）
+
+旧完整App在主线查看子线原文关联的整个对话纠正真实失败已冻结。现来源入口保持当前线可见原文，否则按消息所属线定位，复用原切线owner；失效来源不回退，抽屉自己发起切线后仍能关闭。10定向JVM、Debug/AndroidTest、最终完整MainActivity自动摘要UI创建纠正→主线查看来源→来源子线/面板关闭→重进，以及受控删除来源消息后提示并保留纠正通过；最终流程/独立UUID rollback各OK1，前后六图逐张复核，三种其他草稿与原故事线偏好精确不变。无schema/版本/Release/发布，未独立计HTTP或验证供应商/真机/任意并发，D01暂缓。见[验收](../outputs/android-correction-source-20261008/REVIEW.md)。继续下一核心RP结果。
+
+
+## Android 世界关系新增到删除闭环（2026-10-08）
+
+生产未改，真实MainActivity两个端点选择器/类型备注添加唯一关系，图列表、两个节点正确条目、重进同ID/整行、取消删除保留、确认删除仅关系消失且条目整行保留通过。AndroidTest构建、流程与独立UUID rollback各OK1，六图逐张复核；其他关系/三种草稿精确不变。仅本地CRUD，无供应商入口调用，未独立计HTTP；无真机/任意并发/存储失败/大关系库新证明。版本/schema/Release/发布不变，D01暂缓。见[验收](../outputs/android-relation-flow-20261008/REVIEW.md)。继续下一核心RP结果。
+
+
+生产未改；完整MainActivity保留约22500字编辑草稿后前台SIGKILL，新进程真实重开/编辑全文恢复并直接保存，恰好1编辑子线/1替代消息，原消息整行不变、匹配草稿及bak清除。离页重进无重复，实际切主线显示原文。AndroidTest构建、恢复/独立rollback各OK1，四图复核；其他三种草稿逐项、其他编辑文件集合/hash及故事线偏好精确不变，配置未改、HTTP0。未扩大为任意未落盘/真机/供应商保证，无版本/schema/Release/发布，D01暂缓。见[验收](../outputs/android-message-edit-process-20261008/REVIEW.md)。继续整套原型与core RP。
+
+## Android 新对话暂存设定真实进程恢复（2026-10-08）
+
+旧完整App前台强杀后保留设定入口丢失已冻结；现去创建角色前等待落盘，冷启动恢复原标题/世界/三个开关、唯一新增角色及创建编号，真实按钮创建一次、Room快照正确并清草稿。另通过原事务注入已提交未清窗口，强杀后直接打开同一session不重复创建。44项定向JVM、Debug/AndroidTest、两流程恢复/rollback通过，六图逐图复核；其他三种草稿逐项精确不变，配置未改、无HTTP。角色新增经生产owner，非触摸创建/导入证明；不承诺普通未暂存表单或任意落盘窗口、真机/供应商。main/e5abc07d、348dirty/暂存0，无版本/schema/Release/发布，D01暂缓。见[验收](../outputs/android-session-setup-process-20261008/REVIEW.md)。继续长编辑草稿真实进程恢复到独立分支。
+
+## Android 世界五字段真实进程恢复（2026-10-08）
+
+完整App世界设置编辑五字段→真实保留草稿并离开，逐字落盘后PID22668 SIGKILL；新PID22867真实入口恢复全文并保存，绑定角色详情开始新故事，Room世界/长背景/玩法/规则当前快照精确正确、消息0、无HTTP。生产未改，AndroidTest构建/覆盖安装、恢复/独立rollback各OK1，五图逐图复核；其他世界/角色/聊天草稿keys和值及类型相等，UUID数据无残留，配置未改。不保证任意未落盘窗口/真实存储失败/供应商/真机，无schema/版本/Release/发布，D01暂缓。见[验收](../outputs/android-world-draft-process-20261008/REVIEW.md)。
+
+## Android 角色快捷开局世界快照（2026-10-08）
+
+修复角色绑定B时快捷开局仍传默认模板A，导致关联B但正文/玩法/规则来自A的问题；仅createForCharacter按是否绑定选择默认模板，未绑定仍A，不追改旧会话。旧实现定向13项仅新增串线回归失败，修复后13项及Debug/AndroidTest通过；完整MainActivity两角色实际详情开始对话回读Room，绑定B快照/未绑定默认A均精确正确，消息0、无HTTP，运行/独立rollback各OK1。四图逐图复核；原配置键存在性和值、其他角色/聊天草稿精确恢复，UUID夹具无残留。无真机/后续供应商/并发窗口证明，无schema/版本/Release/发布，D01暂缓。见[验收](../outputs/android-character-world-snapshot-20261008/REVIEW.md)。
+
+## Android 角色长人设真实进程恢复（2026-10-08）
+
+完整App实际全屏编辑人设、生产草稿落盘后精确PID22021 SIGKILL，新PID22199从角色入口恢复全文，通过返回确认保存并离开、详情开始一条对话。角色人设/绑定、唯一百科镜像全文、草稿清理、会话参与者/世界均正确，消息0；恢复/独立rollback各OK1，AndroidTest构建/覆盖安装、5完整窗口图逐图复核。仅新测试、生产未改；UUID夹具/草稿精确回滚，其他角色/聊天草稿逐项相等。无HTTP、任意落盘临界窗/真实存储失败/真机证明，无schema/版本/Release/发布，D01暂缓。见[验收](../outputs/android-character-draft-process-20261008/REVIEW.md)。
+
+## Android 聊天旋转与未发送草稿（2026-10-08）
+
+实际横竖屏发现全宽资料抽屉关闭锚点重算时自动打开遮住输入，局部DrawerState按宽度重建几何并保留原开关意图。Debug/AndroidTest及完整MainActivity真实旋转/IME/Back/离页owner释放/搜索重进精确草稿恢复通过；输入/发送动作不越IME，5关键图逐图复核、关闭与主动打开抽屉均保持意图，Room消息0。独立rollback核验完整UUID，仅移除本session/草稿，其他草稿逐项相等；方向/显示/原AVD保持，reverse空。无HTTP、真机/连续分屏/动画临界窗证明，无schema/版本/Release/发布，D01暂缓。见[验收](../outputs/android-core-input-rotation-20261008/REVIEW.md)。继续角色长人设草稿与开始对话。
+
+## Android 小说横屏键盘输入（2026-10-08）
+
+真实旋转/IME截图确认小说多行背景光标被键盘遮挡；将IME约束放在滚动视口外，修复后正文末尾与光标在键盘上方。Debug/AndroidTest、同路径4图复核、最终输入框不越过IME边界及横竖屏/键盘Back/离页重进精确保留断言通过，独立rollback各OK1。原配置/草稿/receipt恢复，方向/显示保持；无HTTP生成、真机或分屏证据，无schema/版本/Release/发布，D01暂缓。见[验收](../outputs/android-novel-rotation-20261008/REVIEW.md)。
+
+## Android 小说多批真实强杀恢复（2026-10-08）
+
+完整MainActivity请求5章，本机SSE第一批3章DONE、第二批实际续写请求携带全部前文且正文未完成；两批raw及3章sidecar回读一致后精确PID18987 SIGKILL。新进程恢复复制/保存4条章节，编号1–4、仅第四未完成，重进同一session条数不增。恢复/独立回滚各OK1、HTTP2，原配置/输入/receipt精确恢复、reverse空。生产未改，AndroidTest构建/覆盖安装通过；无供应商、真机或任意落盘临界窗保证。D01暂缓，无版本/schema/Release/发布。见[验收](../outputs/android-novel-multibatch-process-20261008/REVIEW.md)。
+
+## Android 小说开篇真实进程终止恢复（2026-10-08）
+
+完整MainActivity本机SSE正文落盘后核对UUID/PID18650 SIGKILL，新进程真实创作入口恢复、复制、保存中断片段，重进同一会话无重复创建。最终恢复/独立回滚各OK1、真实HTTP1；原配置/输入/保存回执准确恢复，reverse空，原AVD保留。生产未改，AndroidTest构建通过。驱动失败及品牌遮罩拦截根因保留；等待既有遮罩消失后最终通过，无固定延时。
+
+不是多批完整章节、任意落盘时间窗、供应商或真机保证，无新截图视觉验收。D01暂缓，无发布/版本/schema/Release。用户持续授权仍有效，继续下一可本机闭环结果，不在本批停止。见[验收](../outputs/android-novel-process-20261008/REVIEW.md)。
+
+## Android 后置与手动维护容量（2026-10-08）
+
+UCM更新/重建、事件提取、百科沉淀与手动摘要整理已复用原非流式请求容量护栏，逐请求核对最终输入加原固定输出，超限保留旧资料/checkpoint/原文，不降低输出，不改变主回复成功。角色/旁白后置任务沿本轮冻结容量；手动任务启动前冻结平台，包括null身份，不晚套新选择。平台失效提示重新选择；自定义无身份线路unknown。
+
+256项定向JVM、最终新增6项联合及Debug通过，原5584覆盖安装成功；本批无新完整App HTTP/UI/Room/供应商/真机/性能证据。其他生成请求/检索分类/自定义线路容量仍有边界，不宣称全部产品预算闭环。无版本/schema/Release/发布、环境重启或用户数据清理，D01暂缓。见[验收](../outputs/android-post-maintenance-budget-20261008/REVIEW.md)。
+
+## Android 前置维护请求容量（2026-10-08）
+
+角色主回复前的自动摘要与状态提取复用本轮冻结平台/实际模型容量，在原非流式请求入口核对最终全部输入、协议估算及原固定输出（400/2000）。不可容纳时在HTTP/计费/重试前跳过，原文、摘要checkpoint及既有状态保留，不截输入或降低输出；unknown保持原时序。后置UCM/事件/沉淀与手动整理/重建仍待下一独立批次。
+
+253项定向JVM和Debug通过，两批新增案例最终联合11项通过；本批无新完整App HTTP/UI/供应商/真机或性能证据，不把主回复零调用扩为全流程零调用。无schema/版本/Release/发布，D01暂缓。见[验收](../outputs/android-maintenance-budget-20261008/REVIEW.md)。
+
+## Android 结构化摘要容量裁剪（2026-10-08）
+
+主角色、旁白与续章通过原PromptBuilder输出源类型块，在最终宏、状态锚点和章节要求后核对容量。仅新自动压缩事务记录来源且正文仍精确匹配的摘要可整块移除；旧摘要、人工编辑、混合或来源不可读保护全文。未知容量绕开来源读取/新后台计量。世界基础、锁定、身份、角色书/检索及混合记忆、当前完整链均保护，不降输出、不截原文。来源digest使用现有config表，与压缩提交/人工编辑同事务，无schema变化。
+
+268项定向JVM、Debug/AndroidTest通过，原5584的3项隔离真实Room验证来源提交/人工编辑撤销及双向失败回滚。本批无新完整App HTTP/UI/供应商/真机/百万级证据；前批整套截图与容量恢复验收保留。检索分类与独立维护请求预算仍待独立推进，旧分区百分比未消费；D01暂缓，无发布/版本/Release。见[设计与验收](../outputs/android-structured-budget-20261008/REVIEW.md)。
+
+## Android 单轮容量护栏（2026-10-08）
+
+平台编辑可按模型设置输入加输出总容量，未设置时保留原软窗口，不以模型名/显示条猜容量硬拒绝。容量只跟随本轮聊天明确选定的平台/实际模型；角色与世界自定义连接仍为未知。最终宏展开及snapshot后后台估算，保护完整system、当前输入和后续链，必要时移除完整旧历史；不可容纳时主回复HTTP/记费前返回可关闭的持续提示，不降输出或截正文，也不重复尝试备用地址。
+
+265项定向JVM与Debug/AndroidTest通过；完整App模拟器容量4000拒绝且保留2700字输入，经实际设置改20000后继续生成，真实主回复HTTP保留原输入及当前主线摘要。独立回滚恢复5配置键、模型选择及UUID夹具/费用，原AVD保持，reverse空。全部system分区裁剪、独立摘要/状态/记忆维护请求预算、自定义连接容量仍未闭环；计量是估算，非供应商tokenizer保证，旁白/续章本批无新完整AppHTTP证据。D01暂缓，无schema/版本/Release/发布。见[设计与验收](../outputs/android-total-budget-20261008/REVIEW.md)。
+## Android 角色导入输出上限校验（2026-10-08）
+
+便携JSON/TXT和角色整文件导入校验最大Token为正整数，拒绝0/负数/小数/Int溢出；缺省仍1200，合法正整数保留，不按猜测的模型容量截断。持久化事务二次校验，整文件第二项非法时首角色及镜像一起回滚；已识别便携配置错误直接提示，不触发AI智能解析。修复前新增JVM一项失败/两项真实Room均失败，修复后10项定向JVM与8项真实Room、Debug/AndroidTest通过；本批没有新SAF/UI/供应商/真机证据，也不追溯旧角色数据。总Prompt容量仍是独立限制，无schema/版本/Release/发布，D01暂缓。见[验收](../outputs/android-import-token-20261008/REVIEW.md)。
+## Android 世界条目补全保留当前内容（2026-10-08）
+
+后台扩展字段补全在原任务提交事务内重读当前条目，仅补仍为空的正文/标题/摘要/标签及合法扩展字段；保留手动编辑、来源与角色绑定，删除或类型变化的目标跳过。11项真实Room及Debug/AndroidTest通过；完整MainActivity生产队列实际本机HTTP两次延迟返回，验证期间编辑保留、删除不重建、缺失字段补齐，任务进度2/2。生产保存/删除owner调用不是面板触摸验收；配置3键精确恢复、UUID世界/任务/费用回滚，reverse空。真机/真实供应商未验收，无schema/版本/Release/发布，D01暂缓。见[验收](../outputs/android-meta-fill-20261008/REVIEW.md)。
+## Android 分支上下文排除继承（2026-10-08）
+
+普通分叉继承父线可见范围排除状态，编辑在事务内将源消息排除key映射到替代消息；子线恢复独立、原文与includeInContext不改。修复前3Room全失败，修复后新增3/既有事件3共6Room及Debug/AndroidTest通过；完整MainActivity生产VM排除→编辑→自动角色请求，本机SSE1stream实际排除源/替代/此前排除正文且保留SEED，新线回复入Room、原线原文保留。request/rollback各OK1、四配置键恢复、reverse空。非编辑面板触摸证据，真机/供应商/已有子线追溯未验收；无schema/版本/发布，D01暂缓。见[验收](../outputs/android-branch-exclusion-20261008/REVIEW.md)。
+
+# Android 当前完整输入与多角色接续（2026-10-08）
+
+SlidingWindowBuilder保留当前投影中最新user及其后完整回复链，只对更早历史使用剩余短期软配额；无user接续保留最后完整消息。修复前6JVM中4失败，修复后窗口/实际请求边界及摘要共10JVM、Debug/AndroidTest通过；完整App本机SSE实际发送2700字合成输入，HTTP正文完整相等、Room输入与回复保存，request/rollback各OK1、四配置键精确恢复、reverse空。多角色仅JVM请求边界，真实供应商/真机/总Prompt容量未验收。无schema/版本/发布，原AVD保持，D01暂缓。见[验收](../outputs/android-long-input-20261008/REVIEW.md)。
+
+## Android 小说续章选项指令（2026-10-08）
+
+生成下一章不再同时要求追加选项：PromptBuilder allowChoices默认保留普通旁白语义，续章传false，世界配置不改写。14项定向JVM、Debug/AndroidTest及完整App本机SSE续章请求/回滚各1通过；世界选项开启时实际system无CHOICES指令、保留无选项要求，主线摘要一次、旁白宏展开、第二章写入Room。四配置键精确恢复，UUID数据/章节草稿回滚，reverse空；真实供应商仍可能不服从，未宣称所有输出保证无选项。无schema/版本/Release/发布，原AVD保持，D01暂缓。见[验收](../outputs/android-chapter-prompt-20261008/REVIEW.md)。
+## Android 旁白与小说续章近期摘要（2026-10-08）
+
+已补齐requestNarrator当前故事线最多6段摘要读取，普通旁白与小说续章共用现有摘要区块；用户纠正在前、旁白宏按旁白身份展开。18项定向JVM与Debug/AndroidTest通过；完整App本机SSE旁白请求/回滚各1通过，主线摘要一次、其他branchId合成摘要不混入、回复入Room，四配置键精确恢复、UUID数据回滚、reverse空。小说续章仅JVM共用路径证据；真实供应商/真机/实际子线继承及总预算未新验收。无schema/版本/Release/发布，原AVD保持，D01暂缓。见[验收](../outputs/android-narrator-memory-20261008/REVIEW.md)。
+## Android 角色回复近期记忆摘要（2026-10-08）
+
+已修复当前分支近期摘要从ContextBuilder到角色system prompt的断链；沿原6段读取与分支筛选，只在PromptBuilder无结构化摘要时加入现有文本，宏展开、不重复，空摘要不产生区块。请求边界等25项定向JVM、Debug/AndroidTest与独立本机SSE完整App请求/回滚各1项通过：主线摘要一次、其他branchId合成摘要不混入、宏展开、回复写入Room。四配置键逐项恢复，UUID数据精确回滚；真实供应商/实际子线继承未验收，未改DAO/schema/版本/Release，无发布。见[验收](../outputs/android-memory-prompt-20261008/REVIEW.md)。D01暂缓。
+## Android 世界设置残留草稿（2026-10-08）
+
+与已保存世界五字段完全相同的本机残留草稿不再误报为未保存或锁住编辑；清理失败仍可使用正式世界并重试，不同草稿继续恢复/丢弃。定向JVM10项、Debug/AndroidTest、API35完整App1项通过，3截图已复核；UUID世界/草稿精确回滚，原AVD及用户数据保留。未改schema/版本/Release，无发布；D01暂缓。见[验收](../outputs/android-world-draft-20261008/REVIEW.md)。
+## Android 回复检查点进程终止恢复（2026-10-08）
+
+人物与普通旁白通过独立本机SSE/host精确SIGKILL、新PID完整App恢复：检查点正文保留一次、token去重、重进提示消失。运行确认未处理恢复记录仍能启动旁白，现共享生成与发送前阻止，并在恢复核对后才发布isReady；新输入保留。ChatViewModel全类221 JVM、Debug/AndroidTest通过，两条最终流程恢复/回滚各OK1；另补一条frame commit截图流程，最终1张恢复卡片已复核。硬杀后的少量未checkpoint短尾可丢失，节流依赖后续片段，不保证最多1.5秒。私有配置journal保留、精确键值回滚、仅UUID数据清理、专用reverse已移除；原AVD与小说残留/快照未动。304 dirty、暂存0，无发布/schema/版本/Release；D01暂缓。见[验收](../outputs/android-reply-process-20261008/REVIEW.md)。
+
+## Android 自动旁白与生成服务（2026-10-08）
+
+450ms待发旁白已补真实完整App成功及离页/重进取消证据。正常旁白HTTP1次并保存显示；pending窗口真实返回取消原Job，重进旁白HTTP0次。首次运行确认stopService在前台服务尚未promote时导致App崩溃；现由服务startForeground后观察原running集合自行停止。Debug/AndroidTest、7项retained JVM及3项API35最终检查通过，2截图已查看，见[本批验收](../outputs/android-narrator-20261008/REVIEW.md)。无旁白owner/schema/版本/Release/发布变化；保留301项既有dirty、原AVD及数据。D01继续暂缓。
+
+创作选择追加1项完整App通过：实际选世界/角色、离页重进、Activity重建、角色失效提示与只移除失效角色，保留背景和世界；未生成、生产未改。首轮夹具恢复input过早校验失败，v2等待页面退出后恢复通过。临时read-only覆盖层保留首轮合成草稿残留及私有快照；不声称已还原首轮前的覆盖层input，原AVD未保存。下一普通回复进程恢复边界检查。
+
+## Android 原型与核心 RP 遗漏补齐（2026-10-08）
+
+本轮审查确认的小说/设置子页底栏、角色相关故事分页、真实完成章节标题、Max保存失败反馈与待发自动旁白取消已实现。逐图复核另修正生成期禁用表单占位，以及当前停止后缺少保存/复制/重试恢复动作。停止后不重进即可保存已收到章节，沿用已有草稿owner，不新增schema。
+
+分批266项定向JVM、1项真实Room、浅色常规与深色320dp/150%各9项共18项完整App通过；84张当前截图/8张联系表已查看。真实本地PNG和章节标题已有完整App证据；小屏世界概览默认折叠，展开封面另有截图。不是全仓测试、真机或真实供应商验收。见[本轮验收](../outputs/android-rp-20261008/REVIEW.md)。
+
+保留main/e5abc07d和298项既有未提交基线，暂存0；无发布、版本/schema/Release变更、原环境重启或用户数据清理。显示回读恢复1080×2400、density override320/font1.4；read-only模拟器5584仍在用。AEX01–11不重复扩写，D01继续暂缓。角色/世界长文本保存失败/返回链追加只读审查未确认新缺陷；后续选择有新证据的用户结果，避免重复已验收矩阵。真机、供应商、任意强杀/旋转、百万级性能仍未独立验证。
+
+## Android 媒体ZIP导出停止与离页 AEX-11（2026-10-06，已验收）
+
+生产代码未改。真实受阻输出管道写入期间，现有导航确认的继续导出保持当前会话且完整导出成功；主动停止提示目标可能不完整、换新目标成功；停止并离开先等待写入结束与缓存清理，再返回故事库，重进后新目标成功。原消息/附件保留，AEX05导航及AEX09一次中断标记语义不变。
+
+最终Debug/AndroidTest构建通过，API35两组屏幕各3项、共6项完整App通过，28截图/6联系表复核。完成/重试ZIP完整校验四记录/四媒体字段和SHA256；每条新UUID夹具，既有受限aex09 ZIP provider不改，不重复写入失败/选择器矩阵。1288非本批源、1169冻结证据不变，四源码副本一致、新增行空白错误0。主题原始键存在性和值逐条恢复，显示恢复physical1080x2400/420、override320/font1.4，三个已有设备用户文件哈希不变，profileInstalled为覆盖安装元数据例外；普通删除allowlist DryRun空、0普通删除/0字节释放，只清本批UUID测试行/文件。
+
+受控provider由本批明确release后结束阻塞；本批证明结束后才离页，不能证明任意不配合provider的即时取消或等待上限。真机、真实旋转/强杀、并发临界窗和大包性能未独立验证；D01持续暂缓，无提交/发布/版本/schema/Release/Web/backend/重启/卸载/清数据。见[验收](../outputs/android-media-navigation-20261006/REVIEW.md)。
+
+媒体导入导出这一轮已覆盖目标闭环，下一批先复核已验收任务清单与当前真实核心RP流程，选择一个尚未闭环的高收益用户结果；不继续扩写同一媒体矩阵、不把已验收搜索/旧消息定位当新缺陷，不预设生产问题。
+
+## Android 媒体ZIP导出选择器恢复 AEX-10（2026-10-06，已验收）
+
+正式生产代码未改。真实选择器取消、选择器期间重建后取消，均恢复菜单且换新目标成功；取消后再次重建和成功后重建没有导出中断误报。重建后实际回调在两组最终运行中均被当前VM接受并成功导出；未就绪拒绝分支仅有静态guard证据，未独立触发，不将无缝恢复泛化为保证。
+
+新独立测试使用新UUID及现有受限aex09 ZIP provider，不改provider或旧用例。最终Debug/AndroidTest构建通过，API35两组屏幕各3项、共6项完整App通过，32截图/6联系表复核。原消息与附件及SHA256保留、私有请求缓存无残留，最终新目标ZIP逐项校验四记录/四媒体的正文、角色、父子、时间、上下文、metadata和媒体SHA256。初次强制期待guard的驱动超时单独保留，不计通过；实际结果记录为opened=true/successVisible=true。
+
+1287非本批源文件与1069旧冻结证据不变；三份事实文档和新测试是本批allowlist。主题原始键存在性和值逐条断言恢复，显示恢复physical1080x2400/420、override320/font1.4，三个已有设备用户文件哈希不变；profileInstalled为install-r元数据例外。删除allowlist DryRun空，0普通删除/0字节释放；仅测试自身UUID行/文件清理。未提交/发布/改版本/schema/Release/Web/backend/重启/卸载/清数据；真机、真实旋转、强杀、未就绪回调临界窗、大包性能未独立验证，D01继续暂缓。见[验收](../outputs/android-media-picker-20261006/REVIEW.md)。
+
+下一AEX-11：媒体ZIP真实受阻写入期间的继续导出、停止并离开与重进重试。保留既有AEX05导航语义，不重做写入错误或选择器矩阵。
+
+## Android 媒体ZIP导出失败与重建恢复 AEX-09（2026-10-06，已验收）
+
+真实受控输出管道确认：媒体ZIP写入期间Activity重建会由ChatScreen.dispose取消旧job，私有缓存清理、原数据保留，但新页面没有中断提示；同一基线用例因缺提示失败。仅在既有ChatScreen增加rememberSaveable(sessionId)导出中断标记，VM接受后设置，正常notice消费；恢复一次提示“目标文件可能不完整，请重新导出”。原取消、SAF、写入、快照和事务owner不变，AEX07导入标记保留。
+
+最终Debug/AndroidTest构建通过，两组屏幕各3项，共6项完整App通过，20截图/6联系表复核。真实目标打开失败、可靠pipe消费部分字节后closeWithError、写入期间重建，均保留原消息与附件，换新目标成功；重试ZIP完整校验四记录/四媒体的正文、角色、父子关系、时间、上下文、metadata及SHA256。已报告错误和成功后重建无误报。未重跑AEX01–08矩阵或全量JVM。
+
+新增独立测试，受限provider仅增加新aex09 UUID ZIP命名空间和写失败模式；旧JSON/TXT命名空间与模式保留。1284份非本批源基线、1002份AEX01–08冻结证据不变，主题原始键值断言恢复、显示与原进程恢复/保留，三份已有设备用户文件哈希不变；profileInstalled为install-r元数据例外。删除allowlist DryRun空，证据与构建保留；只清本批UUID测试数据/文件。未提交/发布/改版本/schema/Release/Web/backend/重启/卸载/清数据。真机、真实旋转、强杀、并发临界窗、大包性能与供应商未独立验证；D01持续暂缓。见[验收](../outputs/android-media-export-20261006/REVIEW.md)。
+
+下一AEX-10：媒体ZIP导出选择器取消与选择器重建后的菜单/guard提示→重选成功、一次中断标记无误报。先真实链路，尤其新VM未就绪时旧选择回调被拒绝的结果；不预设无缝续写，不重复AEX09写入故障矩阵。
+
+## Android 媒体ZIP角色修复重选 AEX-08（2026-10-06，已验收）
+
+现有媒体ZIP按当前参与角色的精确姓名匹配，缺失和重名均在正式写入前拒绝。本批未发现需要修改正式导入的缺陷；新独立完整App用例使用UUID百科、绑定角色和同一会话世界，缺失后从现有“添加参与角色”搜索并实际添加，重名后在角色资料修改姓名并保存，再重选同一包成功。
+
+最终Debug/AndroidTest构建通过；API35 emulator-5580，两组屏幕各2项，共4项通过，18截图/4联系表复核。拒绝后零半批，原文/原附件不变；导入四记录/四媒体，正文、角色/父子关系、时间、上下文、metadata与媒体SHA256核对，派生媒体分配新生成token；重复导入行ID/附件ID/路径不变。只新增测试和更新事实文档，未重跑AEX01–07矩阵/全量JVM。
+
+1288份既有源基线除三份事实文档外不变，936份冻结证据哈希不变；主题原始键值逐条恢复，原进程保留，显示恢复。失败探针的provider前缀/输入框选择/返回误触及token预期错误保留，不计最终通过；仅移除本批UUID夹具及准确定位的本批草稿。普通删除allowlist DryRun为空；未提交/发布/改版本/schema/Release/Web/backend/重启/卸载/清数据。真机、强杀、真实旋转、并发窗口与大包性能未独立验证；D01继续暂缓。见[验收](../outputs/android-media-roles-20261006/REVIEW.md)。
+
+下一AEX-09：先核查媒体ZIP导出实际SAF目标打开/写入失败与重建后的提示、重选和包完整性；不重复已验收的成功导出或导入矩阵，不预设正式代码缺陷。
+
+## Android 媒体导入重建提示 AEX-07（2026-10-06，已验收）
+
+AEX06真实读取重建已确认零半批、可重试，但旧屏dispose取消媒体job，retained store无其他job后清除，新VM没有原notice，用户看不到中断结果。本批仅在现有ChatScreen保存一次中断标记：接受导入才设置，正常结果立即消费；页面重建时提示重新选择文件核对，已保存记录不会重复写入。沿用原取消、单次SAF、codec和Room owner。
+
+同一读取重建用例修复前因缺提示失败、修复后通过；最终Debug/AndroidTest构建通过。两组屏幕配置各3项完整App，共6项通过，24截图/6联系表复核；读取重建后提示→重选→完整记录/附件→重复不增行→成功后再重建无误报，以及取消选择器/已显示打开失败后重建无误报通过。原消息/附件哈希、导入正文/关系/metadata和逐媒体SHA256完整。无新增JVM逻辑，未重跑AEX01–06矩阵。
+
+保护1283份非本批源码及880份AEX01–06冻结文件；主题原始键值与显示恢复，原进程保留，删除allowlist空。无发布/版本/schema/Release/Web/backend/重启/卸载/清数据；D01继续暂缓。见[验收](../outputs/android-media-interruption-20261006/REVIEW.md)。一次恢复提示消费后立即再次重建不保证重复显示；真实强杀/旋转/真机与提交临界窗未独立验证。
+
+下一完整结果AEX-08（从现有流程推断，尚未真实验收）：媒体ZIP来源参与角色缺失或精确重名时，用户从现有设置修复后重新选择成功，原文/附件不变且重复不增行。先核验真实入口与角色资格/同名规则，不预设生产缺陷；不扩大为角色卡/世界交换或改格式。
+
+## Android 媒体 ZIP 失败重试 AEX-06（2026-10-06，已验收）
+
+沿用 SAF 单次打开→私有不可变 ZIP→整包校验→Room 单事务。打开失败、截断 ZIP、可靠 pipe 在部分复制后报错均保留原消息与原附件、零半批且无请求残留；换有效包成功，重复不增行。选择器取消、选择器重建未就绪提示后重选、读取重建取消后离页重进重试均通过。
+
+生产源码本批未改；新增 opt-in 完整 App 用例并扩展受限测试 provider。最终 Debug/AndroidTest 构建通过；API35 模拟器浅色1080×2400/420dpi/100%及深色720×1600/360dpi/150%各5项，共10项通过，44截图/10联系表复核。逐行身份、正文、父子关系、上下文标记、媒体 metadata 与四个文件 SHA256、重复前后行ID/路径核对；每次导入实际只打开一次SAF。主题原始键值断言恢复，显示与进程回读、AEX01–05冻结哈希不变。无发布/版本/schema/Release/Web/backend/重启/卸载/清数据；D01继续暂缓。见[验收](../outputs/android-media-retry-20261006/REVIEW.md)。
+
+主动确认下一完整结果 AEX-07：媒体导入读取期间 Activity 重建会撤销请求并保留原文，但没有恢复提示（新VM就绪、notice/progress为空）。先以已冻结 AEX06 状态与截图为基线补齐可重选的中断反馈；不改媒体格式或取消/事务 owner。真机、强杀、旋转、并发及大文件性能未独立验证。
+
+## Android 最新消息入口 AEX-05（2026-10-06，已验收）
+
+导入300条长消息后，“回到最新”已有真实触摸动作，但当前Material3扩展按钮清除文字子树语义，且原图标无名称，使Android accessibility获得无名可点击节点。仅在现有按钮补齐与显示文案一致的contentDescription（回到最新/加载中），沿用原latestRequested与有界尾窗口owner。
+
+同一最小A/B失败→通过确认名称修复；旧UiAutomation缓存还会保留滚动前节点，独立驱动按API刷新缓存。最终Debug/AndroidTest构建通过，API35模拟器三格式×浅色1080x2400/420dpi/100%与深色720x1600/360dpi/150%，六条完整App真实SAF→300条导入→实际bounds触摸→向上滚动→accessibility点击→末条唯一尾标记通过，24张最终截图/六组联系表复核，Room原消息与300条正文/顺序/元数据完整。另六项先行矩阵和一项名称A/B通过不计最终六项。没有新增JVM逻辑，未重跑旧JVM用例。
+
+保护AEX01–04冻结581文件与其余基线哈希；仅清除测试UUID夹具，主题原始键值断言恢复，显示回读恢复。版本、Room、正式权限、发布状态不变；无重启/卸载/清数据/commit/push/PR/Release/Web/backend。真机TalkBack、旋转、强杀、生成/分支并发与大库性能未独立验证；D01继续暂缓。见[根因与验收](../outputs/android-latest-20261006/REVIEW.md)。下一完整结果：既有主线媒体ZIP打开/损坏/读取失败后重试路径。
+
+## Android 普通聊天导入 AEX-04（2026-10-06，已验收）
+
+既有 Tavern mes[]、本应用 messages[]、JSONL 普通聊天入口完成真实 SAF 生命周期验收。首次打开失败、第二遍打开失败、第二遍写入128条后读取流失败均保留原消息、零半批；重新选择成功后完整保存300条，重复导入不增行。选择器取消/期间重建、首遍与二遍停止、写入期间 Activity重建、离页重进后重试均通过。
+
+定向 JVM 6项、隔离 Debug/AndroidTest 构建通过；API35 emulator-5580 浅色常规屏与深色320dp/150%三格式各4项，合计24次完整App通过，102张最终截图、12组联系表已复核。最终正式源码与本批基线逐字节一致，仅新增测试、受限扩展测试provider及更新三份事实文档。测试仅清除UUID夹具，主题键/显示恢复；版本1.2.2/10202、Room28不变，无Git发布/Release/Web/backend操作。[验收与失败证据](../outputs/android-chat-import-20261006/REVIEW.md)。
+
+下一完整结果 AEX-05：定位导入长消息后“回到最新”可见却未被当前 accessibility 驱动识别的路径。现有触摸探针未记录实际bounds且打开下方消息面板，不能定为生产命中层故障；一次zIndex试验未通过，已精确撤销，不留正式改动。先冻结语义树/布局bounds/真实事件坐标/入口owner，用最小A/B区分驱动与生产，不继续叠补丁。真机、旋转、进程强杀、分支切换、提交后取消边界、并发编辑及大库性能未独立验证；D01切页卡顿仍暂缓。
+
+## Android 小说 TXT / 主线聊天 JSON 导出 AEX-03（2026-10-06，已验收）
+
+真实 SAF 写入中重建 Activity 后，聊天恢复提示曾因清除自身 effect 键而取消；现只在页面恢复时消费中断标记，提示可见并可再次导出。选择器取消、选择器重建、打开失败换目标重试、写入重建、继续导出、停止离页后重进均通过。TXT 整文件精确比对标题、章节、约16.8万字正文与尾声，跳过用户消息和协议标签；JSON 保留三行及全部采用版本，按当前分支选择调整上下文标记，原 Room 内容与标记保留。
+
+证据：定向 JVM 21 项零失败/错误/跳过；最终 Debug/AndroidTest 构建通过；API35 模拟器浅色常规屏与深色 320dp/150% 各两类型各三条完整 App 流程，合计12次通过，40张最终截图已复核。两次旧实现失败与同一用例最小 A/B 通过确认恢复提示修复；早期测试驱动失败全部保留，不计通过。主题原始键值与显示恢复，测试 provider 最终为空。见 [本批验收](../outputs/android-chat-export-20261006/REVIEW.md)。
+
+版本1.2.2/10202、Room28、正式权限与导出格式不变；无 commit/发布/Release/Web/backend 操作。一次性恢复提示再次立即重建不保证重复显示；真机、旋转、进程强杀、大库性能与并发编辑快照未独立验证。下一批 AEX-04 核验既有 Tavern/JSON 聊天导入的真实 SAF 取消、两遍读取失败、重建、停止离页和重试；只在真实证据确认缺陷时修生产代码。D01 持续暂缓。
+
+## Android 资料 JSON 导出 AEX-02（2026-10-06，已验收）
+
+角色库、世界百科与设定工坊沿用既有导出实现；本批只补齐独立测试 APK 的真实 SAF provider 与完整 MainActivity 用例，未发现需要修改正式代码的缺陷。取消选择器、选择器期间 Activity 重建、目标打开失败后换目标重试、写入期间重建、继续导出及停止离页后重进导出均通过，导出 JSON 的版本与完整 fixture 正文已解析核对。
+
+证据：ContentDocumentWriter 定向 JVM 4 项通过；浅色常规屏、深色 320dp/150% 各 9 项完整 App 通过，另 10 次定向重跑通过；36 张最终截图已复核。早期失败与空白首帧保留，不计通过；截图延后取样确认弹窗可读，不作性能结论。主题原始键值由测试断言精确恢复；显示参数回读恢复。真机、进程强杀、旋转、大库与并发编辑仍未独立验证。详见 [本批验收](../outputs/android-library-export-20261006/REVIEW.md)。
+
+版本 1.2.2/10202、Room28、正式权限与正式源码不变；无 commit、发布、Web/backend 修改。AEX-03 已于同日验收，见本文件顶部；D01 持续暂缓。
+
+## Android 主线记录与媒体包 AEX-01（2026-10-06，已验收）
+
+主线文字、手动/自动图片空正文行与有序语音附件支持 Android v1 ZIP 导出，并在整包校验后追加当前故事线。保留包内父消息、旁白、角色、媒体 metadata 与上下文排除；精确同名角色映射、同包及纯文本互斥去重。导出使用只读 WAL 快照、256 条 keyset；导入单 Room 事务，取消/失败清理本请求未引用文件。停止提示生命周期及小屏大字号空态裁切一并修正。
+
+证据：完整 JVM 1,236 项零失败/错误/跳过，后续 codec 11 项通过；最终 Debug/AndroidTest 构建通过，真实 Room 13 项、浅色常规屏与深色 320dp/150% 各 2 条完整 App 通过，26 张最终截图复核。真实 SAF、4 条/4 媒体、重复、Activity 重建、图片预览、静音 WAV 暂停/继续/停止、慢输入停止/离页后零写入已验收。生成/切线阻断为静态与事务 guard 证据，百万级/8 GiB、真机、供应商、强杀及所有取消窗口未独立实测。详见 [本批验收](../outputs/android-media-bundle-20261006/REVIEW.md)。
+
+版本 1.2.2/10202、Room28、正式权限不变，无 commit/发布/Web/backend 变更。显示参数回读恢复，主题原值未独立回读；早期失败和一次误并发测试不计通过，最终严格串行重跑。下一批 AEX-02 先核验资料导出的真实 SAF 中断/重建缺口；D01 持续暂缓。
+
+## Android 自动配音附件 P03（2026-10-06，已验收）
+
+自动配音沿用现有系统/Android TTS 与 Azure，完整原文、attempt token 和有序分段附件落在原派生消息；失败可原消息重试当前音色与配置。聊天及阅读共用播放 owner，支持暂停、继续和停止，已有文件播放失败重试不重新合成。取消只清理未提交文件，原文与已提交附件保留；冷读取将旧占位恢复为中断，不自动调用供应商。首次打开与 Activity 重建显示一致。
+
+主线程验证：1,222 JVM 零失败/错误/跳过；浅色常规屏与深色 320dp/150% 各 OK(17 tests)，包含六项真实 Room、八项组件、两条配音完整 App 与一条既有朗读 App。32 张最终截图复核。9,000 字测试原文由独立测试 APK 的真实本地静音 TTS 服务生成三段 128,044 字节 WAV，逐段静音内容与实际绑定日志核对；播放/控制、独立草稿、重进及真实 Activity 重建通过。并发/取消任意窗、Azure、真机和可听音色仍属未独立实测。见 [本批验收](../outputs/android-auto-voice-20261006/REVIEW.md)。
+
+证据纠正：L02 早期测试服务缺少 DEFAULT、权限及运行依赖配置不当，原 App 记录不能证明当时使用了本地测试引擎；旧冻结产物保留。本批修正测试服务并在两主题下重跑原朗读 App，以实际绑定和静音产物确认当前本地服务。显式未安装/不可用引擎现在预先拒绝；公共 TTS API 在绑定失败时仍可能回退，不宣称所有厂商运行均使用指定引擎。
+
+显示、主题与授权恢复；无 schema、版本、Release、远端或 GitHub 配额操作。AEX-01 已在同日完成，见本文件顶部；不冒充完整会话交换已实现。D01 按用户要求继续暂缓。
+
+## Android 手动配图 P02（2026-10-06，已验收）
+
+失败提示提供直接重试，沿用原描述并读取当前线路 Key；新描述和独立消息草稿保留。忙碌阻止重复请求，取消、换故事线、新请求与关闭失败提示使旧操作失效；重新提交前核对角色/世界目标。成功后的本地查看失败仍只刷新已保存配图，不重新生成。原描述草稿沿用既有持久恢复，瞬时重试请求不新增持久任务。
+
+主线程验证：1,193 JVM 零失败/错误/跳过；浅色常规屏和深色 320dp/150% 各两条完整 App 通过，18 张最终截图已复核。本地回环 HTTP 覆盖失败后原描述直接重试、后来编辑描述保留、独立输入保留、关闭失败提示、重进和再次提交、成功清理匹配描述。Key 更新、目标变更、旧 token、停止和晚到失败为 VM mock 证据；真实供应商、任意强杀与真机未验证。见 [本批验收](../outputs/android-image-retry-20261006/REVIEW.md)。显示、主题和授权恢复；无版本、schema、Release 或远端操作。继续 P03 自动语音附件，D01 依用户要求暂缓。
+
+## Android 自动配图 P01（2026-10-06，已验收）
+
+失败或中断保留原配图描述，在原消息显式重试；当前配置重新解析，忙碌、只读、其他故事线和已有附件不提供重复重试。读取尾页及已有窗口时有界恢复遗留生成状态，不自动请求供应商。生成完成在同一 Room 事务写入附件与状态；旧尝试不能覆盖新结果，停止后未提交的文件清理，提交后的附件保留。
+
+主线程验证：1,187 JVM 零失败/错误/跳过；浅色常规屏、深色 320dp/150% 各 14 项通过，包含六项真实 Room、六项组件和两条完整 App。12 张截图已复核，本地回环 HTTP 完整覆盖失败、原消息重试成功、独立输入草稿、离开重进、遗留占位恢复和真实 Activity 重建；未调用真实供应商。强进程终止的任意时间窗、真机和性能收益未独立验证。见 [本批验收](../outputs/android-image-recovery-20261006/REVIEW.md)。显示与主题恢复，麦克风/通知授权保持原值；无 schema、版本、Release 或远端操作。P02/P03 继续，D01 依用户要求暂缓。
+
+## Android 语音输入 N01/N02（2026-10-06，已验收）
+
+识别服务查询补齐 Android 包可见性声明，无服务先提示而不请求麦克风；权限返回时再次检查服务。识别结果复用唯一受控输入值，按光标插入或替换选区；打开输入工具时恢复清焦点折叠的选区，同时清除已结束的输入法 composition。旧会话/故事线及重复结果不能写入当前草稿。
+
+主线程验证：1,175 JVM 零失败/错误/跳过；浅色常规屏、深色 320dp/150% 各 16 项系统回调/组件/完整 App 通过，24 张最终截图已复核。真实隐式 Intent 使用仅测试 APK 的本地识别 Activity，覆盖首/中/尾、正反选区、空草稿、取消、空结果、真实 Activity 重建、持久草稿重进，以及宏和表情选区替换。服务消失、权限与旧回调为 ActivityResultRegistry 组件证据；未宣称真实录音、厂商识别、中文输入法 composing 或系统强杀已测。见 [本批验收](../outputs/android-voice-input-20261006/REVIEW.md)。显示、主题和麦克风授权恢复，通知授权未改变；无 Release、版本、schema 或远端操作。
+
+P01 已于同日完成，见本文件顶部。P02 手动配图直接重试、P03 自动语音附件继续推进；平台模型、费用、更新入口、最近项目与小说恢复只读审计未确认新缺陷，不冒充新增运行验证。D01 仍暂缓。
+
+## Android 阅读偏好 M01/M02（2026-10-06，已验收）
+
+阅读模式的章节标题跟随已保存字体，旁白按开关使用斜体，正文原有字号与行高保留。内容密度、字体和旁白开关沿用同一个 DataStore；写入中禁止重复提交，失败保持已持久化值，并可重试原请求。旧提示与取消结果不能影响新选择。
+
+主线程验证：1,174 JVM 零失败/错误/跳过；浅色常规屏及深色 320dp/150% 各一条完整 App，覆盖真实设置保存、返回阅读模式、Activity 重建及再次修改；四种字体和旁白/用户/章节样式组件各一条，26 张最终截图已复核。真实 DataStore 的成功保存与重建已验收；写失败/重试属于 VM mock 证据，未声称真实磁盘故障。见 [本批验收](../outputs/android-reading-20261006/REVIEW.md)。显示参数和偏好已恢复，无 Release、版本、schema 或远端操作。
+
+N01/N02 已于同日完成，验收见本文件顶部。小说停止/恢复/继续创作本轮只读审查未发现新缺陷，未重复增加功能。D01 切页卡顿仍按用户要求暂缓。
+
+## Android 朗读播放控制与阅读设置（2026-10-06，持续进行）
+
+L02 已通过主线程验收：同一次朗读可暂停、继续和停止，显示实际分段；首次引擎初始化、准备期暂停、旧回调及 Azure 播放身份隔离。1,169 项 JVM 零失败，真实 MediaPlayer 本地 WAV、播放栏小屏组件和八套主题对比度通过；浅色常规屏与深色 320dp/150% 字号各两条完整 App 流程通过，共 18 张 App 截图、6 张组件截图已复核。完整 App 使用仅测试 APK 注册的本地静音 TTS 引擎，未宣称真实供应商或可听音色。证据见 [本批验收](../outputs/android-playback-20261006/REVIEW.md)。
+
+下一批 M01 已确认阅读模式遗漏阅读字体与旁白斜体，代理在隔离树修正，由主线程随后验收。M02 已确认阅读偏好 DataStore 写失败缺少用户反馈，待串行补齐。D01 切页卡顿仍暂缓；无 Release、版本、schema 或远端变更。
+
+## Android 朗读重试与系统入口（2026-10-06）
+
+L01/C09 已通过主线程验收。朗读失败可直接重试当前全文及原音色；连续失败仍可重试，停止、换音色、切故事线和离页会使旧请求失效。离页后的后台生成不会重新开启朗读；切线读取和音色保存期间不启动旧朗读。聊天与资料抽屉只由当前可见层显示提示。
+
+1,146 项 JVM 零失败，浅色常规屏与深色 320dp/150% 字号各 5 条完整 App 流程通过，22 张截图已复核。系统入口覆盖真实 PendingIntent/URI 投递、重复消费、Activity 重建、失效目标和返回；角色入口按现有导航返回创作中心，再进入故事库。证据见 [本批验收](../outputs/android-speech-system-20261006/REVIEW.md)。Debug/AndroidTest 仅供验收，无 Release/版本/schema/远端变更。通知权限与显示参数已恢复；D01 继续暂缓。L02 的媒体首稿因播放归属问题退回，媒体修正与播放栏正在并行实施。
+
+## Android 世界归入与角色状态（2026-10-06）
+
+J01/K01 已完成主线程审查和独立验收。旧模板可显式选择新建世界或归入已有世界，先预览，默认保留现有字段及同名条目，明确勾选才覆盖字段；源/目标变化拒绝旧预览。条目按 24 条预览、64 条事务批次处理，无逐行冲突查询。对话角色状态可查看本会话/角色/故事线的自动状态并确认清除，仅影响该线；其他线和手动记忆保留。状态弹层展开显示，标题及清除入口固定，正文独立滚动。
+
+1,135 项 JVM、13 项真实 Room、浅深色各 5 条完整 App 流程通过，24 张最终截图已复核。Debug/AndroidTest 仅供验收；无 Release、版本、schema、供应商或远端变更。证据见 [本批验收](../outputs/android-world-state-20261006/REVIEW.md)。D01 仍暂缓。持续任务已进入 L01 朗读失败直接重试和 C09 系统入口专项；L02 进度/暂停的播放 owner 方案已核实，随后串行接入。
+
+## Android 来源核验与资料检索（2026-10-05）
+
+I01–I03 已完成：新沉淀资料记录来源指纹，查看原文时区分内容变更、退出采用上下文和旧资料无法核验；事件按当前故事线在数据库中筛选待跟进/已解决及标题/描述；收藏按全部已存备注搜索，改备注后重查，能定位首屏之外的原文。事件窗口 72 条、收藏窗口 120 条，旧页可回到最近；刷新与翻页失败分别重试。
+
+1,119 项 JVM、7 项 Room/组件测试、浅色常规屏及深色 320dp/150% 字号各 3 条完整 App 流程通过，22 张截图已复核。Debug/AndroidTest 仅供验收，无 Release/APK 交付，版本 1.2.2 / 10202、Room 28 不变。证据见 [本批验收](../outputs/android-flow-next-20261005/REVIEW.md)。D01 仍暂缓；供应商、真机、强杀与切页性能未独立验证。持续任务继续推进 J01：旧模板显式归入已有世界的预览与合并。
+
+## Android 第三轮功能闭环（2026-10-05）
+
+H01–H08、H10、H12、H14 共 11 项已完成：故事置顶原子更新、条目删除失败重试、平台删除与失败回滚、失效发言角色拦截、角色动作归属、旧章节改名、平台费用身份、时间线/关系删除状态、资料库删除保留分页，以及四类页面导出离页确认。主线程逐项审查代理代码，并修正测试失真、重复失败事件、旧游标及遗漏导航入口。
+
+1,106 项 JVM、11 项真实 Room、导出保护 6 项组件/真实文件取消流程在浅深色各一次、完整 App 9 条流程在浅深色各一次通过。54 张完整 App 截图和 2 张导出组件截图、日志及源码增量见 [第三轮验收](../outputs/android-continuous-20261005/REVIEW.md)。Debug/AndroidTest 仅供验收，未构建 Release 或交付 APK。版本 1.2.2 / 10202、Room 28 不变；无提交、推送、发布或远端清理。D01 仍暂缓；真机、供应商网络、任意强杀、切页性能未独立验证。
+
+## Android 第二轮功能闭环（2026-10-05）
+
+G01–G05 已完成：角色整文件事务导入与分页世界匹配、媒体回调归属、条目配图提示草稿及保留离开、世界关系端点校验、导入进度与停止。三个隔离工作树交付后由主线程复核；实际小屏验收发现的确认按钮重叠也已修复并复验。
+
+236 项定向 JVM、21 项去重后的 Room/回调测试、浅/深色共 8 条完整 App 流程通过，24 张最终截图见 [第二轮验收](../outputs/android-continue-20261005/REVIEW.md)。仅构建 Debug/AndroidTest 用于验证，未打 Release 或交付 APK；版本 1.2.2 / 10202、Room 28 不变。工作树可恢复归档，主目录和数据保留；无提交、推送、上传或远端操作。D01 切页卡顿仍按用户要求暂缓，真机、真实供应商、任意强杀及性能收益未独立验证。
+
+## Android 后续清单闭环（2026-10-05）
+
+仅 Android：AI 结果快照/冲突应用、小说中断全文恢复、摘要逐条维护、跨故事线全文搜索和五类草稿恢复已完成；模型覆盖、媒体系统边界、输入序列化及大历史专项均有分层证据。子代理在隔离工作区交付，主线程复核、整合并独立验收。完整清单见 [ANDROID_TASK_BACKLOG](../mojing/docs/ANDROID_TASK_BACKLOG.md)，日志、截图、包与哈希见 [本轮验收](../outputs/android-complete-20261005/REVIEW.md)。
+
+版本保持 1.2.2 / 10202；Room 27→28 仅为生成任务增加可空结果快照及应用时间，旧任务保留。用户数据库、配置、媒体及原有工作区改动保留。无提交、推送、远端发布、Actions 配额清理或上传。切页延迟/卡顿依用户要求继续暂缓；真实供应商、真机和任意崩溃时间窗没有独立证明。
+
+## Android 收藏、世界维护与生成记录检索（2026-10-03）
+
+按用户本轮授权，三个隔离工作区并行实现：收藏备注查看/编辑/清空；独立时间线事件编辑、描述输入与关系备注展示；生成记录按标题和类型检索全部历史。主线程整合并修正连续筛选的请求归属、时间线保存中重载造成的重复提交风险、按提交世界清理草稿，以及编辑面板的键盘避让。沿用现有数据表，无 schema、版本或供应商调用变更。
+
+210 项定向 JVM、7 项 Room 通过；完整 App 在浅色常规屏与深色 320dp/150% 字号下各 3 项通过，24 张截图覆盖编辑、键盘、保存、重开、历史检索、类型筛选、空结果与详情。设备为现有专用模拟器，使用合成资料，显示参数已恢复；真机、强制终止恢复和大数据性能未独立验证。打包及最终核对见[本批交付](../outputs/android-parallel-features-20261003/REVIEW.md)。切页延迟仍按用户要求暂缓。本轮不提交、推送、改版本、上传或处理 GitHub 配额；原有脏改动、正式数据、配置和签名保留。
+
+## 历史：Android 小说目录搜索（2026-10-02）
+
+按用户要求继续功能缺口，本批新增目录标题、已记录章节编号和开头 180 字片段搜索，覆盖当前故事线的未加载目录并沿用已采用回复规则。每页仍为 40 条游标查询，搜索请求可取消，旧结果不得覆盖新关键词或故事线；错误可原位重试，清除恢复目录。没有搜索结果时，续章和整本 TXT 导出语义保持不变。14 项 JVM、3 项 Room 数据库用例及浅色/小屏深色的 70 章查找和旧原文跳转验证通过；正式交付证据见 [目录搜索](../outputs/android-contents-search-20261002/REVIEW.md)。无 schema 迁移，无用户资料改写。
+
+用户报告切页延迟/卡顿，要求先记着；已记入缺口清单和用户指定的持久记忆，当前未修复、未独立测量。GitHub 只读核查：当前账号 6 个可访问自有仓库的 Actions 产物合计约 72.9MiB，账单接口缺少权限，不能据此否定用户的 0.5GB 邮件；最新 v1.2.2 Release 只有校验文件、无 APK。Actions 与 Release 附件配额分别管理，本地构建可继续；本轮不删除产物、不改付费预算、不上传或发布。
+
+## 历史：Android 输入工具与角色分组修正（2026-10-02）
+
+用户真机截图反馈输入工具与预期不一致、角色分组文字贴边。源码确认：输入工具仍保留双行长列表；角色分组使用圆角 Surface 但没有水平内边距。现工具入口改为图标与短标签，随可用宽度和字号在三列/两列间适配；快捷词仍可展开，所有动作沿原回调。角色分组补 16dp 水平、12dp 垂直内边距，长说明可换行；输入栏图标明确 48dp 触控区。
+
+定向模拟器浅色 4 项、小屏深色 150% 字号 2 项通过，包含快捷词插入、旁白入口、分组展开和最后一组可达性；截图与本轮打包记录见 [两处布局修正](../outputs/android-tools-layout-20261002/REVIEW.md)。本轮没有复跑全页面或全量 JVM；真机厂商字体未独立复现。先前交付保留。
+
+## 历史：Android 用户反馈修正（2026-10-02）
+
+用户报告上一轮仍有默认图片误用、剧情选项挤占正文、直角列表、切页闪动、平台标志与提示缺失、编辑弹窗低效等问题；上一轮截图和构建不再作为“视觉闭环”结论。当前按这组反馈修正，最终视觉接受由用户查看新包决定。
+
+已实现：测试山水资源退回默认占位，用户上传的图片保留；创作入口改图标；选项回归滚动正文，小屏大字默认收起且可展开，自由输入始终可用；根导航取消整页透明叠加，设置切换保留轻位移，图片取消重复淡入；四个内置平台使用本地官网标志；字段补提示并弱化提示颜色；统一近期项目、价格、用量、搜索、语音、条目选择等圆角；开篇/风格用大编辑面板，多字段弹窗自适应内容高度，说明按需展开。
+
+163 项定向 JVM 测试通过；Debug、AndroidTest、正式签名 Release 构建通过。完整 App 浅色复核 10 项通过、2 项条件跳过，小屏深色大字 4 项通过，常规尺寸可选剧情与编辑组件 7 项通过。最新 73 张截图、APK 与分层证据见[反馈修正交付](../outputs/android-ui-polish-20261002/REVIEW.md)。模拟器运行的是 Debug；本轮 Release 已核验签名和交付哈希，未独立安装运行，真机视觉与切页体感仍待用户验收。本轮没有数据迁移、清库、卸载、版本改动或外部发布。
+
+## 历史：Android 全页面视觉复核（2026-10-02，上轮本地交付）
+
+用户再次反馈后，已修正聊天、阅读、消息九宫格、全宽资料、创作/角色、世界及设置的整页结构，保留现有真实功能入口。新增紧凑选择行在小屏大字时上下排列，新建对话默认折叠高级设置；图片使用用户资源，无图中性占位。原型未展示的现有功能沿同一视觉语言补齐；静态原型不能确定原动画时序。
+
+192项定向JVM通过，Debug/androidTest/Release构建通过；完整App默认与320dp/150%两轮各9项实际用例通过（各另跳过1项宽屏专用），宽屏2项、深色2项和无图1项通过。小说通过本地SSE验证生成、停止和预览保留。共127张最终截图及设备/哈希记录见[复核交付](../outputs/android-ui-review-20261002/REVIEW.md)。视觉最终接受仍待用户确认；真机、外部供应商、全部异常状态和大型数据性能未在本轮独立验证。
+
+本地通用/ARM64/ARMv7 Release包位于 `outputs/android-ui-review-20261002/`，版本仍1.2.2/10202，签名与包元数据已核对；未覆盖安装到签名不同的Debug模拟器。设备显示状态已恢复；不清库、不卸载、不重启AVD。main/HEAD未变，无提交、推送、PR、改版本或公开发布；原有脏改动、数据库、媒体、配置和历史副本保留。仅做本任务目录DryRun盘点，无删除，释放空间0。
+
+## 历史：1.2.2 发布验证（2026-10-01）
 
 本轮用户重新授权构建及上传至现有私有 GitHub 仓库，替代下方历史暂停安排。1.2.2 / 10202 包含23节视觉标准纠偏，无新增封面模型、数据库迁移、依赖或测试。
 
