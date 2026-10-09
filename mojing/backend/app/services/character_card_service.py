@@ -4,6 +4,7 @@ import base64
 import json
 import struct
 import zlib
+from copy import deepcopy
 from io import BytesIO
 from pathlib import Path
 
@@ -144,7 +145,6 @@ def convert_v2_to_internal(card_data: dict) -> dict:
     character_book = data.get("character_book")
     tags = data.get("tags", [])
     creator = data.get("creator", "")
-    creator_notes = data.get("creator_notes", "")
     persona_parts = [description, personality]
     if scenario:
         persona_parts.insert(0, f"【场景】{scenario}")
@@ -157,8 +157,6 @@ def convert_v2_to_internal(card_data: dict) -> dict:
         persona_prompt += f"\n\n【系统提示】\n{system_prompt}"
     if post_history:
         persona_prompt += f"\n\n【后置指令】\n{post_history}"
-    if creator_notes:
-        persona_prompt += f"\n\n【创作者备注】\n{creator_notes}"
     return {
         "name": name,
         "persona_prompt": persona_prompt.strip(),
@@ -172,27 +170,45 @@ def convert_v2_to_internal(card_data: dict) -> dict:
     }
 
 
-def convert_internal_to_v2(character) -> dict:
-    """将项目内部人物数据转换为 V2 角色卡格式。"""
-    return {
-        "spec": V2_SPEC,
-        "spec_version": "2.0",
-        "data": {
-            "name": character.name,
-            "description": character.persona_prompt or "",
-            "personality": "",
-            "scenario": "",
-            "first_mes": "",
-            "mes_example": "",
-            "system_prompt": "",
-            "post_history_instructions": "",
-            "alternate_greetings": [],
-            "tags": [],
-            "creator": "墨境",
-            "creator_notes": "",
-            "character_book": None,
-        },
+def convert_internal_to_v2(character, profile=None) -> dict:
+    """只读导出当前人设；未改的人设保留原卡结构，与 Android overlay 契约一致。"""
+    raw = getattr(profile, "character_card_json", None)
+    if isinstance(raw, dict) and isinstance(raw.get("tavern_chara_card_v2"), dict):
+        raw = raw["tavern_chara_card_v2"]
+    text_fields = ("description", "personality", "scenario", "first_mes", "mes_example",
+                   "system_prompt", "post_history_instructions")
+    original_root = None
+    original_data = None
+    if isinstance(raw, dict):
+        if isinstance(raw.get("data"), dict) and (raw.get("spec") == V2_SPEC or "name" in raw["data"]):
+            original_root = raw
+            original_data = raw["data"]
+        elif "name" in raw and any(key in raw for key in text_fields):
+            original_data = raw
+    data = deepcopy(original_data) if original_data is not None else {}
+    original_persona = None
+    if original_data is not None:
+        # Old malformed structured fields must not break export or displace current text.
+        try:
+            original_persona = convert_v2_to_internal(original_data)["persona_prompt"]
+        except (TypeError, ValueError, AttributeError):
+            pass
+    persona = character.persona_prompt or ""
+    data["name"] = character.name
+    if original_persona != persona:
+        data["description"] = persona
+        for key in text_fields[1:]:
+            data[key] = ""
+    defaults = {
+        **{key: "" for key in text_fields},
+        "alternate_greetings": [], "tags": [], "creator": "墨境", "creator_notes": "",
+        "character_version": "", "extensions": {}, "character_book": None,
     }
+    for key, value in defaults.items():
+        data.setdefault(key, value)
+    root = deepcopy(original_root) if original_root is not None else {}
+    root.update(spec=V2_SPEC, spec_version="2.0", data=data)
+    return root
 
 
 def read_character_card_from_json(json_path: str | Path) -> dict | None:

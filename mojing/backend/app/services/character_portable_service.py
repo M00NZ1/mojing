@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import math
 import re
+import struct
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import select
@@ -20,6 +23,43 @@ LEGACY_TXT_HEADER = f"# {LEGACY_PORTABLE_KIND} v{PORTABLE_VERSION}"
 TXT_SEP = "\n---\n"
 
 
+def portable_sampling_parameters(payload: dict[str, Any]) -> dict[str, float | int]:
+    """Match the native editor: finite floats, positive integral output limit, no clamping."""
+    defaults = {"temperature": 0.9, "max_tokens": 1200, "top_p": 1.0,
+                "frequency_penalty": 0.0, "presence_penalty": 0.0}
+    result: dict[str, float | int] = {}
+    for field, default in defaults.items():
+        value = payload.get(field)
+        if value is None or value == "":
+            result[field] = default
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise ValueError(f"{field} 必须是有效数字")
+        if field == "max_tokens":
+            try:
+                number = Decimal(str(value).strip())
+                if not number.is_finite() or number != number.to_integral_value() or not 0 < number <= 2147483647:
+                    raise ValueError("max_tokens 必须是正整数")
+                result[field] = int(number)
+            except InvalidOperation as exc:
+                raise ValueError("max_tokens 必须是正整数") from exc
+        else:
+            number = float(value)
+            try:
+                finite_on_android = math.isfinite(struct.unpack("!f", struct.pack("!f", number))[0])
+            except OverflowError:
+                finite_on_android = False
+            if not math.isfinite(number) or not finite_on_android:
+                raise ValueError(f"{field} 必须是有效数字")
+            result[field] = number
+    return result
+
+
+def character_sampling_parameters(character: CharacterModel) -> dict[str, float | int]:
+    return portable_sampling_parameters({field: getattr(character, field) for field in
+        ("temperature", "max_tokens", "top_p", "frequency_penalty", "presence_penalty")})
+
+
 def build_portable_payload(
     character: CharacterModel,
     profile: CharacterProfileModel | None,
@@ -32,8 +72,7 @@ def build_portable_payload(
         "persona_prompt": character.persona_prompt or "",
         "model_name": character.model_name or "",
         "api_base_url": character.api_base_url or "",
-        "temperature": float(character.temperature if character.temperature is not None else 0.9),
-        "max_tokens": int(character.max_tokens or 1200),
+        **character_sampling_parameters(character),
         "avatar_color": character.avatar_color or "",
         "notes": "导入后请在人物中自行填写 API Key；本包不含任何密钥。",
     }

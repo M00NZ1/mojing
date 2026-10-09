@@ -3,6 +3,7 @@ import shutil
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
@@ -37,6 +38,8 @@ from ..services.character_portable_service import (
     allocate_unique_character_name,
     build_portable_payload,
     collect_character_dump_for_summary,
+    character_sampling_parameters,
+    portable_sampling_parameters,
     portable_from_txt,
     portable_json_dumps,
     portable_to_txt,
@@ -309,6 +312,7 @@ def import_character_portable(file: UploadFile = File(...), db: Session = Depend
     if not valid_version:
         raise HTTPException(status_code=400, detail="不支持的便携包版本，原有角色未改变")
     try:
+        sampling = portable_sampling_parameters(payload)
         name = allocate_unique_character_name(db, str(payload.get("name") or "未命名"))
         persona = str(payload.get("persona_prompt") or "")
         character = CharacterModel(
@@ -317,12 +321,12 @@ def import_character_portable(file: UploadFile = File(...), db: Session = Depend
             api_key="",
             api_base_url=str(payload.get("api_base_url") or "https://api.deepseek.com")[:255],
             model_name=str(payload.get("model_name") or "deepseek-chat")[:120],
-            temperature=float(_portable_parameter(payload, "temperature", 0.9)),
-            max_tokens=int(_portable_parameter(payload, "max_tokens", 1200)),
-            top_p=float(_portable_parameter(payload, "top_p", 1.0)),
+            temperature=sampling["temperature"],
+            max_tokens=sampling["max_tokens"],
+            top_p=sampling["top_p"],
             top_k=int(_portable_parameter(payload, "top_k", 0)),
-            frequency_penalty=float(_portable_parameter(payload, "frequency_penalty", 0.0)),
-            presence_penalty=float(_portable_parameter(payload, "presence_penalty", 0.0)),
+            frequency_penalty=sampling["frequency_penalty"],
+            presence_penalty=sampling["presence_penalty"],
             repetition_penalty=float(_portable_parameter(payload, "repetition_penalty", 1.0)),
             avatar_color=str(payload.get("avatar_color") or "#F97316")[:20],
         )
@@ -380,20 +384,20 @@ def export_character_portable(
         return Response(
             content=body,
             media_type="application/json; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name, safe='')}"},
         )
     if fmt == "txt":
         body = portable_to_txt(payload).encode("utf-8")
         return Response(
             content=body,
             media_type="text/plain; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name, safe='')}"},
         )
     docx_bytes = write_plain_docx(portable_to_txt(payload))
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name, safe='')}"},
     )
 
 
@@ -430,8 +434,10 @@ def export_character_portable_summary(
         client_kw["base_url"] = _normalize_openai_compatible_base(base) or base
     client = OpenAI(**client_kw)
     source_dump = collect_character_dump_for_summary(db, character)
+    sampling = character_sampling_parameters(character)
     try:
         summary_payload = summarize_portable_with_public_llm(client=client, model=model, source_dump=source_dump)
+        summary_payload.update(sampling)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"AI 摘要失败：{exc}") from exc
 
@@ -441,20 +447,20 @@ def export_character_portable_summary(
         return Response(
             content=body,
             media_type="application/json; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname, safe='')}"},
         )
     if fmt == "txt":
         body = portable_to_txt(summary_payload).encode("utf-8")
         return Response(
             content=body,
             media_type="text/plain; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname, safe='')}"},
         )
     docx_bytes = write_plain_docx(portable_to_txt(summary_payload))
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname, safe='')}"},
     )
 
 
@@ -598,7 +604,8 @@ def export_character_card(character_id: int, db: Session = Depends(get_db)):
     if character is None:
         raise HTTPException(status_code=404, detail="人物不存在")
 
-    card_data = convert_internal_to_v2(character)
+    profile = db.scalar(select(CharacterProfileModel).where(CharacterProfileModel.character_id == character_id))
+    card_data = convert_internal_to_v2(character, profile)
 
     avatar_path = None
     if character.avatar_image_path:
