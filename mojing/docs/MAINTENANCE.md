@@ -105,6 +105,8 @@ Set-Location .\mojing\android
 .\gradlew.bat connectedDebugAndroidTest
 ```
 
+该命令发现并运行 `app/src/androidTest/` 下的完整 connected suite，只适用于完整测试环境并且已经明确授权全量运行的场景。私有 UUID、性能、恢复和 capture tests 需要各自的 instrumentation 参数、fixture owner、隔离数据和恢复流程，不能作为无参数日常入口。日常设备回归使用下方已有的 `$testClasses` 显式类列表；不要把完整 connected suite 的发现结果当作本轮通过。
+
 测试位于 `app/src/test/` 和 `app/src/androidTest/`。签名、ABI 与 APK 输出见 [Android 开发指南](ANDROID.md)。
 
 ### 独立模拟器交互回归
@@ -130,7 +132,9 @@ $testClasses = @(
 & $testAdb -s $testDevice shell am instrument -w -r -e class $testClasses com.mojing.app.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-以测试输出中的 `OK` 或失败报告判断结果。2026-09-10 使用 Android 35、Pixel 6 配置完成上述 12 项用例；原始结果保存在 `.codex-work/android-ui-20260910/`。头像用例在 280dp 宽度下检查 40dp 尺寸与明暗主题文字颜色。
+以测试输出中的 `OK` 或失败报告判断结果。当前 `$testClasses` 列出 8 个 instrumentation classes，共 15 个 `@Test` 方法；这只是当前显式列表的静态规模，不代表本轮已执行或通过。2026-09-10 使用 Android 35、Pixel 6 配置完成的历史回执记录为 12 项用例，原始结果保存在 `.codex-work/android-ui-20260910/`；该历史数量不改写为当前列表的执行结论。头像用例在 280dp 宽度下检查 40dp 尺寸与明暗主题文字颜色。
+
+日常 CI 只运行 Android JVM 单元测试；核心设备回归按用户流程选择少量已知 instrumentation classes。手动性能/故障取证 fixture 需要显式 gates、fixture ownership、rollback 和输出目录，由运行者单独维护，不纳入日常 CI。`Assume.assumeTrue` 只表达运行前置条件；未运行不能据此判定用例过时、全部跳过或已通过。
 
 本机 SQLite 契约测试从 Room schema 和 DAO 读取表、索引与查询，覆盖角色排序、任务状态和百科版本分页。版本用例包含两万条交错记录、删除游标边界与新增记录：
 
