@@ -1,5 +1,6 @@
 package com.mojing.app.viewmodel
 
+import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.ModelPlatform
 import com.mojing.app.data.local.dao.CostRecordDao
@@ -20,13 +21,19 @@ import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.test.TestScope
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -63,12 +70,21 @@ class SettingsViewModelTest {
     }
 
     @After
-    fun tearDown() {
-        Dispatchers.resetMain()
+    fun tearDown() = runTest(dispatcher) {
+        try {
+            val ownerJob = viewModel.viewModelScope.coroutineContext[Job]
+            viewModel.viewModelScope.cancel()
+            if (ownerJob != null) {
+                withContext(Dispatchers.Default) { withTimeout(5_000) { ownerJob.join() } }
+            }
+        } finally {
+            Dispatchers.resetMain()
+        }
     }
 
     @Test
     fun failedDefaultPlatformSaveKeepsVisibleConfigurationAndAllowsRetry() = runTest(dispatcher) {
+        awaitReady()
         val old = ModelPlatform("old", "旧平台", "https://old.test", "old-key", listOf("old-model"))
         val replacement = ModelPlatform("new", "新平台", "https://new.test", "new-key", listOf("new-model"))
         viewModel.savePlatform(old, makeDefault = true)
@@ -85,18 +101,21 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun initialApiKeyIsEmpty() = runTest {
+    fun initialApiKeyIsEmpty() = runTest(dispatcher) {
+        awaitReady()
         assertEquals("", viewModel.apiKey.value)
     }
 
     @Test
-    fun updateApiKey() = runTest {
+    fun updateApiKey() = runTest(dispatcher) {
+        awaitReady()
         viewModel.updateApiKey("sk-test-key")
         assertEquals("sk-test-key", viewModel.apiKey.value)
     }
 
     @Test
-    fun memoryIntervalOnlyPersistsEffectiveRange() = runTest {
+    fun memoryIntervalOnlyPersistsEffectiveRange() = runTest(dispatcher) {
+        awaitReady()
         viewModel.updateMemoryCompactThreshold("2500")
         assertEquals("2500", viewModel.memoryCompactThreshold.value)
         verify(exactly = 0) { secureStorage.memoryCompactThreshold = any() }
@@ -108,19 +127,22 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun updateBaseUrl() = runTest {
+    fun updateBaseUrl() = runTest(dispatcher) {
+        awaitReady()
         viewModel.updateBaseUrl("https://api.openai.com")
         assertEquals("https://api.openai.com", viewModel.baseUrl.value)
     }
 
     @Test
-    fun updateModel() = runTest {
+    fun updateModel() = runTest(dispatcher) {
+        awaitReady()
         viewModel.updateModel("gpt-4o")
         assertEquals("gpt-4o", viewModel.model.value)
     }
 
     @Test
-    fun invalidSamplingDefaultsStayInDraftWithoutPersisting() = runTest {
+    fun invalidSamplingDefaultsStayInDraftWithoutPersisting() = runTest(dispatcher) {
+        awaitReady()
         viewModel.updateDefaultTemperature("2.1")
         viewModel.updateDefaultMaxTokens("0")
         viewModel.updateDefaultTopP("-0.1")
@@ -141,7 +163,8 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun imageProbeUsesPublicFallbackWhenDedicatedImageSettingsAreBlank() = runTest {
+    fun imageProbeUsesPublicFallbackWhenDedicatedImageSettingsAreBlank() = runTest(dispatcher) {
+        awaitReady()
         every { secureStorage.imageApiKey } returns ""
         every { secureStorage.imageBaseUrl } returns ""
         every { secureStorage.imageModel } returns ""
@@ -161,7 +184,8 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun imageProbePrefersDedicatedImageSettings() = runTest {
+    fun imageProbePrefersDedicatedImageSettings() = runTest(dispatcher) {
+        awaitReady()
         every { secureStorage.imageApiKey } returns "image-key"
         every { secureStorage.imageBaseUrl } returns "https://image.example/v1"
         every { secureStorage.imageModel } returns "image-model"
@@ -181,7 +205,8 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun savingNonDefaultPlatformDoesNotSwitchActiveCredentials() = runTest {
+    fun savingNonDefaultPlatformDoesNotSwitchActiveCredentials() = runTest(dispatcher) {
+        awaitReady()
         val platform = ModelPlatform(
             id = "secondary",
             name = "备用平台",
@@ -199,7 +224,8 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun deletingPlatformReturnsCommittedList() = runTest {
+    fun deletingPlatformReturnsCommittedList() = runTest(dispatcher) {
+        awaitReady()
         val remaining = listOf(ModelPlatform("other", "其它", "https://other.test", "other-key", listOf("model")))
         every { secureStorage.deleteModelPlatform("secondary") } returns remaining
 
@@ -211,7 +237,8 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun deletingPlatformFailureLeavesViewModelStateForRetry() = runTest {
+    fun deletingPlatformFailureLeavesViewModelStateForRetry() = runTest(dispatcher) {
+        awaitReady()
         every { secureStorage.deleteModelPlatform("secondary") } throws IllegalStateException("删除失败")
 
         assertTrue(runCatching { viewModel.deletePlatform("secondary") }.isFailure)
@@ -221,7 +248,8 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun updateProfilePublishesAndPersistsPersonaFields() = runTest {
+    fun updateProfilePublishesAndPersistsPersonaFields() = runTest(dispatcher) {
+        awaitReady()
         viewModel.updateProfile("沈砚", "来自雾都的调查员", "#334455")
         viewModel.profileSaving.first { !it }
 
@@ -233,7 +261,8 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun profileFailureRetainsSavedValuesAndAllowsRetry() = runTest {
+    fun profileFailureRetainsSavedValuesAndAllowsRetry() = runTest(dispatcher) {
+        awaitReady()
         val before = listOf(viewModel.userName.value, viewModel.userDescription.value, viewModel.userAvatarColor.value)
         var saved = false
         every { secureStorage.saveUserProfile(any(), any(), any()) } throws IllegalStateException("disk unavailable")
@@ -255,7 +284,8 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun updateUserAvatarImagePathAppliesImmediately() = runTest {
+    fun updateUserAvatarImagePathAppliesImmediately() = runTest(dispatcher) {
+        awaitReady()
         viewModel.updateUserAvatarImagePath("avatars/persona.png")
 
         assertEquals("avatars/persona.png", viewModel.userAvatarImagePath.value)
@@ -264,6 +294,7 @@ class SettingsViewModelTest {
 
     @Test
     fun defaultsReadOnlySelectedLabelsAndPickerPages() = runTest(dispatcher) {
+        awaitReady()
         viewModel.updateDefaultWorldTemplateId("wuxia")
         viewModel.updateDefaultEncyclopediaIdForAi("2")
         coEvery { worldTemplateDao.getDefaultWorldByTemplateId("wuxia") } returns
@@ -297,6 +328,7 @@ class SettingsViewModelTest {
 
     @Test
     fun selectedDefaultReadFailureKeepsKeysAndAllowsRetry() = runTest(dispatcher) {
+        awaitReady()
         viewModel.updateDefaultWorldTemplateId("wuxia")
         viewModel.updateDefaultEncyclopediaIdForAi("2")
         coEvery { worldTemplateDao.getDefaultWorldByTemplateId("wuxia") } returns
@@ -322,6 +354,7 @@ class SettingsViewModelTest {
 
     @Test
     fun choosingDefaultsPersistsKeysWithoutLoadingWholeLibraries() = runTest(dispatcher) {
+        awaitReady()
         viewModel.selectDefaultWorld(CreationDefaultOption("wuxia", "江湖", 1, 0, 1))
         viewModel.selectDefaultEncyclopedia(CreationDefaultOption("2", "门派志", 2, 0, 1))
         assertEquals("江湖", viewModel.creationDefaultLabels.value.world)
@@ -334,6 +367,19 @@ class SettingsViewModelTest {
         verify { secureStorage.defaultEncyclopediaIdForAi = 0L }
         coVerify(exactly = 0) { worldTemplateDao.getAll() }
         coVerify(exactly = 0) { encyclopediaDao.getAll() }
+    }
+
+    private suspend fun TestScope.awaitReady() {
+        runCurrent()
+        withContext(Dispatchers.Default) {
+            val terminal = withTimeout(5_000) {
+                viewModel.initialization.first {
+                    it is com.mojing.app.ui.settings.SettingsInitializationState.Ready ||
+                        it is com.mojing.app.ui.settings.SettingsInitializationState.Error
+                }
+            }
+            assertTrue("settings initialization did not reach Ready: $terminal", terminal is com.mojing.app.ui.settings.SettingsInitializationState.Ready)
+        }
     }
 
 }

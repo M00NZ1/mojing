@@ -110,7 +110,7 @@ import coil.compose.AsyncImage
 import com.mojing.app.data.local.entity.TimelineEventEntity
 import com.mojing.app.ui.common.SwipeRevealListRow
 import com.mojing.app.ui.common.EmptyState
-import com.mojing.app.ui.common.avatarImageModel
+import com.mojing.app.ui.common.rememberAvatarImageModel
 import com.mojing.app.domain.encyclopedia.sourceReferences
 
 @Composable
@@ -594,7 +594,7 @@ fun EncyclopediaDetailScreen(
                                             } else {
                                                 if (preview.coverImagePath.isNotBlank()) {
                                                     AsyncImage(
-                                                        model = avatarImageModel(LocalContext.current, preview.coverImagePath),
+                                                        model = rememberAvatarImageModel(LocalContext.current, preview.coverImagePath),
                                                         contentDescription = null,
                                                         modifier = Modifier
                                                             .padding(bottom = 8.dp)
@@ -1822,7 +1822,7 @@ private fun EncyclopediaSwipeableEntryRow(
                     }
                     if (entry.coverImagePath.isNotBlank()) {
                         AsyncImage(
-                            model = avatarImageModel(LocalContext.current, entry.coverImagePath),
+                            model = rememberAvatarImageModel(LocalContext.current, entry.coverImagePath),
                             contentDescription = null,
                             modifier = Modifier
                                 .padding(start = 8.dp)

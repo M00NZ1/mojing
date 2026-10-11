@@ -195,22 +195,58 @@ class WorldLibraryShortNativeAppTest {
     }
     private fun uiPrefsSnapshot() = io { com.google.gson.Gson().toJsonTree(uiStore().data.first().asMap().mapKeys { it.key.name }.toSortedMap()) }
     private fun visible(text: String) = nodes().any { it.isVisibleToUser && (it.text?.toString()==text || it.contentDescription?.toString()==text) }
-    private fun scrollTo(text: String, forward: Boolean = true, actionable: Boolean = false) {
-        waitState {
-            var target=nodes().firstOrNull { it.isVisibleToUser && (it.text?.toString()==text || it.contentDescription?.toString()==text) }
-            if (target!=null && actionable) {
-                val label=target
-                val labelRect=android.graphics.Rect().also { label.getBoundsInScreen(it) }
-                while(target!=null && !target.isClickable) target=target.parent
-                val rect=android.graphics.Rect().also { target?.getBoundsInScreen(it) }
+    private val minTouchPx:Int
+        get() = kotlin.math.ceil(48f*context.resources.displayMetrics.density).toInt()
+    private fun verticalScrollable(node:android.view.accessibility.AccessibilityNodeInfo):Boolean {
+        val scrollAction=node.actionList.any { it.id==android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP.id || it.id==android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.id }
+        return node.isVisibleToUser && node.isScrollable && scrollAction
+    }
+    private fun nearestVerticalScrollable(node:android.view.accessibility.AccessibilityNodeInfo):android.view.accessibility.AccessibilityNodeInfo? {
+        var current:android.view.accessibility.AccessibilityNodeInfo?=node
+        var depth=0
+        while(current!=null && depth++<8) {
+            if(verticalScrollable(current)) return current
+            current=current.parent
+        }
+        return null
+    }
+    private fun actionableTarget(text:String, textOnly:Boolean=false):android.view.accessibility.AccessibilityNodeInfo? {
+        return nodes().asSequence().filter { it.isVisibleToUser && (it.text?.toString()==text || (!textOnly && it.contentDescription?.toString()==text)) }
+            .mapNotNull { label ->
+                val labelBounds=android.graphics.Rect().also { label.getBoundsInScreen(it) }
+                var target:android.view.accessibility.AccessibilityNodeInfo?=label
+                var climb=0
+                while(target!=null && !target.isClickable && climb++<8) target=target.parent
+                if(target!=null && !target.isClickable) target=null
+                val clickableTarget=target ?: return@mapNotNull null
+                val viewport=nearestVerticalScrollable(clickableTarget) ?: return@mapNotNull null
+                if(!clickableTarget.isEnabled || labelBounds.isEmpty) return@mapNotNull null
                 val minimumLabelHeight=if(label.text.isNullOrEmpty()) 0f else
                     16*context.resources.displayMetrics.density*context.resources.configuration.fontScale
-                if(rect.height()+1<48*context.resources.displayMetrics.density || labelRect.height()+1<minimumLabelHeight) {
-                    target=null
-                }
-            }
-            if (target!=null) true else {
-                val n=nodes().firstOrNull { it.isVisibleToUser && it.isScrollable }
+                if(labelBounds.height()+1<minimumLabelHeight) return@mapNotNull null
+                val targetBounds=android.graphics.Rect().also { clickableTarget.getBoundsInScreen(it) }
+                val viewportRect=viewportBounds(viewport)
+                val visibleTarget=android.graphics.Rect(targetBounds)
+                val isButton=clickableTarget.className?.toString()=="android.widget.Button"
+                if((isButton && !viewportRect.contains(targetBounds)) ||
+                    (!isButton && !visibleTarget.intersect(viewportRect)) || visibleTarget.height()<minTouchPx ||
+                    labelBounds.top<viewportRect.top || labelBounds.bottom>viewportRect.bottom) return@mapNotNull null
+                clickableTarget
+            }.firstOrNull()
+    }
+    private fun viewportBounds(node:android.view.accessibility.AccessibilityNodeInfo)=android.graphics.Rect().also { node.getBoundsInScreen(it) }
+    private fun verticalScrollables() = nodes().filter(::verticalScrollable).take(8)
+    private fun targetScrollViewport(text:String, textOnly:Boolean=false):android.view.accessibility.AccessibilityNodeInfo? =
+        nodes().asSequence().filter { it.isVisibleToUser && (it.text?.toString()==text || (!textOnly && it.contentDescription?.toString()==text)) }
+            .mapNotNull(::nearestVerticalScrollable).firstOrNull()
+    private fun scrollTo(text: String, forward: Boolean = true, actionable: Boolean = false, textOnly:Boolean = false):android.view.accessibility.AccessibilityNodeInfo? {
+        var acceptedTarget:android.view.accessibility.AccessibilityNodeInfo?=null
+        waitState {
+            val target=if(actionable) actionableTarget(text,textOnly)
+                else nodes().firstOrNull { it.isVisibleToUser && (it.text?.toString()==text || it.contentDescription?.toString()==text) }
+            if (target!=null) { acceptedTarget=target;true } else {
+                val n=if(actionable) targetScrollViewport(text,textOnly) ?: verticalScrollables().firstOrNull()
+                    else verticalScrollables().firstOrNull()
                 // SHOW_ON_SCREEN reports success for a clipped label without exposing its action.
                 // Use a small real gesture so the screenshot and click both use the actual viewport.
                 n?.let { viewport ->
@@ -225,6 +261,7 @@ class WorldLibraryShortNativeAppTest {
                 false
             }
         }
+        return acceptedTarget
     }
     private fun assertAction(text:String) {
         var n=waitNode(text,true)
@@ -266,14 +303,16 @@ class WorldLibraryShortNativeAppTest {
             click(name);assertSettingsAction();capture("04-detail")
             click("世界设置");waitNode("基本资料",true);waitNode(name,true);capture("05-existing-settings")
             back();assertSettingsAction();waitNode(name,true);capture("06-back-same-detail")
-            back();scrollTo(name,actionable=true);assertAction(name);capture("07-library-return")
+            back();waitState { !visible("世界设置") && visible("搜索世界名称") }
+            scrollTo(name,actionable=true);assertAction(name);capture("07-library-return")
             scrollTo("第 1 页");waitNode("上一页",true);waitNode("下一页",true);capture("08-pager")
             scrollTo("搜索世界名称",forward=false)
             check(nodes().any { it.isVisibleToUser && it.isEditable && it.text?.toString()==query })
             click("导入/导出");waitNode("导入百科",true);waitNode("导出百科",true);capture("09-transfer-actions");back()
             replaceInput("无匹配-$run")
             scrollTo("没有找到世界")
-            scrollTo("清除搜索",actionable=true);capture("10-empty-result");click("清除搜索")
+            val clearSearchTarget=scrollTo("清除搜索",actionable=true,textOnly=true);capture("10-empty-result")
+            check(clearSearchTarget?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)==true)
             scrollTo("搜索世界名称",forward=false);replaceInput(query)
             scrollTo(name,actionable=true);assertAction(name);capture("11-recovered-world")
             check(world(j["fixture"].asLong).name==name)

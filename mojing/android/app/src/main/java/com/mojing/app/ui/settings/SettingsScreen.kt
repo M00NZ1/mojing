@@ -60,26 +60,60 @@ fun SettingsScreen(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val isImeOpen = isImeKeyboardOpen()
-    val profileSaving by viewModel.profileSaving.collectAsStateWithLifecycle()
+    val initialization by viewModel.initialization.collectAsStateWithLifecycle()
+    val settingsReady = initialization is SettingsInitializationState.Ready
     val readingPreferencesSaveNotice by viewModel.readingPreferencesSaveNotice.collectAsStateWithLifecycle()
     val storedProfileName by viewModel.userName.collectAsStateWithLifecycle()
     val storedProfileDescription by viewModel.userDescription.collectAsStateWithLifecycle()
     val storedProfileColor by viewModel.userAvatarColor.collectAsStateWithLifecycle()
-    var profileName by rememberSaveable { mutableStateOf(storedProfileName) }
-    var profileDescription by rememberSaveable { mutableStateOf(storedProfileDescription) }
-    var profileColor by rememberSaveable { mutableStateOf(storedProfileColor) }
-    val profileDirty = profileName.trim() != storedProfileName ||
+    var profileName by rememberSaveable { mutableStateOf("") }
+    var profileDescription by rememberSaveable { mutableStateOf("") }
+    var profileColor by rememberSaveable { mutableStateOf("") }
+    var profileDraftHydrated by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(settingsReady) {
+        if (settingsReady && !profileDraftHydrated) {
+            profileName = viewModel.userName.value
+            profileDescription = viewModel.userDescription.value
+            profileColor = viewModel.userAvatarColor.value
+            profileDraftHydrated = true
+        }
+    }
+    val profileInputsReady = settingsReady && profileDraftHydrated
+    val profileDirty = profileInputsReady && (profileName.trim() != storedProfileName ||
         profileDescription != storedProfileDescription ||
-        profileColor != storedProfileColor
+        profileColor != storedProfileColor)
+    // Navigation can arrive before recomposition updates the UI's dirty snapshot.
+    fun profileDirtyNow(): Boolean = profileInputsReady && (profileName.trim() != viewModel.userName.value ||
+        profileDescription != viewModel.userDescription.value ||
+        profileColor != viewModel.userAvatarColor.value)
     var pendingNavigation by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var waitingForInitialization by remember { mutableStateOf(false) }
+    var showInitializationDiscardDialog by remember { mutableStateOf(false) }
     var showDiscardProfileDialog by remember { mutableStateOf(false) }
 
+    LaunchedEffect(settingsReady, profileDraftHydrated) {
+        if (!profileInputsReady || !waitingForInitialization) return@LaunchedEffect
+        waitingForInitialization = false
+        showInitializationDiscardDialog = false
+        val action = pendingNavigation
+        if (profileDirtyNow()) {
+            showDiscardProfileDialog = true
+        } else {
+            pendingNavigation = null
+            action?.invoke()
+        }
+    }
+
     fun requestNavigation(action: () -> Unit) {
-        if (profileSaving) return
+        if (viewModel.profileSaving.value) return
         focusManager.clearFocus()
-        if (profileDirty) {
+        if (profileInputsReady && profileDirtyNow()) {
             pendingNavigation = action
             showDiscardProfileDialog = true
+        } else if (profileDraftHydrated && !profileInputsReady) {
+            pendingNavigation = action
+            waitingForInitialization = true
+            showInitializationDiscardDialog = true
         } else {
             action()
         }
@@ -110,41 +144,45 @@ fun SettingsScreen(
             color = MaterialTheme.colorScheme.background,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-            SettingsSections(
-                sectionState = sectionState,
-                requestModelSection = requestModelSection,
-                onModelRequestConsumed = onModelRequestConsumed,
-                requestNavigation = ::requestNavigation,
-                onBack = { requestNavigation { navController.returnToSessionHome() } },
-            ) { selectedTab ->
-                when (selectedTab) {
-                    0 -> ConnectionSettingsTab(viewModel = viewModel, snackbarHostState = snackbarHostState)
-                    1 -> DefaultsTab(viewModel)
-                    2 -> PersonalizationTab(
-                        viewModel = viewModel,
-                        snackbarHostState = snackbarHostState,
-                        onThemeChanged = onThemeChanged,
-                        onFontScaleChanged = onFontScaleChanged,
-                        selectedSection = personalizationSection,
-                        onSelectSection = { section ->
-                            if (personalizationSection != section) requestNavigation { personalizationSection = section }
-                        },
-                        profileName = profileName,
-                        onProfileNameChange = { profileName = it },
-                        profileDescription = profileDescription,
-                        onProfileDescriptionChange = { profileDescription = it },
-                        profileColor = profileColor,
-                        onProfileColorChange = { profileColor = it },
-                        profileDirty = profileDirty,
-                        onProfileSaved = { name, _, _ ->
-                            if (profileName.trim() == name) profileName = name
-                        },
-                    )
-                    4 -> AppUpdateTab()
-                    3 -> UsageScreen(viewModel = hiltViewModel(), onPlatform = { platform ->
-                        navController.navigate("usage/platform?platformId=${android.net.Uri.encode(platform.id)}&platformName=${android.net.Uri.encode(platform.name)}")
-                    })
-                }
+            when (val state = initialization) {
+                SettingsInitializationState.Loading -> SettingsInitializationLoading()
+                is SettingsInitializationState.Error -> SettingsInitializationError(state.message, viewModel::retryInitialization)
+                is SettingsInitializationState.Ready -> if (profileDraftHydrated) SettingsSections(
+                    sectionState = sectionState,
+                    requestModelSection = requestModelSection,
+                    onModelRequestConsumed = onModelRequestConsumed,
+                    requestNavigation = ::requestNavigation,
+                    onBack = { requestNavigation { navController.returnToSessionHome() } },
+                ) { selectedTab ->
+                    when (selectedTab) {
+                        0 -> ConnectionSettingsTab(viewModel = viewModel, snackbarHostState = snackbarHostState)
+                        1 -> DefaultsTab(viewModel)
+                        2 -> PersonalizationTab(
+                            viewModel = viewModel,
+                            snackbarHostState = snackbarHostState,
+                            onThemeChanged = onThemeChanged,
+                            onFontScaleChanged = onFontScaleChanged,
+                            selectedSection = personalizationSection,
+                            onSelectSection = { section ->
+                                if (personalizationSection != section) requestNavigation { personalizationSection = section }
+                            },
+                            profileName = profileName,
+                            onProfileNameChange = { profileName = it },
+                            profileDescription = profileDescription,
+                            onProfileDescriptionChange = { profileDescription = it },
+                            profileColor = profileColor,
+                            onProfileColorChange = { profileColor = it },
+                            profileDirty = profileDirty,
+                            onProfileSaved = { name, _, _ ->
+                                if (profileName.trim() == name) profileName = name
+                            },
+                        )
+                        4 -> AppUpdateTab()
+                        3 -> UsageScreen(viewModel = hiltViewModel(), onPlatform = { platform ->
+                            navController.navigate("usage/platform?platformId=${android.net.Uri.encode(platform.id)}&platformName=${android.net.Uri.encode(platform.name)}")
+                        })
+                    }
+                } else SettingsInitializationLoading()
             }
             }
         }
@@ -177,10 +215,11 @@ fun SettingsScreen(
                 TextButton(
                     onClick = {
                         val action = pendingNavigation
-                        profileName = storedProfileName
-                        profileDescription = storedProfileDescription
-                        profileColor = storedProfileColor
+                        profileName = viewModel.userName.value
+                        profileDescription = viewModel.userDescription.value
+                        profileColor = viewModel.userAvatarColor.value
                         pendingNavigation = null
+                        waitingForInitialization = false
                         showDiscardProfileDialog = false
                         action?.invoke()
                     },
@@ -191,10 +230,78 @@ fun SettingsScreen(
                     onClick = {
                         showDiscardProfileDialog = false
                         pendingNavigation = null
+                        waitingForInitialization = false
                     },
                 ) { Text("继续编辑") }
             },
         )
+    }
+
+    if (showInitializationDiscardDialog) {
+        val loading = initialization is SettingsInitializationState.Loading
+        AlertDialog(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+            onDismissRequest = {
+                showInitializationDiscardDialog = false
+                pendingNavigation = null
+                waitingForInitialization = false
+            },
+            title = { Text(if (loading) "正在读取资料" else "资料读取失败") },
+            text = {
+                Text(
+                    if (loading) "资料草稿尚未确认，继续等待读取完成，或放弃草稿后离开。"
+                    else "读取失败，离开会丢弃恢复的资料草稿。",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val action = pendingNavigation
+                        profileName = ""
+                        profileDescription = ""
+                        profileColor = ""
+                        profileDraftHydrated = false
+                        pendingNavigation = null
+                        waitingForInitialization = false
+                        showInitializationDiscardDialog = false
+                        action?.invoke()
+                    },
+                ) { Text("放弃草稿并离开") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showInitializationDiscardDialog = false
+                        pendingNavigation = null
+                        waitingForInitialization = false
+                    },
+                ) { Text("继续等待") }
+            },
+        )
+    }
+}
+
+@Composable
+private fun SettingsInitializationLoading() {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        CircularProgressIndicator()
+        Text("正在读取设置…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun SettingsInitializationError(message: String, onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(message, color = MaterialTheme.colorScheme.error)
+        Button(onClick = onRetry) { Text("重试读取") }
     }
 }
 
@@ -224,7 +331,7 @@ private fun PersonalizationTab(
                 horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Surface(Modifier.size(48.dp), shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.primaryContainer) {
                     if (avatarPath.isNotBlank()) coil.compose.AsyncImage(
-                        model = com.mojing.app.ui.common.avatarImageModel(androidx.compose.ui.platform.LocalContext.current, avatarPath),
+                        model = com.mojing.app.ui.common.rememberAvatarImageModel(androidx.compose.ui.platform.LocalContext.current, avatarPath),
                         contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop)
                     else Box(contentAlignment = Alignment.Center) { Text(profileName.take(1).ifBlank { "我" }) }
                 }

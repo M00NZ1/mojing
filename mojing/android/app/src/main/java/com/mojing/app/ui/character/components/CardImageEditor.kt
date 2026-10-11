@@ -24,7 +24,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.mojing.app.media.CharacterCardImageProcessor
-import com.mojing.app.ui.common.avatarImageModel
+import com.mojing.app.ui.common.rememberAvatarImageModel
 import com.mojing.app.ui.util.UserFacingStrings
 import com.mojing.app.util.UsbSessionLog
 import kotlinx.coroutines.CancellationException
@@ -104,7 +104,7 @@ fun CardImageEditor(
         ) {
             when {
                 cardImagePath.isNotEmpty() -> AsyncImage(
-                    model = avatarImageModel(context, cardImagePath),
+                    model = rememberAvatarImageModel(context, cardImagePath),
                     contentDescription = "竖版封面图",
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop

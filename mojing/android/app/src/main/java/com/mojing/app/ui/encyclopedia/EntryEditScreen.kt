@@ -42,7 +42,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.mojing.app.media.CharacterCardImageProcessor
-import com.mojing.app.ui.common.avatarImageModel
+import com.mojing.app.ui.common.rememberAvatarImageModel
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mojing.app.data.local.entity.EntryVersionEntity
@@ -486,7 +486,7 @@ fun EntryEditScreen(
                     Text("条目封面", Modifier.bringIntoViewRequester(sectionTargets[2]), style = MaterialTheme.typography.titleLarge)
                     if (state.coverImagePath.isNotBlank()) {
                         AsyncImage(
-                            model = avatarImageModel(LocalContext.current, state.coverImagePath),
+                            model = rememberAvatarImageModel(LocalContext.current, state.coverImagePath),
                             contentDescription = "条目封面预览",
                             modifier = Modifier
                                 .fillMaxWidth(0.55f)

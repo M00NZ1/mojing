@@ -25,7 +25,7 @@ fun MoJingCoverImage(path: String?, modifier: Modifier = Modifier, description: 
         Box(contentAlignment = Alignment.Center) {
             Icon(if (person) Icons.Outlined.Person else Icons.AutoMirrored.Outlined.MenuBook, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             if (hasUserImage(path)) AsyncImage(
-                model = avatarImageModel(LocalContext.current, path.orEmpty()), contentDescription = description,
+                model = rememberAvatarImageModel(LocalContext.current, path.orEmpty()), contentDescription = description,
                 contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(),
             )
         }

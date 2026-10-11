@@ -55,7 +55,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import coil.compose.AsyncImage
 import com.mojing.app.data.local.entity.CharacterEntity
-import com.mojing.app.ui.common.avatarImageModel
+import com.mojing.app.ui.common.rememberAvatarImageModel
 import com.mojing.app.ui.common.MoJingCenterAlignedTopAppBar
 import com.mojing.app.ui.common.MoJingButton
 import com.mojing.app.ui.common.MoJingTonalButton
@@ -211,7 +211,7 @@ private fun CharacterDetailContent(
                     val imagePath = character.cardImagePath.ifBlank { character.avatarImagePath }
                     if (imagePath.isNotBlank()) {
                         AsyncImage(
-                            model = avatarImageModel(context, imagePath),
+                            model = rememberAvatarImageModel(context, imagePath),
                             contentDescription = character.name,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.size(84.dp).clip(RoundedCornerShape(12.dp)),

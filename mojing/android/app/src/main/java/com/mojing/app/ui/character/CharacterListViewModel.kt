@@ -292,6 +292,15 @@ class CharacterListViewModel @Inject constructor(
         loadPage(0)
     }
 
+    /** Refresh the visible page when returning to the screen without clearing its contents or cursor chain. */
+    fun onScreenVisible(nextSort: CharacterLibrarySort) {
+        if (sort != nextSort) {
+            setSortOrder(nextSort)
+        } else {
+            refreshCurrentPage()
+        }
+    }
+
     /** Search is owned by the paged DAO query so results and cursors cover the full library. */
     fun updateSearch(value: String) {
         val next = value.trimStart()
@@ -317,6 +326,12 @@ class CharacterListViewModel @Inject constructor(
     }
 
     fun retryPage() = loadPage(retryPageIndex ?: _page.value.pageIndex)
+
+    fun refreshCurrentPage() {
+        val currentIndex = _page.value.pageIndex
+        val validIndex = currentIndex.takeIf { it in pageCursors.indices } ?: 0
+        loadPage(validIndex, fallbackToPreviousWhenEmpty = true)
+    }
 
     private fun loadPage(index: Int, fallbackToPreviousWhenEmpty: Boolean = false) {
         pageJob?.cancel()

@@ -62,7 +62,7 @@ import com.mojing.app.ui.navigation.MainAppBottomNavigation
 import com.mojing.app.ui.navigation.returnToCreationHub
 import com.mojing.app.ui.common.MoJingListTokens
 import com.mojing.app.ui.common.SwipeRevealListRow
-import com.mojing.app.ui.common.avatarImageModel
+import com.mojing.app.ui.common.rememberAvatarImageModel
 import com.mojing.app.ui.common.isImeKeyboardOpen
 import com.mojing.app.ui.util.UserFacingStrings
 import com.mojing.app.util.ContentDocumentReader
@@ -987,7 +987,7 @@ private fun WorkbenchTemplateListRowInner(
         leadingContent = {
             if (template.coverImagePath.isNotBlank()) {
                 AsyncImage(
-                    model = avatarImageModel(context, template.coverImagePath),
+                    model = rememberAvatarImageModel(context, template.coverImagePath),
                     contentDescription = null,
                     modifier = Modifier
                         .size(MoJingListTokens.avatar)
@@ -1071,7 +1071,7 @@ private fun WorkbenchTemplateGridCard(
                 key(template.id, template.coverImagePath, template.updatedAt) {
                     if (template.coverImagePath.isNotBlank()) {
                         AsyncImage(
-                            model = avatarImageModel(context, template.coverImagePath),
+                            model = rememberAvatarImageModel(context, template.coverImagePath),
                             contentDescription = null,
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Crop,

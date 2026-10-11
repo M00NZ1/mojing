@@ -21,7 +21,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
-import com.mojing.app.ui.common.avatarImageModel
+import com.mojing.app.ui.common.rememberAvatarImageModel
 import com.mojing.app.util.LocalImageFiles
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -69,7 +69,7 @@ fun AvatarEditor(
         ) {
             if (avatarImagePath.isNotEmpty()) {
                 AsyncImage(
-                    model = avatarImageModel(context, avatarImagePath),
+                    model = rememberAvatarImageModel(context, avatarImagePath),
                     contentDescription = "头像",
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop

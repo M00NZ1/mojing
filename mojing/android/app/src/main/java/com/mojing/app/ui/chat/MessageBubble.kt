@@ -75,7 +75,7 @@ import androidx.compose.ui.semantics.semantics
 import com.mojing.app.data.local.entity.MessageAttachmentEntity
 import com.mojing.app.data.local.entity.MessageEntity
 import com.mojing.app.data.local.AutoImageMetadata
-import com.mojing.app.ui.common.avatarImageModel
+import com.mojing.app.ui.common.rememberAvatarImageModel
 import com.mojing.app.ui.common.ImagePreviewDialog
 import com.mojing.app.domain.billing.CurrencyDisplayState
 import com.mojing.app.domain.billing.formatBillingAmount
@@ -639,7 +639,7 @@ fun CharacterMessageBubble(
             ) {
                 if (avatarPath.isNotEmpty()) {
                     coil.compose.AsyncImage(
-                        model = avatarImageModel(context, avatarPath),
+                        model = rememberAvatarImageModel(context, avatarPath),
                         contentDescription = "角色头像",
                         modifier = Modifier.fillMaxSize(),
                         contentScale = androidx.compose.ui.layout.ContentScale.Crop,
@@ -662,7 +662,7 @@ fun CharacterMessageBubble(
             }
         } else if (avatarPath.isNotEmpty()) {
             coil.compose.AsyncImage(
-                model = avatarImageModel(context, avatarPath),
+                model = rememberAvatarImageModel(context, avatarPath),
                 contentDescription = "角色头像",
                 modifier = avatarModifier,
                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
@@ -830,7 +830,7 @@ fun CharacterMessageBubble(
             title = { Text("竖版封面") },
             text = {
                 coil.compose.AsyncImage(
-                    model = avatarImageModel(context, cardImagePath),
+                    model = rememberAvatarImageModel(context, cardImagePath),
                     contentDescription = "竖版封面",
                     modifier = Modifier
                         .fillMaxWidth()

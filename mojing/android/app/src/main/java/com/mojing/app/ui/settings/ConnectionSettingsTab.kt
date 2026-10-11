@@ -57,6 +57,10 @@ import com.mojing.app.data.VoiceChoice
 import com.mojing.app.data.VoicePreferences
 import com.mojing.app.util.LogExportManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -66,32 +70,68 @@ private enum class ConnectionChannel(val label: String) {
     VOICE("朗读"),
 }
 
+private enum class VoiceLoadState {
+    Idle,
+    Loading,
+    Loaded,
+    Failed,
+}
+
+private data class VoiceSettingsSnapshot(
+    val choice: VoiceChoice,
+    val azureRegion: String,
+    val azureKey: String,
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConnectionSettingsTab(
     viewModel: SettingsViewModel,
     snackbarHostState: SnackbarHostState,
 ) {
+    val initialization by viewModel.initialization.collectAsStateWithLifecycle()
+    if (initialization !is SettingsInitializationState.Ready) return
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val voicePreferences = remember(context) { VoicePreferences(context) }
-    var globalVoiceChoice by remember(context) { mutableStateOf(voicePreferences.global()) }
+    var selectedChannelIndex by remember { mutableIntStateOf(0) }
+    val selectedChannel = ConnectionChannel.entries[selectedChannelIndex]
+    var globalVoiceChoice by remember(context) { mutableStateOf(VoiceChoice()) }
     var azureRegion by remember(context) { mutableStateOf("") }
     var azureKey by remember(context) { mutableStateOf("") }
-    var voiceLoading by remember { mutableStateOf(true) }
+    var voiceLoadState by remember(context) { mutableStateOf(VoiceLoadState.Idle) }
+    var voiceReloadToken by remember(context) { mutableIntStateOf(0) }
     var voiceSaving by remember { mutableStateOf(false) }
     var voiceError by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(context) {
+    LaunchedEffect(context, selectedChannel, voiceReloadToken) {
+        if (selectedChannel != ConnectionChannel.VOICE) {
+            if (voiceLoadState == VoiceLoadState.Loading) voiceLoadState = VoiceLoadState.Idle
+            return@LaunchedEffect
+        }
+        if (voiceLoadState == VoiceLoadState.Loaded) return@LaunchedEffect
+        voiceLoadState = VoiceLoadState.Loading
+        voiceError = null
         try {
-            val stored = withContext(Dispatchers.IO) { voicePreferences.azureRegion to voicePreferences.azureKey }
-            azureRegion = stored.first
-            azureKey = stored.second
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-        catch (_: Exception) { voiceError = "语音配置读取失败，请重新进入设置" }
-        finally { voiceLoading = false }
+            val stored = withContext(Dispatchers.IO) {
+                val preferences = VoicePreferences(context)
+                VoiceSettingsSnapshot(preferences.global(), preferences.azureRegion, preferences.azureKey)
+            }
+            currentCoroutineContext().ensureActive()
+            globalVoiceChoice = stored.choice
+            azureRegion = stored.azureRegion
+            azureKey = stored.azureKey
+            voiceLoadState = VoiceLoadState.Loaded
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            voiceLoadState = VoiceLoadState.Failed
+            voiceError = "语音配置读取失败，请重试"
+        } finally {
+            if (!currentCoroutineContext().isActive && selectedChannel == ConnectionChannel.VOICE) {
+                voiceLoadState = VoiceLoadState.Idle
+            }
+        }
     }
-    var selectedChannelIndex by remember { mutableIntStateOf(0) }
     var showManualChat by remember { mutableStateOf(false) }
     var showManualImage by remember { mutableStateOf(false) }
     var showManualVoice by remember { mutableStateOf(false) }
@@ -144,7 +184,7 @@ fun ConnectionSettingsTab(
         }
     }
 
-    val selectedChannel = ConnectionChannel.entries[selectedChannelIndex]
+    val voiceLoaded = voiceLoadState == VoiceLoadState.Loaded
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -202,49 +242,63 @@ fun ConnectionSettingsTab(
                 ) { Text("3. 测试配图连接") }
             }
 
-            ConnectionChannel.VOICE -> VoiceSettingsCard(
-                choice = globalVoiceChoice,
-                azureRegion = azureRegion,
-                azureKey = azureKey,
-                saving = voiceSaving || voiceLoading,
-                error = voiceError,
-                onChoiceSelected = { selected, onSaved ->
-                    if (!voiceSaving) {
-                        voiceSaving = true
-                        voiceError = null
-                        scope.launch(Dispatchers.IO) {
-                            val result = runCatching { voicePreferences.saveGlobal(selected) }
-                            withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
-                                result.onSuccess {
-                                    globalVoiceChoice = selected
-                                    voiceError = null
-                                    onSaved()
-                                }.onFailure { voiceError = "语音选择保存失败，请重试" }
-                                voiceSaving = false
-                            }
-                        }
+            ConnectionChannel.VOICE -> {
+                if (voiceLoadState == VoiceLoadState.Loading) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Text("读取语音配置…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else if (voiceLoadState == VoiceLoadState.Failed) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("语音配置读取失败，暂不能编辑或保存。", modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.error)
+                        TextButton(enabled = !voiceSaving, onClick = {
+                            voiceLoadState = VoiceLoadState.Loading
+                            voiceReloadToken++
+                        }) { Text("重试读取") }
                     }
-                },
-                onRegionChange = { azureRegion = it; voiceError = null },
-                onKeyChange = { azureKey = it; voiceError = null },
-                onSave = {
-                    if (!voiceSaving) {
-                        voiceSaving = true
-                        voiceError = null
-                        val region = azureRegion.trim()
-                        val key = azureKey
-                        scope.launch(Dispatchers.IO) {
-                            val result = runCatching {
-                                voicePreferences.saveAzure(region, key)
+                }
+                if (voiceLoaded) {
+                    VoiceSettingsCard(
+                        choice = globalVoiceChoice,
+                        azureRegion = azureRegion,
+                        azureKey = azureKey,
+                        saving = voiceSaving,
+                        error = voiceError,
+                        onChoiceSelected = { selected, onSaved ->
+                            if (!voiceSaving) {
+                                voiceSaving = true
+                                voiceError = null
+                                scope.launch(Dispatchers.IO) {
+                                    val result = runCatching { VoicePreferences(context).saveGlobal(selected) }
+                                    withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+                                        result.onSuccess {
+                                            globalVoiceChoice = selected
+                                            voiceError = null
+                                            onSaved()
+                                        }.onFailure { voiceError = "语音选择保存失败，请重试" }
+                                        voiceSaving = false
+                                    }
+                                }
                             }
-                            withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
-                                result.onFailure { voiceError = "Azure 设置保存失败，请重试" }
-                                voiceSaving = false
+                        },
+                        onRegionChange = { azureRegion = it; voiceError = null },
+                        onKeyChange = { azureKey = it; voiceError = null },
+                        onSave = {
+                            if (!voiceSaving) {
+                                voiceSaving = true
+                                voiceError = null
+                                val region = azureRegion.trim()
+                                val key = azureKey
+                                scope.launch(Dispatchers.IO) {
+                                    val result = runCatching { VoicePreferences(context).saveAzure(region, key) }
+                                    withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+                                        result.onFailure { voiceError = "Azure 设置保存失败，请重试" }
+                                        voiceSaving = false
+                                    }
+                                }
                             }
-                        }
-                    }
-                },
-            )
+                        },
+                    )
+                }
+            }
         }
 
         if (selectedChannel == ConnectionChannel.TEXT) {

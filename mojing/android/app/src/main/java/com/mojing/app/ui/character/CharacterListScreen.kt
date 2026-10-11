@@ -20,7 +20,6 @@ import androidx.compose.material.icons.outlined.Public
 import com.mojing.app.ui.common.MoJingTextField as OutlinedTextField
 import com.mojing.app.ui.common.MoJingTonalButton as FilledTonalButton
 
-import android.graphics.Color as AndroidColor
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -64,9 +63,10 @@ import com.mojing.app.ui.common.hideImeKeyboard
 import com.mojing.app.ui.common.isImeKeyboardOpen
 import com.mojing.app.ui.common.rememberExportNavigationGuard
 import com.mojing.app.ui.navigation.returnToCreationHub
+import com.mojing.app.ui.navigation.MainAppBottomNavigation
 import com.mojing.app.ui.common.MoJingListTokens
 import com.mojing.app.ui.common.SwipeRevealListRow
-import com.mojing.app.ui.common.avatarImageModel
+import com.mojing.app.ui.common.rememberAvatarImageModel
 import com.mojing.app.ui.util.UserFacingStrings
 import com.mojing.app.util.ContentDocumentReader
 import com.mojing.app.util.ContentDocumentWriter
@@ -138,8 +138,7 @@ fun CharacterListScreen(
 
     LaunchedEffect(Unit) {
         viewModel.refreshSelectedFilterName()
-        viewModel.setSortOrder(sortOrder)
-        viewModel.refreshList(keepVisible = false)
+        viewModel.onScreenVisible(sortOrder)
     }
 
     fun launchCreateCharacter() {
@@ -315,7 +314,7 @@ fun CharacterListScreen(
         bottomBar = {
             if (!isImeOpen) {
                 Surface(color = MaterialTheme.colorScheme.surface) {
-                    Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
+                    Column(Modifier.fillMaxWidth()) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                         val compactActions = maxWidth < 360.dp
@@ -349,6 +348,7 @@ fun CharacterListScreen(
                             }
                         }
                         }
+                        MainAppBottomNavigation(navController, onNavigateRequest = requestExportNavigation)
                     }
                 }
             }
@@ -632,37 +632,18 @@ private fun CharacterListRowInner(
     ListItem(
         modifier = Modifier.fillMaxWidth(),
         colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
-        leadingContent = {
-            if (listImagePath.isNotBlank()) {
+        leadingContent = if (listImagePath.isNotBlank()) {
+            {
                 AsyncImage(
-                    model = avatarImageModel(context, listImagePath),
+                    model = rememberAvatarImageModel(context, listImagePath),
                     contentDescription = "头像",
                     modifier = Modifier
                         .size(MoJingListTokens.avatar)
                         .clip(androidx.compose.foundation.shape.CircleShape),
                     contentScale = ContentScale.Crop,
                 )
-            } else {
-                val circleBg = try {
-                    androidx.compose.ui.graphics.Color(AndroidColor.parseColor(character.avatarColor))
-                } catch (_: Exception) {
-                    MaterialTheme.colorScheme.primaryContainer
-                }
-                Surface(
-                    modifier = Modifier.size(MoJingListTokens.avatar),
-                    shape = androidx.compose.foundation.shape.CircleShape,
-                    color = circleBg,
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            character.name.take(1).ifBlank { "?" },
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.contentColorFor(circleBg),
-                        )
-                    }
-                }
             }
-        },
+        } else null,
         headlineContent = {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(
@@ -730,66 +711,58 @@ private fun CharacterGridCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Column {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(4f / 5f)
-                    .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
-            ) {
-                when {
-                    mainPath.isNotEmpty() -> AsyncImage(
-                        model = avatarImageModel(context, mainPath),
+            if (mainPath.isNotEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(4f / 5f)
+                        .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+                ) {
+                    AsyncImage(
+                        model = rememberAvatarImageModel(context, mainPath),
                         contentDescription = null,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
                     )
-                    else -> Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Surface(
-                            modifier = Modifier.fillMaxSize(),
-                            color = try { androidx.compose.ui.graphics.Color(AndroidColor.parseColor(character.avatarColor)) } catch (_: Exception) { MaterialTheme.colorScheme.primary }
-                        ) {
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text((character.name.ifBlank { "?" }).take(1), style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.onPrimary)
-                            }
-                        }
+                    if (character.favorite) {
+                        Icon(
+                            Icons.Outlined.Star,
+                            "收藏",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(6.dp)
+                                .size(22.dp)
+                        )
                     }
-                }
-                if (character.favorite) {
-                    Icon(
-                        Icons.Outlined.Star,
-                        "收藏",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(6.dp)
-                            .size(22.dp)
-                    )
-                }
-                if (character.cardImagePath.isNotBlank() && character.avatarImagePath.isNotBlank() && character.cardImagePath != character.avatarImagePath) {
-                    AsyncImage(
-                        model = avatarImageModel(context, character.avatarImagePath),
-                        contentDescription = "头像",
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(8.dp)
-                            .size(36.dp)
-                            .clip(CircleShape),
-                        contentScale = ContentScale.Crop
-                    )
+                    if (character.cardImagePath.isNotBlank() && character.avatarImagePath.isNotBlank() && character.cardImagePath != character.avatarImagePath) {
+                        AsyncImage(
+                            model = rememberAvatarImageModel(context, character.avatarImagePath),
+                            contentDescription = "头像",
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(8.dp)
+                                .size(36.dp)
+                                .clip(CircleShape),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
                 }
             }
             Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    character.name.ifBlank { "未命名角色" },
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        character.name.ifBlank { "未命名角色" },
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (mainPath.isBlank() && character.favorite) {
+                        Spacer(Modifier.width(6.dp))
+                        Icon(Icons.Outlined.Star, "收藏", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                    }
+                }
                 if (character.boundEncyclopediaId > 0L) {
                     Text(
                         encyclopediaLabel ?: "百科 ${character.boundEncyclopediaId}",

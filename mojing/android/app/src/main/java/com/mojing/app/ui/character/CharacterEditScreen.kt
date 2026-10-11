@@ -333,7 +333,7 @@ fun CharacterEditScreen(
                 Surface(onClick = { focusManager.clearFocus(); appearanceOpen = !appearanceOpen },
                     modifier = Modifier.size(72.dp), shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.primaryContainer) {
                     if (state.avatarImagePath.isNotBlank()) coil.compose.AsyncImage(
-                        model = com.mojing.app.ui.common.avatarImageModel(context, state.avatarImagePath), contentDescription = "修改角色形象",
+                        model = com.mojing.app.ui.common.rememberAvatarImageModel(context, state.avatarImagePath), contentDescription = "修改角色形象",
                         contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize())
                     else Box(contentAlignment = Alignment.Center) { Text(state.name.take(1).ifBlank { "角" }, style = MaterialTheme.typography.headlineLarge) }
                 }

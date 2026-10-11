@@ -11,6 +11,7 @@ class MainBottomNavigationStateTest {
     fun rootRoutesKeepBottomNavigationVisible() {
         assertTrue(shouldShowMainBottomNavigation(Routes.SESSION_LIST))
         assertTrue(shouldShowMainBottomNavigation(Routes.CREATION_HUB))
+        assertTrue(shouldShowMainBottomNavigation(Routes.CHARACTER_LIST))
         assertTrue(shouldShowMainBottomNavigation(Routes.ENCYCLOPEDIA_LIST))
         assertTrue(shouldShowMainBottomNavigation(Routes.WORKBENCH))
         assertFalse(shouldShowMainBottomNavigation(Routes.STORY_SIMULATION))
@@ -19,8 +20,8 @@ class MainBottomNavigationStateTest {
 
     @Test
     fun detailAndEditRoutesHideBottomNavigation() {
-        assertFalse(shouldShowMainBottomNavigation(Routes.CHARACTER_LIST))
         assertFalse(shouldShowMainBottomNavigation(Routes.chat(1L)))
+        assertFalse(shouldShowMainBottomNavigation(Routes.characterDetail(1L)))
         assertFalse(shouldShowMainBottomNavigation(Routes.characterEdit(1L)))
         assertFalse(shouldShowMainBottomNavigation(Routes.encyclopediaDetail(1L)))
         assertFalse(shouldShowMainBottomNavigation(Routes.entryEdit(1L, 2L)))
@@ -32,6 +33,7 @@ class MainBottomNavigationStateTest {
     fun detailRoutesStillMapToTheirRootTab() {
         assertEquals(MainNavTab.Session, routeToMainNavTab(Routes.chat(1L)))
         assertEquals(MainNavTab.Create, routeToMainNavTab(Routes.CREATION_HUB))
+        assertEquals(MainNavTab.Create, routeToMainNavTab(Routes.CHARACTER_LIST))
         assertEquals(MainNavTab.Create, routeToMainNavTab(Routes.characterEdit(1L)))
         assertEquals(MainNavTab.Create, routeToMainNavTab(Routes.encyclopediaDetail(1L)))
         assertEquals(MainNavTab.Create, routeToMainNavTab(Routes.templateEdit(1L)))

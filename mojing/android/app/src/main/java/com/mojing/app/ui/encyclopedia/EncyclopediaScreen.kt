@@ -67,7 +67,7 @@ import com.mojing.app.ui.navigation.returnToCreationHub
 import com.mojing.app.ui.navigation.Routes
 import com.mojing.app.ui.common.MoJingListTokens
 import com.mojing.app.ui.common.SwipeRevealListRow
-import com.mojing.app.ui.common.avatarImageModel
+import com.mojing.app.ui.common.rememberAvatarImageModel
 import com.mojing.app.ui.util.UserFacingStrings
 import com.mojing.app.util.ContentDocumentWriter
 import kotlinx.coroutines.cancelAndJoin
@@ -580,8 +580,8 @@ fun EncyclopediaScreen(
         },
     ) { padding ->
         BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
-            // Short windows scroll auxiliary content with the bounded page instead of starving its viewport.
-            val shortContent = maxHeight < 360.dp
+            // Short or narrow windows scroll the large-font header with the bounded page instead of starving its viewport.
+            val shortContent = maxHeight < 360.dp || maxWidth < 360.dp
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -780,33 +780,18 @@ private fun EncyclopediaListRowInner(enc: EncyclopediaLibraryItem) {
     ListItem(
         modifier = Modifier.fillMaxWidth(),
         colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
-        leadingContent = {
-            if (enc.coverImagePath.isNotBlank()) {
+        leadingContent = if (enc.coverImagePath.isNotBlank()) {
+            {
                 AsyncImage(
-                    model = avatarImageModel(context, enc.coverImagePath),
+                    model = rememberAvatarImageModel(context, enc.coverImagePath),
                     contentDescription = null,
                     modifier = Modifier
                         .size(MoJingListTokens.worldCover)
                         .clip(RoundedCornerShape(10.dp)),
                     contentScale = ContentScale.Crop,
                 )
-            } else {
-                Surface(
-                    modifier = Modifier.size(MoJingListTokens.worldCover),
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                ) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Icon(
-                            Icons.AutoMirrored.Outlined.MenuBook,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.85f),
-                            modifier = Modifier.size(28.dp),
-                        )
-                    }
-                }
             }
-        },
+        } else null,
         headlineContent = {
             Text(
                 enc.name.ifBlank { "未命名百科库" },
@@ -853,38 +838,18 @@ private fun EncyclopediaGridCard(enc: EncyclopediaLibraryItem) {
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(3f / 2f),
-            ) {
-                if (enc.coverImagePath.isNotBlank()) {
+            if (enc.coverImagePath.isNotBlank()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(3f / 2f),
+                ) {
                     AsyncImage(
-                        model = avatarImageModel(context, enc.coverImagePath),
+                        model = rememberAvatarImageModel(context, enc.coverImagePath),
                         contentDescription = null,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
                     )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Surface(
-                            modifier = Modifier.fillMaxSize(),
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
-                        ) {
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Icon(
-                                    Icons.AutoMirrored.Outlined.MenuBook,
-                                    null,
-                                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f),
-                                )
-                            }
-                        }
-                    }
                 }
             }
             Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

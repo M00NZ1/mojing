@@ -2,9 +2,11 @@ package com.mojing.app.ui.creation
 
 import com.mojing.app.ui.common.MoJingTopAppBar as TopAppBar
 import com.mojing.app.ui.common.MoJingIcon as Icon
+import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Badge
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.RestorePage
 import androidx.compose.material3.IconButton
 import androidx.compose.foundation.layout.*
@@ -24,8 +26,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.material3.Surface
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -88,17 +90,23 @@ fun CreationHubScreen(navController: NavHostController, viewModel: CreationHubVi
                         Text("还没有故事。从上方选择一个入口，开始你的创作。", style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 12.dp))
                     } else state.items.forEach { session ->
+                        val hasCover = !session.coverImagePath.isNullOrBlank()
                         Surface(onClick = { navController.navigateSingleTop(Routes.chat(session.session.id)) },
-                            modifier = Modifier.padding(bottom = 8.dp), shape = MaterialTheme.shapes.small,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), color = MaterialTheme.colorScheme.surface) {
+                            modifier = Modifier.padding(bottom = if (hasCover) 8.dp else 1.dp),
+                            shape = if (hasCover) MaterialTheme.shapes.small else RectangleShape,
+                            border = if (hasCover) BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant) else null,
+                            color = if (hasCover) MaterialTheme.colorScheme.surface else androidx.compose.ui.graphics.Color.Transparent) {
                             Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
-                                Surface(Modifier.size(48.dp, 60.dp), shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                                    if (!session.coverImagePath.isNullOrBlank()) MoJingCoverImage(
-                                        path = session.coverImagePath,
-                                        modifier = Modifier.fillMaxSize(),
-                                        description = null,
-                                    ) else Box(contentAlignment = Alignment.Center) { Icon(Icons.AutoMirrored.Outlined.MenuBook, null) }
+                                if (hasCover) {
+                                    Surface(Modifier.size(48.dp, 60.dp), shape = MaterialTheme.shapes.small,
+                                        color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                                        MoJingCoverImage(
+                                            path = session.coverImagePath,
+                                            modifier = Modifier.fillMaxSize(),
+                                            description = null,
+                                        )
+                                    }
                                 }
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text(session.session.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -118,28 +126,41 @@ fun CreationHubScreen(navController: NavHostController, viewModel: CreationHubVi
 
 @Composable
 internal fun CreationWorkspaceContent(onNavigate: (String) -> Unit, modifier: Modifier = Modifier) {
-    val fontScale = LocalDensity.current.fontScale
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("故事、角色与世界，从这里开始", style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(Modifier.fillMaxWidth().padding(top = 12.dp).height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            (listOf(storyCreationSection) + creationResourceSections).forEach { section ->
-                Surface(onClick = { onNavigate(section.route) }, modifier = Modifier.weight(1f).fillMaxHeight(),
-                    shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-                    Column {
-                        Box(Modifier.fillMaxWidth().height(64.dp).padding(start = 12.dp, top = 16.dp),
-                            contentAlignment = Alignment.CenterStart) {
-                            Icon(section.icon, null, Modifier.size(32.dp), tint = MaterialTheme.colorScheme.primary)
-                        }
-                        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(section.title, style = MaterialTheme.typography.titleSmall,
-                                modifier = if (fontScale > 1.2f) Modifier.widthIn(max = (16f * fontScale * 2.2f).dp)
-                                    .heightIn(min = (24f * fontScale * 2).dp) else Modifier)
-
-                        }
+        Surface(onClick = { onNavigate(storyCreationSection.route) },
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 92.dp).padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Icon(storyCreationSection.icon, null, Modifier.size(32.dp), tint = MaterialTheme.colorScheme.primary)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(storyCreationSection.title, style = MaterialTheme.typography.headlineSmall)
+                    Text("从开局设定进入新的故事", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+                Icon(Icons.AutoMirrored.Outlined.ArrowForward, null, Modifier.size(22.dp))
+            }
+        }
+        Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+            Text("资源", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            creationResourceSections.forEach { section ->
+                Surface(onClick = { onNavigate(section.route) }, modifier = Modifier.fillMaxWidth(),
+                    shape = RectangleShape, color = androidx.compose.ui.graphics.Color.Transparent) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 4.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Icon(section.icon, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary)
+                        Text(section.title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                        Icon(Icons.Outlined.ChevronRight, null, Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
         }
     }

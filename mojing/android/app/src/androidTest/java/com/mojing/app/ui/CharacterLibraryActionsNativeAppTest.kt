@@ -141,6 +141,9 @@ class CharacterLibraryActionsNativeAppTest {
         val bitmap=checkNotNull(inst.uiAutomation.takeScreenshot())
         try { FileOutputStream(output.resolve("$label.png")).use { check(bitmap.compress(Bitmap.CompressFormat.PNG,100,it)) } }
         finally { bitmap.recycle() }
+        // Keep the UIAutomation image and append the same bounded system capture used by the World fixtures.
+        output.resolve("$label-shell.png").writeBytes(android.os.ParcelFileDescriptor.AutoCloseInputStream(
+            inst.uiAutomation.executeShellCommand("screencap -p")).use { it.readBytes() })
     }
     private fun characterIds():Set<Long> = io {
         buildSet { db.openHelper.readableDatabase.query("SELECT id FROM characters ORDER BY id").use { c -> while(c.moveToNext()) add(c.getLong(0)) } }
@@ -149,20 +152,98 @@ class CharacterLibraryActionsNativeAppTest {
         waitNode(label,true)
         return nodes().filter { it.isVisibleToUser && it.text?.toString()==label }.maxBy { n -> android.graphics.Rect().also { n.getBoundsInScreen(it) }.top }
     }
+    private data class FooterTarget(val node:android.view.accessibility.AccessibilityNodeInfo,val depth:Int,val viaAncestor:Boolean)
+    private val minTouchPx:Int
+        get() = kotlin.math.ceil(48f*context.resources.displayMetrics.density).toInt()
+    private fun nodeEvidence(node:android.view.accessibility.AccessibilityNodeInfo):JsonObject = JsonObject().apply {
+        val b=android.graphics.Rect().also { node.getBoundsInScreen(it) }
+        addProperty("left",b.left);addProperty("top",b.top);addProperty("right",b.right);addProperty("bottom",b.bottom)
+        addProperty("enabled",node.isEnabled);addProperty("clickable",node.isClickable)
+        addProperty("selected",node.isSelected)
+        addProperty("hasClickAction",node.actionList.any { it.id==android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK })
+    }
+    private fun recordFooterParentEvidence() {
+        val fixed=listOf("新建角色","导入","对话","创作","设置")
+        val evidence=JsonObject()
+        fixed.forEach { label ->
+            val leaf=footerNode(label)
+            val chain=List(8) { JsonObject() }
+            var node:android.view.accessibility.AccessibilityNodeInfo?=leaf
+            var depth=0
+            while(node!=null && depth<8) {
+                chain[depth].addProperty("depth",depth)
+                chain[depth].add("node",nodeEvidence(node))
+                node=node.parent
+                depth++
+            }
+            val rows=com.google.gson.JsonArray()
+            chain.take(depth).forEach { rows.add(it) }
+            evidence.add(label,JsonObject().apply { add("chain",rows);addProperty("depthsRecorded",depth) })
+        }
+        val j=JsonParser.parseString(journalFile.readText()).asJsonObject
+        j.add("footerParentEvidence",evidence)
+        persist(j)
+    }
+    private fun footerTarget(label:String, tab:Boolean=false):FooterTarget {
+        val textNode=footerNode(label)
+        val textBounds=android.graphics.Rect().also { textNode.getBoundsInScreen(it) }
+        fun valid(n:android.view.accessibility.AccessibilityNodeInfo):Boolean {
+            if(n===textNode || !n.isVisibleToUser || !n.isEnabled) return false
+            val b=android.graphics.Rect().also { n.getBoundsInScreen(it) }
+            if(b.isEmpty || !b.contains(textBounds)) return false
+            val click=n.isClickable || n.actionList.any { it.id==android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK }
+            return if(tab && label=="创作") n.isSelected else click
+        }
+        var parent=textNode.parent
+        var depth=1
+        while(parent!=null && depth<=8) {
+            if(valid(parent)) return FooterTarget(parent,depth,true)
+            parent=parent.parent
+            depth++
+        }
+        // Some Compose semantics trees expose the text leaf without a usable parent link.
+        // Recover only the smallest bounded clickable/selected container for this fixed label.
+        val screenW=context.resources.displayMetrics.widthPixels
+        val screenH=context.resources.displayMetrics.heightPixels
+        val recovered=nodes().asSequence().filter(::valid).map { n ->
+            val b=android.graphics.Rect().also { n.getBoundsInScreen(it) }
+            n to b
+        }.filter { (_,b) -> b.width()<=screenW && b.height()<=screenH && b.height()>=minTouchPx }
+            .minByOrNull { (_,b) -> b.width().toLong()*b.height().toLong() }
+        return recovered?.first?.let { FooterTarget(it,-1,false) }
+            ?: error("footer container missing: $label")
+    }
+    private fun footerEvidence(target:FooterTarget):JsonObject = JsonObject().apply {
+        val b=android.graphics.Rect().also { target.node.getBoundsInScreen(it) }
+        addProperty("ancestorDepth",target.depth)
+        addProperty("viaAncestor",target.viaAncestor)
+        addProperty("left",b.left);addProperty("top",b.top);addProperty("right",b.right);addProperty("bottom",b.bottom)
+        addProperty("enabled",target.node.isEnabled);addProperty("clickable",target.node.isClickable)
+        addProperty("selected",target.node.isSelected)
+    }
     private fun clickFooter(label:String) {
-        var node=footerNode(label)
-        while(!node.isClickable) node=checkNotNull(node.parent)
+        val node=footerTarget(label).node
         check(node.isEnabled && node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK))
     }
     private fun assertFooter() {
-        fun bounds(label:String):android.graphics.Rect {
-            var node=footerNode(label)
-            while(!node.isClickable) node=checkNotNull(node.parent)
-            return android.graphics.Rect().also { node.getBoundsInScreen(it) }
-        }
-        val create=bounds("新建角色");val import=bounds("导入")
-        check(create.top==import.top && create.left<import.left && create.height()>=48 && import.height()>=48)
-        check(nodes().none { it.isVisibleToUser && it.text?.toString() in listOf("对话","创作","设置") })
+        // Persist the bounded five-label parent evidence before any container or geometry check can fail.
+        recordFooterParentEvidence()
+        val targets=linkedMapOf(
+            "新建角色" to footerTarget("新建角色"), "导入" to footerTarget("导入"),
+            "对话" to footerTarget("对话",true), "创作" to footerTarget("创作",true), "设置" to footerTarget("设置",true)
+        )
+        val create=android.graphics.Rect().also { targets.getValue("新建角色").node.getBoundsInScreen(it) }
+        val import=android.graphics.Rect().also { targets.getValue("导入").node.getBoundsInScreen(it) }
+        val sessionTab=android.graphics.Rect().also { targets.getValue("对话").node.getBoundsInScreen(it) }
+        val creationTab=android.graphics.Rect().also { targets.getValue("创作").node.getBoundsInScreen(it) }
+        val settingsTab=android.graphics.Rect().also { targets.getValue("设置").node.getBoundsInScreen(it) }
+        check(create.top==import.top && create.left<import.left && create.height()>=minTouchPx && import.height()>=minTouchPx)
+        check(sessionTab.top==creationTab.top && creationTab.top==settingsTab.top)
+        check(sessionTab.height()>=minTouchPx && creationTab.height()>=minTouchPx && settingsTab.height()>=minTouchPx)
+        check(create.bottom<=sessionTab.top && import.bottom<=sessionTab.top)
+        val evidence=JsonObject().apply { targets.forEach { (label,target) -> add(label,footerEvidence(target)) } }
+        val j=JsonParser.parseString(journalFile.readText()).asJsonObject
+        j.add("footerEvidence",evidence);persist(j)
     }
     @Test fun importCancelCreateAndReturn() {
         guard(); check(!journalFile.exists())
@@ -205,6 +286,7 @@ class CharacterLibraryActionsNativeAppTest {
             capture("04-search-ime-no-footer");back();waitNode("导入",true);assertFooter()
             j.addProperty("createPending",true);persist(j)
             clickFooter("新建角色");waitNode("编辑角色",true)
+            waitState { nodes().none { it.isVisibleToUser && it.text?.toString() in listOf("对话","创作","设置") } }
             val added=characterIds()-j.getAsJsonArray("originalIds").map { it.asLong }.toSet()-setOf(j["fixture"].asLong)
             check(added.size==1)
             val created=checkNotNull(io { db.characterDao().getById(added.single()) })

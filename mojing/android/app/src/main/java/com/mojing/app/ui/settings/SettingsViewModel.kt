@@ -2,6 +2,7 @@ package com.mojing.app.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.mojing.app.data.ModelPlatform
 import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.prefs.UiPreferencesRepository
 import com.mojing.app.ui.common.ProbeUiMessages
@@ -59,6 +60,47 @@ data class ReadingPreferencesSaveNotice(
     val request: ReadingPreferenceSaveRequest,
 )
 
+internal sealed interface SettingsInitializationState {
+    data object Loading : SettingsInitializationState
+    data object Ready : SettingsInitializationState
+    data class Error(val message: String) : SettingsInitializationState
+}
+
+private data class SettingsSecureSnapshot(
+    val publicApiKey: String,
+    val publicBaseUrl: String,
+    val publicModel: String,
+    val themeMode: String,
+    val uiFontScale: Float,
+    val activePlatformId: String,
+    val userName: String,
+    val userDescription: String,
+    val userAvatarColor: String,
+    val userAvatarImagePath: String,
+    val defaultTemperature: String,
+    val defaultMaxTokens: String,
+    val defaultTopP: String,
+    val defaultWorldTemplateId: String,
+    val defaultNarratorEnabled: Boolean,
+    val defaultChoiceGenerationEnabled: Boolean,
+    val defaultAntiCheatEnabled: Boolean,
+    val memoryCompactThreshold: Int,
+    val universalContextMemoryEnabled: Boolean,
+    val maxUploadMb: Int,
+    val maxAutoSpeakers: Int,
+    val defaultEncyclopediaIdForAi: Long,
+    val imageApiKey: String,
+    val imageBaseUrl: String,
+    val imageModel: String,
+    val voiceApiKey: String,
+    val voiceBaseUrl: String,
+    val voiceModel: String,
+    val voiceSpeechVoice: String,
+    val voicePresetPrefixModel: String,
+    val allowSessionThinkMax: Boolean,
+    val thinkMaxModel: String,
+)
+
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val secureStorage: SecureStorage,
@@ -68,19 +110,23 @@ class SettingsViewModel @Inject constructor(
     private val worldTemplateDao: WorldTemplateDao,
     private val encyclopediaDao: EncyclopediaDao,
 ) : ViewModel() {
-    private val _apiKey = MutableStateFlow(secureStorage.publicApiKey)
+    private val _initialization = MutableStateFlow<SettingsInitializationState>(SettingsInitializationState.Loading)
+    internal val initialization: StateFlow<SettingsInitializationState> = _initialization.asStateFlow()
+    private var initializationJob: Job? = null
+
+    private val _apiKey = MutableStateFlow("")
     val apiKey: StateFlow<String> = _apiKey.asStateFlow()
 
-    private val _baseUrl = MutableStateFlow(secureStorage.publicBaseUrl)
+    private val _baseUrl = MutableStateFlow("")
     val baseUrl: StateFlow<String> = _baseUrl.asStateFlow()
 
-    private val _model = MutableStateFlow(secureStorage.publicModel)
+    private val _model = MutableStateFlow("")
     val model: StateFlow<String> = _model.asStateFlow()
 
-    private val _themeMode = MutableStateFlow(AppThemes.normalize(secureStorage.themeMode))
+    private val _themeMode = MutableStateFlow(AppThemes.normalize("dark"))
     val themeMode: StateFlow<String> = _themeMode.asStateFlow()
 
-    private val _uiFontScale = MutableStateFlow(secureStorage.uiFontScale)
+    private val _uiFontScale = MutableStateFlow(1f)
     val uiFontScale: StateFlow<Float> = _uiFontScale.asStateFlow()
 
     val chatDensity: StateFlow<String> = uiPreferencesRepository.chatDensity.stateIn(
@@ -106,15 +152,107 @@ class SettingsViewModel @Inject constructor(
         saveReadingPreference(ReadingPreferenceSaveRequest(ReadingPreferenceKind.NARRATOR_ITALIC, booleanValue = enabled))
     }
 
-    fun updateApiKey(value: String) { _apiKey.value = value; secureStorage.publicApiKey = value }
-    fun updateBaseUrl(value: String) { _baseUrl.value = value; secureStorage.publicBaseUrl = value }
-    fun updateModel(value: String) { _model.value = value; secureStorage.publicModel = value }
+    private fun isInitialized(): Boolean = _initialization.value is SettingsInitializationState.Ready
 
-    fun modelPlatforms() = secureStorage.modelPlatforms()
-    private val _activePlatformId = MutableStateFlow(secureStorage.activeModelPlatformId())
+    private fun loadSecureSnapshot() {
+        if (initializationJob?.isActive == true) return
+        _initialization.value = SettingsInitializationState.Loading
+        initializationJob = viewModelScope.launch {
+            try {
+                val snapshot = withContext(Dispatchers.IO) {
+                    SettingsSecureSnapshot(
+                        publicApiKey = secureStorage.publicApiKey,
+                        publicBaseUrl = secureStorage.publicBaseUrl,
+                        publicModel = secureStorage.publicModel,
+                        themeMode = secureStorage.themeMode,
+                        uiFontScale = secureStorage.uiFontScale,
+                        activePlatformId = secureStorage.activeModelPlatformId(),
+                        userName = secureStorage.userName,
+                        userDescription = secureStorage.userDescription,
+                        userAvatarColor = secureStorage.userAvatarColor,
+                        userAvatarImagePath = secureStorage.userAvatarImagePath,
+                        defaultTemperature = secureStorage.defaultTemperature,
+                        defaultMaxTokens = secureStorage.defaultMaxTokens,
+                        defaultTopP = secureStorage.defaultTopP,
+                        defaultWorldTemplateId = secureStorage.defaultWorldTemplateId,
+                        defaultNarratorEnabled = secureStorage.defaultNarratorEnabled,
+                        defaultChoiceGenerationEnabled = secureStorage.defaultChoiceGenerationEnabled,
+                        defaultAntiCheatEnabled = secureStorage.defaultAntiCheatEnabled,
+                        memoryCompactThreshold = secureStorage.memoryCompactThreshold,
+                        universalContextMemoryEnabled = secureStorage.universalContextMemoryEnabled,
+                        maxUploadMb = secureStorage.maxUploadMb,
+                        maxAutoSpeakers = secureStorage.maxAutoSpeakers,
+                        defaultEncyclopediaIdForAi = secureStorage.defaultEncyclopediaIdForAi,
+                        imageApiKey = secureStorage.imageApiKey,
+                        imageBaseUrl = secureStorage.imageBaseUrl,
+                        imageModel = secureStorage.imageModel,
+                        voiceApiKey = secureStorage.voiceApiKey,
+                        voiceBaseUrl = secureStorage.voiceBaseUrl,
+                        voiceModel = secureStorage.voiceModel,
+                        voiceSpeechVoice = secureStorage.voiceSpeechVoice,
+                        voicePresetPrefixModel = secureStorage.voicePresetPrefixModel,
+                        allowSessionThinkMax = secureStorage.allowSessionThinkMax,
+                        thinkMaxModel = secureStorage.thinkMaxModel,
+                    )
+                }
+                _apiKey.value = snapshot.publicApiKey
+                _baseUrl.value = snapshot.publicBaseUrl
+                _model.value = snapshot.publicModel
+                _themeMode.value = AppThemes.normalize(snapshot.themeMode)
+                _uiFontScale.value = snapshot.uiFontScale
+                _activePlatformId.value = snapshot.activePlatformId
+                _userName.value = snapshot.userName
+                _userDescription.value = snapshot.userDescription
+                _userAvatarColor.value = snapshot.userAvatarColor
+                _userAvatarImagePath.value = snapshot.userAvatarImagePath
+                _defaultTemperature.value = snapshot.defaultTemperature
+                _defaultMaxTokens.value = snapshot.defaultMaxTokens
+                _defaultTopP.value = snapshot.defaultTopP
+                _defaultWorldTemplateId.value = snapshot.defaultWorldTemplateId
+                _defaultNarratorEnabled.value = snapshot.defaultNarratorEnabled
+                _defaultChoiceGenerationEnabled.value = snapshot.defaultChoiceGenerationEnabled
+                _defaultAntiCheatEnabled.value = snapshot.defaultAntiCheatEnabled
+                _memoryCompactThreshold.value = snapshot.memoryCompactThreshold.toString()
+                _universalContextMemoryEnabled.value = snapshot.universalContextMemoryEnabled
+                _maxUploadMb.value = snapshot.maxUploadMb.toString()
+                _maxAutoSpeakers.value = snapshot.maxAutoSpeakers.toString()
+                _defaultEncyclopediaIdForAi.value = snapshot.defaultEncyclopediaIdForAi.takeIf { it > 0L }?.toString().orEmpty()
+                _imageApiKey.value = snapshot.imageApiKey
+                _imageBaseUrl.value = snapshot.imageBaseUrl
+                _imageModel.value = snapshot.imageModel
+                _voiceApiKey.value = snapshot.voiceApiKey
+                _voiceBaseUrl.value = snapshot.voiceBaseUrl
+                _voiceModel.value = snapshot.voiceModel
+                _voiceSpeechVoice.value = snapshot.voiceSpeechVoice
+                _voicePresetPrefixModel.value = snapshot.voicePresetPrefixModel
+                _allowSessionThinkMax.value = snapshot.allowSessionThinkMax
+                _thinkMaxModel.value = snapshot.thinkMaxModel
+                _initialization.value = SettingsInitializationState.Ready
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _initialization.value = SettingsInitializationState.Error("设置读取失败，请重试")
+            } finally {
+                initializationJob = null
+            }
+        }
+    }
+
+    fun retryInitialization() {
+        if (_initialization.value !is SettingsInitializationState.Error) return
+        loadSecureSnapshot()
+    }
+
+    fun updateApiKey(value: String) { if (!isInitialized()) return; _apiKey.value = value; secureStorage.publicApiKey = value }
+    fun updateBaseUrl(value: String) { if (!isInitialized()) return; _baseUrl.value = value; secureStorage.publicBaseUrl = value }
+    fun updateModel(value: String) { if (!isInitialized()) return; _model.value = value; secureStorage.publicModel = value }
+
+    fun modelPlatforms(): List<ModelPlatform> = secureStorage.modelPlatforms()
+    private val _activePlatformId = MutableStateFlow("")
     val activePlatformId: StateFlow<String> = _activePlatformId.asStateFlow()
 
     suspend fun savePlatform(platform: com.mojing.app.data.ModelPlatform, makeDefault: Boolean = false) {
+        check(isInitialized()) { "设置尚未读取完成" }
         val remainsActive = platform.id == _activePlatformId.value
         val shouldProjectToDefault = makeDefault || remainsActive
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -129,6 +267,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     suspend fun deletePlatform(platformId: String): List<com.mojing.app.data.ModelPlatform> {
+        check(isInitialized()) { "设置尚未读取完成" }
         val wasActive = platformId == _activePlatformId.value
         val remaining = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             secureStorage.deleteModelPlatform(platformId)
@@ -145,12 +284,14 @@ class SettingsViewModel @Inject constructor(
     suspend fun fetchPlatformModels(base: String, key: String) = systemProbeApi.listModels(base, key)
 
     fun setThemeMode(mode: String) {
+        if (!isInitialized()) return
         val m = AppThemes.normalize(mode)
         _themeMode.value = m
         secureStorage.themeMode = m
     }
 
     fun setUiFontScale(scale: Float) {
+        if (!isInitialized()) return
         val s = scale.coerceIn(0.8f, 1.45f)
         _uiFontScale.value = s
         secureStorage.uiFontScale = s
@@ -209,17 +350,18 @@ class SettingsViewModel @Inject constructor(
     }
 
     // User Profile
-    private val _userName = MutableStateFlow(secureStorage.userName)
+    private val _userName = MutableStateFlow("玩家")
     val userName: StateFlow<String> = _userName.asStateFlow()
-    private val _userDescription = MutableStateFlow(secureStorage.userDescription)
+    private val _userDescription = MutableStateFlow("")
     val userDescription: StateFlow<String> = _userDescription.asStateFlow()
-    private val _userAvatarColor = MutableStateFlow(secureStorage.userAvatarColor)
+    private val _userAvatarColor = MutableStateFlow("#53C7A8")
     val userAvatarColor: StateFlow<String> = _userAvatarColor.asStateFlow()
 
-    private val _userAvatarImagePath = MutableStateFlow(secureStorage.userAvatarImagePath)
+    private val _userAvatarImagePath = MutableStateFlow("")
     val userAvatarImagePath: StateFlow<String> = _userAvatarImagePath.asStateFlow()
 
     fun updateUserAvatarImagePath(path: String) {
+        if (!isInitialized()) return
         _userAvatarImagePath.value = path
         secureStorage.userAvatarImagePath = path
     }
@@ -230,6 +372,7 @@ class SettingsViewModel @Inject constructor(
     val profileSaveError = _profileSaveError.asStateFlow()
 
     fun updateProfile(name: String, desc: String, color: String, onSaved: () -> Unit = {}) {
+        if (!isInitialized()) return
         if (_profileSaving.value) return
         if (name.isBlank()) {
             _profileSaveError.value = "请输入对话中使用的名字"
@@ -255,45 +398,48 @@ class SettingsViewModel @Inject constructor(
     }
 
     // Defaults
-    private val _defaultTemperature = MutableStateFlow(secureStorage.defaultTemperature)
+    private val _defaultTemperature = MutableStateFlow("0.9")
     val defaultTemperature: StateFlow<String> = _defaultTemperature.asStateFlow()
-    private val _defaultMaxTokens = MutableStateFlow(secureStorage.defaultMaxTokens)
+    private val _defaultMaxTokens = MutableStateFlow("1200")
     val defaultMaxTokens: StateFlow<String> = _defaultMaxTokens.asStateFlow()
-    private val _defaultTopP = MutableStateFlow(secureStorage.defaultTopP)
+    private val _defaultTopP = MutableStateFlow("1.0")
     val defaultTopP: StateFlow<String> = _defaultTopP.asStateFlow()
 
     fun updateDefaultTemperature(value: String) {
+        if (!isInitialized()) return
         _defaultTemperature.value = value
         if (value.trim().toFloatOrNull()?.let { it in 0f..2f } == true) secureStorage.defaultTemperature = value
     }
     fun updateDefaultMaxTokens(value: String) {
+        if (!isInitialized()) return
         _defaultMaxTokens.value = value
         if (value.trim().toIntOrNull()?.let { it in 1..200_000 } == true) secureStorage.defaultMaxTokens = value
     }
     fun updateDefaultTopP(value: String) {
+        if (!isInitialized()) return
         _defaultTopP.value = value
         if (value.trim().toFloatOrNull()?.let { it in 0f..1f } == true) secureStorage.defaultTopP = value
     }
 
-    private val _defaultWorldTemplateId = MutableStateFlow(secureStorage.defaultWorldTemplateId)
+    private val _defaultWorldTemplateId = MutableStateFlow("custom")
     val defaultWorldTemplateId: StateFlow<String> = _defaultWorldTemplateId.asStateFlow()
-    private val _defaultNarratorEnabled = MutableStateFlow(secureStorage.defaultNarratorEnabled)
+    private val _defaultNarratorEnabled = MutableStateFlow(false)
     val defaultNarratorEnabled: StateFlow<Boolean> = _defaultNarratorEnabled.asStateFlow()
-    private val _defaultChoiceGenerationEnabled = MutableStateFlow(secureStorage.defaultChoiceGenerationEnabled)
+    private val _defaultChoiceGenerationEnabled = MutableStateFlow(true)
     val defaultChoiceGenerationEnabled: StateFlow<Boolean> = _defaultChoiceGenerationEnabled.asStateFlow()
-    private val _defaultAntiCheatEnabled = MutableStateFlow(secureStorage.defaultAntiCheatEnabled)
+    private val _defaultAntiCheatEnabled = MutableStateFlow(true)
     val defaultAntiCheatEnabled: StateFlow<Boolean> = _defaultAntiCheatEnabled.asStateFlow()
-    private val _memoryCompactThreshold = MutableStateFlow(secureStorage.memoryCompactThreshold.toString())
+    private val _memoryCompactThreshold = MutableStateFlow("120")
     val memoryCompactThreshold: StateFlow<String> = _memoryCompactThreshold.asStateFlow()
-    private val _universalContextMemoryEnabled = MutableStateFlow(secureStorage.universalContextMemoryEnabled)
+    private val _universalContextMemoryEnabled = MutableStateFlow(true)
     val universalContextMemoryEnabled: StateFlow<Boolean> = _universalContextMemoryEnabled.asStateFlow()
-    private val _maxUploadMb = MutableStateFlow(secureStorage.maxUploadMb.toString())
+    private val _maxUploadMb = MutableStateFlow("20")
     val maxUploadMb: StateFlow<String> = _maxUploadMb.asStateFlow()
-    private val _maxAutoSpeakers = MutableStateFlow(secureStorage.maxAutoSpeakers.toString())
+    private val _maxAutoSpeakers = MutableStateFlow("2")
     val maxAutoSpeakers: StateFlow<String> = _maxAutoSpeakers.asStateFlow()
 
     private val _defaultEncyclopediaIdForAi = MutableStateFlow(
-        secureStorage.defaultEncyclopediaIdForAi.takeIf { it > 0L }?.toString() ?: "",
+        "",
     )
     val defaultEncyclopediaIdForAi: StateFlow<String> = _defaultEncyclopediaIdForAi.asStateFlow()
 
@@ -353,6 +499,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun updateDefaultWorldTemplateId(value: String) {
+        if (!isInitialized()) return
         defaultLabelJob?.cancel()
         defaultLabelRevision++
         _defaultWorldTemplateId.value = value
@@ -365,37 +512,45 @@ class SettingsViewModel @Inject constructor(
         )
     }
     fun updateDefaultNarratorEnabled(value: Boolean) {
+        if (!isInitialized()) return
         _defaultNarratorEnabled.value = value
         secureStorage.defaultNarratorEnabled = value
     }
     fun updateDefaultChoiceGenerationEnabled(value: Boolean) {
+        if (!isInitialized()) return
         _defaultChoiceGenerationEnabled.value = value
         secureStorage.defaultChoiceGenerationEnabled = value
     }
     fun updateDefaultAntiCheatEnabled(value: Boolean) {
+        if (!isInitialized()) return
         _defaultAntiCheatEnabled.value = value
         secureStorage.defaultAntiCheatEnabled = value
     }
     fun updateMemoryCompactThreshold(value: String) {
+        if (!isInitialized()) return
         _memoryCompactThreshold.value = value
         value.toIntOrNull()?.takeIf { it in 10..2000 }?.let { secureStorage.memoryCompactThreshold = it }
     }
 
     fun updateUniversalContextMemoryEnabled(value: Boolean) {
+        if (!isInitialized()) return
         _universalContextMemoryEnabled.value = value
         secureStorage.universalContextMemoryEnabled = value
     }
 
     fun updateMaxUploadMb(value: String) {
+        if (!isInitialized()) return
         _maxUploadMb.value = value
         value.toIntOrNull()?.let { secureStorage.maxUploadMb = it }
     }
     fun updateMaxAutoSpeakers(value: String) {
+        if (!isInitialized()) return
         _maxAutoSpeakers.value = value
         value.toIntOrNull()?.let { secureStorage.maxAutoSpeakers = it }
     }
 
     fun updateDefaultEncyclopediaIdForAi(value: String) {
+        if (!isInitialized()) return
         defaultLabelJob?.cancel()
         defaultLabelRevision++
         _defaultEncyclopediaIdForAi.value = value.trim()
@@ -410,57 +565,65 @@ class SettingsViewModel @Inject constructor(
     }
 
     // Image API
-    private val _imageApiKey = MutableStateFlow(secureStorage.imageApiKey)
+    private val _imageApiKey = MutableStateFlow("")
     val imageApiKey: StateFlow<String> = _imageApiKey.asStateFlow()
-    private val _imageBaseUrl = MutableStateFlow(secureStorage.imageBaseUrl)
+    private val _imageBaseUrl = MutableStateFlow("")
     val imageBaseUrl: StateFlow<String> = _imageBaseUrl.asStateFlow()
-    private val _imageModel = MutableStateFlow(secureStorage.imageModel)
+    private val _imageModel = MutableStateFlow("dall-e-3")
     val imageModel: StateFlow<String> = _imageModel.asStateFlow()
 
-    fun updateImageApiKey(value: String) { _imageApiKey.value = value; secureStorage.imageApiKey = value }
-    fun updateImageBaseUrl(value: String) { _imageBaseUrl.value = value; secureStorage.imageBaseUrl = value }
-    fun updateImageModel(value: String) { _imageModel.value = value; secureStorage.imageModel = value }
+    fun updateImageApiKey(value: String) { if (!isInitialized()) return; _imageApiKey.value = value; secureStorage.imageApiKey = value }
+    fun updateImageBaseUrl(value: String) { if (!isInitialized()) return; _imageBaseUrl.value = value; secureStorage.imageBaseUrl = value }
+    fun updateImageModel(value: String) { if (!isInitialized()) return; _imageModel.value = value; secureStorage.imageModel = value }
 
     // Voice API
-    private val _voiceApiKey = MutableStateFlow(secureStorage.voiceApiKey)
+    private val _voiceApiKey = MutableStateFlow("")
     val voiceApiKey: StateFlow<String> = _voiceApiKey.asStateFlow()
-    private val _voiceBaseUrl = MutableStateFlow(secureStorage.voiceBaseUrl)
+    private val _voiceBaseUrl = MutableStateFlow("")
     val voiceBaseUrl: StateFlow<String> = _voiceBaseUrl.asStateFlow()
-    private val _voiceModel = MutableStateFlow(secureStorage.voiceModel)
+    private val _voiceModel = MutableStateFlow("system")
     val voiceModel: StateFlow<String> = _voiceModel.asStateFlow()
 
-    fun updateVoiceApiKey(value: String) { _voiceApiKey.value = value; secureStorage.voiceApiKey = value }
-    fun updateVoiceBaseUrl(value: String) { _voiceBaseUrl.value = value; secureStorage.voiceBaseUrl = value }
-    fun updateVoiceModel(value: String) { _voiceModel.value = value; secureStorage.voiceModel = value }
+    fun updateVoiceApiKey(value: String) { if (!isInitialized()) return; _voiceApiKey.value = value; secureStorage.voiceApiKey = value }
+    fun updateVoiceBaseUrl(value: String) { if (!isInitialized()) return; _voiceBaseUrl.value = value; secureStorage.voiceBaseUrl = value }
+    fun updateVoiceModel(value: String) { if (!isInitialized()) return; _voiceModel.value = value; secureStorage.voiceModel = value }
 
-    private val _voiceSpeechVoice = MutableStateFlow(secureStorage.voiceSpeechVoice)
+    private val _voiceSpeechVoice = MutableStateFlow("")
     val voiceSpeechVoice: StateFlow<String> = _voiceSpeechVoice.asStateFlow()
 
     fun updateVoiceSpeechVoice(value: String) {
+        if (!isInitialized()) return
         _voiceSpeechVoice.value = value
         secureStorage.voiceSpeechVoice = value
     }
 
-    private val _voicePresetPrefixModel = MutableStateFlow(secureStorage.voicePresetPrefixModel)
+    private val _voicePresetPrefixModel = MutableStateFlow("")
     val voicePresetPrefixModel: StateFlow<String> = _voicePresetPrefixModel.asStateFlow()
 
     fun updateVoicePresetPrefixModel(value: String) {
+        if (!isInitialized()) return
         _voicePresetPrefixModel.value = value
         secureStorage.voicePresetPrefixModel = value
     }
 
-    private val _allowSessionThinkMax = MutableStateFlow(secureStorage.allowSessionThinkMax)
+    private val _allowSessionThinkMax = MutableStateFlow(false)
     val allowSessionThinkMax: StateFlow<Boolean> = _allowSessionThinkMax.asStateFlow()
 
-    private val _thinkMaxModel = MutableStateFlow(secureStorage.thinkMaxModel)
+    private val _thinkMaxModel = MutableStateFlow("")
     val thinkMaxModel: StateFlow<String> = _thinkMaxModel.asStateFlow()
 
+    init {
+        loadSecureSnapshot()
+    }
+
     fun updateAllowSessionThinkMax(value: Boolean) {
+        if (!isInitialized()) return
         _allowSessionThinkMax.value = value
         secureStorage.allowSessionThinkMax = value
     }
 
     fun updateThinkMaxModel(value: String) {
+        if (!isInitialized()) return
         _thinkMaxModel.value = value
         secureStorage.thinkMaxModel = value
     }

@@ -1,5 +1,6 @@
 package com.mojing.app.ui.settings
 
+import androidx.lifecycle.viewModelScope
 import com.mojing.app.data.SecureStorage
 import com.mojing.app.data.prefs.UiPreferencesRepository
 import com.mojing.app.data.local.dao.CostRecordDao
@@ -13,16 +14,23 @@ import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -62,12 +70,21 @@ class ReadingPreferencesSaveTest {
     }
 
     @After
-    fun tearDown() {
-        Dispatchers.resetMain()
+    fun tearDown() = runTest(dispatcher) {
+        try {
+            val ownerJob = viewModel.viewModelScope.coroutineContext[Job]
+            viewModel.viewModelScope.cancel()
+            if (ownerJob != null) {
+                withContext(Dispatchers.Default) { withTimeout(5_000) { ownerJob.join() } }
+            }
+        } finally {
+            Dispatchers.resetMain()
+        }
     }
 
     @Test
     fun failureKeepsOldFlowAndRetryUsesOriginalRequest() = runTest(dispatcher) {
+        awaitReady()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.chatFont.collect() }
         advanceUntilIdle()
         assertEquals("mono", viewModel.chatFont.value)
@@ -95,6 +112,7 @@ class ReadingPreferencesSaveTest {
 
     @Test
     fun consecutiveFailuresCreateFreshNoticeTokens() = runTest(dispatcher) {
+        awaitReady()
         coEvery { uiPreferencesRepository.setChatDensity("reader") } throws IllegalStateException("write failed")
 
         viewModel.setChatDensity("reader")
@@ -110,6 +128,7 @@ class ReadingPreferencesSaveTest {
 
     @Test
     fun duplicateSelectionWhileSavingWritesOnce() = runTest(dispatcher) {
+        awaitReady()
         val started = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         coEvery { uiPreferencesRepository.setChatFont("mono") } coAnswers {
@@ -132,6 +151,7 @@ class ReadingPreferencesSaveTest {
 
     @Test
     fun oldNoticeCannotRetryAfterNewSelection() = runTest(dispatcher) {
+        awaitReady()
         coEvery { uiPreferencesRepository.setChatFont("serif") } throws IllegalStateException("font failed")
         coEvery { uiPreferencesRepository.setChatDensity("reader") } returns Unit
 
@@ -150,6 +170,7 @@ class ReadingPreferencesSaveTest {
 
     @Test
     fun cancellationRestoresControlsWithoutFailureNotice() = runTest(dispatcher) {
+        awaitReady()
         val started = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         coEvery { uiPreferencesRepository.setNarratorItalic(true) } coAnswers {
@@ -166,5 +187,17 @@ class ReadingPreferencesSaveTest {
         assertFalse(viewModel.readingPreferencesSaving.value)
         assertNull(viewModel.readingPreferencesSaveNotice.value)
         release.complete(Unit)
+    }
+
+    private suspend fun TestScope.awaitReady() {
+        runCurrent()
+        withContext(Dispatchers.Default) {
+            val terminal = withTimeout(5_000) {
+                viewModel.initialization.first {
+                    it is SettingsInitializationState.Ready || it is SettingsInitializationState.Error
+                }
+            }
+            assertTrue("settings initialization did not reach Ready: $terminal", terminal is SettingsInitializationState.Ready)
+        }
     }
 }

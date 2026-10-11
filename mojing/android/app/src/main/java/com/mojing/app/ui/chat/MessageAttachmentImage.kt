@@ -29,7 +29,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.mojing.app.data.local.entity.MessageAttachmentEntity
-import com.mojing.app.ui.common.avatarImageModel
+import com.mojing.app.ui.common.rememberAvatarImageModel
 
 /** Retries only reading the stored attachment; it never regenerates or changes the message. */
 @Composable
@@ -41,7 +41,7 @@ internal fun MessageAttachmentImage(attachment: MessageAttachmentEntity, onImage
     key(path, revision) {
         var loading by remember { mutableStateOf(true) }
         var failed by remember { mutableStateOf(false) }
-        val model = remember(path, revision) { avatarImageModel(context, path) }
+        val model = rememberAvatarImageModel(context, path, revision)
         Box(Modifier.fillMaxWidth().heightIn(max = 220.dp).clip(RoundedCornerShape(8.dp))) {
             AsyncImage(
                 model = model,
@@ -51,7 +51,7 @@ internal fun MessageAttachmentImage(attachment: MessageAttachmentEntity, onImage
                 contentScale = ContentScale.Fit,
                 onLoading = { loading = true; failed = false },
                 onSuccess = { loading = false; failed = false },
-                onError = { loading = false; failed = true },
+                onError = { loading = model == null; failed = model != null },
             )
             if (loading) Box(Modifier.matchParentSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)

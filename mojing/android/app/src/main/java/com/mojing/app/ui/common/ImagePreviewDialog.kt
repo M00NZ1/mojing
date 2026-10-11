@@ -52,8 +52,16 @@ fun ImagePreviewDialog(imageUrl: String, onDismiss: () -> Unit) {
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
                 key(imageUrl, revision) {
-                    SubcomposeAsyncImage(
-                        model = remember(imageUrl, revision) { avatarImageModel(context, imageUrl) },
+                    val model = rememberAvatarImageModel(context, imageUrl, revision)
+                    if (model == null) {
+                        Box(
+                            Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator(color = Color.White)
+                        }
+                    } else SubcomposeAsyncImage(
+                        model = model,
                         contentDescription = "图片预览",
                         modifier = Modifier
                             .fillMaxSize()

@@ -22,7 +22,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.mojing.app.data.local.entity.EncyclopediaEntity
-import com.mojing.app.ui.common.avatarImageModel
+import com.mojing.app.ui.common.rememberAvatarImageModel
 
 data class WorldOverviewStat(
     val label: String,
@@ -40,7 +40,7 @@ internal fun WorldOverviewHeader(
     var expanded by rememberSaveable(world.id) { mutableStateOf(!compact) }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
         if (expanded && com.mojing.app.ui.common.hasUserImage(world.coverImagePath)) {
-            AsyncImage(model = avatarImageModel(LocalContext.current, world.coverImagePath), contentDescription = "世界封面",
+            AsyncImage(model = rememberAvatarImageModel(LocalContext.current, world.coverImagePath), contentDescription = "世界封面",
                 contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().aspectRatio(2.2f).clip(MaterialTheme.shapes.medium))
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

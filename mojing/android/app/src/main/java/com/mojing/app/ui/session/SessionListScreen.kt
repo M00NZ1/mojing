@@ -1256,8 +1256,12 @@ fun SessionListRowInner(
     val previewLabel = if (showingMain) "主线" else branchPreview?.label?.takeIf(String::isNotBlank) ?: "上次故事线"
     val meta = "主线 ${row.messageCount} 条 · ${row.participantCount} 角色"
     val colors = MaterialTheme.colorScheme
-    Row(Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        com.mojing.app.ui.common.MoJingCoverImage(row.coverImagePath, Modifier.size(56.dp, 72.dp), "故事关联封面")
+    val hasCover = !row.coverImagePath.isNullOrBlank()
+    Row(Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 8.dp),
+        horizontalArrangement = if (hasCover) Arrangement.spacedBy(12.dp) else Arrangement.Start) {
+        if (hasCover) {
+            com.mojing.app.ui.common.MoJingCoverImage(row.coverImagePath, Modifier.size(56.dp, 72.dp), "故事关联封面")
+        }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(session.title.ifBlank { "未命名对话" },
             style = MaterialTheme.typography.titleMedium,
