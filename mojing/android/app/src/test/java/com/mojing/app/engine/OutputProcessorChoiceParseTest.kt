@@ -1,6 +1,7 @@
 package com.mojing.app.engine
 
 import com.mojing.app.domain.engine.OutputProcessor
+import com.mojing.app.domain.engine.StructuredParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -103,5 +104,70 @@ class OutputProcessorChoiceParseTest {
         assertEquals(raw, OutputProcessor.normalizeOptions(raw))
         assertTrue(OutputProcessor.extractChoices(raw).isEmpty())
     }
-}
 
+    @Test
+    fun fourShortMarkdownMarkersRemainRawAndNormalizationIsIdempotent() {
+        for (marker in listOf("**", "***", "__", "___")) {
+            assertEquals(marker, OutputProcessor.normalizeOptions(marker))
+            assertEquals(marker, OutputProcessor.normalizeOptions(OutputProcessor.normalizeOptions(marker)))
+            assertTrue(OutputProcessor.extractChoices(marker).isEmpty())
+            assertEquals(marker, StructuredParser.parse(marker).plainText)
+        }
+    }
+
+    @Test
+    fun shortMarkersAlongsideCompleteXmlKeepTheRawTextAndParsedBody() {
+        for (marker in listOf("**", "***", "__", "___")) {
+            val raw = "<NARRATION>旁白。</NARRATION>\n$marker"
+            assertEquals(raw, OutputProcessor.normalizeOptions(raw))
+            val reply = StructuredParser.parse(raw)
+            assertEquals(listOf("旁白。"), reply.narrations)
+            assertEquals(marker, reply.plainText)
+            assertTrue(reply.choices.isEmpty())
+            assertEquals(raw, OutputProcessor.normalizeOptions(OutputProcessor.normalizeOptions(raw)))
+        }
+    }
+
+    @Test
+    fun shortMarkersInsideTruncatedXmlRemainRawAndDoNotInventChoices() {
+        for (marker in listOf("**", "***", "__", "___")) {
+            for (tag in listOf("NARRATION", "CHOICES")) {
+                val raw = "<$tag>\n$marker"
+                assertEquals(raw, OutputProcessor.normalizeOptions(raw))
+                assertEquals(raw, OutputProcessor.normalizeOptions(OutputProcessor.normalizeOptions(raw)))
+                assertTrue(OutputProcessor.extractChoices(raw).isEmpty())
+                assertFalse(StructuredParser.isStructured(raw))
+            }
+        }
+    }
+
+    @Test
+    fun shortMarkersInsideCompleteChoiceBlocksKeepExistingLiteralChoiceRules() {
+        // '*' remains the existing bullet prefix; '_' remains literal in explicit blocks.
+        for ((marker, choice) in listOf("**" to "*", "***" to "**", "__" to "__", "___" to "___")) {
+            val raw = "<SPEECH>对白。</SPEECH><CHOICES>$marker</CHOICES>"
+            val normalized = OutputProcessor.normalizeOptions(raw)
+            assertEquals("<SPEECH>对白。</SPEECH><CHOICES><OPTION>$choice</OPTION></CHOICES>", normalized)
+            assertEquals(listOf(choice), OutputProcessor.extractChoices(raw))
+            assertEquals(listOf("对白。"), StructuredParser.parse(raw).speeches.map { it.text })
+            assertEquals(normalized, OutputProcessor.normalizeOptions(normalized))
+            assertEquals("<SPEECH>对白。</SPEECH><CHOICES>$marker</CHOICES>", raw)
+        }
+    }
+
+    @Test
+    fun completeWrappersAndChoicesNormalizeWhileUnclosedMarkersStayRaw() {
+        for (wrapper in listOf("**", "__")) {
+            val raw = "<SPEECH>正文。</SPEECH>\n${wrapper}后续选项：$wrapper\n${wrapper}选项一：继续$wrapper\n${wrapper}选项二：离开$wrapper"
+            val normalized = OutputProcessor.normalizeOptions(raw)
+            assertEquals(listOf("继续", "离开"), OutputProcessor.extractChoices(raw))
+            assertEquals(normalized, OutputProcessor.normalizeOptions(normalized))
+            assertEquals(listOf("正文。"), StructuredParser.parse(raw).speeches.map { it.text })
+        }
+        for (raw in listOf("**正文", "正文**", "__正文", "正文__", "***", "___")) {
+            assertEquals(raw, OutputProcessor.normalizeOptions(raw))
+            assertEquals(raw, OutputProcessor.normalizeOptions(OutputProcessor.normalizeOptions(raw)))
+        }
+    }
+
+}

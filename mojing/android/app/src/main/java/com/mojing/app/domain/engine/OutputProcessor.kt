@@ -159,8 +159,9 @@ object OutputProcessor {
     private fun trimMarkdown(raw: String): String {
         var value = raw.trim()
         while (value.startsWith(">")) value = value.removePrefix(">").trimStart()
-        if ((value.startsWith("**") && value.endsWith("**")) ||
-            (value.startsWith("__") && value.endsWith("__"))
+        if (value.length >= 4 &&
+            ((value.startsWith("**") && value.endsWith("**")) ||
+                (value.startsWith("__") && value.endsWith("__")))
         ) {
             value = value.substring(2, value.length - 2).trim()
         }
